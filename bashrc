@@ -11,7 +11,7 @@ alias la='ls $LS_OPTIONS -la'
 
 # Some more alias to avoid making mistakes:
 alias rm='rm -i'
-alias cp='cp -i'
+alias cp='cp'
 alias mv='mv -i'
 
 # Shortcuts
@@ -19,6 +19,7 @@ alias cdngx='cd /etc/nginx/conf.d/'
 alias ngx+='/etc/init.d/nginx start'
 alias ngx-='/etc/init.d/nginx stop'
 alias ngx#='/etc/init.d/nginx restart'
+alias ngxr='/etc/init.d/nginx reload'
 alias dps='docker ps -a'
 
 export EDITOR=nano
