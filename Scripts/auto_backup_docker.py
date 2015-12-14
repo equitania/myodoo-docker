@@ -75,4 +75,4 @@ fname_rsync = 'rsync_targets.csv'
 if os.path.isfile(fname_rsync):
 	reader2 = csv.reader(open(fname_rsync, 'rb'))
 	for row in reader2:
-		os.system(mydb = row[0])
+		os.system(row[0])
