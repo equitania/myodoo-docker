@@ -25,8 +25,10 @@
 ##############################################################################
 import os
 import csv
+import sys
 import zipfile
 import datetime, time
+from subprocess import call
 
 def zip_dir(dirpath, zippath):
 	fzip = zipfile.ZipFile(zippath, 'w', zipfile.ZIP_DEFLATED)
@@ -65,7 +67,24 @@ for row in reader1:
 	os.rename(mybackupfolder+'/'+mydb,mybackupfolder+'/filestore')
 	zip_dir(mybackupfolder,mybackuppath+'/'+mydatacontainer+'_dockerbackup_'+mytime+'.zip')
 	os.system('rm -r '+mybackupfolder)
-	print 'Backup is done '+mydb
+	print 'Backup is done ' + mydatacontainer
+
+# run by crontab
+# removes any files in mybackuppath older than 14 days
+
+now = time.time()
+cutoff = now - (14 * 86400)
+
+files = os.listdir(mybackuppath+"/")
+for xfile in files:
+	if os.path.isfile(mybackuppath + "/" + xfile ):
+		t = os.stat( mybackuppath + "/" + xfile )
+		c = t.st_ctime
+
+		# delete file if older than 2 weeks
+		if c < cutoff:
+			print "remove: " + mybackuppath + "/" + xfile
+			os.remove(mybackuppath + "/" + xfile)
 
 
 print 'Start resync'
