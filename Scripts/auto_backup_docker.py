@@ -54,6 +54,9 @@ print mybackuppath
 
 for row in reader1:
 	mydb = row[0]
+	if mydb.startswith('#'):
+		# Kommentarzeile
+		continue
 	mysqlcontainer = row[1]
 	mydatacontainer = row[2]
 	print 'Database Name:'+mydb+'\nDatabaseContainerName:'+mysqlcontainer+'\nMyOdooContainerName:'+mydatacontainer
