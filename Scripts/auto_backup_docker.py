@@ -72,6 +72,12 @@ for row in reader1:
 	os.system('rm -r '+mybackupfolder)
 	print 'Backup is done ' + mydatacontainer
 
+# backup nginx-conf
+os.mkdir('/root/nginx-backups/')
+ts = time.time()
+mytime=datetime.datetime.fromtimestamp(ts).strftime('%Y-%m-%d_%H-%M-%S')
+os.system('zip -r /root/nginx-backups/nginx-confs_'+mytime+'.zip /etc/nginx/conf.d/')
+
 # run by crontab
 # removes any files in mybackuppath older than 14 days
 
@@ -89,8 +95,7 @@ for xfile in files:
 			print "remove: " + mybackuppath + "/" + xfile
 			os.remove(mybackuppath + "/" + xfile)
 
-
-print 'Start resync'
+print 'Start rsync'
 # csv format
 # rsync --delete -avzre "ssh" /sourcepath/ user@servername:/targetpath/
 fname_rsync = 'rsync_targets.csv'
