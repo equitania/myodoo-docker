@@ -29,25 +29,42 @@ echo "Your home path is: "$mybasepath
 echo "Your backup path is: "$mybackuppath
 echo "So your zip file should store there!"
 
-echo "Name of the new db:"
-read mydb
+mydb=$1
+mysqlcontainer=$2
+mydatacontainer=$3
+mydel=$4
+mybackupzip=$5
+mycron=$6
 
-echo "ID of the Postgres container:"
-read mysqlcontainer
+if [ "$mydb" = "" ]; then
+  echo "Name of the new db:"
+  read mydb
+fi
 
-echo "ID of the Data container:"
-read mydatacontainer
+if [ "$mysqlcontainer" = "" ]; then
+  echo "ID of the Postgres container:"
+  read mysqlcontainer
+fi
 
-echo "Delete the old version of $mydb [Y/n]:"
-read mydel
+if [ "$mydatacontainer" = "" ]; then
+  echo "ID of the Data container:"
+  read mydatacontainer
+fi
+
+if [ "$mydel" = "" ]; then
+  echo "Delete the old version of $mydb [Y/n]:"
+  read mydel
+fi
 
 if [ "$mydel" == "Y" ] || [ "$mydel" == "y" ]; then
   docker exec -i $mysqlcontainer dropdb -U postgres $mydb
   echo "Drop is done."
 fi
 
-echo "Name of the backupfile (path: $mybackuppath):"
-read mybackupzip
+if [ "$mybackupzip" = "" ]; then
+  echo "Name of the backupfile (path: $mybackuppath):"
+  read mybackupzip
+fi
 
 if [ "$mydb" != "" ]; then
   echo "Unzip $mybackuppath/$mybackupzip.."
@@ -67,8 +84,10 @@ if [ "$mydb" != "" ]; then
     docker exec -i $mysqlcontainer createdb -U odoo -T template0 $mydb
     echo "Restore DB $mydb"
     cat $mybackup | docker exec -i $mysqlcontainer psql -U odoo -d $mydb
-    echo "Do you want to deactivate cronjob functions in $mydb [Y/n]:"
-    read mycron
+    if [ "$mycron" = "" ]; then
+      echo "Do you want to deactivate cronjob functions in $mydb [Y/n]:"
+      read mycron
+    fi
     if [ "$mycron" == "Y" ] || [ "$mycron" == "y" ]; then
       docker exec -i $mysqlcontainer psql -d $mydb -U odoo -c $'UPDATE ir_cron SET active = FALSE;'
     fi
