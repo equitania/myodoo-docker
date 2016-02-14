@@ -20,6 +20,7 @@ alias ngx+='/etc/init.d/nginx start'
 alias ngx-='/etc/init.d/nginx stop'
 alias ngx#='/etc/init.d/nginx restart'
 alias ngxr='/etc/init.d/nginx reload'
+alias ngxs='cp -r /etc/nginx/conf.d/ /root/nginx-save'
 alias dps='docker ps -a'
 
 export EDITOR=nano
