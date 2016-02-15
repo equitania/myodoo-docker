@@ -73,7 +73,8 @@ for row in reader1:
 	print 'Backup is done ' + mydatacontainer
 
 # backup nginx-conf
-os.mkdir('/root/nginx-backups/')
+if not os.path.exists('/root/nginx-backups/'):
+	os.mkdir('/root/nginx-backups/')
 ts = time.time()
 mytime=datetime.datetime.fromtimestamp(ts).strftime('%Y-%m-%d_%H-%M-%S')
 os.system('zip -r /root/nginx-backups/nginx-confs_'+mytime+'.zip /etc/nginx/conf.d/')
