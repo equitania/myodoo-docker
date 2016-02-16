@@ -50,6 +50,12 @@ fname_backup = 'containers2backup.csv'
 reader1 = csv.reader(open(fname_backup, 'rb'))
 mybasepath = os.getcwd()
 mybackuppath=mybasepath + "/docker-backups"
+if not os.path.exists(mybackuppath):
+	os.mkdir(mybackuppath)
+mynginxpath=mybasepath + "/nginx-backups"
+if not os.path.exists(mynginxpath):
+	os.mkdir(mynginxpath)
+
 print mybackuppath
 
 for row in reader1:
@@ -74,11 +80,11 @@ for row in reader1:
 	print 'Backup is done ' + mydatacontainer
 
 # backup nginx-conf
-if not os.path.exists('/root/nginx-backups/'):
-	os.mkdir('/root/nginx-backups/')
+if not os.path.exists(mynginxpath):
+	os.mkdir(mynginxpath)
 ts = time.time()
 mytime=datetime.datetime.fromtimestamp(ts).strftime('%Y-%m-%d_%H-%M-%S')
-os.system('zip -r /root/nginx-backups/nginx-confs_'+mytime+'.zip /etc/nginx/conf.d/')
+os.system('zip -r '+mynginxpath+'/nginx-confs_'+mytime+'.zip /etc/nginx/conf.d/')
 
 # run by crontab
 # removes any files in mybackuppath older than 14 days
@@ -97,6 +103,19 @@ for xfile in files:
 			print "remove: " + mybackuppath + "/" + xfile
 			os.remove(mybackuppath + "/" + xfile)
 
+# removes any files in mynginxpath older than 14 days
+files = os.listdir(mynginxpath+"/")
+for xfile in files:
+	if os.path.isfile(mynginxpath + "/" + xfile ):
+		t = os.stat( mynginxpath + "/" + xfile )
+		c = t.st_ctime
+
+		# delete file if older than 2 weeks
+		if c < cutoff:
+			print "remove: " + mynginxpath + "/" + xfile
+			os.remove(mynginxpath + "/" + xfile)
+
+
 print 'Start rsync'
 # csv format
 # rsync --delete -avzre "ssh" /sourcepath/ user@servername:/targetpath/
@@ -105,3 +124,4 @@ if os.path.isfile(fname_rsync):
 	reader2 = csv.reader(open(fname_rsync, 'rb'))
 	for row in reader2:
 		os.system(row[0])
+print 'Backup done!'
