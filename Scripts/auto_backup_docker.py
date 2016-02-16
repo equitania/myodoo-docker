@@ -61,7 +61,8 @@ for row in reader1:
 	mydatacontainer = row[2]
 	print 'Database Name:'+mydb+'\nDatabaseContainerName:'+mysqlcontainer+'\nMyOdooContainerName:'+mydatacontainer
 	mybackupfolder=mybackuppath+'/'+mydb
-	os.mkdir(mybackupfolder)
+	if not os.path.exists(mybackupfolder):
+		os.mkdir(mybackupfolder)
 	os.system('docker exec -i '+mysqlcontainer+' pg_dump -U odoo '+mydb+' > '+mybackupfolder+'/dump.sql')
 	filestorepath='/opt/odoo/data/filestore/'
 	os.system('docker cp '+mydatacontainer+':/opt/odoo/data/filestore/'+mydb+' '+mybackupfolder+'/')
