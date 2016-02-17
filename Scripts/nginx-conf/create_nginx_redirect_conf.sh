@@ -42,6 +42,12 @@ if [ "$mydomain" = "" ]; then
   read mydomain
 fi
 
+if [ "$mytarget" = "" ]; then
+  echo "Insert the target domain name | Geben Sie den Ziel-Domainnamen ein:"
+  read mytarget
+fi
+
+
 myolddomain="server.domain.de"
 myoldtarget="target.domain.de"
 myoldip="ip.ip.ip.ip"
