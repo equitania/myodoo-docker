@@ -105,6 +105,7 @@ bindkey -M vicmd '/' history-incremental-search-backward
 ### aliases / functions ###
 # default settings
 alias ls='ls --color --classify'
+alias ll='ls -al --color --classify'
 alias l='ls --color --classify -lah'
 alias grep='grep --color=auto'
 alias nano='nano --nowrap'
@@ -282,5 +283,6 @@ alias ngxr='/etc/init.d/nginx reload'
 alias ngxs='cp -r /etc/nginx/conf.d/ /root/nginx-save'
 alias dps='docker ps -a'
 alias dpi='docker images'
+alias syspatch='apt-get update && apt-get dist-upgrade && apt-get autoremove'
 
 export EDITOR=nano
