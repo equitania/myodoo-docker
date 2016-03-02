@@ -67,6 +67,9 @@ for row in reader:
 		print myodoocontainer+' started...'
 		os.system('docker cp '+myupdatepath+'/'+mydb+' '+myodoocontainer+':/opt/odoo/data/filestore/'+mydb)
 		print 'Filestore restored...'
+		print myodoocontainer+' restarting...'
+		os.system('docker restart '+myodoocontainer)
+		print myodoocontainer+' restarted...'
 		print 'Load translation...'
 		if os.path.isfile(mypath+"load_translation.py"):
 			os.system("python "+mypath+"load_translation.py")
