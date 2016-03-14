@@ -1,7 +1,7 @@
 FROM debian:jessie
 MAINTAINER Equitania Software GmbH <info@myodoo.de>
-# Version 1.0.1
-# Date 06.01.2016
+# Version 1.0.2
+# Date 14.03.2016
 
 CMD "echo" "MyOdoo build will start now.."
 
@@ -15,7 +15,7 @@ RUN set -x; \
 		antiword  \
 		poppler-utils \
 		curl \
-		postgresql-client \
+		postgresql-client-9.4 \
 		build-essential \
 		libfreetype6-dev \
 		libjpeg-dev \
@@ -26,7 +26,9 @@ RUN set -x; \
 		mc \
 		geoip-bin \
 		geoip-database \
-		sudo
+		sudo \
+		node-less \
+		node-clean-css
 
 # Python packages..
 RUN set -x; \
@@ -106,24 +108,8 @@ RUN set -x; \
 		&& pip install Jinja2==2.3 \
 		&& pip install gevent \
 		&& pip install psycogreen\
-		&& pip install egenix-mx-base
-
-# Python Image Library will be install..
-RUN set -x; \
-		wget http://effbot.org/downloads/Imaging-1.1.7.tar.gz \
-		&& tar fzvx Imaging-1.1.7.tar.gz \
-		&& cd Imaging-1.1.7 \
-		&& python setup.py install \
-		&& pip install -I pillow \
-		&& cd ..\
-		&& rm -r Imaging-1.1.7 \
-		&& rm  Imaging-1.1.7.tar.gz
-
-# npm packages will be install..
-RUN set -x; \
-		curl -sL https://deb.nodesource.com/setup_0.12 | bash - \
-		&& apt-get install -y --no-install-recommends nodejs \
-		&& npm install -g less less-plugin-clean-css
+		&& pip install egenix-mx-base \
+		&& pip install pillow==2.6.0
 
 # Barcodes will be install...
 RUN set -x; \
@@ -132,12 +118,11 @@ RUN set -x; \
 		&& mv fonts /usr/lib/python2.7/dist-packages/reportlab/ \
 		&& rm pfbfer.zip
 
-# Print engine..
+# PDF export engine..
 RUN set -x; \
-		curl -o wkhtmltox.deb -SL http://nightly.odoo.com/extra/wkhtmltox-0.12.1.2_linux-jessie-amd64.deb \
+		curl -k -o wkhtmltox.deb -SL https://release.myodoo.de/wkhtmltox-0.12.1.2_linux-jessie-amd64.deb \
 		&& echo '40e8b906de658a2221b15e4e8cd82565a47d7ee8 wkhtmltox.deb' | sha1sum -c - \
 		&& dpkg --force-depends -i wkhtmltox.deb \
 		&& apt-get -y install -f --no-install-recommends \
 		&& apt-get purge -y --auto-remove -o APT::AutoRemove::RecommendsImportant=false -o APT::AutoRemove::SuggestsImportant=false npm \
 		&& rm -rf /var/lib/apt/lists/* wkhtmltox.deb
-
