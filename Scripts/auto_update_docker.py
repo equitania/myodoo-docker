@@ -25,6 +25,7 @@
 ##############################################################################
 import os
 import csv
+import time
 
 # csv format - separator ","
 # update/noupdate,myodoo_containername,databasename,port,path2Dockfile,postgresql_containername,Docker_image_name
@@ -70,10 +71,11 @@ for row in reader:
 		print myodoocontainer+' restarting...'
 		os.system('docker restart '+myodoocontainer)
 		print myodoocontainer+' restarted...'
-		print 'Load translation...'
 		if os.path.isfile(mypath+"load_translation.py"):
+			print 'Translation loading...'
+			time.sleep(10)
 			os.system("python "+mypath+"load_translation.py")
-		print 'Translation loaded...'
+			print 'Translation loaded...'
 		print myodoocontainer+' restarting...'
 		os.system('docker restart '+myodoocontainer)
 		print myodoocontainer+' restarted...'
