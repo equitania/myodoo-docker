@@ -1,7 +1,7 @@
 #!/usr/bin/python
 # -*- coding: utf-8 -*-
-# Mit diesem Skript wird ein Backup einer Odoo Datenbank inkl. FileStore unter Docker durchgeführt
-# With this script you can backup odoo db on postgresql incl. filestore under Docker
+# Mit diesem Skript wird ein Update einer Odoo Datenbank unter Docker durchgeführt
+# With this script you can update odoo db on postgresql under Docker
 # Version 1.0.1
 # Date 14.12.2015
 ##############################################################################
