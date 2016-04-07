@@ -22,7 +22,7 @@
 #
 ##############################################################################
 
-echo "Geben Sie das Passwort für den User für Ihre Odoo Datenbank innerhalb der PostgreSQL an: "
+echo "Geben Sie den Namen für den User für Ihre Odoo Datenbank innerhalb der PostgreSQL an: "
 read mypguser
 
 echo "Geben Sie das Passwort für den User $mypguser innerhalb der PostgreSQL an (Leerlassen für kein Passwort): "
