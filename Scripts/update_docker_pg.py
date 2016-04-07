@@ -63,6 +63,9 @@ for row in reader:
 	print myimage+' removed...'
 	print myimage+' start building..'
 	os.chdir(mypath)
+	if os.path.isfile(mypath+"getMyOdooRelease.sh"):
+		print 'Get latest release loading...'
+		os.system('/bin/bash getMyOdooRelease.sh')
 	os.system('docker build -t '+myimage+' .')
 	print myodoocontainer+' start updating...'
 	os.system('docker run -it --rm -p '+myport+':8069 --name="'+myodoocontainer+'" '+myimage+' update --database='+mydb+' --db_user='+mydbuser+' --db_password='+mydbpassword+' --db_host='+mydbhost)
