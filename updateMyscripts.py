@@ -37,3 +37,5 @@ os.system("cp /root/myodoo-docker/Scripts/auto_update_docker_with_same_image.py 
 os.system("cp /root/myodoo-docker/Scripts/auto_update_docker.py /root/")
 os.system("cp /root/myodoo-docker/Scripts/restore2docker.sh /root/")
 os.system("cp -r /root/myodoo-docker/Scripts/nginx-conf /root/")
+os.system("cp /root/myodoo-docker/Scripts/xmlrpc_backup.py /root/")
+os.system("cp /root/myodoo-docker/Scripts/update_docker_pg.py /root/")
