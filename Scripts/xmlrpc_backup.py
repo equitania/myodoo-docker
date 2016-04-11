@@ -56,10 +56,14 @@ for row in reader1:
 	ts = time.time()
 	mytime=datetime.datetime.fromtimestamp(ts).strftime('%Y-%m-%d_%H-%M-%S')
 	file_path = mybackuppath+'/'+mydb+'_odoo_backup_'+mytime+'.zip'
-	backup_db_file = open(file_path, 'wb')
-	backup_db_file.write(base64.b64decode(sock.dump(mydbpwd, mydb)))
-	backup_db_file.close()
-	print 'Backup is done ' + mydb
+	try:
+		backup_db_file = open(file_path, 'wb')
+		backup_db_file.write(base64.b64decode(sock.dump(mydbpwd, mydb)))
+		backup_db_file.close()
+		print 'Backup is done ' + mydb
+	except:
+		print 'Backup NOT possible ' + mydb
+		continue	
 
 # backup nginx-conf
 if not os.path.exists(mynginxpath):
