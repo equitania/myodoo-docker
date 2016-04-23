@@ -25,8 +25,7 @@ myscriptpath="$PWD"
 myserverpath="/etc/nginx/conf.d/"
 myip=$1
 mydomain=$2
-myport=$3
-mytarget=$4
+mytarget=$3
 
 echo "Dieses Skript erstellt einen Redirect auf die eingebene Domain mit www als Präfix!"
 echo "Sowohl für http als auch https."
