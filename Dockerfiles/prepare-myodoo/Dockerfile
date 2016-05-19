@@ -111,12 +111,20 @@ RUN set -x; \
 		&& pip install egenix-mx-base \
 		&& pip install pillow==2.6.0
 
+# OpenSans font will be install...
+RUN set -x; \
+		wget https://release.myodoo.de/fonts/opensans.zip \
+		&& unzip opensans.zip \
+		&& mv opensans /usr/share/fonts/truetype/ \
+		&& rm opensans.zip
+
 # Barcodes will be install...
 RUN set -x; \
 		wget http://www.reportlab.com/ftp/pfbfer.zip \
 		&& unzip pfbfer.zip -d fonts \
 		&& mv fonts /usr/lib/python2.7/dist-packages/reportlab/ \
-		&& rm pfbfer.zip
+		&& rm pfbfer.zip \
+		&& fc-cache -f -v
 
 # PDF export engine..
 RUN set -x; \
