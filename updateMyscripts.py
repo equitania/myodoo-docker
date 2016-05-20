@@ -1,8 +1,8 @@
 #!/usr/bin/python
 # -*- coding: utf-8 -*-
 # Dieses Skript hilft beim Organisieren von Docker-Servern
-# Version 1.0.0
-# Date 14.12.2015
+# Version 1.0.1
+# Date 20.05.2016
 ##############################################################################
 #
 #    Shell Script for Odoo, Open Source Management Solution
@@ -32,10 +32,10 @@ os.system("git pull")
 os.system("find . -name '*.pyc' -type f -print0 | xargs -0 /bin/rm -f")
 os.system("cp /root/myodoo-docker/bashrc /root/.bashrc")
 os.system("cp /root/myodoo-docker/zshrc /root/.zshrc")
-os.system("cp /root/myodoo-docker/Scripts/auto_backup_docker.py /root/")
-os.system("cp /root/myodoo-docker/Scripts/auto_update_docker_with_same_image.py /root/")
-os.system("cp /root/myodoo-docker/Scripts/auto_update_docker.py /root/")
-os.system("cp /root/myodoo-docker/Scripts/restore2docker.sh /root/")
+#os.system("cp /root/myodoo-docker/Scripts/auto_backup_docker.py /root/")
+#os.system("cp /root/myodoo-docker/Scripts/auto_update_docker_with_same_image.py /root/")
+#os.system("cp /root/myodoo-docker/Scripts/auto_update_docker.py /root/")
+#os.system("cp /root/myodoo-docker/Scripts/restore2docker.sh /root/")
 os.system("cp -r /root/myodoo-docker/Scripts/nginx-conf /root/")
 os.system("cp /root/myodoo-docker/Scripts/xmlrpc_backup.py /root/")
 os.system("cp /root/myodoo-docker/Scripts/update_docker_pg.py /root/")
