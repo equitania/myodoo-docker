@@ -26,6 +26,9 @@ myserverpath="/etc/nginx/conf.d/"
 myip=$1
 mydomain=$2
 mytarget=$3
+mykey=$4
+mycrt=$5
+mylets=$6
 
 echo "Dieses Skript erstellt einen Redirect auf die eingebene Domain mit www als Präfix!"
 echo "Sowohl für http als auch https."
@@ -42,15 +45,42 @@ if [ "$mydomain" = "" ]; then
   read mydomain
 fi
 
+if [ "$mykey" = "" ]; then
+  echo "Insert the ssl key file name | Geben Sie den Name der SSL key Datei ein:"
+  read mykey
+fi
+
+if [ "$mycrt" = "" ]; then
+  echo "Insert the ssl crt file name | Geben Sie den Name der SSL crt Datei ein:"
+  read mycrt
+fi
+
+if [ "$mylets" = "" ]; then
+  echo "Use let's encrypt | Wollen Sie let's encrypt verwenden? (y/n):"
+  read mylets
+fi
+
 myolddomain="server.domain.de"
 myoldip="ip.ip.ip.ip"
 myoldtarget="target.domain.de"
+myoldcrt="zertifikat.crt"
+myoldkey="zertifikat.key"
+myzert1="#zert1"
+myzert2="#zert2"
+myempty=""
 
 if [ "$myip" != "" ] || [ "$mydomain" != "" ] || [ "$myport" != "" ]; then
   cp  $myscriptpath"/nginx.server.domain_redirect_ssl.conf" $myserverpath"/$mydomain.conf"
   sed -i "s/$myolddomain/$mydomain/g" $myserverpath"/$mydomain.conf"
   sed -i "s/$myoldtarget/$mytarget/g" $myserverpath"/$mydomain.conf"
   sed -i "s/$myoldip/$myip/g" $myserverpath"/$mydomain.conf"
+  sed -i "s/$myoldcrt/$mycrt/g" $myserverpath"/$mydomain.conf"
+  sed -i "s/$myoldkey/$mykey/g" $myserverpath"/$mydomain.conf"
+  if [ "$mylets" = "y" ]; then
+    sed -i "s/$myzert2/$myempty/g" $myserverpath"/$mydomain.conf"
+  else
+    sed -i "s/$myzert1/$myempty/g" $myserverpath"/$mydomain.conf"
+  fi
   echo "Finished!"
 else
   echo "Parameter wasn't correct - Parameter waren fehlerhaft!"
