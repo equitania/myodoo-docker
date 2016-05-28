@@ -81,7 +81,7 @@ if [ "$myip" != "" ] || [ "$mydomain" != "" ] || [ "$myport" != "" ] || [ "$myke
   sed -i "s/$myoldcrt/$mycrt/g" $myserverpath"/$mydomain.conf"
   sed -i "s/$myoldkey/$mykey/g" $myserverpath"/$mydomain.conf"
   sed -i "s/$myoldport/$myport/g" $myserverpath"/$mydomain.conf"
-  if ["$mylets"="y"]; then
+  if [ "$mylets" = "y" ]; then
     sed -i "s/$myzert2/$myempty/g" $myserverpath"/$mydomain.conf"
   else
     sed -i "s/$myzert1/$myempty/g" $myserverpath"/$mydomain.conf"
