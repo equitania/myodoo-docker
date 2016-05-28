@@ -28,6 +28,7 @@ mydomain=$2
 myport=$3
 mykey=$4
 mycrt=$5
+mylets=$6
 
 echo "Dieses Skript erstellt einen Portweiterleitung auf die eingebene Domain für https!"
 echo "Basepath: "$myscriptpath
@@ -58,12 +59,20 @@ if [ "$mycrt" = "" ]; then
   read mycrt
 fi
 
+if [ "$mylets" = "" ]; then
+  echo "Use let's encrypt | Wollen Sie let's encrypt verwenden? (y/n):"
+  read mylets
+fi
+
 
 myolddomain="server.domain.de"
 myoldip="ip.ip.ip.ip"
 myoldport="oldport"
 myoldcrt="zertifikat.crt"
 myoldkey="zertifikat.key"
+myzert1="#zert1"
+myzert2="#zert2"
+myempty=""
 
 if [ "$myip" != "" ] || [ "$mydomain" != "" ] || [ "$myport" != "" ] || [ "$mykey" != "" ]  || [ "$mycrt" != "" ]; then
   cp  $myscriptpath"/nginx.server.domain_ssl.conf" $myserverpath"/$mydomain.conf"
@@ -72,6 +81,11 @@ if [ "$myip" != "" ] || [ "$mydomain" != "" ] || [ "$myport" != "" ] || [ "$myke
   sed -i "s/$myoldcrt/$mycrt/g" $myserverpath"/$mydomain.conf"
   sed -i "s/$myoldkey/$mykey/g" $myserverpath"/$mydomain.conf"
   sed -i "s/$myoldport/$myport/g" $myserverpath"/$mydomain.conf"
+  if ["$mylets"="y"]; then
+    sed -i "s/$myzert2/$myempty/g" $myserverpath"/$mydomain.conf"
+  else
+    sed -i "s/$myzert1/$myempty/g" $myserverpath"/$mydomain.conf"
+  fi
   echo "Finished!"
 else
   echo "Parameter wasn't correct - Parameter waren fehlerhaft!"
