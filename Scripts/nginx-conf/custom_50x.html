@@ -1,39 +1,73 @@
 <!DOCTYPE html>
-<html lang="de-DE">
-	<head>
-		<title>Server-Wartung</title>
-    	<meta charset="utf-8"/>
-		<meta name="viewport" content="width=device-width, initial-scale=1, user-scalable=no">
-	    <style type="text/css">
+    <html lang="de-DE">
+        <head>
+			<title>Server-Wartung</title>        
+            <meta charset="utf-8"/>
+			<meta name="viewport" content="width=device-width, initial-scale=1, user-scalable=no">
+            <style type="text/css">
 				
-			body {
-				font-family:Lucida Grande,Open Sans,Arial,sans-serif;
-				font-size:12px;
-				margin-right:auto;
-				width:100%;	
-			}
+				body {
+					font-family:Lucida Grande,Open Sans,Arial,sans-serif;
+					font-size:12px;
+					margin-right:auto;
+					width:100%;	
+				}
+				
+				#wrap {
+					margin-left:auto;
+					margin-right:auto;
+					width:40%;
+				}
+				
+				a.button:link, a.button:visited, a.button:hover, a.button:active {
+ 					font-size:14px;
+ 					text-align:center;
+ 					text-decoration: none;
+ 					width:100px;
+ 					height:20px;
+ 					padding:3px;
+ 					border-radius: 8px;
+				}
 
-			h1 {text-align:center; }
-			p {text-align:center; }
+				a.button:link, a.button:visited {
+ 					background: #e7e7e7 none repeat scroll 0 0;
+    				border-radius: 4px;
+    				color: #000;
+    				padding: 1ex;
+    				text-align: center;
+				}
 
-		</style>
-        
-	</head>
+				a.button:hover, a.button:active {
+					color:red;
+					border-radius: 8px;
+				}
+
+				img {max-width: 100%; height: auto;}
+
+				p {text-align:center; }
+			</style>
+		</head>
 		
- 	<body background-color="#fff">
-		<div id="wrap">
-			<div class="oe_structure">
-				<br>
-				<p>
-				<h1>Server-Wartung</h1>	
-				</p>
-				<br>
-				<br>
-				<p>Falls der Server längere Zeit nicht erreichbar ist, 
-				</br>wenden Sie sich bitte an unseren Support.
-				</p>
+		<body background-color="#fff">
+			<div id="wrap">
+    			<div class="content">
+    				<p>
+					<img src="https://release.myodoo.de/images/wartungsarbeiten.jpg" alt="Wartungsarbeiten" float="inherit">
+					<img src="https://release.myodoo.de/images/logo.png" alt="MyOdoo Logo" >
+    				</p>
+		 		</div>
+				<div class="oe_structure">
+					<br>
+					<p>Falls der Server längere Zeit nicht erreichbar ist, </br>
+					wenden Sie sich bitte an unseren Support.
+					</p>
+					<p>
+					<br>
+					<br>
+					<a class="button" href="https://equitania.zendesk.com/agent/" target="_blank">equitania.zendesk.com</a>
+					</p>
+				</div>											
 			</div>
-		</div>
-	</body>
-</html>
+		</body>
+    </html>
 
