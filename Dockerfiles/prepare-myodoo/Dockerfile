@@ -1,7 +1,7 @@
 FROM debian:jessie
 MAINTAINER Equitania Software GmbH <info@myodoo.de>
-# Version 1.0.2
-# Date 14.03.2016
+# Version 1.0.3
+# Date 13.06.2016
 
 CMD "echo" "MyOdoo build will start now.."
 
@@ -109,7 +109,8 @@ RUN set -x; \
 		&& pip install gevent \
 		&& pip install psycogreen\
 		&& pip install egenix-mx-base \
-		&& pip install pillow==2.6.0
+		&& pip install pillow==2.6.0 \
+		&& pip install phonenumbers
 
 # OpenSans font will be install...
 RUN set -x; \
