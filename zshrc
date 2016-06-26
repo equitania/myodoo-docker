@@ -284,7 +284,9 @@ alias ngxs='cp -r /etc/nginx/conf.d/ /root/nginx-save'
 alias dps='docker ps -a'
 alias dpi='docker images'
 alias syspatch='apt-get update && apt-get dist-upgrade && apt-get autoremove'
-alias mybk='./auto_backup_docker.py'
-alias myup='./auto_update_docker.py'
+alias dobk='./xmlrpc_backup.py'
+alias doup='./update_docker_pg.py'
+alias edbk='nano docker2bakxmlrpc.csv'
+alias edup='nano docker2update_pg.csv'
 
 export EDITOR=nano
