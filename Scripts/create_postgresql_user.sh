@@ -31,8 +31,8 @@ read myodoopwd
 if [ "$mypguser" != "" ]; then
   adduser $mypguser --no-create-home --gecos "" --disabled-login
   echo "PostgreSQL Passwort $mypguser wird gesetzt ..."
-  su postgres -c "psql --command \"CREATE USER $mypguser WITH PASSWORD '$myodoopwd'\""
-  su postgres -c "psql --command \"ALTER USER $mypguser CREATEDB\""
+  su - postgres -c "psql -U postgres -d postgres -c \"CREATE USER $mypguser with password '$myodoopwd';\""
+  su - postgres -c "psql -U postgres -d postgres -c \"ALTER USER $mypguser CREATEDB;\""
 fi
 
 echo "Geben Sie das Passwort für den User postgres innerhalb der PostgreSQL an (Leerlassen für kein Passwort): "
@@ -40,6 +40,6 @@ read mypsqlpwd
 
 if [ "$mypsqlpwd" != "" ]; then
   echo "PostgreSQL Passwort postgres wird gesetzt ..."
-  su postgres -c "psql --command \"ALTER USER postgres WITH PASSWORD '$mypsqlpwd'\""
+  su - postgres -c "psql -U postgres -d postgres -c "ALTER USER postgres WITH PASSWORD '$mypsqlpwd'\;"
 fi
 
