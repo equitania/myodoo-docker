@@ -40,6 +40,6 @@ read mypsqlpwd
 
 if [ "$mypsqlpwd" != "" ]; then
   echo "PostgreSQL Passwort postgres wird gesetzt ..."
-  su - postgres -c "psql -U postgres -d postgres -c "ALTER USER postgres WITH PASSWORD '$mypsqlpwd'\;"
+  su - postgres -c "psql -U postgres -d postgres -c \"ALTER USER postgres WITH PASSWORD '$mypsqlpwd';\""
 fi
 
