@@ -70,7 +70,7 @@ for row in reader:
 	print myodoocontainer+' start updating...'
 	os.system('docker run -it --rm -p '+myport+':8069 --name="'+myodoocontainer+'" '+myimage+' update --database='+mydb+' --db_user='+mydbuser+' --db_password='+mydbpassword+' --db_host='+mydbhost)
 	print myodoocontainer+' starting...'
-	os.system('docker run -d -p '+myport+':8069 --name="'+myodoocontainer+'" '+myimage+' start')
+	os.system('docker run -d --restart=always -p '+myport+':8069 --name="'+myodoocontainer+'" '+myimage+' start')
 	print myodoocontainer+' started...'
 	os.system('docker cp '+myupdatepath+'/'+mydb+' '+myodoocontainer+':/opt/odoo/data/filestore/'+mydb)
 	print 'Filestore restored...'
