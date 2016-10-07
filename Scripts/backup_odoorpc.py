@@ -23,6 +23,8 @@
 #    along with this program.  If not, see <http://www.gnu.org/licenses/>.
 #
 ##############################################################################
+# For prepare apt-get install python-pip
+# pip install odoorpc
 import os
 import csv
 import datetime, time

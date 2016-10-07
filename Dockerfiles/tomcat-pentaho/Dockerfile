@@ -1,5 +1,19 @@
 FROM cloudesire/java:8
-MAINTAINER MyOdoo <info@myodoo.de>
+MAINTAINER Equitania Software GmbH <info@myodoo.de>
+# Version 1.0.1
+# Date 12.09.2016
+
+ENV DEBIAN_FRONTEND noninteractive
+
+RUN apt-get update && apt-get install -y locales
+
+## Set LOCALE to UTF8
+#
+RUN echo "de_DE.UTF-8 UTF-8" > /etc/locale.gen && \
+    locale-gen de_DE.UTF-8 && \
+    dpkg-reconfigure locales && \
+    /usr/sbin/update-locale LANG=de_DE.UTF-8
+ENV LC_ALL de_DE.UTF-8
 
 # Install required fonts and needed tools.
 RUN echo "deb http://ftp.de.debian.org/debian/ jessie main contrib" >> /etc/apt/sources.list
