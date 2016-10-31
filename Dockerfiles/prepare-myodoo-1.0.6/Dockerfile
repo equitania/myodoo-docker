@@ -7,11 +7,10 @@ CMD "echo" "MyOdoo build will start now.."
 
 ENV DEBIAN_FRONTEND noninteractive
 
-RUN apt-get update && apt-get -y dist-upgrade && apt-get install -y apt-utils zsh locales
+RUN apt-get update && apt-get -y dist-upgrade && apt-get install -y apt-utils locales
 
-CMD "echo" "Install zsh.."
-COPY ./.zshrc /root/
-RUN chsh -s /usr/bin/zsh
+CMD "echo" "Update bash.."
+COPY ./.bashrc /root/
 
 CMD "echo" "Set LOCALE to UTF8.."
 RUN echo "en_US.UTF-8 UTF-8" > /etc/locale.gen && \
