@@ -2,8 +2,8 @@
 # -*- coding: utf-8 -*-
 # Mit diesem Skript wird ein Backup einer Odoo Datenbank inkl. FileStore unter Docker durchgeführt
 # With this script you can backup odoo db on postgresql incl. filestore under Docker
-# Version 1.0.0
-# Date 07.10.2016
+# Version 1.0.1
+# Date 07.11.2016
 ##############################################################################
 #
 #    Shell Script for Odoo, Open Source Management Solution
@@ -23,10 +23,12 @@
 #    along with this program.  If not, see <http://www.gnu.org/licenses/>.
 #
 ##############################################################################
-import os
 import csv
+import datetime
+import os
+import time
 import zipfile
-import datetime, time
+
 
 def zip_dir(dirpath, zippath):
     fzip = zipfile.ZipFile(zippath, 'w', zipfile.ZIP_DEFLATED)
@@ -44,7 +46,7 @@ def zip_dir(dirpath, zippath):
 
 
 # csv format - separator ","
-#DATABASENAME,DB_USER,DB_PASSWORD,MYODOO-CONTAINERNAME
+# DATABASENAME,DB_USER,DB_PASSWORD,MYODOO-CONTAINERNAME
 fname_backup = 'docker2backup_fs_pg.csv'
 reader1 = csv.reader(open(fname_backup, 'rb'))
 mybasepath = os.getcwd()
@@ -69,7 +71,8 @@ for row in reader1:
     mybackupfolder = mybackuppath + '/' + mydb
     if not os.path.exists(mybackupfolder):
         os.mkdir(mybackupfolder)
-    os.system('pg_dump --dbname=postgresql://'+my_db_user+':'+my_db_password+'@127.0.0.1:5432/' + mydb + ' > ' + mybackupfolder + '/dump.sql')
+    os.system(
+        'pg_dump --dbname=postgresql://' + my_db_user + ':' + my_db_password + '@127.0.0.1:5432/' + mydb + ' > ' + mybackupfolder + '/dump.sql')
     filestorepath = '/opt/odoo/data/filestore/'
     os.system('docker cp ' + mydatacontainer + ':/opt/odoo/data/filestore/' + mydb + ' ' + mybackupfolder + '/')
     ts = time.time()
@@ -84,8 +87,8 @@ if os.path.exists('/etc/nginx/conf.d/'):
     if not os.path.exists(mynginxpath):
         os.mkdir(mynginxpath)
     ts = time.time()
-    mytime=datetime.datetime.fromtimestamp(ts).strftime('%Y-%m-%d_%H-%M-%S')
-    os.system('zip -r '+mynginxpath+'/nginx-confs_'+mytime+'.zip /etc/nginx/conf.d/')
+    mytime = datetime.datetime.fromtimestamp(ts).strftime('%Y-%m-%d_%H-%M-%S')
+    os.system('zip -r ' + mynginxpath + '/nginx-confs_' + mytime + '.zip /etc/nginx/conf.d/')
 
 # run by crontab
 # removes any files in mybackuppath older than 14 days
