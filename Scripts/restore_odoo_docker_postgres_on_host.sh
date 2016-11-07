@@ -2,6 +2,8 @@
 # Mit diesem Skript wird ein Restore einer Odoo Datenbank durchgeführt
 # Verwenden Sie den Benutzer odoo > sudo su odoo
 # With this script you can restore a odoo db on postgresql
+# Version 1.0.1
+# Date 07.11.2016
 ##############################################################################
 #
 #    Shell Script for Odoo, Open Source Management Solution
