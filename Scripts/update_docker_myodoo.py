@@ -26,6 +26,7 @@
 import csv
 import os
 import time
+import sys
 
 # csv format - separator ","
 # myodoo_containername,databasename,port,path2Dockfile,docker_image_name,postgresql_username,postgresql_userpassword,hostname/ip
@@ -46,7 +47,11 @@ for row in reader:
     mydbuser = row[5]
     mydbpassword = row[6]
     mydbhost = row[7]
-    myupdate = row[8].strip()
+    try:
+        myupdate = row[8].strip()
+    except:
+        print("Unexpected error:", sys.exc_info()[0])
+        myupdate = ''
 
     print 'MyOdoo Container:' + myodoocontainer + '\nDatabase Name:' + mydb + '\nPort:' + myport
     print 'Path:' + mypath + '\nImage:' + myimage
