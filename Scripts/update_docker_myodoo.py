@@ -58,7 +58,7 @@ for row in reader:
     print myimage + ' removed...'
     print myimage + ' start building..'
     os.chdir(mypath)
-    if os.path.isfile(mypath + "getMyOdooRelease.sh"):
+    if os.path.isfile(mypath + 'getMyOdooRelease.sh'):
         print 'Get latest release loading...'
         os.system('/bin/bash getMyOdooRelease.sh')
     os.system('docker build -t ' + myimage + ' .')
@@ -67,22 +67,24 @@ for row in reader:
         'docker run -it --rm -p ' + myport + ':8069 --name="' + myodoocontainer + '" ' + myimage + ' update --database=' + mydb + ' --db_user=' + mydbuser + ' --db_password=' + mydbpassword + ' --db_host=' + mydbhost)
     print myodoocontainer + ' starting...'
     os.system('docker run -d -p ' + myport + ':8069 --name="' + myodoocontainer + '" ' + myimage + ' start')
-    if os.path.isfile(mypath + "load_translation.py"):
+    if os.path.isfile(mypath + 'load_translation.py'):
         print 'Translation loading...'
         time.sleep(10)
-        os.system("python " + mypath + "load_translation.py")
+        os.system("python " + mypath + 'load_translation.py')
         print 'Translation loaded...'
-    if os.path.isfile(mypath + "set_custom_translations.py"):
+    if os.path.isfile(mypath + 'set_custom_translations.py'):
         print 'Translation bugfixes...'
-        os.system("python " + mypath + "set_custom_translations.py")
+        os.system("python " + mypath + 'set_custom_translations.py')
         print 'Translation bugfixed...'
     print myodoocontainer + ' restarting...'
     os.system('docker cp ' + myodoocontainer + ':/opt/odoo/data/filestore/' + mydb + ' ' + mypath + mydb)
     os.system('docker stop ' + myodoocontainer)
     os.system('docker rm ' + myodoocontainer)
     os.system(
-        'docker run -d --restart=always -p ' + myport + ':8069 --name="' + myodoocontainer + '" ' + myimage + ' start -u eq_website_customerportal')
+        'docker run -d --restart=always -p ' + myport + ':8069 --name="' + myodoocontainer + '" ' + myimage + ' start -u eq_no_ad')
     os.system('docker cp ' + mypath + mydb + ' ' + myodoocontainer + ':/opt/odoo/data/filestore/' + mydb)
     print myodoocontainer + ' restarted...'
-    os.system('rm -r ' + mypath + mydb)
+    if os.path.exists(mypath + mydb + '.bak'):
+        os.system('rm -r ' + mypath + mydb + '.bak')
+    os.system('mv ' + mypath + mydb + '.bak')
     print 'Update is done ' + mydb
