@@ -2,8 +2,8 @@
 # -*- coding: utf-8 -*-
 # Mit diesem Skript wird ein Update einer Odoo Datenbank unter Docker durchgeführt
 # With this script you can update odoo db on postgresql under Docker
-# Version 1.1.1
-# Date 07.11.2016
+# Version 1.1.2
+# Date 08.11.2016
 ##############################################################################
 #
 #    Shell Script for Odoo, Open Source Management Solution
@@ -38,6 +38,7 @@ for row in reader:
     if myodoocontainer.startswith('#'):
         # Kommentarzeile
         continue
+
     mydb = row[1]
     myport = row[2]
     mypath = row[3]
@@ -45,6 +46,8 @@ for row in reader:
     mydbuser = row[5]
     mydbpassword = row[6]
     mydbhost = row[7]
+    myupdate = row[8].strip()
+
     print 'MyOdoo Container:' + myodoocontainer + '\nDatabase Name:' + mydb + '\nPort:' + myport
     print 'Path:' + mypath + '\nImage:' + myimage
     os.system('mkdir ' + mypath + mydb)
@@ -79,7 +82,9 @@ for row in reader:
     print myodoocontainer + ' restarting...'
     os.system('docker stop ' + myodoocontainer)
     os.system('docker rm ' + myodoocontainer)
-    os.system('docker run -d --restart=always -p ' + myport + ':8069 --name="' + myodoocontainer + '" ' + myimage + ' start -u eq_no_ad')
+    if myupdate != "":
+        myupdate = '-u a' + myupdate
+    os.system('docker run -d --restart=always -p ' + myport + ':8069 --name="' + myodoocontainer + '" ' + myimage + ' start ' + myupdate)
     print myodoocontainer + ' restarted...'
     if os.path.exists(mypath + mydb + '.bak'):
         os.system('rm -r ' + mypath + mydb + '.bak')
