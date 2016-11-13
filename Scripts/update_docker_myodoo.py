@@ -58,6 +58,10 @@ for row in reader:
     os.system('mkdir ' + mypath + mydb)
     os.system('docker cp ' + myodoocontainer + ':/opt/odoo/data/filestore/' + mydb + ' ' + mypath)
     print 'Filestore saved...'
+    os.chdir(mypath)
+    if os.path.isfile(mypath + 'getMyOdooRelease.sh'):
+        print 'Get latest release loading...'
+        os.system('/bin/bash getMyOdooRelease.sh')
     print myodoocontainer + ' will be stop...'
     os.system('docker stop ' + myodoocontainer)
     print myodoocontainer + ' stopped...'
@@ -66,10 +70,6 @@ for row in reader:
     os.system('docker rmi ' + myimage + ':latest')
     print myimage + ' removed...'
     print myimage + ' start building..'
-    os.chdir(mypath)
-    if os.path.isfile(mypath + 'getMyOdooRelease.sh'):
-        print 'Get latest release loading...'
-        os.system('/bin/bash getMyOdooRelease.sh')
     os.system('docker build -t ' + myimage + ' .')
     print myodoocontainer + ' start updating...'
     os.system('docker run -it --rm -p ' + myport + ':8069 --name="' + myodoocontainer + '" ' + myimage + ' update --database=' + mydb + ' --db_user=' + mydbuser + ' --db_password=' + mydbpassword + ' --db_host=' + mydbhost)
