@@ -50,7 +50,7 @@ for row in reader:
     try:
         myupdate = row[8].strip()
     except:
-        print("Unexpected error:", sys.exc_info()[0])
+        print("Update-Spalte ist nicht vorhanden!", sys.exc_info()[0])
         myupdate = ''
 
     print 'MyOdoo Container:' + myodoocontainer + '\nDatabase Name:' + mydb + '\nPort:' + myport
