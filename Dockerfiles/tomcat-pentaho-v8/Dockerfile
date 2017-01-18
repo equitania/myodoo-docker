@@ -1,11 +1,17 @@
-FROM cloudesire/java:8
+FROM debian:jessie-backports
+
 MAINTAINER Equitania Software GmbH <info@myodoo.de>
-# Version 1.0.1
-# Date 12.09.2016
+# Version 8.0.39
+# Date 15.01.2017
 
 ENV DEBIAN_FRONTEND noninteractive
 
 RUN apt-get update && apt-get install -y locales
+
+RUN apt-get update && \
+    apt-get install -y --force-yes --no-install-recommends openjdk-8-jre-headless && \
+    apt-get clean && \
+    rm -rf /var/lib/apt/lists
 
 ## Set LOCALE to UTF8
 #
@@ -26,7 +32,7 @@ RUN apt-get update && \
     rm -rf /var/lib/apt/lists/*
 
 ENV TOMCAT_MAJOR_VERSION 8
-ENV TOMCAT_MINOR_VERSION 8.0.22
+ENV TOMCAT_MINOR_VERSION 8.0.39
 ENV CATALINA_HOME /tomcat
 ENV JAVA_OPTS ""
 
