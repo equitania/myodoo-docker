@@ -73,9 +73,9 @@ RUN set -x; \
 		python-renderpm \
 		python-reportlab-accel \
 		python-support \
-	    python-tz \
-        python-zsi \
-        python-webdav
+		python-tz \
+		python-zsi \
+		python-webdav
 
 
 CMD "echo" "Python packages pip install.."
