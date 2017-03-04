@@ -1,5 +1,6 @@
-FROM myodoo/prepare-v8:1.0.8
+FROM myodoo/prepare-v8:1.0.10
 MAINTAINER Equitania Software GmbH <info@myodoo.de>
+# Odoo 8 powered by MyOdoo.de
 
 CMD "echo" "MyOdoo build will start now.."
 
@@ -30,6 +31,5 @@ VOLUME ["/opt/odoo/var", "/opt/odoo/etc", "/opt/odoo/data"]
 ENTRYPOINT ["/app/bin/boot"]
 CMD ["help"]
 # Expose the odoo ports (for linked containers)
-#EXPOSE 8069 8072
 EXPOSE 8069
 ADD bin /app/bin/

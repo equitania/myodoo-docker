@@ -3,9 +3,9 @@
  
  
 ## Build
-docker build -t myodoo/public-myodoo:170102 .
+docker build -t myodoo/public-myodoo:170301 .
 
-docker push myodoo/public-myodoo:170102
+docker push myodoo/public-myodoo:170301
 
 
 ## Run
