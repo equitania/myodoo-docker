@@ -2,7 +2,7 @@ FROM debian:jessie
 MAINTAINER Equitania Software GmbH <info@myodoo.de>
 # For Odoo 10 powered by MyOdoo.de
 # Version 1.0.10
-# Date 03.03.2017
+# Date 04.03.2017
 
 CMD "echo" "MyOdoo build will start now.."
 
@@ -150,7 +150,9 @@ RUN set -x; \
     && pip install pyelasticsearch \
     && pip install openpyxl \
     && pip install phonenumbers \
-    && pip install pysftp
+    && pip install pysftp \
+    && pip install email \
+    && pip install suds
 
 CMD "echo" "OpenSans font install.."
 RUN set -x; \

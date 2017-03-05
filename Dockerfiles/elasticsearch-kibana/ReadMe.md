@@ -1,13 +1,12 @@
 ## docker
-docker build -t myodoo/elasticsearch-kibana:5.1.1 .
+docker build -t myodoo/elasticsearch-kibana:5.2.2 .
 
-docker push myodoo/elasticsearch-kibana:5.1.1
+## Push to Docker
+docker push myodoo/elasticsearch-kibana:5.2.2
 
-docker run -d --restart=always -p 9200:9200 -p 5601:5601 --name="elasticsearch-kibana-myodoo" myodoo/elasticsearch-kibana
+## Run
+docker run -d --restart=always -p 9200:9200 -p 5601:5601 --name="elasticsearch-kibana-myodoo" myodoo/elasticsearch-kibana:5.2.2
  
-## Upload
-docker push myodoo/elasticsearch-kibana
-
 ## Test
 docker run -it --rm -p 9200:9200 -p 5601:5601 --name="elasticsearch-kibana-myodoo" myodoo/elasticsearch-kibana
  

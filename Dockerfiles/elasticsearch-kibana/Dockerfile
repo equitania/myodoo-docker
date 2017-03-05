@@ -1,11 +1,11 @@
 FROM openjdk:jre-alpine
 
 MAINTAINER Equitania Software GmbH <info@myodoo.de>
-# Version 5.1.1
-# Date 03.01.2017
+# Version 5.2.2
+# Date 28.02.2017
 
-ENV ES_VERSION=5.1.1 \
-    KIBANA_VERSION=5.1.1
+ENV ES_VERSION=5.2.2 \
+    KIBANA_VERSION=5.2.2
 
 RUN apk add --quiet --no-progress --no-cache nodejs wget \
  && adduser -D elasticsearch
