@@ -1,8 +1,8 @@
 FROM debian:jessie
 MAINTAINER Equitania Software GmbH <info@myodoo.de>
 # For Odoo 8 powered by MyOdoo.de
-# Version 1.0.10
-# Date 03.03.2017
+# Version 1.0.11
+# Date 16.04.2017
 
 CMD "echo" "MyOdoo build will start now.."
 

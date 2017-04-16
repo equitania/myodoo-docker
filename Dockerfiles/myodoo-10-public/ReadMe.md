@@ -1,6 +1,7 @@
 
 ## Build
 docker build -t myodoo/myodoo-10-public:170301 .
+docker push myodoo/myodoo-10-public:170301
 
 docker run -d --restart=always -e POSTGRES_USER=myodoo10 -e POSTGRES_PASSWORD=myodoo10 --name "myodoo10-db" postgres:9.4
 

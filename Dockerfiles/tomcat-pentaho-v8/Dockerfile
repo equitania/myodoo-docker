@@ -1,17 +1,24 @@
-FROM debian:jessie-backports
+FROM debian:jessie
 
 MAINTAINER Equitania Software GmbH <info@myodoo.de>
-# Version 8.0.39
-# Date 15.01.2017
+# https://tomcat.apache.org/download-80.cgi
+# Version 8.0.43
+# Date 16.04.2017
 
 ENV DEBIAN_FRONTEND noninteractive
 
+RUN /bin/bash -c "echo deb http://ppa.launchpad.net/webupd8team/java/ubuntu trusty main | tee /etc/apt/sources.list.d/webupd8team-java.list"
+RUN /bin/bash -c "echo deb-src http://ppa.launchpad.net/webupd8team/java/ubuntu trusty main | tee -a /etc/apt/sources.list.d/webupd8team-java.list"
+RUN /bin/bash -c "apt-key adv --keyserver hkp://keyserver.ubuntu.com:80 --recv-keys EEA14886"
+RUN /bin/bash -c "echo debconf shared/accepted-oracle-license-v1-1 select true | debconf-set-selections"
+RUN /bin/bash -c "echo debconf shared/accepted-oracle-license-v1-1 seen true | debconf-set-selections"
+
+
 RUN apt-get update && apt-get install -y locales
 
-RUN apt-get update && \
-    apt-get install -y --force-yes --no-install-recommends openjdk-8-jre-headless && \
-    apt-get clean && \
-    rm -rf /var/lib/apt/lists
+RUN apt-get install -y --force-yes --no-install-recommends oracle-java8-installer
+
+RUN apt-get install -y --force-yes --no-install-recommends oracle-java8-set-default
 
 ## Set LOCALE to UTF8
 #
@@ -32,7 +39,7 @@ RUN apt-get update && \
     rm -rf /var/lib/apt/lists/*
 
 ENV TOMCAT_MAJOR_VERSION 8
-ENV TOMCAT_MINOR_VERSION 8.0.39
+ENV TOMCAT_MINOR_VERSION 8.0.43
 ENV CATALINA_HOME /tomcat
 ENV JAVA_OPTS ""
 
