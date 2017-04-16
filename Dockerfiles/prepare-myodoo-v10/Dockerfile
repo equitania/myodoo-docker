@@ -1,8 +1,8 @@
 FROM debian:jessie
 MAINTAINER Equitania Software GmbH <info@myodoo.de>
 # For Odoo 10 powered by MyOdoo.de
-# Version 1.0.10
-# Date 04.03.2017
+# Version 1.0.11
+# Date 16.04.2017
 
 CMD "echo" "MyOdoo build will start now.."
 
@@ -123,7 +123,8 @@ RUN set -x; \
     && pip install Werkzeug==0.11.11 \
     && pip install wsgiref==0.1.2 \
     && pip install XlsxWriter==0.9.3 \
-    && pip install xlwt==1.1.2
+    && pip install xlwt==1.1.2 \
+    && pip install xlrd==1.0.0
 
 RUN set -x; \
     pip install gdata \
