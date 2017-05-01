@@ -1,8 +1,8 @@
 FROM debian:jessie
 MAINTAINER Equitania Software GmbH <info@myodoo.de>
 # For Odoo 8 powered by MyOdoo.de
-# Version 1.0.11
-# Date 16.04.2017
+# Version 1.0.12
+# Date 01.05.2017
 
 CMD "echo" "MyOdoo build will start now.."
 
@@ -165,10 +165,13 @@ RUN set -x; \
 		&& fc-cache -f -v
 
 CMD "echo" "PDF export engine install.."
+# http://download.gna.org/wkhtmltopdf/0.12/0.12.2.1/
 RUN set -x; \
-		curl -k -o wkhtmltox.deb -SL https://release.myodoo.de/wkhtmltox-0.12.1.2_linux-jessie-amd64.deb \
-		&& echo '40e8b906de658a2221b15e4e8cd82565a47d7ee8 wkhtmltox.deb' | sha1sum -c - \
+		curl -k -o wkhtmltox.deb -SL https://release.myodoo.de/wkhtmltox-0.12.2.1_linux-jessie-amd64.deb \
+		&& echo 'c81fffae4c0914f95fb12e047a72edda5042b1c6 wkhtmltox.deb' | sha1sum -c - \
 		&& dpkg --force-depends -i wkhtmltox.deb \
+        && ln -s /usr/local/bin/wkhtmltopdf /usr/bin \
+        && ln -s /usr/local/bin/wkhtmltoimage /usr/bin \
 		&& apt-get -y install -f --no-install-recommends \
 		&& apt-get purge -y --auto-remove -o APT::AutoRemove::RecommendsImportant=false -o APT::AutoRemove::SuggestsImportant=false npm \
 		&& rm -rf /var/lib/apt/lists/* wkhtmltox.deb
