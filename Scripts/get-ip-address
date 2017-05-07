@@ -1,0 +1,12 @@
+#!/bin/sh
+echo "#############################################################################"
+echo "# Willkommen bei der optimierten Odoo-Installation powered by www.myodoo.de #"
+echo "#############################################################################"
+echo "#        Hotline unter +49 7231 16604 0 oder direkt unter myodoo.de         #"
+echo "#############################################################################" 
+echo ""
+echo ""
+myip=$(/sbin/ifconfig | grep "inet addr" | grep -v "127.0.0.1" | awk '{ print $2 }' | awk -F: '{ print $2 }')
+echo "Die IP Adresse dieses Systems ist: $myip"
+echo ""
+echo "Rufen Sie MyOdoo.de  mittels http://$myip auf."
