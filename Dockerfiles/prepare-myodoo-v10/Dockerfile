@@ -1,8 +1,8 @@
 FROM debian:jessie
 MAINTAINER Equitania Software GmbH <info@myodoo.de>
 # For Odoo 10 powered by MyOdoo.de
-# Version 1.0.12
-# Date 01.05.2017
+# Version 1.0.13
+# Date 31.05.2017
 
 CMD "echo" "MyOdoo build will start now.."
 
@@ -96,7 +96,7 @@ RUN set -x; \
     && pip install Mako==1.0.4 \
     && pip install MarkupSafe==0.23 \
     && pip install mock==2.0.0 \
-    && pip install ofxparse==0.15 \
+    && pip install ofxparse==0.16 \
     && pip install passlib==1.6.5 \
     && pip install Pillow==3.4.1 \
     && pip install psutil==4.3.1 \

@@ -83,7 +83,7 @@ for row in reader:
         print 'Translation loaded...'
     if os.path.isfile(mypath + 'set_custom_translations.py'):
         print 'Translation bugfixes...'
-        os.system("python " + mypath + 'set_custom_translations.py')
+        os.system("python " + mypath + 'set_custom_translation.py')
         print 'Translation bugfixed...'
     print myodoocontainer + ' restarting...'
     os.system('docker stop ' + myodoocontainer)
