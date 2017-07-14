@@ -36,3 +36,6 @@ install/win32/meta.py
 /share/
 /src/
 /.settings/
+/Dockerfiles/myodoo-10-public/odoo-ce.zip
+.idea/vcs.xml
+Dockerfiles/myodoo-10-public/odoo-ce.zip

@@ -1,7 +1,7 @@
-FROM debian:strech
+FROM debian:jessie
 MAINTAINER Equitania Software GmbH <info@myodoo.de>
 # For Odoo 10 powered by MyOdoo.de
-# Version 1.0.14
+# Version 1.0.13
 # Date 23.06.2017
 
 CMD "echo" "MyOdoo build will start now.."
@@ -77,8 +77,6 @@ RUN set -x; \
 	    python-tz \
         python-zsi \
         python-webdav
-
-# 		python-psycopg2 \
 
 CMD "echo" "Python packages pip install.."
 RUN set -x; \

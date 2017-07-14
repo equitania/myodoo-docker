@@ -1,8 +1,8 @@
 FROM debian:jessie
 MAINTAINER Equitania Software GmbH <info@myodoo.de>
 # For Odoo 8 powered by MyOdoo.de
-# Version 1.0.12
-# Date 01.05.2017
+# Version 1.0.13
+# Date 23.06.2017
 
 CMD "echo" "MyOdoo build will start now.."
 
@@ -66,7 +66,6 @@ RUN set -x; \
 		apt-get install -y --no-install-recommends \
 		python-software-properties \
 		python-pip  \
-		python-psycopg2 \
 		python-ldap \
 		python-magic \
 		python-libxslt1 \
@@ -83,6 +82,8 @@ RUN set -x; \
 CMD "echo" "Python packages pip install.."
 RUN set -x; \
     pip install --upgrade pip \
+    && pip install psycopg2==2.7.1 \
+    && pip install argparse==1.2.1 \
     && pip install Babel==2.3.4 \
     && pip install decorator==4.0.10 \
     && pip install docutils==0.12 \

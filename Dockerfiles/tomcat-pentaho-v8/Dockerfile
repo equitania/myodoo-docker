@@ -2,8 +2,8 @@ FROM debian:jessie
 
 MAINTAINER Equitania Software GmbH <info@myodoo.de>
 # https://tomcat.apache.org/download-80.cgi
-# Version 8.0.43
-# Date 16.04.2017
+# Version 8.0.45
+# Date 11.07.2017
 
 ENV DEBIAN_FRONTEND noninteractive
 
@@ -39,7 +39,7 @@ RUN apt-get update && \
     rm -rf /var/lib/apt/lists/*
 
 ENV TOMCAT_MAJOR_VERSION 8
-ENV TOMCAT_MINOR_VERSION 8.0.43
+ENV TOMCAT_MINOR_VERSION 8.0.45
 ENV CATALINA_HOME /tomcat
 ENV JAVA_OPTS ""
 
