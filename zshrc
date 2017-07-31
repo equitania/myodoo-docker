@@ -288,5 +288,6 @@ alias dobk='./backup_odoo_docker_postgres_on_host.py'
 alias doup='./update_docker_myodoo.py'
 alias edbk='nano docker2backup_fs_pg.csv'
 alias edup='nano docker2update_pg.csv'
+alias pga='sudo -u postgres pg_activity -U postgres'
 
 export EDITOR=nano
