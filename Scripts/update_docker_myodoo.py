@@ -2,8 +2,8 @@
 # -*- coding: utf-8 -*-
 # Mit diesem Skript wird ein Update einer Odoo Datenbank unter Docker durchgeführt
 # With this script you can update odoo db on postgresql under Docker
-# Version 1.1.7
-# Date 12.06.2017
+# Version 1.1.8
+# Date 31.07.2017
 ##############################################################################
 #
 #    Shell Script for Odoo, Open Source Management Solution
@@ -47,10 +47,11 @@ for row in reader:
     mydbuser = row[5]
     mydbpassword = row[6]
     mydbhost = row[7]
+    # Dieser Parameter kann für Update mit "-u modulname" oder Installationen "-i modulname" verwendet werden
     try:
         myupdate = row[8].strip()
     except:
-        print("Update-Spalte ist nicht vorhanden!", sys.exc_info()[0])
+        print("Update-Spalte ist nicht vorhanden!"
         myupdate = ''
 
     print 'MyOdoo Container:' + myodoocontainer + '\nDatabase Name:' + mydb + '\nPort:' + myport
@@ -89,7 +90,6 @@ for row in reader:
     os.system('docker stop ' + myodoocontainer)
     os.system('docker rm ' + myodoocontainer)
     if myupdate != "":
-        myupdate = '-u ' + myupdate
         print 'Post update wird durchgeführt.'
     print 'docker run -d --restart=always -p ' + myport + ':8069 --name="' + myodoocontainer + '" ' + myimage + ' start ' + myupdate
     os.system('docker run -d --restart=always -p ' + myport + ':8069 --name="' + myodoocontainer + '" ' + myimage + ' start ' + myupdate)
