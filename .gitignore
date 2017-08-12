@@ -1,10 +1,6 @@
 # sphinx build directories
 _build/
 
-# release files
-._getMyOdoo
-*.release
-
 # dotfiles
 !.gitignore
 # compiled python files
@@ -36,6 +32,21 @@ install/win32/meta.py
 /share/
 /src/
 /.settings/
-/Dockerfiles/myodoo-10-public/odoo-ce.zip
-.idea/vcs.xml
-Dockerfiles/myodoo-10-public/odoo-ce.zip
+/local/
+/mx/
+pip-selfcheck.json
+
+# PyCharm
+.idea/
+.idea
+
+# Eclipse
+.project
+.pydevproject
+.settings/
+
+# odoo
+.mailmap
+
+# mac
+.DS_Store

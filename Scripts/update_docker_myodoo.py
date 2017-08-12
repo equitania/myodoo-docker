@@ -2,8 +2,8 @@
 # -*- coding: utf-8 -*-
 # Mit diesem Skript wird ein Update einer Odoo Datenbank unter Docker durchgeführt
 # With this script you can update odoo db on postgresql under Docker
-# Version 1.1.7
-# Date 12.06.2017
+# Version 1.2.0
+# Date 31.07.2017
 ##############################################################################
 #
 #    Shell Script for Odoo, Open Source Management Solution
@@ -29,30 +29,45 @@ import time
 import sys
 
 # csv format - separator ","
-# myodoo_containername,databasename,port,path2Dockfile,docker_image_name,postgresql_username,postgresql_userpassword,hostname/ip
+# myodoo_containername,databasename,port,path2Dockfile,docker_image_name,postgresql_username,postgresql_userpassword,hostname/ip,kommado
 fname = 'docker2update_pg.csv'
 reader = csv.reader(open(fname, 'rb'))
 mybasepath = os.getcwd()
 
 for row in reader:
+    mydb = ""
+    myport = ""
+    mypath = ""
+    myimage = ""
+    mydbuser = ""
+    mydbpassword = ""
+    mydbhost = ""
+    myupdate = ""
+
+    # Name des Docker Containers
     myodoocontainer = row[0]
     if myodoocontainer.startswith('#'):
         # Kommentarzeile
         continue
-
+    # Name des Datenbank
     mydb = row[1]
+    # Port nach außen
     myport = row[2]
+    # Lokaler Pfad zum Dockerfile
     mypath = row[3]
+    # Name des Images, das gebildet werden soll
     myimage = row[4]
+    # Name des Datenbankbenutzers (Postgres) 
     mydbuser = row[5]
+    # Passwort des Datenbankbenutzers (Postgres) 
     mydbpassword = row[6]
+    # IP 
     mydbhost = row[7]
+    # Dieser Parameter kann für Update mit "-u modulname" oder Installationen "-i modulname" verwendet werden
     try:
-        myupdate = row[8].strip()
+        myupdate = row[8]
     except:
-        print("Update-Spalte ist nicht vorhanden!", sys.exc_info()[0])
-        myupdate = ''
-
+        print("Update-Spalte ist nicht vorhanden!")
     print 'MyOdoo Container:' + myodoocontainer + '\nDatabase Name:' + mydb + '\nPort:' + myport
     print 'Path:' + mypath + '\nImage:' + myimage
     print 'Post Update:' + myupdate
@@ -89,7 +104,6 @@ for row in reader:
     os.system('docker stop ' + myodoocontainer)
     os.system('docker rm ' + myodoocontainer)
     if myupdate != "":
-        myupdate = '-u ' + myupdate
         print 'Post update wird durchgeführt.'
     print 'docker run -d --restart=always -p ' + myport + ':8069 --name="' + myodoocontainer + '" ' + myimage + ' start ' + myupdate
     os.system('docker run -d --restart=always -p ' + myport + ':8069 --name="' + myodoocontainer + '" ' + myimage + ' start ' + myupdate)

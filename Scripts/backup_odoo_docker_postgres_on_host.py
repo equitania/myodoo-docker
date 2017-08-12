@@ -91,10 +91,10 @@ if os.path.exists('/etc/nginx/conf.d/'):
     os.system('zip -r ' + mynginxpath + '/nginx-confs_' + mytime + '.zip /etc/nginx/conf.d/')
 
 # run by crontab
-# removes any files in mybackuppath older than 8 days
+# removes any files in mybackuppath older than 14 days
 
 now = time.time()
-cutoff = now - (8 * 86400)
+cutoff = now - (14 * 86400)
 
 files = os.listdir(mybackuppath + "/")
 for xfile in files:
