@@ -2,7 +2,6 @@
 _build/
 
 # dotfiles
-!.gitignore
 # compiled python files
 *.py[co]
 # setup.py egg_info
@@ -39,6 +38,10 @@ pip-selfcheck.json
 # PyCharm
 .idea/
 .idea
+.idea/workspace.xml
+
+*.zip
+*.release
 
 # Eclipse
 .project
@@ -50,3 +53,4 @@ pip-selfcheck.json
 
 # mac
 .DS_Store
+/Dockerfiles/myodoo-10-public/odoo-ce.zip
