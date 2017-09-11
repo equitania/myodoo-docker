@@ -1,4 +1,4 @@
-FROM myodoo/prepare-v10:1.0.13
+FROM myodoo/prepare-v10:1.0.14
 MAINTAINER Equitania Software GmbH <info@myodoo.de>
 
 CMD "echo" "MyOdoo build will start now.."
@@ -34,4 +34,5 @@ ENTRYPOINT ["/app/bin/boot"]
 CMD ["help"]
 # Expose the odoo ports (for linked containers)
 EXPOSE 8069
+EXPOSE 8072
 ADD bin /app/bin/

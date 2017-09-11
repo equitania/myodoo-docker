@@ -1,14 +1,21 @@
-FROM debian:jessie
+FROM debian:jessie-slim
 MAINTAINER Equitania Software GmbH <info@myodoo.de>
 # For Odoo 10 powered by MyOdoo.de
-# Version 1.0.13
-# Date 23.06.2017
+# Version 1.0.14
+# Date 31.08.2017
 
 CMD "echo" "MyOdoo build will start now.."
 
 ENV DEBIAN_FRONTEND noninteractive
 
-RUN apt-get update && apt-get -y dist-upgrade && apt-get install -y apt-utils locales
+
+RUN apt-get update && apt-get -y dist-upgrade && apt-get install -y apt-utils locales wget sudo
+
+CMD "echo" "Postgres 9.6 for Jessie"
+RUN wget -q https://www.postgresql.org/media/keys/ACCC4CF8.asc -O - | apt-key add - && \
+    sh -c 'echo "deb http://apt.postgresql.org/pub/repos/apt/ jessie-pgdg main" >> /etc/apt/sources.list.d/pgdg.list' && \
+    apt-get update && \
+    apt-get install -y postgresql-client-9.6
 
 CMD "echo" "Update bash.."
 COPY ./.bashrc /root/
@@ -20,8 +27,8 @@ RUN echo "en_US.UTF-8 UTF-8" > /etc/locale.gen && \
     /usr/sbin/update-locale LANG=en_US.UTF-8
 ENV LC_ALL en_US.UTF-8
 
-CMD "echo" "Set fs.inotify.max_user_watches = 524288.."
-RUN echo "fs.inotify.max_user_watches = 524288" >> /etc/sysctl.conf
+#CMD "echo" "Set fs.inotify.max_user_watches = 524288.."
+#RUN echo "fs.inotify.max_user_watches = 524288" >> /etc/sysctl.conf
 
 CMD "echo" "Install basics.."
 RUN set -x; \
@@ -34,7 +41,6 @@ RUN set -x; \
 		mtr \
 		dnsutils \
 		curl \
-		postgresql-client-9.4 \
 		build-essential \
 		libfreetype6-dev \
 		libjpeg-dev \
@@ -81,6 +87,7 @@ RUN set -x; \
 CMD "echo" "Python packages pip install.."
 RUN set -x; \
     pip install --upgrade pip \
+    && pip install wheel \
     && pip install psycopg2==2.7.1 \
     && pip install Babel==2.3.4 \
     && pip install decorator==4.0.10 \
@@ -100,7 +107,6 @@ RUN set -x; \
     && pip install Pillow==3.4.1 \
     && pip install psutil==4.3.1 \
     && pip install psycogreen==1.0 \
-    && pip install psycopg2==2.6.2 \
     && pip install pydot==1.2.3 \
     && pip install pyparsing==2.1.10 \
     && pip install pyPdf==1.13 \
