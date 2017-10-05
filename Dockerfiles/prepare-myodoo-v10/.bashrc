@@ -14,5 +14,7 @@ alias mv='mv -i'
 
 # Shortcuts
 alias cdo='cd /opt/odoo/'
+alias olog='cat /opt/odoo/var/log/odoo-server.log'
+alias rolog='rm /opt/odoo/var/log/odoo-server.log'
 
 export EDITOR=nano
