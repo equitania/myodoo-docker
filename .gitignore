@@ -40,7 +40,6 @@ pip-selfcheck.json
 .idea
 .idea/workspace.xml
 
-*.zip
 *.release
 
 # Eclipse
