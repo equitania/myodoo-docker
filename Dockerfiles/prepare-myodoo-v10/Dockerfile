@@ -1,8 +1,8 @@
-FROM debian:jessie-slim
+FROM debian:jessie
 MAINTAINER Equitania Software GmbH <info@myodoo.de>
 # For Odoo 10 powered by MyOdoo.de
-# Version 1.0.15
-# Date 01.10.2017
+# Version 1.0.17
+# Date 01.12.2017
 
 CMD "echo" "MyOdoo build will start now.."
 
@@ -27,8 +27,8 @@ RUN echo "en_US.UTF-8 UTF-8" > /etc/locale.gen && \
     /usr/sbin/update-locale LANG=en_US.UTF-8
 ENV LC_ALL en_US.UTF-8
 
-#CMD "echo" "Set fs.inotify.max_user_watches = 524288.."
-#RUN echo "fs.inotify.max_user_watches = 524288" >> /etc/sysctl.conf
+CMD "echo" "Set fs.inotify.max_user_watches = 524288.."
+RUN echo "fs.inotify.max_user_watches = 524288" >> /etc/sysctl.conf
 
 CMD "echo" "Install basics.."
 RUN set -x; \
@@ -88,7 +88,7 @@ CMD "echo" "Python packages pip install.."
 RUN set -x; \
     pip install --upgrade pip \
     && pip install wheel \
-    && pip install psycopg2==2.7.1 \
+    && pip install psycopg2==2.7.3.1 \
     && pip install Babel==2.3.4 \
     && pip install decorator==4.0.10 \
     && pip install docutils==0.12 \
@@ -153,12 +153,14 @@ RUN set -x; \
     && pip install egenix-mx-base \
     && pip install pypdf2 \
     && pip install odoorpc \
-    && pip install pyelasticsearch \
+    && pip install elasticsearch==6.0.0 \
     && pip install openpyxl \
     && pip install phonenumbers \
     && pip install pysftp \
     && pip install email \
-    && pip install suds
+    && pip install suds \
+    && pip install py3o.template \
+    && pip install py3o.formats
 
 CMD "echo" "OpenSans font install.."
 RUN set -x; \
