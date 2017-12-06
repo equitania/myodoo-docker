@@ -1,4 +1,4 @@
-FROM myodoo/prepare-v10:1.0.15
+FROM myodoo/prepare-v10:1.0.17
 MAINTAINER Equitania Software GmbH <info@myodoo.de>
 
 CMD "echo" "MyOdoo build will start now.."
