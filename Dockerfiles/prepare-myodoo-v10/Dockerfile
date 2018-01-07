@@ -1,15 +1,21 @@
-FROM debian:jessie
+FROM ubuntu:16.04
 MAINTAINER Equitania Software GmbH <info@myodoo.de>
 # For Odoo 10 powered by MyOdoo.de
-# Version 1.0.17
-# Date 01.12.2017
+# Version 2.0.0
+# Date 03.01.2018
 
 CMD "echo" "MyOdoo build will start now.."
 
-ENV DEBIAN_FRONTEND noninteractive
+ARG DEBIAN_FRONTEND=noninteractive
 
+RUN apt-get update && apt-get -y dist-upgrade && apt-get install -y apt-utils wget locales
 
-RUN apt-get update && apt-get -y dist-upgrade && apt-get install -y apt-utils locales wget sudo
+CMD "echo" "Set LOCALE to UTF8.."
+RUN echo "en_US.UTF-8 UTF-8" > /etc/locale.gen && \
+    locale-gen en_US.UTF-8 && \
+    dpkg-reconfigure locales && \
+    /usr/sbin/update-locale LANG=en_US.UTF-8
+ENV LC_ALL en_US.UTF-8
 
 CMD "echo" "Postgres 9.6 for Jessie"
 RUN wget -q https://www.postgresql.org/media/keys/ACCC4CF8.asc -O - | apt-key add - && \
@@ -20,16 +26,6 @@ RUN wget -q https://www.postgresql.org/media/keys/ACCC4CF8.asc -O - | apt-key ad
 CMD "echo" "Update bash.."
 COPY ./.bashrc /root/
 
-CMD "echo" "Set LOCALE to UTF8.."
-RUN echo "en_US.UTF-8 UTF-8" > /etc/locale.gen && \
-    locale-gen en_US.UTF-8 && \
-    dpkg-reconfigure locales && \
-    /usr/sbin/update-locale LANG=en_US.UTF-8
-ENV LC_ALL en_US.UTF-8
-
-CMD "echo" "Set fs.inotify.max_user_watches = 524288.."
-RUN echo "fs.inotify.max_user_watches = 524288" >> /etc/sysctl.conf
-
 CMD "echo" "Install basics.."
 RUN set -x; \
 		apt-get install -y --no-install-recommends \
@@ -38,7 +34,7 @@ RUN set -x; \
 		graphviz \
 		antiword  \
 		poppler-utils \
-		mtr \
+		htop \
 		dnsutils \
 		curl \
 		build-essential \
@@ -51,7 +47,6 @@ RUN set -x; \
 		libldap2-dev \
 		libsasl2-dev \
 		libffi-dev \		
-		wget \
 		unzip \
 		sqlite3 \
 		nano \
@@ -62,7 +57,6 @@ RUN set -x; \
 		sudo \
 		node-less \
 		node-clean-css \
-		tesseract-ocr \
 		imagemagick \
 		xfonts-75dpi \
 		xfonts-base
@@ -79,7 +73,6 @@ RUN set -x; \
 		python-openssl \
 		python-renderpm \
 		python-reportlab-accel \
-		python-support \
 	    python-tz \
         python-zsi \
         python-webdav
@@ -87,12 +80,12 @@ RUN set -x; \
 CMD "echo" "Python packages pip install.."
 RUN set -x; \
     pip install --upgrade pip \
-    && pip install wheel \
+    && pip install wheel --upgrade \
+    && pip install setuptools --upgrade \
     && pip install psycopg2==2.7.3.1 \
     && pip install Babel==2.3.4 \
     && pip install decorator==4.0.10 \
     && pip install docutils==0.12 \
-    && pip install ebaysdk==2.1.4 \
     && pip install feedparser==5.2.1 \
     && pip install gevent==1.1.2 \
     && pip install greenlet==0.4.10 \
@@ -158,9 +151,7 @@ RUN set -x; \
     && pip install phonenumbers \
     && pip install pysftp \
     && pip install email \
-    && pip install suds \
-    && pip install py3o.template \
-    && pip install py3o.formats
+    && pip install suds
 
 CMD "echo" "OpenSans font install.."
 RUN set -x; \
@@ -180,8 +171,7 @@ RUN set -x; \
 CMD "echo" "PDF export engine install.."
 # http://download.gna.org/wkhtmltopdf/0.12/0.12.2.1/
 RUN set -x; \
-		curl -k -o wkhtmltox.deb -SL https://release.myodoo.de/wkhtmltox-0.12.2.1_linux-jessie-amd64.deb \
-		&& echo 'c81fffae4c0914f95fb12e047a72edda5042b1c6 wkhtmltox.deb' | sha1sum -c - \
+		curl -k -o wkhtmltox.deb -SL https://release.myodoo.de/wkhtmltox-0.12.2.1_linux-trusty-amd64.deb \
 		&& dpkg --force-depends -i wkhtmltox.deb \
         && ln -s /usr/local/bin/wkhtmltopdf /usr/bin \
         && ln -s /usr/local/bin/wkhtmltoimage /usr/bin \
