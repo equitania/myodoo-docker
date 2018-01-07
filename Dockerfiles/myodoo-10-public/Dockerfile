@@ -1,4 +1,4 @@
-FROM myodoo/prepare-v10:1.0.17
+FROM myodoo/prepare-v10:2.0.0
 MAINTAINER Equitania Software GmbH <info@myodoo.de>
 
 CMD "echo" "MyOdoo build will start now.."
@@ -13,12 +13,12 @@ USER odoo
 
 RUN /bin/bash -c "mkdir -p /opt/odoo/{odoo-server/odoo,bin,etc,sources/odoo,data,data/filestore}"
 
-COPY odoo-ce.zip /opt/odoo/odoo-server/
 COPY odoo-bin /opt/odoo/odoo-server/
 #COPY ./testdb/ /opt/odoo/data/filestore/testdb/
 
 RUN /bin/bash -c "mkdir -p /opt/odoo/{bin,etc,sources/odoo,data,data/filestore}" && \
     cd /opt/odoo/odoo-server/ && \
+    curl -k -o odoo-ce.zip -SL https://release.myodoo.de/public/odoo-ce-10-180101.zip && \
     unzip odoo-ce.zip && \
     rm odoo-ce.zip
 
