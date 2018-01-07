@@ -2,6 +2,7 @@
 docker build -t myodoo/myodoo-10-public:180101 .
 docker push myodoo/myodoo-10-public:180101
 
+# Start Postgres Container
 docker run -d --restart=always -e POSTGRES_USER=myodoo -e POSTGRES_PASSWORD=myodoo --name "myodoo-10-db" postgres:9.6.6
 
 ## Run
@@ -32,6 +33,11 @@ sudo -i -u odoo /usr/bin/python \
 https://release.myodoo.de/public/v10_basis_public_build_180101_admin_myodoo2018.zip
 admin_passwd = myodoo2018
 
- 
 # bash Zugriff
 docker exec -ti "myodoo-10-public" env TERM=xterm bash -l
+
+# Weitere Dokumentationen zum Thema Docker:
+https://equitania.atlassian.net/wiki/x/BABRAw
+
+# Anleitung für den Betrieb unter Synology finden Sie hier:
+https://equitania.atlassian.net/wiki/x/Pb1XAw
