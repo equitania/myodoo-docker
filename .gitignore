@@ -52,4 +52,6 @@ pip-selfcheck.json
 
 # mac
 .DS_Store
-/Dockerfiles/myodoo-10-public/odoo-ce.zip
+
+# Release
+odoo-ce.zip

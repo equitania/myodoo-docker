@@ -1,11 +1,10 @@
 #!/usr/bin/env bash
 python2.7 -m pip install --upgrade pip \
-    && python2.7 -m pip install psycopg2==2.7.1 \
+    && python2.7 -m pip install psycopg2==2.7.3.1 \
     && python2.7 -m pip install argparse==1.2.1 \
     && python2.7 -m pip install Babel==2.3.4 \
     && python2.7 -m pip install decorator==4.0.10 \
     && python2.7 -m pip install docutils==0.12 \
-    && python2.7 -m pip install ebaysdk==2.1.4 \
     && python2.7 -m pip install feedparser==5.2.1 \
     && python2.7 -m pip install gevent==1.1.2 \
     && python2.7 -m pip install greenlet==0.4.10 \
@@ -65,7 +64,9 @@ python2.7 -m pip install gdata \
     && python2.7 -m pip install egenix-mx-base \
     && python2.7 -m pip install pypdf2 \
     && python2.7 -m pip install odoorpc \
-    && python2.7 -m pip install pyelasticsearch \
+    && python2.7 -m pip install elasticsearch==6.0.0 \
     && python2.7 -m pip install openpyxl \
     && python2.7 -m pip install phonenumbers \
-    && python2.7 -m pip install pysftp
+    && python2.7 -m pip install pysftp \
+    && python2.7 -mpip install py3o.template \
+    && python2.7 -mpip install py3o.formats
