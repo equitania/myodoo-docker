@@ -2,8 +2,8 @@
 # -*- coding: utf-8 -*-
 # Mit diesem Skript wird ein Backup einer Odoo Datenbank inkl. FileStore unter Docker durchgeführt
 # With this script you can backup odoo db on postgresql incl. filestore under Docker
-# Version 1.0.3
-# Date 12.06.2017
+# Version 1.0.4
+# Date 04.02.2018
 ##############################################################################
 #
 #    Shell Script for Odoo, Open Source Management Solution

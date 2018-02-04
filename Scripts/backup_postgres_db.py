@@ -1,9 +1,9 @@
 #!/usr/bin/python
 # -*- coding: utf-8 -*-
-# Mit diesem Skript wird ein Backup einer Odoo Datenbank ohne FileStore unter Docker durchgeführt
-# With this script you can backup odoo db on postgresql  without filestore under Docker
-# Version 1.0.2
-# Date 16.03.2017
+# Mit diesem Skript wird ein Backup einer PostgreSQL Datenbank
+# With this script you can backup postgresql db
+# Version 1.0.0
+# Date 04.02.2018
 ##############################################################################
 #
 #    Shell Script for Odoo, Open Source Management Solution
@@ -44,16 +44,13 @@ def zip_dir(dirpath, zippath):
 
 
 # csv format - separator ","
-#DATABASENAME,DB_USER,DB_PASSWORD,MYODOO-CONTAINERNAME
-fname_backup = 'docker2backup_fs_pg.csv'
+#DATABASENAME,DB_USER,DB_PASSWORD
+fname_backup = 'backup_postgres_db.csv'
 reader1 = csv.reader(open(fname_backup, 'rb'))
 mybasepath = os.getcwd()
-mybackuppath = mybasepath + "/docker-backups"
+mybackuppath = mybasepath + "/postgres-backups"
 if not os.path.exists(mybackuppath):
     os.mkdir(mybackuppath)
-mynginxpath = mybasepath + "/nginx-backups"
-if not os.path.exists(mynginxpath):
-    os.mkdir(mynginxpath)
 
 print mybackuppath
 
@@ -65,14 +62,13 @@ for row in reader1:
     my_db_user = row[1]
     my_db_password = row[2]
     mydatacontainer = row[3]
-    print 'Database Name:' + mydb + '\nDatabase User:' + my_db_user + '\nDatabase Password:' + my_db_password + '\nMyOdooContainerName:' + mydatacontainer
+    print 'Database Name:' + mydb + '\nDatabase User:' + my_db_user + '\nDatabase Password:' + my_db_password
     mybackupfolder = mybackuppath + '/' + mydb
     if not os.path.exists(mybackupfolder):
         os.mkdir(mybackupfolder)
-    os.system('pg_dump --dbname=postgresql://'+my_db_user+':'+my_db_password+'@127.0.0.1:5432/' + mydb + ' > ' + mybackupfolder + '/dump.sql')
+    os.system('pg_dump --dbname=postgresql://'+my_db_user+':'+my_db_password+'@127.0.0.1:5432/' + mydb + ' > ' + mybackupfolder + '/' + mydb + '.sql')
     filestorepath = '/opt/odoo/data/filestore/'
-    os.system('mkdir ' + mybackupfolder + '/'+mydb)
-    #os.system('docker cp ' + mydatacontainer + ':/opt/odoo/data/filestore/' + mydb + ' ' + mybackupfolder + '/')
+    os.system('mkdir ' + mybackupfolder + '/' + mydb)
     ts = time.time()
     mytime = datetime.datetime.fromtimestamp(ts).strftime('%Y-%m-%d_%H-%M-%S')
     os.rename(mybackupfolder + '/' + mydb, mybackupfolder + '/filestore')
@@ -80,13 +76,6 @@ for row in reader1:
     os.system('rm -r ' + mybackupfolder)
     print 'Backup is done ' + mydatacontainer
 
-# backup nginx-conf
-if os.path.exists('/etc/nginx/conf.d/'):
-    if not os.path.exists(mynginxpath):
-        os.mkdir(mynginxpath)
-    ts = time.time()
-    mytime=datetime.datetime.fromtimestamp(ts).strftime('%Y-%m-%d_%H-%M-%S')
-    os.system('zip -r '+mynginxpath+'/nginx-confs_'+mytime+'.zip /etc/nginx/conf.d/')
 
 # run by crontab
 # removes any files in mybackuppath older than 14 days
@@ -105,17 +94,6 @@ for xfile in files:
             print "remove: " + mybackuppath + "/" + xfile
             os.remove(mybackuppath + "/" + xfile)
 
-# removes any files in mynginxpath older than 14 days
-files = os.listdir(mynginxpath + "/")
-for xfile in files:
-    if os.path.isfile(mynginxpath + "/" + xfile):
-        t = os.stat(mynginxpath + "/" + xfile)
-        c = t.st_ctime
-        
-        # delete file if older than 2 weeks
-        if c < cutoff:
-            print "remove: " + mynginxpath + "/" + xfile
-            os.remove(mynginxpath + "/" + xfile)
 
 print 'Start rsync'
 # csv format
