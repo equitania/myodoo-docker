@@ -50,10 +50,10 @@ def zip_dir(dirpath, zippath):
 fname_backup = 'docker2backup.csv'
 reader1 = csv.reader(open(fname_backup, 'rb'))
 mybasepath = os.getcwd()
-mybackuppath = mybasepath + "/docker-backups"
+mybackuppath = mybasepath + "/backups-docker"
 if not os.path.exists(mybackuppath):
     os.mkdir(mybackuppath)
-mynginxpath = mybasepath + "/nginx-backups"
+mynginxpath = mybasepath + "/backups-nginx"
 if not os.path.exists(mynginxpath):
     os.mkdir(mynginxpath)
 

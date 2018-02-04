@@ -20,7 +20,14 @@ alias ngx+='/etc/init.d/nginx start'
 alias ngx-='/etc/init.d/nginx stop'
 alias ngx#='/etc/init.d/nginx restart'
 alias ngxr='/etc/init.d/nginx reload'
-alias ngxs='cp -r /etc/nginx/conf.d/ /root/nginx-save'
 alias dps='docker ps -a'
+alias dpi='docker images'
+alias syspatch='apt-get update && apt-get dist-upgrade && apt-get autoremove'
+alias dobk='/root/backup_odoo_docker_postgres_on_host.py'
+alias doup='/root/update_docker_myodoo.py'
+alias edbk='nano docker2backup.csv'
+alias edup='nano docker2update.csv'
+alias pga='sudo -u postgres pg_activity -U postgres'
+
 
 export EDITOR=nano
