@@ -48,7 +48,7 @@ def zip_dir(dirpath, zippath):
 fname_backup = 'backup_postgres_db.csv'
 reader1 = csv.reader(open(fname_backup, 'rb'))
 mybasepath = os.getcwd()
-mybackuppath = mybasepath + "/postgres-backups"
+mybackuppath = mybasepath + "/backups-postgres"
 if not os.path.exists(mybackuppath):
     os.mkdir(mybackuppath)
 
@@ -61,20 +61,17 @@ for row in reader1:
         continue
     my_db_user = row[1]
     my_db_password = row[2]
-    mydatacontainer = row[3]
     print 'Database Name:' + mydb + '\nDatabase User:' + my_db_user + '\nDatabase Password:' + my_db_password
     mybackupfolder = mybackuppath + '/' + mydb
     if not os.path.exists(mybackupfolder):
         os.mkdir(mybackupfolder)
     os.system('pg_dump --dbname=postgresql://'+my_db_user+':'+my_db_password+'@127.0.0.1:5432/' + mydb + ' > ' + mybackupfolder + '/' + mydb + '.sql')
-    filestorepath = '/opt/odoo/data/filestore/'
     os.system('mkdir ' + mybackupfolder + '/' + mydb)
     ts = time.time()
     mytime = datetime.datetime.fromtimestamp(ts).strftime('%Y-%m-%d_%H-%M-%S')
-    os.rename(mybackupfolder + '/' + mydb, mybackupfolder + '/filestore')
-    zip_dir(mybackupfolder, mybackuppath + '/' + mydatacontainer + '_dockerbackup_' + mytime + '.zip')
+    zip_dir(mybackupfolder, mybackuppath + '/' + mydb + '_postgres_backup_' + mytime + '.zip')
     os.system('rm -r ' + mybackupfolder)
-    print 'Backup is done ' + mydatacontainer
+    print 'Backup is done ' + mydb
 
 
 # run by crontab
@@ -98,7 +95,7 @@ for xfile in files:
 print 'Start rsync'
 # csv format
 # rsync --delete -avzre "ssh" /sourcepath/ user@servername:/targetpath/
-fname_rsync = 'rsync_targets.csv'
+fname_rsync = 'rsync_targets_postgres.csv'
 if os.path.isfile(fname_rsync):
     reader2 = csv.reader(open(fname_rsync, 'rb'))
     for row in reader2:
