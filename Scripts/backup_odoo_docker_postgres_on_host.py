@@ -47,7 +47,7 @@ def zip_dir(dirpath, zippath):
 
 # csv format - separator ","
 # DATABASENAME,DB_USER,DB_PASSWORD,MYODOO-CONTAINERNAME
-fname_backup = 'docker2backup_fs_pg.csv'
+fname_backup = 'docker2backup.csv'
 reader1 = csv.reader(open(fname_backup, 'rb'))
 mybasepath = os.getcwd()
 mybackuppath = mybasepath + "/docker-backups"
