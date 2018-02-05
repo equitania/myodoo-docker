@@ -15,22 +15,14 @@
 
 ## Skripte
 
-### auto_backup_docker.py
+Dieses Repository bietet Hilfsskripte und Dockerfiles für den MyOdoo Fork https://www.myodoo.de.  
+Wir benutzen es bei unseren täglichen Administrationstätigkeiten mit den Kunden Systemen.  
 
-Erstellt Backups aller MyOdoo Container, die in `containers2backup.csv` mit `,` als Separator definiert sind.
+### Bereiche:  
+  
+1. Dockerfiles
+2. Postgres Konfigurationen
+3. nginx Templates & Konfigurationen
+4. Hilfsskripte für Installation, Updates & Backups
 
-Dabei ist in der csv-Datei zuerst der Datenbankname, der Postgres-Containername sowie der MyOdoo-Containername anzugeben.  
-
-
-### auto_update_docker.py
-
-Führt Update aller MyOdoo Container, die in `containers2update.csv` mit `,` als Separator definiert sind und in der Spalte 1 das Wort `update` stehen haben.
-
-Dabei ist in der csv-Datei zuerst der MyOdoo-Containername, der Datenbankname, der Port, der Pfad zum Dockerfile sowie der Postgres-Containername anzugeben.  
-
-### auto_update_docker_with_same_image.py
-
-
-### restore2docker.sh
-
-Zum Restoren von Backups.
+Weiterführende Informationen finden Sie in unserem WIKI https://equitania.atlassian.net/wiki/spaces/MW/overview 
