@@ -1,8 +1,8 @@
 FROM ubuntu:16.04
 MAINTAINER Equitania Software GmbH <info@myodoo.de>
 # For Odoo 11 powered by MyOdoo.de
-# Version 1.0.0
-# Date 03.01.2018
+# Version 1.0.1
+# Date 05.02.2018
 
 CMD "echo" "MyOdoo build will start now.."
 
@@ -80,14 +80,14 @@ RUN set -x; \
     && pip3 install greenlet==0.4.10 \
     && pip3 install html2text==2016.9.19 \
     && pip3 install Jinja2==2.8 \
-    && pip3 install lxml==3.5.0 \
+    && pip3 install lxml==3.7.1 \
     && pip3 install Mako==1.0.4 \
     && pip3 install MarkupSafe==0.23 \
     && pip3 install mock==2.0.0 \
     && pip3 install num2words==0.5.4 \
     && pip3 install ofxparse==0.16 \
     && pip3 install passlib==1.6.5 \
-    && pip3 install Pillow==3.4.1 \
+    && pip3 install Pillow==4.0.0 \
     && pip3 install psutil==4.3.1 \
     && pip3 install psycopg2==2.7.3.1 \
     && pip3 install pydot==1.2.3 \
