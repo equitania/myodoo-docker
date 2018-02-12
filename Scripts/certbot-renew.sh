@@ -9,8 +9,8 @@ echo "nginx stop"
 /etc/init.d/nginx stop
 echo "certbot renew"
 /root/certbot/letsencrypt-auto renew
-echo "delete nginx log files older than 14 days"
-find /var/log/nginx/ -type f -mtime +14 | xargs rm
+echo "delete nginx log files older than 30 days"
+find /var/log/nginx/ -type f -mtime +30 | xargs rm
 echo "nginx start"
 /etc/init.d/nginx start
 /etc/init.d/nginx status
