@@ -1,7 +1,7 @@
 #!/bin/bash
-# Install all Python 2.7 Libs for Odoo 10
+# Install all Python 2.7 Libs for Odoo 8
 # Script must run with mit root-rights
-# Version 2.0.3 - Stand 04.03.2018
+# Version 1.0.14 - Stand 04.03.2018
 ##############################################################################
 #
 #    Shell Script for Odoo, Open Source Management Solution
@@ -22,8 +22,15 @@
 #
 ##############################################################################
 
+cd /home/ownerp/Public/gitbase/
+git clone -b develop git@gitlab.ownerp.io:v8-myodoo-public/v8-server.git
+virtualenv -p /usr/bin/python2.7 v8-server
+echo '[list]\nformat=columns' > pip.conf
+source v8-server/bin/activate
+
+
 python2.7 -m pip install --upgrade pip \
-    && python2.7 -m pip install psycopg2==2.7.3.1 \
+    && python2.7 -m pip install psycopg2==2.7.1 \
     && python2.7 -m pip install argparse==1.2.1 \
     && python2.7 -m pip install Babel==2.3.4 \
     && python2.7 -m pip install decorator==4.0.10 \
@@ -37,7 +44,7 @@ python2.7 -m pip install --upgrade pip \
     && python2.7 -m pip install Mako==1.0.4 \
     && python2.7 -m pip install MarkupSafe==0.23 \
     && python2.7 -m pip install mock==2.0.0 \
-    && python2.7 -m pip install ofxparse==0.16 \
+    && python2.7 -m pip install ofxparse==0.15 \
     && python2.7 -m pip install passlib==1.6.5 \
     && python2.7 -m pip install Pillow==3.4.1 \
     && python2.7 -m pip install psutil==4.3.1 \
@@ -48,7 +55,6 @@ python2.7 -m pip install --upgrade pip \
     && python2.7 -m pip install pyserial==3.1.1 \
     && python2.7 -m pip install Python-Chart==1.39 \
     && python2.7 -m pip install python-dateutil==2.5.3 \
-    && python2.7 -m pip install python-ldap==2.4.27 \
     && python2.7 -m pip install python-openid==2.2.5 \
     && python2.7 -m pip install pytz==2016.7 \
     && python2.7 -m pip install pyusb==1.0.0 \
@@ -63,7 +69,6 @@ python2.7 -m pip install --upgrade pip \
     && python2.7 -m pip install Werkzeug==0.11.11 \
     && python2.7 -m pip install wsgiref==0.1.2 \
     && python2.7 -m pip install XlsxWriter==0.9.3 \
-    && python2.7 -m pip install xlrd==1.0.0 \
     && python2.7 -m pip install xlwt==1.1.2
 
 python2.7 -m pip install gdata \
@@ -87,13 +92,9 @@ python2.7 -m pip install gdata \
     && python2.7 -m pip install egenix-mx-base \
     && python2.7 -m pip install pypdf2 \
     && python2.7 -m pip install odoorpc \
-    && python2.7 -m pip install elasticsearch==6.0.0 \
+    && python2.7 -m pip install pyelasticsearch \
     && python2.7 -m pip install openpyxl \
     && python2.7 -m pip install phonenumbers \
-    && python2.7 -m pip install pysftp \
-    && python2.7 -m pip install email \
-    && python2.7 -m pip install suds \
-    && python2.7 -m pip install pycrypto==2.6.1 \
-    && python2.7 -m pip install pyocclient==0.4 \
-    && python2.7 -m pip install dropbox==8.7.1 \
-    && python2.7 -m pip install py-Asterisk
+    && python2.7 -m pip install pysftp
+
+cd /home/ownerp/Public/gitbase/ && source v8-server/bin/activate && cd /home/ownerp/Public/gitbase/v8-server/
