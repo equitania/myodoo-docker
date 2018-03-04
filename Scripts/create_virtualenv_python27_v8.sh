@@ -95,6 +95,7 @@ python2.7 -m pip install gdata \
     && python2.7 -m pip install pyelasticsearch \
     && python2.7 -m pip install openpyxl \
     && python2.7 -m pip install phonenumbers \
-    && python2.7 -m pip install pysftp
+    && python2.7 -m pip install pysftp \
+    && python2.7 -m pip install soappy
 
 cd /home/ownerp/Public/gitbase/ && source v8-server/bin/activate && cd /home/ownerp/Public/gitbase/v8-server/
