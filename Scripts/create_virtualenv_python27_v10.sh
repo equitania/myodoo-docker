@@ -1,6 +1,5 @@
 #!/bin/bash
 # Install all Python 2.7 Libs for Odoo 10
-# Script must run with mit root-rights
 # Version 2.0.3 - Stand 04.03.2018
 ##############################################################################
 #
@@ -21,6 +20,12 @@
 #    along with this program.  If not, see <http://www.gnu.org/licenses/>.
 #
 ##############################################################################
+
+cd /home/ownerp/Public/gitbase/
+git clone -b develop git@gitlab.ownerp.io:v10-myodoo-public/v10-server.git
+virtualenv -p /usr/bin/python2.7 v10-server
+echo '[list]\nformat=columns' > pip.conf
+source v10-server/bin/activate
 
 python2.7 -m pip install --upgrade pip \
     && python2.7 -m pip install psycopg2==2.7.3.1 \
@@ -97,3 +102,5 @@ python2.7 -m pip install gdata \
     && python2.7 -m pip install pyocclient==0.4 \
     && python2.7 -m pip install dropbox==8.7.1 \
     && python2.7 -m pip install py-Asterisk
+
+cd /home/ownerp/Public/gitbase/ && source v10-server/bin/activate && cd /home/ownerp/Public/gitbase/v10-server/
