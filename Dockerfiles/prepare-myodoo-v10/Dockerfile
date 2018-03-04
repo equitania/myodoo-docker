@@ -1,8 +1,8 @@
 FROM ubuntu:16.04
 MAINTAINER Equitania Software GmbH <info@myodoo.de>
 # For Odoo 10 powered by MyOdoo.de
-# Version 2.0.2
-# Date 05.02.2018
+# Version 2.0.3
+# Date 04.03.2018
 
 CMD "echo" "MyOdoo build will start now.."
 
@@ -154,6 +154,7 @@ RUN set -x; \
     && pip install suds \
     && pip install pycrypto==2.6.1 \
     && pip install pyocclient==0.4 \
+    && pip install dropbox==8.7.1 \
     && pip install py-Asterisk
 
 CMD "echo" "OpenSans font install.."
