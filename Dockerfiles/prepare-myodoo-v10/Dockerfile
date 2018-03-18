@@ -1,8 +1,8 @@
 FROM ubuntu:16.04
 MAINTAINER Equitania Software GmbH <info@myodoo.de>
 # For Odoo 10 powered by MyOdoo.de
-# Version 2.0.3
-# Date 04.03.2018
+# Version 2.0.5
+# Date 18.03.2018
 
 CMD "echo" "MyOdoo build will start now.."
 
@@ -17,11 +17,11 @@ RUN echo "en_US.UTF-8 UTF-8" > /etc/locale.gen && \
     /usr/sbin/update-locale LANG=en_US.UTF-8
 ENV LC_ALL en_US.UTF-8
 
-CMD "echo" "Postgres 9.6 for Jessie"
+CMD "echo" "Postgres 10 for Ubuntu"
 RUN wget -q https://www.postgresql.org/media/keys/ACCC4CF8.asc -O - | apt-key add - && \
-    sh -c 'echo "deb http://apt.postgresql.org/pub/repos/apt/ jessie-pgdg main" >> /etc/apt/sources.list.d/pgdg.list' && \
+    sh -c 'echo "deb http://apt.postgresql.org/pub/repos/apt/ xenial-pgdg main" >> /etc/apt/sources.list.d/pgdg.list' && \
     apt-get update && \
-    apt-get install -y postgresql-client-9.6
+    apt-get install -y postgresql-client-10
 
 CMD "echo" "Update bash.."
 COPY ./.bashrc /root/
@@ -70,7 +70,6 @@ RUN set -x; \
 		python-magic \
 		python-libxslt1 \
 		python-imaging \
-		python-openssl \
 		python-renderpm \
 		python-reportlab-accel \
 	    python-tz \
@@ -82,6 +81,7 @@ RUN set -x; \
     pip install --upgrade pip \
     && pip install wheel --upgrade \
     && pip install setuptools --upgrade \
+    && pip install pyopenssl \
     && pip install psycopg2==2.7.3.1 \
     && pip install Babel==2.3.4 \
     && pip install decorator==4.0.10 \
@@ -146,7 +146,7 @@ RUN set -x; \
     && pip install egenix-mx-base \
     && pip install pypdf2 \
     && pip install odoorpc \
-    && pip install elasticsearch==6.0.0 \
+    && pip install elasticsearch==6.1.1 \
     && pip install openpyxl \
     && pip install phonenumbers \
     && pip install pysftp \
@@ -154,8 +154,7 @@ RUN set -x; \
     && pip install suds \
     && pip install pycrypto==2.6.1 \
     && pip install pyocclient==0.4 \
-    && pip install dropbox==8.7.1 \
-    && pip install py-Asterisk
+    && pip install dropbox==8.7.1
 
 CMD "echo" "OpenSans font install.."
 RUN set -x; \

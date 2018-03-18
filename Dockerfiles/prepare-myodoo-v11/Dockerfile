@@ -1,8 +1,8 @@
 FROM ubuntu:16.04
 MAINTAINER Equitania Software GmbH <info@myodoo.de>
 # For Odoo 11 powered by MyOdoo.de
-# Version 1.0.1
-# Date 05.02.2018
+# Version 1.0.2
+# Date 18.03.2018
 
 CMD "echo" "MyOdoo build will start now.."
 
@@ -17,11 +17,11 @@ RUN echo "en_US.UTF-8 UTF-8" > /etc/locale.gen && \
     /usr/sbin/update-locale LANG=en_US.UTF-8
 ENV LC_ALL en_US.UTF-8
 
-CMD "echo" "Postgres 9.6 for Ubuntu"
+CMD "echo" "Postgres 10 for Ubuntu"
 RUN wget -q https://www.postgresql.org/media/keys/ACCC4CF8.asc -O - | apt-key add - && \
-    sh -c 'echo "deb http://apt.postgresql.org/pub/repos/apt/ jessie-pgdg main" >> /etc/apt/sources.list.d/pgdg.list' && \
+    sh -c 'echo "deb http://apt.postgresql.org/pub/repos/apt/ xenial-pgdg main" >> /etc/apt/sources.list.d/pgdg.list' && \
     apt-get update && \
-    apt-get install -y postgresql-client-9.6
+    apt-get install -y postgresql-client-10
 
 
 CMD "echo" "Update bash.."
@@ -113,7 +113,7 @@ RUN set -x; \
     && pip3 install openpyxl \
     && pip3 install phonenumbers \
     && pip3 install odoorpc \
-    && pip3 install elasticsearch==6.0.0
+    && pip3 install elasticsearch==6.1.1
 
 
 CMD "echo" "OpenSans font install.."
