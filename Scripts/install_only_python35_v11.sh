@@ -1,6 +1,7 @@
 #!/bin/bash
 # Install all Python 3.5 Libs for Odoo 11
-# Version 2.0.4 - Stand 05.04.2018
+# Script must run with mit root-rights
+# Version 1.0.0 - Stand 05.04.2018
 ##############################################################################
 #
 #    Shell Script for Odoo, Open Source Management Solution
@@ -20,12 +21,6 @@
 #    along with this program.  If not, see <http://www.gnu.org/licenses/>.
 #
 ##############################################################################
-
-cd /home/ownerp/Public/gitbase/
-git clone -b develop git@gitlab.ownerp.io:v11-myodoo-public/v11-server.git
-virtualenv -p /usr/bin/python3.5 v11-server
-echo '[list]\nformat=columns' > pip.conf
-source v11-server/bin/activate
 
 python3.5 -m pip install --no-cache-dir pip==9.0.3 \
     && python3.5 -m pip install --no-cache-dir wheel --upgrade \
@@ -73,5 +68,3 @@ python3.5 -m pip install --no-cache-dir pip==9.0.3 \
     && python3.5 -m pip install --no-cache-dir odoorpc \
     && python3.5 -m pip install --no-cache-dir elasticsearch==6.1.1 \
     && python3.5 -m pip install --no-cache-dir dropbox==8.7.1
-
-cd /home/ownerp/Public/gitbase/ && source v11-server/bin/activate && cd /home/ownerp/Public/gitbase/v11-server/
