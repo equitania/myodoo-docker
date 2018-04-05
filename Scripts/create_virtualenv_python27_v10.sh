@@ -1,6 +1,6 @@
 #!/bin/bash
 # Install all Python 2.7 Libs for Odoo 10
-# Version 2.0.3 - Stand 04.03.2018
+# Version 2.0.4 - Stand 05.04.2018
 ##############################################################################
 #
 #    Shell Script for Odoo, Open Source Management Solution
@@ -92,7 +92,7 @@ python2.7 -m pip install gdata \
     && python2.7 -m pip install egenix-mx-base \
     && python2.7 -m pip install pypdf2 \
     && python2.7 -m pip install odoorpc \
-    && python2.7 -m pip install elasticsearch==6.0.0 \
+    && python2.7 -m pip install elasticsearch==6.1.1 \
     && python2.7 -m pip install openpyxl \
     && python2.7 -m pip install phonenumbers \
     && python2.7 -m pip install pysftp \
@@ -100,7 +100,6 @@ python2.7 -m pip install gdata \
     && python2.7 -m pip install suds \
     && python2.7 -m pip install pycrypto==2.6.1 \
     && python2.7 -m pip install pyocclient==0.4 \
-    && python2.7 -m pip install dropbox==8.7.1 \
-    && python2.7 -m pip install py-Asterisk
+    && python2.7 -m pip install dropbox==8.7.1
 
 cd /home/ownerp/Public/gitbase/ && source v10-server/bin/activate && cd /home/ownerp/Public/gitbase/v10-server/
