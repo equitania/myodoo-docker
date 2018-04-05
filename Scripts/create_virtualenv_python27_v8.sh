@@ -1,7 +1,7 @@
 #!/bin/bash
 # Install all Python 2.7 Libs for Odoo 8
 # Script must run with mit root-rights
-# Version 1.0.14 - Stand 04.03.2018
+# Version 1.0.15 - Stand 05.04.2018
 ##############################################################################
 #
 #    Shell Script for Odoo, Open Source Management Solution
@@ -29,73 +29,75 @@ echo '[list]\nformat=columns' > pip.conf
 source v8-server/bin/activate
 
 
-python2.7 -m pip install --upgrade pip \
-    && python2.7 -m pip install psycopg2==2.7.1 \
-    && python2.7 -m pip install argparse==1.2.1 \
-    && python2.7 -m pip install Babel==2.3.4 \
-    && python2.7 -m pip install decorator==4.0.10 \
-    && python2.7 -m pip install docutils==0.12 \
-    && python2.7 -m pip install feedparser==5.2.1 \
-    && python2.7 -m pip install gevent==1.1.2 \
-    && python2.7 -m pip install greenlet==0.4.10 \
-    && python2.7 -m pip install jcconv==0.2.3 \
-    && python2.7 -m pip install Jinja2==2.8 \
-    && python2.7 -m pip install lxml==3.6.4 \
-    && python2.7 -m pip install Mako==1.0.4 \
-    && python2.7 -m pip install MarkupSafe==0.23 \
-    && python2.7 -m pip install mock==2.0.0 \
-    && python2.7 -m pip install ofxparse==0.15 \
-    && python2.7 -m pip install passlib==1.6.5 \
-    && python2.7 -m pip install Pillow==3.4.1 \
-    && python2.7 -m pip install psutil==4.3.1 \
-    && python2.7 -m pip install psycogreen==1.0 \
-    && python2.7 -m pip install pydot==1.2.3 \
-    && python2.7 -m pip install pyparsing==2.1.10 \
-    && python2.7 -m pip install pyPdf==1.13 \
-    && python2.7 -m pip install pyserial==3.1.1 \
-    && python2.7 -m pip install Python-Chart==1.39 \
-    && python2.7 -m pip install python-dateutil==2.5.3 \
-    && python2.7 -m pip install python-openid==2.2.5 \
-    && python2.7 -m pip install pytz==2016.7 \
-    && python2.7 -m pip install pyusb==1.0.0 \
-    && python2.7 -m pip install PyYAML==3.12 \
-    && python2.7 -m pip install qrcode==5.3 \
-    && python2.7 -m pip install reportlab==3.3.0 \
-    && python2.7 -m pip install requests==2.11.1 \
-    && python2.7 -m pip install six==1.10.0 \
-    && python2.7 -m pip install suds-jurko==0.6 \
-    && python2.7 -m pip install vatnumber==1.2 \
-    && python2.7 -m pip install vobject==0.9 \
-    && python2.7 -m pip install Werkzeug==0.11.11 \
-    && python2.7 -m pip install wsgiref==0.1.2 \
-    && python2.7 -m pip install XlsxWriter==0.9.3 \
-    && python2.7 -m pip install xlwt==1.1.2
+python2.7 -m pip install --no-cache-dir pip==9.0.3 \
+    && python2.7 -m pip install --no-cache-dir wheel --upgrade \
+    && python2.7 -m pip install --no-cache-dir setuptools --upgrade \
+    && python2.7 -m pip install --no-cache-dir psycopg2==2.7.1 \
+    && python2.7 -m pip install --no-cache-dir argparse==1.2.1 \
+    && python2.7 -m pip install --no-cache-dir Babel==2.3.4 \
+    && python2.7 -m pip install --no-cache-dir decorator==4.0.10 \
+    && python2.7 -m pip install --no-cache-dir docutils==0.12 \
+    && python2.7 -m pip install --no-cache-dir feedparser==5.2.1 \
+    && python2.7 -m pip install --no-cache-dir gevent==1.1.2 \
+    && python2.7 -m pip install --no-cache-dir greenlet==0.4.10 \
+    && python2.7 -m pip install --no-cache-dir jcconv==0.2.3 \
+    && python2.7 -m pip install --no-cache-dir Jinja2==2.8 \
+    && python2.7 -m pip install --no-cache-dir lxml==3.6.4 \
+    && python2.7 -m pip install --no-cache-dir Mako==1.0.4 \
+    && python2.7 -m pip install --no-cache-dir MarkupSafe==0.23 \
+    && python2.7 -m pip install --no-cache-dir mock==2.0.0 \
+    && python2.7 -m pip install --no-cache-dir ofxparse==0.15 \
+    && python2.7 -m pip install --no-cache-dir passlib==1.6.5 \
+    && python2.7 -m pip install --no-cache-dir Pillow==3.4.1 \
+    && python2.7 -m pip install --no-cache-dir psutil==4.3.1 \
+    && python2.7 -m pip install --no-cache-dir psycogreen==1.0 \
+    && python2.7 -m pip install --no-cache-dir pydot==1.2.3 \
+    && python2.7 -m pip install --no-cache-dir pyparsing==2.1.10 \
+    && python2.7 -m pip install --no-cache-dir pyPdf==1.13 \
+    && python2.7 -m pip install --no-cache-dir pyserial==3.1.1 \
+    && python2.7 -m pip install --no-cache-dir Python-Chart==1.39 \
+    && python2.7 -m pip install --no-cache-dir python-dateutil==2.5.3 \
+    && python2.7 -m pip install --no-cache-dir python-openid==2.2.5 \
+    && python2.7 -m pip install --no-cache-dir pytz==2016.7 \
+    && python2.7 -m pip install --no-cache-dir pyusb==1.0.0 \
+    && python2.7 -m pip install --no-cache-dir PyYAML==3.12 \
+    && python2.7 -m pip install --no-cache-dir qrcode==5.3 \
+    && python2.7 -m pip install --no-cache-dir reportlab==3.3.0 \
+    && python2.7 -m pip install --no-cache-dir requests==2.11.1 \
+    && python2.7 -m pip install --no-cache-dir six==1.10.0 \
+    && python2.7 -m pip install --no-cache-dir suds-jurko==0.6 \
+    && python2.7 -m pip install --no-cache-dir vatnumber==1.2 \
+    && python2.7 -m pip install --no-cache-dir vobject==0.9 \
+    && python2.7 -m pip install --no-cache-dir Werkzeug==0.11.11 \
+    && python2.7 -m pip install --no-cache-dir wsgiref==0.1.2 \
+    && python2.7 -m pip install --no-cache-dir XlsxWriter==0.9.3 \
+    && python2.7 -m pip install --no-cache-dir xlwt==1.1.2
 
-python2.7 -m pip install gdata \
-    && python2.7 -m pip install simplejson \
-    && python2.7 -m pip install unittest2 \
-    && python2.7 -m pip install pdftools \
-    && python2.7 -m pip install matplotlib \
-    && python2.7 -m pip install beautifulsoup4 \
-    && python2.7 -m pip install evdev \
-    && python2.7 -m pip install polib \
-    && python2.7 -m pip install unidecode \
-    && python2.7 -m pip install validate_email \
-    && python2.7 -m pip install pyDNS \
-    && python2.7 -m pip install python-slugify \
-    && python2.7 -m pip install paramiko==1.9.0 \
-    && python2.7 -m pip install pycrypto==2.6 \
-    && python2.7 -m pip install pyinotify \
-    && python2.7 -m pip install ecdsa==0.11 \
-    && python2.7 -m pip install sphinx \
-    && python2.7 -m pip install Pygments==2.0 \
-    && python2.7 -m pip install egenix-mx-base \
-    && python2.7 -m pip install pypdf2 \
-    && python2.7 -m pip install odoorpc \
-    && python2.7 -m pip install pyelasticsearch \
-    && python2.7 -m pip install openpyxl \
-    && python2.7 -m pip install phonenumbers \
-    && python2.7 -m pip install pysftp \
-    && python2.7 -m pip install soappy
+python2.7 -m pip install --no-cache-dir gdata \
+    && python2.7 -m pip install --no-cache-dir simplejson \
+    && python2.7 -m pip install --no-cache-dir unittest2 \
+    && python2.7 -m pip install --no-cache-dir pdftools \
+    && python2.7 -m pip install --no-cache-dir matplotlib \
+    && python2.7 -m pip install --no-cache-dir beautifulsoup4 \
+    && python2.7 -m pip install --no-cache-dir evdev \
+    && python2.7 -m pip install --no-cache-dir polib \
+    && python2.7 -m pip install --no-cache-dir unidecode \
+    && python2.7 -m pip install --no-cache-dir validate_email \
+    && python2.7 -m pip install --no-cache-dir pyDNS \
+    && python2.7 -m pip install --no-cache-dir python-slugify \
+    && python2.7 -m pip install --no-cache-dir paramiko==1.9.0 \
+    && python2.7 -m pip install --no-cache-dir pycrypto==2.6 \
+    && python2.7 -m pip install --no-cache-dir pyinotify \
+    && python2.7 -m pip install --no-cache-dir ecdsa==0.11 \
+    && python2.7 -m pip install --no-cache-dir sphinx \
+    && python2.7 -m pip install --no-cache-dir Pygments==2.0 \
+    && python2.7 -m pip install --no-cache-dir egenix-mx-base \
+    && python2.7 -m pip install --no-cache-dir pypdf2 \
+    && python2.7 -m pip install --no-cache-dir odoorpc \
+    && python2.7 -m pip install --no-cache-dir pyelasticsearch \
+    && python2.7 -m pip install --no-cache-dir openpyxl \
+    && python2.7 -m pip install --no-cache-dir phonenumbers \
+    && python2.7 -m pip install --no-cache-dir pysftp \
+    && python2.7 -m pip install --no-cache-dir soappy
 
 cd /home/ownerp/Public/gitbase/ && source v8-server/bin/activate && cd /home/ownerp/Public/gitbase/v8-server/
