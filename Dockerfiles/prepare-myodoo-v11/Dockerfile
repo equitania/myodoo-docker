@@ -1,34 +1,37 @@
 FROM ubuntu:16.04
 MAINTAINER Equitania Software GmbH <info@myodoo.de>
 # For Odoo 11 powered by MyOdoo.de
-# Version 1.0.2
-# Date 18.03.2018
+# Version 1.0.3
+# Date 08.04.2018
 
-CMD "echo" "MyOdoo build will start now.."
 
 ARG DEBIAN_FRONTEND=noninteractive
 
 RUN apt-get update && apt-get -y dist-upgrade && apt-get install -y apt-utils wget locales
 
-CMD "echo" "Set LOCALE to UTF8.."
+# Set LOCALE to UTF8..
 RUN echo "en_US.UTF-8 UTF-8" > /etc/locale.gen && \
     locale-gen en_US.UTF-8 && \
     dpkg-reconfigure locales && \
     /usr/sbin/update-locale LANG=en_US.UTF-8
 ENV LC_ALL en_US.UTF-8
 
-CMD "echo" "Postgres 10 for Ubuntu"
+RUN \
+  apt-get -y install tzdata && \
+  ln -sf /usr/share/zoneinfo/Europe/Berlin /etc/localtime
+
+#Postgres 10 for Ubuntu
 RUN wget -q https://www.postgresql.org/media/keys/ACCC4CF8.asc -O - | apt-key add - && \
     sh -c 'echo "deb http://apt.postgresql.org/pub/repos/apt/ xenial-pgdg main" >> /etc/apt/sources.list.d/pgdg.list' && \
     apt-get update && \
     apt-get install -y postgresql-client-10
 
 
-CMD "echo" "Update bash.."
+# Update bash..
 COPY ./.bashrc /root/
 
 
-CMD "echo" "Install basics.."
+# Install basics..
 RUN set -x; \
 		apt-get install -y --no-install-recommends \
 		ca-certificates \
@@ -67,7 +70,7 @@ RUN set -x; \
 		xfonts-base
 
 
-CMD "echo" "Python packages pip install.."
+# Python packages pip install..
 RUN set -x; \
     pip3 install --upgrade pip \
     && pip3 install wheel  --upgrade \
@@ -113,17 +116,18 @@ RUN set -x; \
     && pip3 install openpyxl \
     && pip3 install phonenumbers \
     && pip3 install odoorpc \
-    && pip3 install elasticsearch==6.1.1
+    && pip3 install elasticsearch==6.1.1 \
+    && pip3 install dropbox==8.7.1 \
+    && pip3 install MT-940
 
-
-CMD "echo" "OpenSans font install.."
+# OpenSans font install..
 RUN set -x; \
 		wget https://release.myodoo.de/fonts/opensans.zip \
 		&& unzip opensans.zip \
 		&& mv opensans /usr/share/fonts/truetype/ \
 		&& rm opensans.zip
 
-CMD "echo" "Barcodes font install.."
+# Barcodes font install..
 RUN set -x; \
 		wget http://www.reportlab.com/ftp/pfbfer.zip \
 		&& unzip pfbfer.zip -d fonts \
@@ -131,7 +135,7 @@ RUN set -x; \
 		&& rm pfbfer.zip \
 		&& fc-cache -f -v
 
-CMD "echo" "PDF export engine install.."
+# PDF export engine install..
 # http://download.gna.org/wkhtmltopdf/0.12/0.12.2.1/
 RUN set -x; \
 		curl -k -o wkhtmltox.deb -SL https://release.myodoo.de/wkhtmltox-0.12.2.1_linux-trusty-amd64.deb \
@@ -142,6 +146,4 @@ RUN set -x; \
 		&& apt-get purge -y --auto-remove -o APT::AutoRemove::RecommendsImportant=false -o APT::AutoRemove::SuggestsImportant=false npm \
 		&& rm -rf /var/lib/apt/lists/* wkhtmltox.deb
 
-CMD "echo" "Cleanup.."
-RUN apt-get autoremove
-CMD "echo" "Finished with build."
+# Finished with build.

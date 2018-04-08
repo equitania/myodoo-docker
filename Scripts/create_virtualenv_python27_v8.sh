@@ -1,7 +1,7 @@
 #!/bin/bash
 # Install all Python 2.7 Libs for Odoo 8
 # Script must run with mit root-rights
-# Version 1.0.15 - Stand 05.04.2018
+# Version 1.0.16 - Stand 08.04.2018
 ##############################################################################
 #
 #    Shell Script for Odoo, Open Source Management Solution
@@ -21,6 +21,10 @@
 #    along with this program.  If not, see <http://www.gnu.org/licenses/>.
 #
 ##############################################################################
+
+# To prepare your Ubuntu 16.04
+# sudo apt-get install python-pip
+# sudo pip install virtualenv
 
 cd /home/ownerp/Public/gitbase/
 git clone -b develop git@gitlab.ownerp.io:v8-myodoo-public/v8-server.git

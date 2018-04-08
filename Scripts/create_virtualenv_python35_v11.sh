@@ -1,6 +1,6 @@
 #!/bin/bash
 # Install all Python 3.5 Libs for Odoo 11
-# Version 2.0.4 - Stand 05.04.2018
+# Version 2.0.5 - Stand 08.04.2018
 ##############################################################################
 #
 #    Shell Script for Odoo, Open Source Management Solution
@@ -20,6 +20,10 @@
 #    along with this program.  If not, see <http://www.gnu.org/licenses/>.
 #
 ##############################################################################
+
+# To prepare your Ubuntu 16.04
+# sudo apt-get install python3-pip
+# sudo pip3 install virtualenv
 
 cd /home/ownerp/Public/gitbase/
 git clone -b develop git@gitlab.ownerp.io:v11-myodoo-public/v11-server.git
