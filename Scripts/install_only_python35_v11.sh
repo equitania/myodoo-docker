@@ -1,7 +1,7 @@
 #!/bin/bash
 # Install all Python 3.5 Libs for Odoo 11
 # Script must run with mit root-rights
-# Version 1.0.0 - Stand 05.04.2018
+# Version 1.0.1 - Stand 08.04.2018
 ##############################################################################
 #
 #    Shell Script for Odoo, Open Source Management Solution
@@ -67,4 +67,5 @@ python3.5 -m pip install --no-cache-dir pip==9.0.3 \
     && python3.5 -m pip install --no-cache-dir phonenumbers \
     && python3.5 -m pip install --no-cache-dir odoorpc \
     && python3.5 -m pip install --no-cache-dir elasticsearch==6.1.1 \
-    && python3.5 -m pip install --no-cache-dir dropbox==8.7.1
+    && python3.5 -m pip install --no-cache-dir dropbox==8.7.1 \
+    && python3.5 -m pip install --no-cache-dir MT-940
