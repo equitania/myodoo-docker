@@ -1,6 +1,6 @@
 #!/bin/bash
 # Install all Python 3.5 Libs for Odoo 11
-# Version 2.0.5 - Stand 08.04.2018
+# Version 2.0.6 - Stand 14.04.2018
 ##############################################################################
 #
 #    Shell Script for Odoo, Open Source Management Solution
@@ -25,11 +25,18 @@
 # sudo apt-get install python3-pip
 # sudo pip3 install virtualenv
 
-cd /home/ownerp/Public/gitbase/
-git clone -b develop git@gitlab.ownerp.io:v11-myodoo-public/v11-server.git
-virtualenv -p /usr/bin/python3.5 v11-server
+mypython="v11-p35"
+mypath="/home/ownerp/venv/"
+myenv=$mypath$mypython
+
+if [ ! -d $myenv ]; then
+  mkdir -p $myenv
+fi
+cd $mypath
+
+virtualenv -p /usr/bin/python3.5 $mypython
 echo '[list]\nformat=columns' > pip.conf
-source v11-server/bin/activate
+source $mypython/bin/activate
 
 python3.5 -m pip install --no-cache-dir pip==9.0.3 \
     && python3.5 -m pip install --no-cache-dir wheel --upgrade \
@@ -79,4 +86,4 @@ python3.5 -m pip install --no-cache-dir pip==9.0.3 \
     && python3.5 -m pip install --no-cache-dir dropbox==8.7.1 \
     && python3.5 -m pip install --no-cache-dir MT-940
 
-cd /home/ownerp/Public/gitbase/ && source v11-server/bin/activate && cd /home/ownerp/Public/gitbase/v11-server/
+cd $mypath && source $mypython/bin/activate && cd $myenv

@@ -1,7 +1,7 @@
 #!/bin/bash
 # Install all Python 2.7 Libs for Odoo 8
 # Script must run with mit root-rights
-# Version 1.0.16 - Stand 08.04.2018
+# Version 1.0.17 - Stand 14.04.2018
 ##############################################################################
 #
 #    Shell Script for Odoo, Open Source Management Solution
@@ -26,12 +26,18 @@
 # sudo apt-get install python-pip
 # sudo pip install virtualenv
 
-cd /home/ownerp/Public/gitbase/
-git clone -b develop git@gitlab.ownerp.io:v8-myodoo-public/v8-server.git
-virtualenv -p /usr/bin/python2.7 v8-server
-echo '[list]\nformat=columns' > pip.conf
-source v8-server/bin/activate
+mypython="v8-p27"
+mypath="/home/ownerp/venv/"
+myenv=$mypath$mypython
 
+if [ ! -d $myenv ]; then
+  mkdir -p $myenv
+fi
+cd $mypath
+
+virtualenv -p /usr/bin/python2.7 $mypython
+echo '[list]\nformat=columns' > pip.conf
+source $mypython/bin/activate
 
 python2.7 -m pip install --no-cache-dir pip==9.0.3 \
     && python2.7 -m pip install --no-cache-dir wheel --upgrade \
@@ -104,4 +110,4 @@ python2.7 -m pip install --no-cache-dir gdata \
     && python2.7 -m pip install --no-cache-dir pysftp \
     && python2.7 -m pip install --no-cache-dir soappy
 
-cd /home/ownerp/Public/gitbase/ && source v8-server/bin/activate && cd /home/ownerp/Public/gitbase/v8-server/
+cd $mypath && source $mypython/bin/activate && cd $myenv

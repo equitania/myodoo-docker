@@ -1,6 +1,6 @@
 #!/bin/bash
 # Install all Python 2.7 Libs for Odoo 10
-# Version 2.0.5 - Stand 08.04.2018
+# Version 2.0.6 - Stand 14.04.2018
 ##############################################################################
 #
 #    Shell Script for Odoo, Open Source Management Solution
@@ -25,11 +25,18 @@
 # sudo apt-get install python-pip
 # sudo pip install virtualenv
 
-cd /home/ownerp/Public/gitbase/
-git clone -b develop git@gitlab.ownerp.io:v10-myodoo-public/v10-server.git
-virtualenv -p /usr/bin/python2.7 v10-server
+mypython="v10-p27"
+mypath="/home/ownerp/venv/"
+myenv=$mypath$mypython
+
+if [ ! -d $myenv ]; then
+  mkdir -p $myenv
+fi
+cd $mypath
+
+virtualenv -p /usr/bin/python2.7 $mypython
 echo '[list]\nformat=columns' > pip.conf
-source v10-server/bin/activate
+source $mypython/bin/activate
 
 python2.7 -m pip install --no-cache-dir pip==9.0.3 \
     && python2.7 -m pip install --no-cache-dir wheel --upgrade \
@@ -107,4 +114,4 @@ python2.7 -m pip install --no-cache-dir pip==9.0.3 \
     && python2.7 -m pip install --no-cache-dir pyocclient==0.4 \
     && python2.7 -m pip install --no-cache-dir dropbox==8.7.1
 
-cd /home/ownerp/Public/gitbase/ && source v10-server/bin/activate && cd /home/ownerp/Public/gitbase/v10-server/
+cd $mypath && source $mypython/bin/activate && cd $myenv
