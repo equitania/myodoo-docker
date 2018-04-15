@@ -2,8 +2,8 @@
 # -*- coding: utf-8 -*-
 # Mit diesem Skript wird ein Update einer Odoo Datenbank unter Docker durchgeführt
 # With this script you can update odoo db on postgresql under Docker
-# Version 1.2.1
-# Date 04.02.2018
+# Version 2.0.0
+# Date 15.04.2018
 ##############################################################################
 #
 #    Shell Script for Odoo, Open Source Management Solution
@@ -29,7 +29,7 @@ import time
 import sys
 
 # csv format - separator ","
-# myodoo_containername,databasename,port,path2Dockfile,docker_image_name,postgresql_username,postgresql_userpassword,hostname/ip,kommado
+# myodoo_containername,databasename,port,path2Dockfile,docker_image_name,postgresql_username,postgresql_userpassword,hostname/ip,volumen,kommado
 fname = 'docker2update.csv'
 reader = csv.reader(open(fname, 'rb'))
 mybasepath = os.getcwd()
@@ -42,6 +42,7 @@ for row in reader:
     mydbuser = ""
     mydbpassword = ""
     mydbhost = ""
+    myvolumen = ""
     myupdate = ""
 
     # Name des Docker Containers
@@ -63,17 +64,24 @@ for row in reader:
     mydbpassword = row[6]
     # IP 
     mydbhost = row[7]
+    # Dieser Parameter das Speichern des Filestores auf dem Host
+    try:
+        myvolumen = row[8]
+    except:
+        print("Volumen-Parameter ist nicht vorhanden!")
     # Dieser Parameter kann für Update mit "-u modulname" oder Installationen "-i modulname" verwendet werden
     try:
-        myupdate = row[8]
+        myupdate = row[9]
     except:
         print("Update-Spalte ist nicht vorhanden!")
     print 'MyOdoo Container:' + myodoocontainer + '\nDatabase Name:' + mydb + '\nPort:' + myport
-    print 'Path:' + mypath + '\nImage:' + myimage
+    print 'Path:' + mypath + '\nImage:' + myimage + '\n'
+    print 'Volumen:' + myvolumen + '\n'
     print 'Post Update:' + myupdate
-    os.system('mkdir ' + mypath + mydb)
-    os.system('docker cp ' + myodoocontainer + ':/opt/odoo/data/filestore/' + mydb + ' ' + mypath)
-    print 'Filestore saved...'
+    if myvolumen != "":
+        os.system('mkdir ' + mypath + mydb)
+        os.system('docker cp ' + myodoocontainer + ':/opt/odoo/data/filestore/' + mydb + ' ' + mypath)
+        print 'Filestore saved...'
     os.chdir(mypath)
     if os.path.isfile(mypath + 'getMyOdooRelease.sh'):
         print 'Get latest release loading...'
