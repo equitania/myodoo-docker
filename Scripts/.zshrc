@@ -1,12 +1,12 @@
 
-# Version 2.0.0
+# Version 2.0.1
 # Date 15.04.2018
 # If you come from bash you might have to change your $PATH.
 # export PATH=$HOME/bin:/usr/local/bin:$PATH
 
 # Install with >>> sh -c "$(wget https://raw.github.com/robbyrussell/oh-my-zsh/master/tools/install.sh -O -)"
 # Path to your oh-my-zsh installation.
-  export ZSH=/home/ownerp/.oh-my-zsh
+  export ZSH=/root/.oh-my-zsh
 
 # Set name of the theme to load. Optionally, if you set this to "random"
 # it'll load a random theme each time that oh-my-zsh is loaded.
@@ -100,6 +100,7 @@ alias zshconfig="nano -B ~/.zshrc"
 alias ohmyzsh="nano -B ~/.oh-my-zsh"
 
 # Shortcuts
+alias ll='ls -alh'
 alias cdngx='cd /etc/nginx/conf.d/'
 alias ngx+='/etc/init.d/nginx start'
 alias ngx-='/etc/init.d/nginx stop'
