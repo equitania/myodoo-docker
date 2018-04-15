@@ -1,5 +1,5 @@
 
-# Version 2.0.1
+# Version 2.0.2
 # Date 15.04.2018
 # If you come from bash you might have to change your $PATH.
 # export PATH=$HOME/bin:/usr/local/bin:$PATH
@@ -111,8 +111,8 @@ alias dpi='docker images'
 alias syspatch='apt-get update && apt-get dist-upgrade && apt-get autoremove'
 alias dobk='/root/backup_odoo_docker_postgres_on_host.py'
 alias doup='/root/update_docker_myodoo.py'
-alias edbk='nano -B docker2backup.csv'
-alias edup='nano -B docker2update.csv'
+alias edbk='nano -B /root/docker2backup.csv'
+alias edup='nano -B /root/docker2update.csv'
 alias pga='sudo -u postgres pg_activity -U postgres'
 alias myed='nano -B'
 
