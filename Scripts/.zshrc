@@ -1,3 +1,6 @@
+
+# Version 2.0.0
+# Date 15.04.2018
 # If you come from bash you might have to change your $PATH.
 # export PATH=$HOME/bin:/usr/local/bin:$PATH
 
@@ -93,23 +96,22 @@ source $ZSH/oh-my-zsh.sh
 # For a full list of active aliases, run `alias`.
 #
 # Example aliases
-# alias zshconfig="mate ~/.zshrc"
-# alias ohmyzsh="mate ~/.oh-my-zsh"
+alias zshconfig="nano -B ~/.zshrc"
+alias ohmyzsh="nano -B ~/.oh-my-zsh"
 
 # Shortcuts
-alias ll='ls -alh'
+alias cdngx='cd /etc/nginx/conf.d/'
+alias ngx+='/etc/init.d/nginx start'
+alias ngx-='/etc/init.d/nginx stop'
+alias ngx#='/etc/init.d/nginx restart'
+alias ngxr='/etc/init.d/nginx reload'
 alias dps='docker ps -a'
 alias dpi='docker images'
 alias syspatch='apt-get update && apt-get dist-upgrade && apt-get autoremove'
+alias dobk='/root/backup_odoo_docker_postgres_on_host.py'
+alias doup='/root/update_docker_myodoo.py'
+alias edbk='nano -B docker2backup.csv'
+alias edup='nano -B docker2update.csv'
 alias pga='sudo -u postgres pg_activity -U postgres'
-alias dev8='cd /home/ownerp/Public/gitbase/ && source v8-server/bin/activate && cd /home/ownerp/Public/gitbase/v8-server/'
-alias dev10='cd /home/ownerp/Public/gitbase/ && source v10-server/bin/activate && cd /home/ownerp/Public/gitbase/v10-server/'
-alias dev11='cd /home/ownerp/Public/gitbase/ && source v11-server/bin/activate && cd /home/ownerp/Public/gitbase/v11-server/'
-alias dev-='deactivate && cd /home/ownerp/Public/gitbase'
-alias ed='nano -B'
-alias mygit='cd /home/ownerp/Public/gitbase/'
-alias exam8='echo "dev8 >>> ./odoo.py -c /home/ownerp/Public/gitbase/dev-helpers/conf/odoo8.conf --db-filter=v10_basis -d v10_basis -u all"'
-alias exam10='echo "dev10 >>> ./odoo-bin -c /home/ownerp/Public/gitbase/dev-helpers/conf/odoo10.conf --db-filter=v10_basis -d v10_basis -u all"'
-alias exam11='echo "dev11 >>> ./odoo-bin -c /home/ownerp/Public/gitbase/dev-helpers/conf/odoo11.conf --db-filter=v11_basis -d v11_basis -u all"'
+alias myed='nano -B'
 
-mygit

@@ -1,8 +1,8 @@
 #!/usr/bin/python
 # -*- coding: utf-8 -*-
 # Dieses Skript hilft beim Organisieren von Docker-Servern
-# Version 1.0.4
-# Date 04.02.2018
+# Version 2.0.0
+# Date 15.04.2018
 ##############################################################################
 #
 #    Shell Script for Odoo, Open Source Management Solution
@@ -30,8 +30,7 @@ os.chdir("/root/myodoo-docker")
 os.system("git checkout "+global_server_version)
 os.system("git pull")
 os.system("find . -name '*.pyc' -type f -print0 | xargs -0 /bin/rm -f")
-os.system("cp /root/myodoo-docker/bashrc /root/.bashrc")
-os.system("cp /root/myodoo-docker/zshrc /root/.zshrc")
+os.system("cp /root/myodoo-docker/Scripts/.zshrc /root/.zshrc")
 os.system("cp /root/myodoo-docker/Scripts/certbot-renew.sh /root/")
 os.system("cp -r /root/myodoo-docker/nginx-conf /root/")
 os.system("cp /root/myodoo-docker/Scripts/update_docker_myodoo.py /root/")
