@@ -2,7 +2,7 @@
 # -*- coding: utf-8 -*-
 # Mit diesem Skript wird ein Update einer Odoo Datenbank unter Docker durchgeführt
 # With this script you can update odoo db on postgresql under Docker
-# Version 2.0.1
+# Version 2.0.2
 # Date 16.04.2018
 ##############################################################################
 #
@@ -122,5 +122,6 @@ for row in reader:
     print myodoocontainer + ' restarted...'
     if os.path.exists(mypath + mydb + '.bak'):
         os.system('rm -r ' + mypath + mydb + '.bak')
-    os.system('mv ' + mypath + mydb + ' ' + mypath + mydb + '.bak')
+    if os.path.exists(mypath + mydb):
+        os.system('mv ' + mypath + mydb + ' ' + mypath + mydb + '.bak')
     print 'Update is done ' + mydb
