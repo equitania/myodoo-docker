@@ -74,6 +74,10 @@ for row in reader:
         myupdate = row[9]
     except:
         print("Update-Spalte ist nicht vorhanden!")
+    # Wenn Path zum Dockerfile nicht vorhanden
+    if not os.path.isdir(mypath):
+        print("Dockerpfad stimmt nicht!")
+        continue
     print 'MyOdoo Container:' + myodoocontainer + '\nDatabase Name:' + mydb + '\nPort:' + myport
     print 'Path:' + mypath + '\nImage:' + myimage + '\n'
     print 'Volumen:' + myvolumen + '\n'
@@ -96,9 +100,9 @@ for row in reader:
     print myimage + ' start building..'
     os.system('docker build -t ' + myimage + ' .')
     print myodoocontainer + ' start updating...'
-    os.system('docker run -it --rm -p ' + myport + ':8069 --name="' + myodoocontainer + '" ' + myimage + ' update --database=' + mydb + ' --db_user=' + mydbuser + ' --db_password=' + mydbpassword + ' --db_host=' + mydbhost)
+    os.system('docker run -it --rm -p ' + myport + ':8069 --name="' + myodoocontainer + '" ' + myvolumen + myimage + ' update --database=' + mydb + ' --db_user=' + mydbuser + ' --db_password=' + mydbpassword + ' --db_host=' + mydbhost)
     print myodoocontainer + ' starting...'
-    os.system('docker run -d -p ' + myport + ':8069 --name="' + myodoocontainer + '" ' + myimage + ' start')
+    os.system('docker run -d -p ' + myport + ':8069 --name="' + myodoocontainer + '" ' + myvolumen + myimage + ' start')
     if os.path.isfile(mypath + 'load_translation.py'):
         print 'Translation loading...'
         time.sleep(60)
@@ -113,8 +117,8 @@ for row in reader:
     os.system('docker rm ' + myodoocontainer)
     if myupdate != "":
         print 'Post update wird durchgeführt.'
-    print 'docker run -d --restart=always -p ' + myport + ':8069 --name="' + myodoocontainer + '" ' + myimage + ' start ' + myupdate
-    os.system('docker run -d --restart=always -p ' + myport + ':8069 --name="' + myodoocontainer + '" ' + myimage + ' start ' + myupdate)
+    print 'docker run -d --restart=always -p ' + myport + ':8069 --name="' + myodoocontainer + '" ' + myvolumen + myimage + ' start ' + myupdate
+    os.system('docker run -d --restart=always -p ' + myport + ':8069 --name="' + myodoocontainer + '" ' + myvolumen + myimage + ' start ' + myupdate)
     print myodoocontainer + ' restarted...'
     if os.path.exists(mypath + mydb + '.bak'):
         os.system('rm -r ' + mypath + mydb + '.bak')

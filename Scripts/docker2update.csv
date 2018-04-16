@@ -1,1 +1,2 @@
-# myodoo_containername,databasename,port,path2Dockfile,docker_image_name,postgresql_username,postgresql_userpassword,hostname/ip
+# myodoo_containername,databasename,port,path2Dockfile,docker_image_name,postgresql_username,postgresql_userpassword,hostname/ip,volumen,update
+# f.e. # ownerp,ownerp,11000,/root/docker/11000-ownerp/,myodoo/ownerp,myodoo,myodoo,db," --link myodoo-db:db -v /opt/ownerp/data:/opt/odoo/data ","-u eq_sale"

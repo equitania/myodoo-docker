@@ -1,6 +1,6 @@
 
-# Version 2.0.2
-# Date 15.04.2018
+# Version 2.0.3
+# Date 16.04.2018
 # If you come from bash you might have to change your $PATH.
 # export PATH=$HOME/bin:/usr/local/bin:$PATH
 
@@ -11,9 +11,9 @@
 # Set name of the theme to load. Optionally, if you set this to "random"
 # it'll load a random theme each time that oh-my-zsh is loaded.
 # See https://github.com/robbyrussell/oh-my-zsh/wiki/Themes
-#ZSH_THEME="robbyrussell"
+ZSH_THEME="robbyrussell"
 #ZSH_THEME="gallois"
-ZSH_THEME="nanotech"
+#ZSH_THEME="nanotech"
 
 # Set list of themes to load
 # Setting this variable when ZSH_THEME=random
@@ -107,12 +107,16 @@ alias ngx-='/etc/init.d/nginx stop'
 alias ngx#='/etc/init.d/nginx restart'
 alias ngxr='/etc/init.d/nginx reload'
 alias dps='docker ps -a'
+alias dpsfull='docker inspect  -f "{{.Name}} {{.Config.Cmd}}" $(docker ps -a -q)'
 alias dpi='docker images'
 alias syspatch='apt-get update && apt-get dist-upgrade && apt-get autoremove'
-alias dobk='/root/backup_odoo_docker_postgres_on_host.py'
+alias dobkhost='/root/backup_odoo_docker_postgres_on_host.py'
+alias dobk='/root/container2backup.py'
 alias doup='/root/update_docker_myodoo.py'
-alias edbk='nano -B /root/docker2backup.csv'
+alias edbkhost='nano -B /root/docker2backup.csv'
+alias edbk='nano -B /root/container2backup.csv'
 alias edup='nano -B /root/docker2update.csv'
 alias pga='sudo -u postgres pg_activity -U postgres'
 alias myed='nano -B'
+alias showcerts='ll /etc/letsencrypt/live/'
 

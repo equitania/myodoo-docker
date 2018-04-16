@@ -2,7 +2,7 @@
 # -*- coding: utf-8 -*-
 # Mit diesem Skript wird ein Backup einer Odoo Datenbank inkl. FileStore unter Docker durchgeführt
 # With this script you can backup odoo db on postgresql incl. filestore under Docker
-# Version 2.0.0
+# Version 2.0.2
 # Date 16.04.2018
 ##############################################################################
 #
@@ -71,8 +71,7 @@ for row in reader1:
     if not os.path.exists(mybackupfolder):
         os.mkdir(mybackupfolder)
     os.system('docker exec -i ' + mysqlcontainer + ' pg_dump -U ' + mydbuser + ' ' + mydb + ' > ' + mybackupfolder + '/dump.sql')
-    filestorepath = '/opt/odoo/data/filestore/'
-    os.system('docker cp ' + mydatacontainer + ':/opt/odoo/data/filestore/' + mydb + ' ' + mybackupfolder + '/')
+    filestorepath = '/opt/odoo/data/filestore/'.system('docker cp ' + mydatacontainer + ':/opt/odoo/data/filestore/' + mydb + ' ' + mybackupfolder + '/')
     ts = time.time()
     mytime = datetime.datetime.fromtimestamp(ts).strftime('%Y-%m-%d_%H-%M-%S')
     os.rename(mybackupfolder + '/' + mydb, mybackupfolder + '/filestore')
@@ -87,6 +86,14 @@ if os.path.exists('/etc/nginx/conf.d/'):
     ts = time.time()
     mytime = datetime.datetime.fromtimestamp(ts).strftime('%Y-%m-%d_%H-%M-%S')
     os.system('zip -r ' + mynginxpath + '/nginx-confs_' + mytime + '.zip /etc/nginx/')
+
+# backup letsencrypt
+if os.path.exists('/etc/letsencrypt/live/'):
+    if not os.path.exists(mynginxpath):
+        os.mkdir(mynginxpath)
+    ts = time.time()
+    mytime = datetime.datetime.fromtimestamp(ts).strftime('%Y-%m-%d_%H-%M-%S')
+    os.system('zip -r ' + mynginxpath + '/letsencrypt_' + mytime + '.zip /etc/letsencrypt/live/')
 
 # run by crontab
 # removes any files in mybackuppath older than 14 days
