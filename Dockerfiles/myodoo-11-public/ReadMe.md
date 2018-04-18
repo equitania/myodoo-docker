@@ -3,7 +3,14 @@ docker build -t myodoo/myodoo-11-public:180201 .
 docker push myodoo/myodoo-11-public:180201
 
 # Start Postgres Container
-docker run -d --restart=always -e POSTGRES_USER=myodoo -e POSTGRES_PASSWORD=myodoo --name "myodoo-11-db" postgres:9.6.6
+
+# Start Postgres Container
+docker run -d --restart=always -e POSTGRES_USER=myodoo -e POSTGRES_PASSWORD=myodoo --name "myodoo-11-db" postgres:9.6.8
+# Start Postgres Container mit mount Host Filesystem
+docker run -d --restart=always -v /opt/postgresql/pg-data/:/var/lib/postgresql/data/ -e POSTGRES_USER=myodoo -e POSTGRES_PASSWORD=myodoo --name "myodoo-11-db" postgres:9.6.8
+### Links Optimierungswebsite für Postgres http://pgtune.leopard.in.ua/ oder https://www.pgconfig.org/#/tuning 
+
+### pgAdmin 4 https://hub.docker.com/r/myodoo/pgadmin4/
 
 ## Run
 docker run -d --restart=always -p 11069:8069 --name="myodoo-11-public" --link myodoo-11-db:db  myodoo/myodoo-11-public:180201 start
