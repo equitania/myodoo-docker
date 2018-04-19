@@ -1,8 +1,8 @@
 FROM ubuntu:16.04
 MAINTAINER Equitania Software GmbH <info@myodoo.de>
 # For Odoo 10 powered by MyOdoo.de
-# Version 2.0.6
-# Date 07.04.2018
+# Version 2.0.7
+# Date 18.04.2018
 
 ARG DEBIAN_FRONTEND=noninteractive
 
@@ -80,7 +80,7 @@ RUN set -x; \
 
 # Python packages pip install..
 RUN set -x; \
-    pip install --upgrade pip \
+    pip install pip==9.0.3 \
     && pip install wheel --upgrade \
     && pip install setuptools --upgrade \
     && pip install pyopenssl \
@@ -154,7 +154,8 @@ RUN set -x; \
     && pip install suds \
     && pip install pycrypto==2.6.1 \
     && pip install pyocclient==0.4 \
-    && pip install dropbox==8.7.1
+    && pip install dropbox==8.7.1 \
+    && pip install Office365Api==0.0.9
 
 # OpenSans font install..
 RUN set -x; \
