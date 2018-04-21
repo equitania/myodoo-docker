@@ -60,7 +60,7 @@ alias l='ls --color --classify -lah'
 alias grep='grep --color=auto'
 alias nano='nano --nowrap -B'
 alias hg='history | grep'
-alias myed='nano -B'
+
 # ignore dangerous commands from history and make them safer
 alias rm='rm -I'
 alias chmod=' chmod -c'
