@@ -1,19 +1,15 @@
-
-# Version 2.0.3
-# Date 16.04.2018
 # If you come from bash you might have to change your $PATH.
 # export PATH=$HOME/bin:/usr/local/bin:$PATH
 
-# Install with >>> sh -c "$(wget https://raw.github.com/robbyrussell/oh-my-zsh/master/tools/install.sh -O -)"
 # Path to your oh-my-zsh installation.
-  export ZSH=/root/.oh-my-zsh
+  export ZSH=/home/ownerp/.oh-my-zsh
 
 # Set name of the theme to load. Optionally, if you set this to "random"
 # it'll load a random theme each time that oh-my-zsh is loaded.
 # See https://github.com/robbyrussell/oh-my-zsh/wiki/Themes
-ZSH_THEME="robbyrussell"
+#ZSH_THEME="robbyrussell"
 #ZSH_THEME="gallois"
-#ZSH_THEME="nanotech"
+ZSH_THEME="nanotech"
 
 # Set list of themes to load
 # Setting this variable when ZSH_THEME=random
@@ -138,21 +134,27 @@ alias shred=' shred -u -z'
 alias cp='cp -i'
 alias mv='mv -i'
 
-# Server
-alias cdngx='cd /etc/nginx/conf.d/'
-alias ngx+='/etc/init.d/nginx start'
-alias ngx-='/etc/init.d/nginx stop'
-alias ngx#='/etc/init.d/nginx restart'
-alias ngxr='/etc/init.d/nginx reload'
+# dev variables
+dodev8="./odoo.py -c /home/ownerp/Public/gitbase/dev-helpers/conf/odoo8.conf --db-filter=v8_basis -d v8_basis"
+dodev10="./odoo-bin -c /home/ownerp/Public/gitbase/dev-helpers/conf/odoo10.conf --db-filter=v10_basis -d v10_basis"
+dodev11="./odoo-bin -c /home/ownerp/Public/gitbase/dev-helpers/conf/odoo11.conf --db-filter=v11_basis -d v11_basis"
+# Dev
 alias dps='docker ps -a'
-alias dpsfull='docker inspect  -f "{{.Name}} {{.Config.Cmd}}" $(docker ps -a -q)'
 alias dpi='docker images'
-alias syspatch='apt-get update && apt-get dist-upgrade && apt-get autoremove'
-alias dobkhost='/root/backup_odoo_docker_postgres_on_host.py'
-alias dobk='/root/container2backup.py'
-alias doup='/root/update_docker_myodoo.py'
-alias edbkhost='nano -B /root/docker2backup.csv'
-alias edbk='nano -B /root/container2backup.csv'
-alias edup='nano -B /root/docker2update.csv'
+alias syspatch='sudo apt-get update && sudo apt-get dist-upgrade && sudo apt-get autoclean'
 alias pga='sudo -u postgres pg_activity -U postgres'
-alias showcerts='ll /etc/letsencrypt/live/'
+alias dev8='cd /home/ownerp/venv/ && source v8-p27/bin/activate && cd /home/ownerp/Public/gitbase/v8-server/'
+alias dev10='cd /home/ownerp/venv/ && source v10-p27/bin/activate && cd /home/ownerp/Public/gitbase/v10-server/'
+alias dev10pypy='cd /home/ownerp/venv/ && source pypy27_v10/bin/activate && cd /home/ownerp/Public/gitbase/v10-server-pypy/'
+alias dev11='cd /home/ownerp/venv/ && source v11-p36/bin/activate && cd /home/ownerp/Public/gitbase/v11-server/'
+alias p27='cd /home/ownerp/venv/ && source p27/bin/activate && cd /home/ownerp/'
+alias pypy27='cd /home/ownerp/venv/ && source pypy27/bin/activate && cd /home/ownerp/'
+alias p36='cd /home/ownerp/venv/ && source p36/bin/activate && cd /home/ownerp/'
+alias dev-='deactivate && cd /home/ownerp/Public/gitbase'
+alias myed='nano -B'
+alias mygit='cd /home/ownerp/Public/gitbase/'
+alias exam8='echo "dev8 to clipboad $dodev8" && echo $dodev8 | xclip -selection clipboard'
+alias exam10='echo "dev10 to clipboad $dodev10" && echo $dodev10 | xclip -selection clipboard'
+alias exam11='echo "dev11 to clipboad $dodev11" && echo $dodev11 | xclip -selection clipboard'
+
+mygit
