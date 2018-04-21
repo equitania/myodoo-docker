@@ -99,8 +99,46 @@ source $ZSH/oh-my-zsh.sh
 alias zshconfig="nano -B ~/.zshrc"
 alias ohmyzsh="nano -B ~/.oh-my-zsh"
 
-# Shortcuts
-alias ll='ls -alh'
+### keybindings ###
+# vi mode
+bindkey -v
+# home/end (urxvt)
+bindkey "\e[7~" beginning-of-line
+bindkey "\e[8~" end-of-line
+# home/end (xterm)
+bindkey "\e[1~" beginning-of-line
+bindkey "\e[4~" end-of-line
+# Shift=Tab (completion)
+bindkey "\e[Z" reverse-menu-complete
+# insert
+bindkey "\e[2~" overwrite-mode
+# delete
+bindkey "\e[3~" delete-char
+# history search with started command
+bindkey "\e[A" up-line-or-search
+bindkey "\e[B" down-line-or-search
+# Ctrl+R
+bindkey '^R' history-incremental-search-backward
+
+
+### aliases / functions ###
+# default settings
+alias ls='ls --color --classify'
+alias ll='ls -al --color --classify'
+alias l='ls --color --classify -lah'
+alias grep='grep --color=auto'
+alias nano='nano --nowrap -B'
+alias hg='history | grep'
+
+# ignore dangerous commands from history and make them safer
+alias rm='rm -I'
+alias chmod=' chmod -c'
+alias chown=' chown -c'
+alias shred=' shred -u -z'
+alias cp='cp -i'
+alias mv='mv -i'
+
+# Server
 alias cdngx='cd /etc/nginx/conf.d/'
 alias ngx+='/etc/init.d/nginx start'
 alias ngx-='/etc/init.d/nginx stop'
@@ -117,6 +155,4 @@ alias edbkhost='nano -B /root/docker2backup.csv'
 alias edbk='nano -B /root/container2backup.csv'
 alias edup='nano -B /root/docker2update.csv'
 alias pga='sudo -u postgres pg_activity -U postgres'
-alias myed='nano -B'
 alias showcerts='ll /etc/letsencrypt/live/'
-
