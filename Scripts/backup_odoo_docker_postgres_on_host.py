@@ -2,8 +2,8 @@
 # -*- coding: utf-8 -*-
 # Mit diesem Skript wird ein Backup einer Odoo Datenbank inkl. FileStore unter Docker durchgeführt
 # With this script you can backup odoo db on postgresql incl. filestore under Docker
-# Version 1.0.4
-# Date 04.02.2018
+# Version 1.0.5
+# Date 21.04.2018
 ##############################################################################
 #
 #    Shell Script for Odoo, Open Source Management Solution
@@ -89,6 +89,14 @@ if os.path.exists('/etc/nginx/conf.d/'):
     ts = time.time()
     mytime = datetime.datetime.fromtimestamp(ts).strftime('%Y-%m-%d_%H-%M-%S')
     os.system('zip -r ' + mynginxpath + '/nginx-confs_' + mytime + '.zip /etc/nginx/conf.d/')
+
+# backup letsencrypt
+if os.path.exists('/etc/letsencrypt/live/'):
+    if not os.path.exists(mynginxpath):
+        os.mkdir(mynginxpath)
+    ts = time.time()
+    mytime = datetime.datetime.fromtimestamp(ts).strftime('%Y-%m-%d_%H-%M-%S')
+    os.system('zip -r ' + mynginxpath + '/letsencrypt_' + mytime + '.zip /etc/letsencrypt/live/')
 
 # run by crontab
 # removes any files in mybackuppath older than 14 days
