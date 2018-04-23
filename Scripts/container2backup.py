@@ -2,8 +2,8 @@
 # -*- coding: utf-8 -*-
 # Mit diesem Skript wird ein Backup einer Odoo Datenbank inkl. FileStore unter Docker durchgeführt
 # With this script you can backup odoo db on postgresql incl. filestore under Docker
-# Version 2.0.2
-# Date 16.04.2018
+# Version 2.0.3
+# Date 23.04.2018
 ##############################################################################
 #
 #    Shell Script for Odoo, Open Source Management Solution
@@ -71,7 +71,8 @@ for row in reader1:
     if not os.path.exists(mybackupfolder):
         os.mkdir(mybackupfolder)
     os.system('docker exec -i ' + mysqlcontainer + ' pg_dump -U ' + mydbuser + ' ' + mydb + ' > ' + mybackupfolder + '/dump.sql')
-    filestorepath = '/opt/odoo/data/filestore/'.system('docker cp ' + mydatacontainer + ':/opt/odoo/data/filestore/' + mydb + ' ' + mybackupfolder + '/')
+    filestorepath = '/opt/odoo/data/filestore/'
+    os.system('docker cp ' + mydatacontainer + ':/opt/odoo/data/filestore/' + mydb + ' ' + mybackupfolder + '/')
     ts = time.time()
     mytime = datetime.datetime.fromtimestamp(ts).strftime('%Y-%m-%d_%H-%M-%S')
     os.rename(mybackupfolder + '/' + mydb, mybackupfolder + '/filestore')
