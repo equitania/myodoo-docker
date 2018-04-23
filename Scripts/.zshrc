@@ -1,6 +1,6 @@
 # Oh my ZSH powered by MyOdoo.de
-# Version 1.1.0
-# Date 21.04.2018
+# Version 1.1.1
+# Date 23.04.2018
 
 # If you come from bash you might have to change your $PATH.
 # export PATH=$HOME/bin:/usr/local/bin:$PATH
@@ -149,10 +149,10 @@ alias dpsfull='docker inspect  -f "{{.Name}} {{.Config.Cmd}}" $(docker ps -a -q)
 alias dpi='docker images'
 alias syspatch='apt-get update && apt-get dist-upgrade && apt-get autoremove'
 alias dobkhost='/root/backup_odoo_docker_postgres_on_host.py'
-alias dobk='/root/container2backup.py'
+alias dobkc='/root/container2backup.py'
 alias doup='/root/update_docker_myodoo.py'
-alias edbkhost='nano -B /root/docker2backup.csv'
-alias edbk='nano -B /root/container2backup.csv'
+alias edbk='nano -B /root/docker2backup.csv'
+alias edbkc='nano -B /root/container2backup.csv'
 alias edup='nano -B /root/docker2update.csv'
 alias pga='sudo -u postgres pg_activity -U postgres'
 alias showcerts='ll /etc/letsencrypt/live/'
