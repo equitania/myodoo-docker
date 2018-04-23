@@ -131,5 +131,9 @@ fname_rsync = 'rsync_targets.csv'
 if os.path.isfile(fname_rsync):
     reader2 = csv.reader(open(fname_rsync, 'rb'))
     for row in reader2:
-        os.system(row[0])
+        if (row[0].startswith('#')) or (row[0] == '') or (row[0] == None):
+            continue
+        else:
+            os.system(row[0])
+
 print 'Backup done!'
