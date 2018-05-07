@@ -1,7 +1,7 @@
 #!/usr/bin/python
 # -*- coding: utf-8 -*-
 # Dieses Skript hilft beim Organisieren von Docker-Servern
-# Version 2.0.3
+# Version 2.0.4
 # Date 23.04.2018
 ##############################################################################
 #
@@ -26,13 +26,15 @@ import os
 
 # main
 global_server_version = 'master'
-os.chdir("/root/myodoo-docker")
+myhome = os.path.expanduser('~')
+os.chdir(myhome + "/" + "myodoo-docker")
 os.system("git checkout "+global_server_version)
 os.system("git pull")
 os.system("find . -name '*.pyc' -type f -print0 | xargs -0 /bin/rm -f")
-os.system("cp /root/myodoo-docker/Scripts/.zshrc /root/.zshrc")
-os.system("cp /root/myodoo-docker/Scripts/certbot-renew.sh /root/")
-os.system("cp -r /root/myodoo-docker/nginx-conf /root/")
-os.system("cp /root/myodoo-docker/Scripts/update_docker_myodoo.py /root/")
-os.system("cp /root/myodoo-docker/Scripts/backup_odoo_docker_postgres_on_host.py /root/")
-os.system("cp /root/myodoo-docker/Scripts/container2backup.py /root/")
+os.system("cp $HOME/myodoo-docker/Scripts/.zshrc $HOME/.zshrc")
+os.system("cp $HOME/myodoo-docker/Scripts/certbot-renew.sh $HOME")
+os.system("cp -r $HOME/myodoo-docker/nginx-conf $HOME")
+os.system("cp $HOME/myodoo-docker/Scripts/update_docker_myodoo.py $HOME")
+os.system("cp $HOME/myodoo-docker/Scripts/backup_odoo_docker_postgres_on_host.py $HOME")
+os.system("cp $HOME/myodoo-docker/Scripts/container2backup.py $HOME")
+
