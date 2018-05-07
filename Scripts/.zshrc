@@ -1,6 +1,6 @@
 # Oh my ZSH powered by MyOdoo.de
-# Version 1.1.3
-# Date 23.04.2018
+# Version 1.1.4
+# Date 07.05.2018
 # Install: sh -c "$(curl -fsSL https://raw.github.com/robbyrussell/oh-my-zsh/master/tools/install.sh)"
 
 # If you come from bash you might have to change your $PATH.
@@ -26,7 +26,23 @@ ZSH_THEME="robbyrussell"
 # Uncomment the following line to use case-sensitive completion.
 # CASE_SENSITIVE="true"
 
-# Uncomment the following line to use hyphen-insensitive completion. Case
+# Uncomment the following # --prefix=/etc/nginx
+# --sbin-path=/usr/sbin/nginx
+# --modules-path=/usr/lib/nginx/modules
+# --conf-path=/etc/nginx/nginx.conf
+# --error-log-path=/var/log/nginx/error.log
+# --http-log-path=/var/log/nginx/access.log
+# --pid-path=/var/run/nginx.pid
+# --lock-path=/var/run/nginx.lock
+# --http-client-body-temp-path=/var/cache/nginx/client_temp
+# --http-proxy-temp-path=/var/cache/nginx/proxy_temp
+# --http-fastcgi-temp-path=/var/cache/nginx/fastcgi_temp
+# --http-uwsgi-temp-path=/var/cache/nginx/uwsgi_temp
+# --http-scgi-temp-path=/var/cache/nginx/scgi_temp
+# --user=nginx
+# --group=nginx
+# --with-http_ssl_module
+# --with-http_v2_moduleline to use hyphen-insensitive completion. Case
 # sensitive completion must be off. _ and - will be interchangeable.
 # HYPHEN_INSENSITIVE="true"
 
@@ -53,7 +69,23 @@ COMPLETION_WAITING_DOTS="true"
 # much, much faster.
 # DISABLE_UNTRACKED_FILES_DIRTY="true"
 
-# Uncomment the following line if you want to change the command execution time
+# Uncomment the following # --prefix=/etc/nginx
+# --sbin-path=/usr/sbin/nginx
+# --modules-path=/usr/lib/nginx/modules
+# --conf-path=/etc/nginx/nginx.conf
+# --error-log-path=/var/log/nginx/error.log
+# --http-log-path=/var/log/nginx/access.log
+# --pid-path=/var/run/nginx.pid
+# --lock-path=/var/run/nginx.lock
+# --http-client-body-temp-path=/var/cache/nginx/client_temp
+# --http-proxy-temp-path=/var/cache/nginx/proxy_temp
+# --http-fastcgi-temp-path=/var/cache/nginx/fastcgi_temp
+# --http-uwsgi-temp-path=/var/cache/nginx/uwsgi_temp
+# --http-scgi-temp-path=/var/cache/nginx/scgi_temp
+# --user=nginx
+# --group=nginx
+# --with-http_ssl_module
+# --with-http_v2_moduleline if you want to change the command execution time
 # stamp shown in the history command output.
 # The optional three formats: "mm/dd/yyyy"|"dd.mm.yyyy"|"yyyy-mm-dd"
 # HIST_STAMPS="mm/dd/yyyy"
@@ -141,13 +173,13 @@ alias mv='mv -i'
 
 # server alias
 alias cdngx='cd /etc/nginx/conf.d/'
-alias ngx+='/etc/init.d/nginx start'
-alias ngx-='/etc/init.d/nginx stop'
-alias ngx#='/etc/init.d/nginx restart'
-alias ngxr='/etc/init.d/nginx reload'
-alias dps='docker ps -a'
-alias dpsfull='docker inspect  -f "{{.Name}} {{.Config.Cmd}}" $(docker ps -a -q)'
-alias dpi='docker images'
+alias ngx+='sudo service nginx start'
+alias ngx-='sudo service nginx stop'
+alias ngx#='sudo service nginx restart'
+alias ngxr='sudo service nginx reload'
+alias dps='sudo docker ps -a'
+alias dpsfull='sudo docker inspect  -f "{{.Name}} {{.Config.Cmd}}" $(docker ps -a -q)'
+alias dpi='sudo docker images'
 alias syspatch='apt-get update && apt-get dist-upgrade && apt-get autoremove'
 alias dobk='/root/backup_odoo_docker_postgres_on_host.py'
 alias dobkc='/root/container2backup.py'
