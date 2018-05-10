@@ -1,12 +1,12 @@
 FROM ubuntu:16.04
 MAINTAINER Equitania Software GmbH <info@myodoo.de>
 # For Odoo 10 powered by MyOdoo.de
-# Version 2.0.8
-# Date 24.04.2018
+# Version 2.0.9
+# Date 10.05.2018
 
 ARG DEBIAN_FRONTEND=noninteractive
 
-RUN apt-get update && apt-get -y dist-upgrade && apt-get install -y apt-utils wget locales
+RUN apt-get update && apt-get -y dist-upgrade && apt-get install -y wget locales
 
 # Set LOCALE to UTF8..
 RUN echo "en_US.UTF-8 UTF-8" > /etc/locale.gen && \
@@ -154,7 +154,12 @@ RUN set -x; \
     && python2.7 -m pip install --no-cache-dir pycrypto==2.6.1 \
     && python2.7 -m pip install --no-cache-dir pyocclient==0.4 \
     && python2.7 -m pip install --no-cache-dir dropbox==8.7.1 \
-    && python2.7 -m pip install --no-cache-dir Office365Api==0.0.9
+    && python2.7 -m pip install --no-cache-dir Office365Api==0.0.9 \
+    && python2.7 -m pip install --no-cache-dir oauthlib \
+    && python2.7 -m pip install --no-cache-dir sphinx==1.4.6 \
+    && python2.7 -m pip install --no-cache-dir sphinx_tabs==1.1.6 \
+    && python2.7 -m pip install --no-cache-dir sphinxcontrib-httpdomain==1.5.0 \
+    && python2.7 -m pip install --no-cache-dir sphinx_rtd_theme==0.2.5b2
 
 # OpenSans font install..
 RUN set -x; \

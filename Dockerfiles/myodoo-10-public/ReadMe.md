@@ -1,6 +1,6 @@
 ## Build
-docker build -t myodoo/myodoo-10-public:180201 .
-docker push myodoo/myodoo-10-public:180201
+docker build -t myodoo/myodoo-10-public:180510 .
+docker push myodoo/myodoo-10-public:180510
 
 # Start Postgres Container
 docker run -d --restart=always -e POSTGRES_USER=myodoo -e POSTGRES_PASSWORD=myodoo --name "myodoo-10-db" postgres:9.6.8
@@ -11,16 +11,16 @@ docker run -d --restart=always -v /opt/postgresql/pg-data/:/var/lib/postgresql/d
 ### pgAdmin 4 https://hub.docker.com/r/myodoo/pgadmin4/
 
 ## Run
-docker run -d --restart=always -p 10069:8069 --name="myodoo-10-public" --link myodoo-10-db:db  myodoo/myodoo-10-public:180201 start
+docker run -d --restart=always -p 10069:8069 --name="myodoo-10-public" --link myodoo-10-db:db  myodoo/myodoo-10-public:180510 start
 
 ## Test
-docker run -it --rm -p 10069:8069 --name="myodoo-10-public" --link myodoo-10-db:db  myodoo/myodoo-10-public:180201 start
+docker run -it --rm -p 10069:8069 --name="myodoo-10-public" --link myodoo-10-db:db  myodoo/myodoo-10-public:180510 start
 
 ## Filestore auf Host mounten
-docker run -d --restart=always -p 10069:8069 --name="myodoo-10-public" -v ~/odoofilestore:/opt/odoo/data --link myodoo-10-db:db  myodoo/myodoo-10-public:180201 start
+docker run -d --restart=always -p 10069:8069 --name="myodoo-10-public" -v /opt/odoo/data:/opt/odoo/data --link myodoo-10-db:db  myodoo/myodoo-10-public:180510 start
  
 ## Update
-docker run -it --rm -p 10069:8069 --name="myodoo-10-public" --link myodoo-10-db:db myodoo/myodoo-10-public:180201 update --database=test --db_user=myodoo --db_password=myodoo --db_host=db
+docker run -it --rm -p 10069:8069 --name="myodoo-10-public" --link myodoo-10-db:db myodoo/myodoo-10-public:180510 update --database=test --db_user=myodoo --db_password=myodoo --db_host=db
 
 ## Update im Container
 sudo -i -u odoo /usr/bin/python \

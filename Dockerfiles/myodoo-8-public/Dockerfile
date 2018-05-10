@@ -1,4 +1,4 @@
-FROM myodoo/prepare-v8:1.0.14
+FROM myodoo/prepare-v8:1.0.17
 MAINTAINER Equitania Software GmbH <info@myodoo.de>
 # Odoo 8 powered by MyOdoo.de
 

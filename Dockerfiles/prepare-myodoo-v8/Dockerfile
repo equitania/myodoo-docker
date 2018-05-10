@@ -1,24 +1,29 @@
 FROM debian:jessie
 MAINTAINER Equitania Software GmbH <info@myodoo.de>
 # For Odoo 8 powered by MyOdoo.de
-# Version 1.0.16
-# Date 24.04.2018
+# Version 1.0.17
+# Date 10.05.2018
 
-CMD "echo" "MyOdoo build will start now.."
+# "echo" "MyOdoo build will start now.."
 
 ENV DEBIAN_FRONTEND noninteractive
 
-RUN apt-get update && apt-get -y dist-upgrade && apt-get install -y apt-utils locales
+RUN apt-get update && apt-get -y dist-upgrade && apt-get install -y locales
 
-CMD "echo" "Update bash.."
+# "echo" "Update bash.."
 COPY ./.bashrc /root/
 
-CMD "echo" "Set LOCALE to UTF8.."
+RUN \
+  apt-get -y install tzdata && \
+  ln -sf /usr/share/zoneinfo/Europe/Berlin /etc/localtime
+
+# "echo" "Set LOCALE to UTF8.."
 RUN echo "en_US.UTF-8 UTF-8" > /etc/locale.gen && \
     locale-gen en_US.UTF-8 && \
     dpkg-reconfigure locales && \
     /usr/sbin/update-locale LANG=en_US.UTF-8
 ENV LC_ALL en_US.UTF-8
+
 
 # "echo" "Set fs.inotify.max_user_watches = 524288.."
 RUN echo "fs.inotify.max_user_watches = 524288" >> /etc/sysctl.conf
@@ -122,10 +127,8 @@ RUN set -x; \
     && python2.7 -m pip install --no-cache-dir Werkzeug==0.11.11 \
     && python2.7 -m pip install --no-cache-dir wsgiref==0.1.2 \
     && python2.7 -m pip install --no-cache-dir XlsxWriter==0.9.3 \
-    && python2.7 -m pip install --no-cache-dir xlwt==1.1.2
-
-RUN set -x; \
-    python2.7 -m pip install --no-cache-dir gdata \
+    && python2.7 -m pip install --no-cache-dir xlwt==1.1.2 \
+    && python2.7 -m pip install --no-cache-dir gdata \
     && python2.7 -m pip install --no-cache-dir simplejson \
     && python2.7 -m pip install --no-cache-dir unittest2 \
     && python2.7 -m pip install --no-cache-dir pdftools \
@@ -151,14 +154,14 @@ RUN set -x; \
     && python2.7 -m pip install --no-cache-dir phonenumbers \
     && python2.7 -m pip install --no-cache-dir pysftp
 
-CMD "echo" "OpenSans font install.."
+# "echo" "OpenSans font install.."
 RUN set -x; \
 		wget https://release.myodoo.de/fonts/opensans.zip \
 		&& unzip opensans.zip \
 		&& mv opensans /usr/share/fonts/truetype/ \
 		&& rm opensans.zip
 
-CMD "echo" "Barcodes font install.."
+# "echo" "Barcodes font install.."
 RUN set -x; \
 		wget http://www.reportlab.com/ftp/pfbfer.zip \
 		&& unzip pfbfer.zip -d fonts \
@@ -166,7 +169,7 @@ RUN set -x; \
 		&& rm pfbfer.zip \
 		&& fc-cache -f -v
 
-CMD "echo" "PDF export engine install.."
+# "echo" "PDF export engine install.."
 # http://download.gna.org/wkhtmltopdf/0.12/
 # http://nightly.odoo.com/extra/
 RUN set -x; \
@@ -179,6 +182,4 @@ RUN set -x; \
 		&& apt-get purge -y --auto-remove -o APT::AutoRemove::RecommendsImportant=false -o APT::AutoRemove::SuggestsImportant=false npm \
 		&& rm -rf /var/lib/apt/lists/* wkhtmltox.deb
 
-CMD "echo" "Cleanup.."
-RUN apt-get autoremove
-CMD "echo" "Finished with build."
+# "echo" "Finished with build."

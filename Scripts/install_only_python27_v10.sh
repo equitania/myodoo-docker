@@ -1,7 +1,7 @@
 #!/bin/bash
 # Install all Python 2.7 Libs for Odoo 10
 # Script must run with mit root-rights
-# Version 2.0.4 - Stand 05.04.2018
+# Version 2.0.5 - Stand 10.05.2018
 ##############################################################################
 #
 #    Shell Script for Odoo, Open Source Management Solution
@@ -96,4 +96,13 @@ python2.7 -m pip install --no-cache-dir pip==9.0.3 \
     && python2.7 -m pip install --no-cache-dir suds \
     && python2.7 -m pip install --no-cache-dir pycrypto==2.6.1 \
     && python2.7 -m pip install --no-cache-dir pyocclient==0.4 \
-    && python2.7 -m pip install --no-cache-dir dropbox==8.7.1
+    && python2.7 -m pip install --no-cache-dir dropbox==8.7.1 \
+    && python2.7 -m pip install --no-cache-dir Office365Api==0.0.9 \
+    && python2.7 -m pip install --no-cache-dir oauthlib \
+    && python2.7 -m pip install --no-cache-dir sphinx==1.4.6 \
+    && python2.7 -m pip install --no-cache-dir sphinx_tabs==1.1.6 \
+    && python2.7 -m pip install --no-cache-dir sphinxcontrib-httpdomain==1.5.0 \
+    && python2.7 -m pip install --no-cache-dir sphinx_rtd_theme==0.2.5b2
+
+
+

@@ -1,13 +1,13 @@
 FROM ubuntu:16.04
 MAINTAINER Equitania Software GmbH <info@myodoo.de>
 # For Odoo 11 powered by MyOdoo.de
-# Version 1.0.3
-# Date 08.04.2018
+# Version 1.0.4
+# Date 10.05.2018
 
 
 ARG DEBIAN_FRONTEND=noninteractive
 
-RUN apt-get update && apt-get -y dist-upgrade && apt-get install -y apt-utils wget locales
+RUN apt-get update && apt-get -y dist-upgrade && apt-get install -y wget locales
 
 # Set LOCALE to UTF8..
 RUN echo "en_US.UTF-8 UTF-8" > /etc/locale.gen && \
@@ -72,53 +72,53 @@ RUN set -x; \
 
 # Python packages pip install..
 RUN set -x; \
-    pip3 install --upgrade pip \
-    && pip3 install wheel  --upgrade \
-    && pip3 install setuptools  --upgrade \
-    && pip3 install Babel==2.3.4 \
-    && pip3 install decorator==4.0.10 \
-    && pip3 install docutils==0.12 \
-    && pip3 install feedparser==5.2.1 \
-    && pip3 install gevent==1.1.2 \
-    && pip3 install greenlet==0.4.10 \
-    && pip3 install html2text==2016.9.19 \
-    && pip3 install Jinja2==2.8 \
-    && pip3 install lxml==3.7.1 \
-    && pip3 install Mako==1.0.4 \
-    && pip3 install MarkupSafe==0.23 \
-    && pip3 install mock==2.0.0 \
-    && pip3 install num2words==0.5.4 \
-    && pip3 install ofxparse==0.16 \
-    && pip3 install passlib==1.6.5 \
-    && pip3 install Pillow==4.0.0 \
-    && pip3 install psutil==4.3.1 \
-    && pip3 install psycopg2==2.7.3.1 \
-    && pip3 install pydot==1.2.3 \
-    && pip3 install pyldap==2.4.28 \
-    && pip3 install pyparsing==2.1.10 \
-    && pip3 install PyPDF2==1.26.0 \
-    && pip3 install pyserial==3.1.1 \
-    && pip3 install python-dateutil==2.5.3 \
-    && pip3 install pytz==2016.7 \
-    && pip3 install pyusb==1.0.0 \
-    && pip3 install PyYAML==3.12 \
-    && pip3 install qrcode==5.3 \
-    && pip3 install reportlab==3.3.0 \
-    && pip3 install requests==2.11.1 \
-    && pip3 install six==1.10.0 \
-    && pip3 install suds-jurko==0.6 \
-    && pip3 install vatnumber==1.2 \
-    && pip3 install vobject==0.9.3 \
-    && pip3 install Werkzeug==0.11.11 \
-    && pip3 install XlsxWriter==0.9.3 \
-    && pip3 install xlwt==1.3.* \
-    && pip3 install xlrd==1.0.0 \
-    && pip3 install openpyxl \
-    && pip3 install phonenumbers \
-    && pip3 install odoorpc \
-    && pip3 install elasticsearch==6.1.1 \
-    && pip3 install dropbox==8.7.1 \
-    && pip3 install MT-940
+    python3 -m pip install --no-cache-dir pip==10.0.1 \
+    && python3 -m pip install --no-cache-dir wheel --upgrade \
+    && python3 -m pip install --no-cache-dir setuptools --upgrade \
+    && python3 -m pip install --no-cache-dir Babel==2.3.4 \
+    && python3 -m pip install --no-cache-dir decorator==4.0.10 \
+    && python3 -m pip install --no-cache-dir docutils==0.12 \
+    && python3 -m pip install --no-cache-dir feedparser==5.2.1 \
+    && python3 -m pip install --no-cache-dir gevent==1.1.2 \
+    && python3 -m pip install --no-cache-dir greenlet==0.4.10 \
+    && python3 -m pip install --no-cache-dir html2text==2016.9.19 \
+    && python3 -m pip install --no-cache-dir Jinja2==2.8 \
+    && python3 -m pip install --no-cache-dir lxml==3.7.1 \
+    && python3 -m pip install --no-cache-dir Mako==1.0.4 \
+    && python3 -m pip install --no-cache-dir MarkupSafe==0.23 \
+    && python3 -m pip install --no-cache-dir mock==2.0.0 \
+    && python3 -m pip install --no-cache-dir num2words==0.5.4 \
+    && python3 -m pip install --no-cache-dir ofxparse==0.16 \
+    && python3 -m pip install --no-cache-dir passlib==1.6.5 \
+    && python3 -m pip install --no-cache-dir Pillow==4.0.0 \
+    && python3 -m pip install --no-cache-dir psutil==4.3.1 \
+    && python3 -m pip install --no-cache-dir psycopg2==2.7.3.1 \
+    && python3 -m pip install --no-cache-dir pydot==1.2.3 \
+    && python3 -m pip install --no-cache-dir pyldap==2.4.28 \
+    && python3 -m pip install --no-cache-dir pyparsing==2.1.10 \
+    && python3 -m pip install --no-cache-dir PyPDF2==1.26.0 \
+    && python3 -m pip install --no-cache-dir pyserial==3.1.1 \
+    && python3 -m pip install --no-cache-dir python-dateutil==2.5.3 \
+    && python3 -m pip install --no-cache-dir pytz==2016.7 \
+    && python3 -m pip install --no-cache-dir pyusb==1.0.0 \
+    && python3 -m pip install --no-cache-dir PyYAML==3.12 \
+    && python3 -m pip install --no-cache-dir qrcode==5.3 \
+    && python3 -m pip install --no-cache-dir reportlab==3.3.0 \
+    && python3 -m pip install --no-cache-dir requests==2.11.1 \
+    && python3 -m pip install --no-cache-dir six==1.10.0 \
+    && python3 -m pip install --no-cache-dir suds-jurko==0.6 \
+    && python3 -m pip install --no-cache-dir vatnumber==1.2 \
+    && python3 -m pip install --no-cache-dir vobject==0.9.3 \
+    && python3 -m pip install --no-cache-dir Werkzeug==0.11.11 \
+    && python3 -m pip install --no-cache-dir XlsxWriter==0.9.3 \
+    && python3 -m pip install --no-cache-dir xlwt==1.3.* \
+    && python3 -m pip install --no-cache-dir xlrd==1.0.0 \
+    && python3 -m pip install --no-cache-dir openpyxl \
+    && python3 -m pip install --no-cache-dir phonenumbers \
+    && python3 -m pip install --no-cache-dir odoorpc \
+    && python3 -m pip install --no-cache-dir elasticsearch==6.1.1 \
+    && python3 -m pip install --no-cache-dir dropbox==8.7.1 \
+    && python3 -m pip install --no-cache-dir MT-940
 
 # OpenSans font install..
 RUN set -x; \
