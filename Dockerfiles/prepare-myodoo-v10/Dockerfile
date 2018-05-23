@@ -1,12 +1,13 @@
 FROM ubuntu:16.04
 MAINTAINER Equitania Software GmbH <info@myodoo.de>
 # For Odoo 10 powered by MyOdoo.de
-# Version 2.0.9
-# Date 10.05.2018
+# Version 2.1.0
+# Date 23.05.2018
 
 ARG DEBIAN_FRONTEND=noninteractive
 
-RUN apt-get update && apt-get -y dist-upgrade && apt-get install -y wget locales
+RUN apt-get update && apt-get -y dist-upgrade && apt-get install -y wget locales tzdata && \
+    ln -sf /usr/share/zoneinfo/Europe/Berlin /etc/localtime
 
 # Set LOCALE to UTF8..
 RUN echo "en_US.UTF-8 UTF-8" > /etc/locale.gen && \
@@ -14,10 +15,6 @@ RUN echo "en_US.UTF-8 UTF-8" > /etc/locale.gen && \
     dpkg-reconfigure locales && \
     /usr/sbin/update-locale LANG=en_US.UTF-8
 ENV LC_ALL en_US.UTF-8
-
-RUN \
-  apt-get -y install tzdata && \
-  ln -sf /usr/share/zoneinfo/Europe/Berlin /etc/localtime
 
 # Postgres 9.6 for Ubuntu
 RUN wget -q https://www.postgresql.org/media/keys/ACCC4CF8.asc -O - | apt-key add - && \
@@ -159,7 +156,10 @@ RUN set -x; \
     && python2.7 -m pip install --no-cache-dir sphinx==1.4.6 \
     && python2.7 -m pip install --no-cache-dir sphinx_tabs==1.1.6 \
     && python2.7 -m pip install --no-cache-dir sphinxcontrib-httpdomain==1.5.0 \
-    && python2.7 -m pip install --no-cache-dir sphinx_rtd_theme==0.2.5b2
+    && python2.7 -m pip install --no-cache-dir sphinx_rtd_theme==0.2.5b2 \
+    && python2.7 -m pip install --no-cache-dir zammad-py==0.1.3 \
+    && python2.7 -m pip install --no-cache-dir bs4==0.0.1 \
+    && python2.7 -m pip install --no-cache-dir zenpy==2.0.4
 
 # OpenSans font install..
 RUN set -x; \

@@ -1,7 +1,7 @@
 #!/bin/bash
 # Install all Python 2.7 Libs for Odoo 10
 # Script must run with mit root-rights
-# Version 2.0.5 - Stand 10.05.2018
+# Version 2.0.6 - Stand 23.05.2018
 ##############################################################################
 #
 #    Shell Script for Odoo, Open Source Management Solution
@@ -102,7 +102,10 @@ python2.7 -m pip install --no-cache-dir pip==9.0.3 \
     && python2.7 -m pip install --no-cache-dir sphinx==1.4.6 \
     && python2.7 -m pip install --no-cache-dir sphinx_tabs==1.1.6 \
     && python2.7 -m pip install --no-cache-dir sphinxcontrib-httpdomain==1.5.0 \
-    && python2.7 -m pip install --no-cache-dir sphinx_rtd_theme==0.2.5b2
+    && python2.7 -m pip install --no-cache-dir sphinx_rtd_theme==0.2.5b2 \
+    && python2.7 -m pip install --no-cache-dir zammad-py==0.1.3 \
+    && python2.7 -m pip install --no-cache-dir bs4==0.0.1 \
+    && python2.7 -m pip install --no-cache-dir zenpy==2.0.4
 
 
 
