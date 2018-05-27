@@ -1,8 +1,8 @@
-#pgAdmin4 in docker container - Version 2.1
+#pgAdmin4 in docker container - Version 3.0
 
 ## Build
-`docker build -t myodoo/pgadmin4:2.1 .`   
-`docker push myodoo/pgadmin4:2.1`  
+`docker build -t myodoo/pgadmin4:3.0 .`   
+`docker push myodoo/pgadmin4:3.0`  
   
   
 **Quick start**
@@ -11,10 +11,10 @@
 mkdir -p /home/user/.config/pgadmin
 
 ##### Test  
-`$ docker run -it -rm --name="pgadmin4" -p 5050:5050 -v /home/user/.config/pgadmin:/var/lib/pgadmin myodoo/pgadmin4:2.1 `
+`$ docker run -it -rm --name="pgadmin4" -p 5050:5050 -v /home/user/.config/pgadmin:/var/lib/pgadmin myodoo/pgadmin4:3.0`
   
 ##### Run
-`$ docker run -d --restart=always --name="pgadmin4" -p 5050:5050 -v /home/user/.config/pgadmin:/var/lib/pgadmin myodoo/pgadmin4:2.1 `
+`$ docker run -d --restart=always --name="pgadmin4" -p 5050:5050 -v /home/user/.config/pgadmin:/var/lib/pgadmin myodoo/pgadmin4:3.0`
   
 ##Environment Variables
 

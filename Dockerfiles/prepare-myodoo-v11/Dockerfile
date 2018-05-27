@@ -1,13 +1,14 @@
 FROM ubuntu:16.04
 MAINTAINER Equitania Software GmbH <info@myodoo.de>
 # For Odoo 11 powered by MyOdoo.de
-# Version 1.0.4
-# Date 10.05.2018
+# Version 1.0.5
+# Date 27.05.2018
 
 
 ARG DEBIAN_FRONTEND=noninteractive
 
-RUN apt-get update && apt-get -y dist-upgrade && apt-get install -y wget locales
+RUN apt-get update && apt-get -y dist-upgrade && apt-get install -y wget locales tzdata && \
+    ln -sf /usr/share/zoneinfo/Europe/Berlin /etc/localtime
 
 # Set LOCALE to UTF8..
 RUN echo "en_US.UTF-8 UTF-8" > /etc/locale.gen && \
@@ -15,10 +16,6 @@ RUN echo "en_US.UTF-8 UTF-8" > /etc/locale.gen && \
     dpkg-reconfigure locales && \
     /usr/sbin/update-locale LANG=en_US.UTF-8
 ENV LC_ALL en_US.UTF-8
-
-RUN \
-  apt-get -y install tzdata && \
-  ln -sf /usr/share/zoneinfo/Europe/Berlin /etc/localtime
 
 #Postgres 10 for Ubuntu
 RUN wget -q https://www.postgresql.org/media/keys/ACCC4CF8.asc -O - | apt-key add - && \
