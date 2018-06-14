@@ -1,6 +1,8 @@
 #!/bin/bash
 # Erzeugt man eine nginx Konfiguration inkl. SSL
 # Skript muss mit root-Rechten ausgeführt werden
+# Version 2.0.0
+# Date 14.06.2018
 ##############################################################################
 #
 #    Shell Script for Odoo, Open Source Management Solution
@@ -26,6 +28,7 @@ myserverpath="/etc/nginx/conf.d/"
 myip=$1
 mydomain=$2
 myport=$3
+mypollport=$4
 
 echo "Dieses Skript erstellt einen Portweiterleitung auf die eingebene Domain für http!"
 echo "Basepath: "$myscriptpath
@@ -46,15 +49,22 @@ if [ "$myport" = "" ]; then
   read myport
 fi
 
+if [ "$mypollport" = "" ]; then
+  echo "Insert the odoo polling port | Geben Sie den Port für Odoo ein:"
+  read mypollport
+fi
+
 myolddomain="server.domain.de"
 myoldip="ip.ip.ip.ip"
 myoldport="oldport"
+myoldpollport="pollport"
 
 if [ "$myip" != "" ] || [ "$mydomain" != "" ] || [ "$myport" != "" ]; then
   cp  $myscriptpath"/nginx.server.domain.conf" $myserverpath"/$mydomain.conf"
   sed -i "s/$myolddomain/$mydomain/g" $myserverpath"/$mydomain.conf"
   sed -i "s/$myoldip/$myip/g" $myserverpath"/$mydomain.conf"
   sed -i "s/$myoldport/$myport/g" $myserverpath"/$mydomain.conf"
+  sed -i "s/$myoldpollport/$mypollport/g" $myserverpath"/$mydomain.conf"
   echo "Finished!"
 else
   echo "Parameter wasn't correct - Parameter waren fehlerhaft!"
