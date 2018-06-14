@@ -1,6 +1,8 @@
 #!/bin/bash
 # Erzeugt man eine nginx Konfiguration inkl. SSL
 # Skript muss mit root-Rechten ausgeführt werden
+# Version 2.0.0
+# Date 14.06.2018
 ##############################################################################
 #
 #    Shell Script for Odoo, Open Source Management Solution

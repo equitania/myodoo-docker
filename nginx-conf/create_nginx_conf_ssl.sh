@@ -1,6 +1,8 @@
 #!/bin/bash
 # Erzeugt man eine nginx Konfiguration inkl. SSL
 # Skript muss mit root-Rechten ausgeführt werden
+# Version 2.0.0
+# Date 14.06.2018
 ##############################################################################
 #
 #    Shell Script for Odoo, Open Source Management Solution
@@ -26,9 +28,10 @@ myserverpath="/etc/nginx/conf.d/"
 myip=$1
 mydomain=$2
 myport=$3
-mykey=$4
-mycrt=$5
-mylets=$6
+mypollport=$4
+mykey=$5
+mycrt=$6
+mylets=$7
 
 echo "Dieses Skript erstellt einen Portweiterleitung auf die eingebene Domain für https!"
 echo "Basepath: "$myscriptpath
@@ -47,6 +50,11 @@ fi
 if [ "$myport" = "" ]; then
   echo "Insert the odoo port | Geben Sie den Port für Odoo ein:"
   read myport
+fi
+
+if [ "$mypollport" = "" ]; then
+  echo "Insert the odoo polling port | Geben Sie den Port für Odoo ein:"
+  read mypollport
 fi
 
 if [ "$mykey" = "" ]; then
@@ -68,6 +76,7 @@ fi
 myolddomain="server.domain.de"
 myoldip="ip.ip.ip.ip"
 myoldport="oldport"
+myoldpollport="pollport"
 myoldcrt="zertifikat.crt"
 myoldkey="zertifikat.key"
 myzert1="#zert1"
@@ -81,6 +90,7 @@ if [ "$myip" != "" ] || [ "$mydomain" != "" ] || [ "$myport" != "" ] || [ "$myke
   sed -i "s/$myoldcrt/$mycrt/g" $myserverpath"/$mydomain.conf"
   sed -i "s/$myoldkey/$mykey/g" $myserverpath"/$mydomain.conf"
   sed -i "s/$myoldport/$myport/g" $myserverpath"/$mydomain.conf"
+  sed -i "s/$myoldpollport/$mypollport/g" $myserverpath"/$mydomain.conf"
   if [ "$mylets" = "y" ]; then
     sed -i "s/$myzert2/$myempty/g" $myserverpath"/$mydomain.conf"
   else
