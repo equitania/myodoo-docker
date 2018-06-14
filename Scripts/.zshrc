@@ -1,6 +1,6 @@
 # Oh my ZSH powered by MyOdoo.de
-# Version 1.1.7
-# Date 03.06.2018
+# Version 1.1.8
+# Date 14.06.2018
 # Install: sh -c "$(curl -fsSL https://raw.github.com/robbyrussell/oh-my-zsh/master/tools/install.sh)"
 
 # If you come from bash you might have to change your $PATH.
@@ -168,8 +168,8 @@ alias rm='rm -I'
 alias chmod=' chmod -c'
 alias chown=' chown -c'
 alias shred=' shred -u -z'
-alias cp='cp -i'
-alias mv='mv -i'
+#alias cp='cp -i'
+#alias mv='mv -i'
 
 # server alias
 alias cdngx='cd /etc/nginx/conf.d/'
