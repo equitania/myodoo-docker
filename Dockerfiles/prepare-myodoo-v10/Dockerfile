@@ -1,8 +1,8 @@
 FROM ubuntu:16.04
 MAINTAINER Equitania Software GmbH <info@myodoo.de>
 # For Odoo 10 powered by MyOdoo.de
-# Version 2.1.0
-# Date 23.05.2018
+# Version 2.1.1
+# Date 03.07.2018
 
 ARG DEBIAN_FRONTEND=noninteractive
 
@@ -159,7 +159,8 @@ RUN set -x; \
     && python2.7 -m pip install --no-cache-dir sphinx_rtd_theme==0.2.5b2 \
     && python2.7 -m pip install --no-cache-dir zammad-py==0.1.3 \
     && python2.7 -m pip install --no-cache-dir bs4==0.0.1 \
-    && python2.7 -m pip install --no-cache-dir zenpy==2.0.4
+    && python2.7 -m pip install --no-cache-dir zenpy==2.0.4 \
+    && python2.7 -m pip install --no-cache-dir xmltodict==0.11.0
 
 # OpenSans font install..
 RUN set -x; \
