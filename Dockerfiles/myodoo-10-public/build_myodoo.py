@@ -1,7 +1,7 @@
 #!/usr/bin/python
 # -*- coding: utf-8 -*-
 # Mit diesem Skript wird mittels dem Release Manager ein neuer Server gebaut
-# Version 1.0.0
+# Version 1.0.1
 # Date 16.07.2018
 ##############################################################################
 #
@@ -36,7 +36,8 @@ if os.path.isfile(_access_file):
         print('Starting with build at ' + _build_path + ' with accesscode ' + _accesscode)
         os.chdir(_build_path)
         os.system('wget -q -O release.file https://v10.myodoo.de/get_csv_file/' + _accesscode)
-        time.sleep(2)
+        while not os.path.isfile(_release_file):
+            time.sleep(0.1)
         # Wenn Releasefile gefüllt ist, beginnt der Buildprozess
         if os.stat(_release_file).st_size != 0:
             _reader = csv.reader(open(_release_file, 'rb'))
@@ -47,15 +48,26 @@ if os.path.isfile(_access_file):
                 if _count == 1:
                     print('url: ' + _column)
                     _url = _column
+                    if _url == 'False':
+                        print('url is missing .. stop!')
+                        continue
                 elif _count == 2:
                     print('dockerimage: ' + _column)
                 elif _count == 3:
-                    os.system('wget -qq ' + _url + '/' + _column)
-                    os.system('mkdir -p odoo-server/addons')
-                    os.system('unzip -q ' + _column + ' -d odoo-server')
-                    print('kernel: ' + _column + ' loaded and installed..')
+                    if _column == 'False':
+                        print('kernel is missing .. stop!')
+                        continue
+                    else:
+                        os.system('wget -qq ' + _url + '/' + _column)
+                        os.system('mkdir -p odoo-server/addons')
+                        while not os.path.isfile(_column):
+                            time.sleep(0.1)
+                        os.system('unzip -q ' + _column + ' -d odoo-server')
+                        print('kernel: ' + _column + ' loaded and installed..')
                 else:
                     os.system('wget -qq ' + _url + '/' + _column)
+                    while not os.path.isfile(_column):
+                        time.sleep(0.1)
                     os.system('unzip -q ' + _column + ' -d odoo-server/addons')
                     print('file: ' + _column + ' loaded and installed..')
                 _count += 1
