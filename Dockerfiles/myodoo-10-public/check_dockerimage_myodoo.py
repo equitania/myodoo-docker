@@ -1,7 +1,7 @@
 #!/usr/bin/python
 # -*- coding: utf-8 -*-
 # Mit diesem Skript überprüft das passende Dockerimage gemäß des Releasefiles
-# Version 1.0.0
+# Version 1.0.2
 # Date 16.07.2018
 ##############################################################################
 #
@@ -33,7 +33,8 @@ if os.path.isfile(_access_file):
     # Wenn accesscode gefüllt, wird versucht das Releasefile zu holen
     if _accesscode != "":
         os.system('wget -q -O release.file https://v10.myodoo.de/get_csv_file/' + _accesscode)
-        time.sleep(1)
+        while not os.path.isfile(_release_file):
+            time.sleep(0.1)
         # Wenn Releasefile gefüllt ist, beginnt der Buildprozess
         if os.stat(_release_file).st_size != 0:
             _reader = csv.reader(open(_release_file, 'rb'))
@@ -44,10 +45,13 @@ if os.path.isfile(_access_file):
                 if _count == 1:
                     _url = _column
                 elif _count == 2:
-                    print('dockerimage: ' + _column)
-                    _command = "sed -i '1s|.*|FROM " + _column + "|' Dockerfile"
-                    print(_command)
-                    os.system(_command)
+                    if _column != '':
+                        print('dockerimage: ' + _column)
+                        _command = "sed -i '1s|.*|FROM " + _column + "|' Dockerfile"
+                        print(_command)
+                        os.system(_command)
+                    else:
+                        print('No Dockerimages defined!')
                 else:
                     continue
                 _count += 1
