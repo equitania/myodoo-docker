@@ -2,8 +2,8 @@
 # -*- coding: utf-8 -*-
 # Mit diesem Skript wird ein Update einer Odoo Datenbank unter Docker durchgeführt
 # With this script you can update odoo db on postgresql under Docker
-# Version 2.1.0
-# Date 14.06.2018
+# Version 2.2.0
+# Date 16.07.2018
 ##############################################################################
 #
 #    Shell Script for Odoo, Open Source Management Solution
@@ -93,6 +93,9 @@ for row in reader:
     if os.path.isfile(mypath + 'getMyOdooRelease.sh'):
         print 'Get latest release loading...'
         os.system('/bin/bash getMyOdooRelease.sh')
+    if os.path.isfile(mypath + 'check_dockerimage_myodoo.py') and os.path.isfile(mypath + 'access_myodoo.txt'):
+        print 'Get latest dockerimages changing...'
+        os.system('python check_dockerimage_myodoo.py')
     print myodoocontainer + ' will be stop...'
     os.system('docker stop ' + myodoocontainer)
     print myodoocontainer + ' stopped...'
