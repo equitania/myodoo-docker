@@ -1,8 +1,8 @@
 FROM ubuntu:16.04
 MAINTAINER Equitania Software GmbH <info@myodoo.de>
 # For Odoo 10 powered by MyOdoo.de
-# Version 2.1.1
-# Date 03.07.2018
+# Version 2.1.2
+# Date 26.08.2018
 
 ARG DEBIAN_FRONTEND=noninteractive
 
@@ -88,7 +88,7 @@ RUN set -x; \
     && python2.7 -m pip install --no-cache-dir gevent==1.1.2 \
     && python2.7 -m pip install --no-cache-dir greenlet==0.4.10 \
     && python2.7 -m pip install --no-cache-dir jcconv==0.2.3 \
-    && python2.7 -m pip install --no-cache-dir Jinja2==2.8 \
+    && python2.7 -m pip install --no-cache-dir Jinja2==2.8.1 \
     && python2.7 -m pip install --no-cache-dir lxml==3.6.4 \
     && python2.7 -m pip install --no-cache-dir Mako==1.0.4 \
     && python2.7 -m pip install --no-cache-dir MarkupSafe==0.23 \
@@ -160,7 +160,8 @@ RUN set -x; \
     && python2.7 -m pip install --no-cache-dir zammad-py==0.1.3 \
     && python2.7 -m pip install --no-cache-dir bs4==0.0.1 \
     && python2.7 -m pip install --no-cache-dir zenpy==2.0.4 \
-    && python2.7 -m pip install --no-cache-dir xmltodict==0.11.0
+    && python2.7 -m pip install --no-cache-dir xmltodict==0.11.0 \
+    && python2.7 -m pip install --no-cache-dir email_validator
 
 # OpenSans font install..
 RUN set -x; \
