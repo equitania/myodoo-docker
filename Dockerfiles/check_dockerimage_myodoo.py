@@ -1,7 +1,7 @@
 #!/usr/bin/python
 # -*- coding: utf-8 -*-
 # Mit diesem Skript überprüft das passende Dockerimage gemäß des Releasefiles
-# Version 1.0.2
+# Version 1.0.3
 # Date 16.07.2018
 ##############################################################################
 #
@@ -23,10 +23,10 @@
 #
 ##############################################################################
 
-import os, csv, time, shutil
+import os, csv, time
 
-_access_file = 'access_myodoo.txt'
-_release_file = 'release.file'
+_access_file = 'access_myodoo.txt' # type: str
+_release_file = 'release.file'  # type: str
 
 if os.path.isfile(_access_file):
     _accesscode = open(_access_file).readline().rstrip()
