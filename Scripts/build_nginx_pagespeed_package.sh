@@ -23,11 +23,11 @@
 ##############################################################################
 
 # Update OS and get dependencies
-sudo apt-get update && sudo apt-get -y dist-upgrade && sudo apt-get install -y sudo build-essential zlib1g-dev unzip uuid-dev curl libpcre3-dev wget libssl-dev
+sudo apt-get update && sudo apt-get -y dist-upgrade && sudo apt-get install -y sudo python-dev build-essential zlib1g-dev unzip uuid-dev curl libpcre3-dev wget libssl-dev
 
 # Install latest nginx with pagespeed
 # Quelle: https://github.com/apache/incubator-pagespeed-ngx/blob/master/scripts/build_ngx_pagespeed.sh
-sudo bash $HOME/myodoo-docker/build_ngx_pagespeed.sh \
+sudo bash $HOME/myodoo-docker/Scripts/build_ngx_pagespeed.sh \
     --nginx-version latest --assume-yes \
     --additional-nginx-configure-arguments '--prefix=/etc/nginx --sbin-path=/usr/sbin/nginx --modules-path=/usr/lib/nginx/modules --conf-path=/etc/nginx/nginx.conf --error-log-path=/var/log/nginx/error.log --http-log-path=/var/log/nginx/access.log --pid-path=/var/run/nginx.pid --lock-path=/var/run/nginx.lock --http-client-body-temp-path=/var/cache/nginx/client_temp --http-proxy-temp-path=/var/cache/nginx/proxy_temp --http-fastcgi-temp-path=/var/cache/nginx/fastcgi_temp --http-uwsgi-temp-path=/var/cache/nginx/uwsgi_temp --http-scgi-temp-path=/var/cache/nginx/scgi_temp --user=nginx --group=nginx --with-http_ssl_module --with-http_v2_module'
 
