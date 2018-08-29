@@ -1,7 +1,7 @@
 #!/bin/bash
 # Install latest nginx with pagedspeed
 # Script must run with mit root-rights
-# Version 1.0.2 - Stand 07.05.2018
+# Version 1.0.3 - Stand 29.08.2018
 ##############################################################################
 #
 #    Shell Script for Odoo, Open Source Management Solution
@@ -23,10 +23,10 @@
 ##############################################################################
 
 # Update OS and get dependencies
-apt-get update && apt-get -y dist-upgrade && apt-get install -y sudo build-essential zlib1g-dev unzip uuid-dev curl libpcre3-dev wget libssl-dev
+sudo apt-get update && sudo apt-get -y dist-upgrade && sudo apt-get install -y sudo build-essential zlib1g-dev unzip uuid-dev curl libpcre3-dev wget libssl-dev
 
 # Install latest nginx with pagespeed
-bash <(curl -f -L -sS https://ngxpagespeed.com/install) \
+sudo bash <(curl -f -L -sS https://ngxpagespeed.com/install) \
     --nginx-version latest --assume-yes \
     --additional-nginx-configure-arguments '--prefix=/etc/nginx --sbin-path=/usr/sbin/nginx --modules-path=/usr/lib/nginx/modules --conf-path=/etc/nginx/nginx.conf --error-log-path=/var/log/nginx/error.log --http-log-path=/var/log/nginx/access.log --pid-path=/var/run/nginx.pid --lock-path=/var/run/nginx.lock --http-client-body-temp-path=/var/cache/nginx/client_temp --http-proxy-temp-path=/var/cache/nginx/proxy_temp --http-fastcgi-temp-path=/var/cache/nginx/fastcgi_temp --http-uwsgi-temp-path=/var/cache/nginx/uwsgi_temp --http-scgi-temp-path=/var/cache/nginx/scgi_temp --user=nginx --group=nginx --with-http_ssl_module --with-http_v2_module'
 
@@ -49,14 +49,14 @@ bash <(curl -f -L -sS https://ngxpagespeed.com/install) \
 # --with-http_v2_module
 
 # prepare nginx
-mkdir -p /var/cache/nginx/client_temp
-mkdir /etc/nginx/conf.d/
-mv /etc/nginx/nginx.conf /etc/nginx/nginx.conf.backup
-cp $HOME/myodoo-docker/nginx-conf/nginx.conf /etc/nginx/
+sudo mkdir -p /var/cache/nginx/client_temp
+sudo mkdir /etc/nginx/conf.d/
+sudo mv /etc/nginx/nginx.conf /etc/nginx/nginx.conf.backup
+sudo cp $HOME/myodoo-docker/nginx-conf/nginx.conf /etc/nginx/
 
 # prepare pagespeed
-mkdir /var/cache/ngx_pagespeed/
-chown -R www-data:www-data /var/cache/ngx_pagespeed/
+sudo mkdir /var/cache/ngx_pagespeed/
+sudo chown -R www-data:www-data /var/cache/ngx_pagespeed/
 
 # Install & start service nginx
 cp $HOME/myodoo-docker/Scripts/nginx.service /lib/systemd/system/
