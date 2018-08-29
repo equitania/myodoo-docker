@@ -1,13 +1,13 @@
 # Oh my ZSH powered by MyOdoo.de
-# Version 1.1.9
-# Date 28.08.2018
+# Version 1.2.0
+# Date 29.08.2018
 # Install: sh -c "$(curl -fsSL https://raw.github.com/robbyrussell/oh-my-zsh/master/tools/install.sh)"
 
 # If you come from bash you might have to change your $PATH.
 # export PATH=$HOME/bin:/usr/local/bin:$PATH
 
 # Path to your oh-my-zsh installation.
-  export ZSH=/root/.oh-my-zsh
+  export ZSH=$HOME/.oh-my-zsh
 
 # Set name of the theme to load. Optionally, if you set this to "random"
 # it'll load a random theme each time that oh-my-zsh is loaded.
@@ -98,7 +98,7 @@ COMPLETION_WAITING_DOTS="true"
 # Example format: plugins=(rails git textmate ruby lighthouse)
 # Add wisely, as too many plugins slow down shell startup.
 plugins=(
-  git
+  git git-extras history jsontools last-working-dir pip python screen web-search
 )
 
 source $ZSH/oh-my-zsh.sh
