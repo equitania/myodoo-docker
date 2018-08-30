@@ -1,5 +1,8 @@
 FROM myodoo/prepare-v10:2.1.2
 MAINTAINER Equitania Software GmbH <info@myodoo.de>
+# Mit diesem Skript überprüft das passende Dockerimage gemäß des Releasefiles
+# Version 2.1.2
+# Date 30.08.2018
 
 CMD "echo" "MyOdoo build will start now.."
 
@@ -32,6 +35,5 @@ VOLUME ["/opt/odoo/var", "/opt/odoo/etc", "/opt/odoo/data"]
 ENTRYPOINT ["/app/bin/boot"]
 CMD ["help"]
 # Expose the odoo ports (for linked containers)
-EXPOSE 8069
-EXPOSE 8072
+EXPOSE 8069 8072
 ADD bin /app/bin/
