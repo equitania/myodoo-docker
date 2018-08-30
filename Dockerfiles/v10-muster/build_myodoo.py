@@ -1,8 +1,8 @@
 #!/usr/bin/python
 # -*- coding: utf-8 -*-
 # Mit diesem Skript wird mittels dem Release Manager ein neuer Server gebaut
-# Version 1.0.1
-# Date 16.07.2018
+# Version 1.0.2
+# Date 30.08.2018
 ##############################################################################
 #
 #    Shell Script for Odoo, Open Source Management Solution
@@ -50,13 +50,13 @@ if os.path.isfile(_access_file):
                     _url = _column
                     if _url == 'False':
                         print('url is missing .. stop!')
-                        continue
+                        exit()
                 elif _count == 2:
                     print('dockerimage: ' + _column)
                 elif _count == 3:
                     if _column == 'False':
                         print('kernel is missing .. stop!')
-                        continue
+                        exit()
                     else:
                         os.system('wget -qq ' + _url + '/' + _column)
                         os.system('mkdir -p odoo-server/addons')
