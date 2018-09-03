@@ -1,2 +1,4 @@
+# Version 2.0.0
+# Date 30.08.2018
 #DATABASENAME,DBUSER,DB-CONTAINERNAME,MYODOO-CONTAINERNAME
-
+#ownerp,myodoo,db-ownerp,ownerp-myodoo
