@@ -54,6 +54,8 @@ sudo mkdir -p /var/cache/nginx/client_temp
 sudo mkdir /etc/nginx/conf.d/
 sudo mv /etc/nginx/nginx.conf /etc/nginx/nginx.conf.backup
 sudo cp $HOME/myodoo-docker/nginx-conf/nginx.conf /etc/nginx/
+sudo cp $HOME/myodoo-docker/nginx-conf/custom_50x.html /etc/nginx/html/
+
 
 # prepare pagespeed
 sudo mkdir /var/cache/ngx_pagespeed/
