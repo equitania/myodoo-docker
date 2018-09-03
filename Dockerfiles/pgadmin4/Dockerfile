@@ -10,11 +10,11 @@ RUN set -ex \
 	&& apt-get update \
 	&& apt-get -y dist-upgrade \
 	&& apt-get install -y --no-install-recommends \
-		postgresql-client \
+		postgresql-client python3-dev \
 	&& rm -rf /var/lib/apt/lists/*
 
-ENV PGADMIN4_VERSION 3.0
-ENV PGADMIN4_DOWNLOAD_URL https://ftp.postgresql.org/pub/pgadmin/pgadmin4/v3.0/pip/pgadmin4-3.0-py2.py3-none-any.whl
+ENV PGADMIN4_VERSION 3.2
+ENV PGADMIN4_DOWNLOAD_URL https://ftp.postgresql.org/pub/pgadmin/pgadmin4/v3.2/pip/pgadmin4-3.2-py2.py3-none-any.whl
 
 # Metadata
 LABEL org.label-schema.name="pgAdmin4" \
