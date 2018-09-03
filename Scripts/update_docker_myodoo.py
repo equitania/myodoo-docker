@@ -2,8 +2,8 @@
 # -*- coding: utf-8 -*-
 # Mit diesem Skript wird ein Update einer Odoo Datenbank unter Docker durchgeführt
 # With this script you can update odoo db on postgresql under Docker
-# Version 2.2.0
-# Date 16.07.2018
+# Version 2.2.1
+# Date 03.09.2018
 ##############################################################################
 #
 #    Shell Script for Odoo, Open Source Management Solution
@@ -106,9 +106,9 @@ for row in reader:
     print myimage + ' start building..'
     os.system('docker build -t ' + myimage + ' .')
     print myodoocontainer + ' start updating...'
-    os.system('docker run -it --rm -p ' + myport + ':8069 -p '+ mypollport + ':8072 --name="' + myodoocontainer + '" ' + myvolumen + ' ' + myimage + ' update --database=' + mydb + ' --db_user=' + mydbuser + ' --db_password=' + mydbpassword + ' --db_host=' + mydbhost)
+    os.system('docker run -it --rm -p 127.0.0.1:' + myport + ':8069 -p 127.0.0.1:'+ mypollport + ':8072 --name="' + myodoocontainer + '" ' + myvolumen + ' ' + myimage + ' update --database=' + mydb + ' --db_user=' + mydbuser + ' --db_password=' + mydbpassword + ' --db_host=' + mydbhost)
     print myodoocontainer + ' starting...'
-    os.system('docker run -d -p ' + myport + ':8069 -p ' + mypollport + ':8072 --name="' + myodoocontainer + '" ' + myvolumen + ' ' + myimage + ' start')
+    os.system('docker run -d -p 127.0.0.1:' + myport + ':8069 -p 127.0.0.1:' + mypollport + ':8072 --name="' + myodoocontainer + '" ' + myvolumen + ' ' + myimage + ' start')
     if os.path.isfile(mypath + 'load_translation.py'):
         print 'Translation loading...'
         time.sleep(10)
@@ -123,8 +123,8 @@ for row in reader:
     os.system('docker rm ' + myodoocontainer)
     if myupdate != "":
         print 'Post update wird durchgeführt.'
-    print 'docker run -d --restart=always -p ' + myport + ':8069 -p ' + mypollport + ':8072 --name="' + myodoocontainer + '" ' + myvolumen + ' ' + myimage + ' start ' + myupdate
-    os.system('docker run -d --restart=always -p ' + myport + ':8069 -p ' + mypollport + ':8072 --name="' + myodoocontainer + '" ' + myvolumen + ' ' + myimage + ' start ' + myupdate)
+    print 'docker run -d --restart=always -p 127.0.0.1:' + myport + ':8069 -p 127.0.0.1:' + mypollport + ':8072 --name="' + myodoocontainer + '" ' + myvolumen + ' ' + myimage + ' start ' + myupdate
+    os.system('docker run -d --restart=always -p 127.0.0.1:' + myport + ':8069 -p 127.0.0.1:' + mypollport + ':8072 --name="' + myodoocontainer + '" ' + myvolumen + ' ' + myimage + ' start ' + myupdate)
     print myodoocontainer + ' restarted...'
     if os.path.exists(mypath + mydb + '.bak'):
         os.system('rm -r ' + mypath + mydb + '.bak')
