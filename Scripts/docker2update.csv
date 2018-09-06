@@ -1,4 +1,5 @@
 # containername,databasename,port,longpollingport,path2Dockfile,docker_image_name,postgresql_username,postgresql_userpassword,hostname/ip,volumen,update
 # Version 2.0.0
 # Date 30.08.2018
-# f.e. # ownerp,ownerp,11000,12000,/root/docker-builds/11000-ownerp/,myodoo/ownerp,myodoo,myodoo,db," --link myodoo-db:db -v /opt/ownerp/data:/opt/odoo/data ","-u eq_sale"
+# f.e. # ownerp,ownerp,11000,12000,/root/docker-builds/11000-ownerp/,myodoo/ownerp,myodoo,myodoo,db," --link myodoo-db:db -v /opt/ownerp/data:/opt/odoo/data ","-u mdoulename"
+# f.e. with ufw & proxy # ownerp,ownerp,127.0.0.1:11000,127.0.0.1:12000,/root/docker-builds/11000-ownerp/,myodoo/ownerp,myodoo,myodoo,db," --link myodoo-db:db -v /opt/ownerp/data:/opt/odoo/data ","-u modulename"
