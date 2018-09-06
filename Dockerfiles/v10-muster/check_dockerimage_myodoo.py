@@ -1,8 +1,8 @@
 #!/usr/bin/python
 # -*- coding: utf-8 -*-
 # Mit diesem Skript überprüft das passende Dockerimage gemäß des Releasefiles
-# Version 1.0.3
-# Date 16.07.2018
+# Version 1.0.4
+# Date 06.09.2018
 ##############################################################################
 #
 #    Shell Script for Odoo, Open Source Management Solution
