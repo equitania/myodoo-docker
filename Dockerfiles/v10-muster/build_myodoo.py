@@ -1,7 +1,7 @@
 #!/usr/bin/python
 # -*- coding: utf-8 -*-
 # Mit diesem Skript wird mittels dem Release Manager ein neuer Server gebaut
-# Version 1.0.4
+# Version 1.0.5
 # Date 06.09.2018
 ##############################################################################
 #
@@ -64,9 +64,9 @@ if os.path.isfile(_release_file):
                 os.system('unzip -q ' + _column + ' -d odoo-server/addons')
                 print('file: ' + _column + ' loaded and installed..')
             _count += 1
-        else:
-            print('No valid release file :(')
-            exit()
+    else:
+        print('No valid release file :(')
+        exit()
     print('Build finished!')
     os.system('rm -f *.zip')
     #os.system('rm -f release.file')
