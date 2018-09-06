@@ -1,8 +1,8 @@
 #!/usr/bin/python
 # -*- coding: utf-8 -*-
 # Mit diesem Skript wird mittels dem Release Manager ein neuer Server gebaut
-# Version 1.0.2
-# Date 30.08.2018
+# Version 1.0.3
+# Date 06.09.2018
 ##############################################################################
 #
 #    Shell Script for Odoo, Open Source Management Solution
@@ -35,7 +35,8 @@ if os.path.isfile(_access_file):
     if _accesscode != "":
         print('Starting with build at ' + _build_path + ' with accesscode ' + _accesscode)
         os.chdir(_build_path)
-        os.system('wget -q -O release.file https://v10.myodoo.de/get_csv_file/' + _accesscode)
+        if not os.path.isfile(_access_file):
+            os.system('wget -q -O release.file https://v10.myodoo.de/get_csv_file/' + _accesscode)
         while not os.path.isfile(_release_file):
             time.sleep(0.1)
         # Wenn Releasefile gefüllt ist, beginnt der Buildprozess

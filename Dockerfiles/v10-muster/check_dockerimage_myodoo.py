@@ -61,5 +61,5 @@ if os.path.isfile(_access_file):
             print('No valid release file :(')
     else:
         print('Not valid accesscode :(')
-    os.system('rm -f release.file')
+    #os.system('rm -f release.file')
     print('Cleanup and finished!')
