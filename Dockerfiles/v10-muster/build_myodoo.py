@@ -1,8 +1,8 @@
 #!/usr/bin/python
 # -*- coding: utf-8 -*-
 # Mit diesem Skript wird mittels dem Release Manager ein neuer Server gebaut
-# Version 1.0.5
-# Date 06.09.2018
+# Version 1.0.6
+# Date 08.09.2018
 ##############################################################################
 #
 #    Shell Script for Odoo, Open Source Management Solution
@@ -58,11 +58,14 @@ if os.path.isfile(_release_file):
                     os.system('unzip -q ' + _column + ' -d odoo-server')
                     print('kernel: ' + _column + ' loaded and installed..')
             else:
-                os.system('wget -qq ' + _url + '/' + _column)
-                while not os.path.isfile(_column):
-                    time.sleep(0.1)
-                os.system('unzip -q ' + _column + ' -d odoo-server/addons')
-                print('file: ' + _column + ' loaded and installed..')
+                if _column.find('.zip') is not -1:
+                    os.system('wget -qq ' + _url + '/' + _column)
+                    while not os.path.isfile(_column):
+                        time.sleep(0.1)
+                    os.system('unzip -q ' + _column + ' -d odoo-server/addons')
+                    print('file: ' + _column + ' loaded and installed..')
+                else:
+                    continue
             _count += 1
     else:
         print('No valid release file :(')
