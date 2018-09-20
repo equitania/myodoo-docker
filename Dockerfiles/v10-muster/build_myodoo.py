@@ -1,8 +1,8 @@
 #!/usr/bin/python
 # -*- coding: utf-8 -*-
 # Mit diesem Skript wird mittels dem Release Manager ein neuer Server gebaut
-# Version 1.0.6
-# Date 08.09.2018
+# Version 1.0.7
+# Date 20.09.2018
 ##############################################################################
 #
 #    Shell Script for Odoo, Open Source Management Solution
@@ -74,3 +74,8 @@ if os.path.isfile(_release_file):
     os.system('rm -f *.zip')
     #os.system('rm -f release.file')
     print('Cleanup and finished!')
+else:
+    print('*********************************************')
+    print('*               E R R O R                   *')
+    print('*    NO file named release.file found!!     *')
+    print('*********************************************')

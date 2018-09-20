@@ -1,8 +1,8 @@
 #!/usr/bin/python
 # -*- coding: utf-8 -*-
 # Mit diesem Skript überprüft das passende Dockerimage gemäß des Releasefiles
-# Version 1.0.4
-# Date 06.09.2018
+# Version 1.0.5
+# Date 20.09.2018
 ##############################################################################
 #
 #    Shell Script for Odoo, Open Source Management Solution
@@ -63,3 +63,9 @@ if os.path.isfile(_access_file):
         print('Not valid accesscode :(')
     #os.system('rm -f release.file')
     print('Cleanup and finished!')
+else:
+    print('*********************************************')
+    print('*               E R R O R                   *')
+    print('*  NO file named access_myodoo.txt found!!  *')
+    print('*********************************************')
+
