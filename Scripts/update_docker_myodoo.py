@@ -2,8 +2,8 @@
 # -*- coding: utf-8 -*-
 # Mit diesem Skript wird ein Update einer Odoo Datenbank unter Docker durchgeführt
 # With this script you can update odoo db on postgresql under Docker
-# Version 2.2.2
-# Date 06.09.2018
+# Version 2.3.0
+# Date 20.09.2018
 ##############################################################################
 #
 #    Shell Script for Odoo, Open Source Management Solution
@@ -26,108 +26,131 @@
 import csv
 import os
 import time
-import sys
 
-# csv format - separator ","
-# myodoo_containername,databasename,port,path2Dockfile,docker_image_name,postgresql_username,postgresql_userpassword,hostname/ip,volumen,kommado
-fname = 'docker2update.csv'
-reader = csv.reader(open(fname, 'rb'))
-mybasepath = os.getcwd()
+# csv format - separator "," [M]odules or [F]ull update,containername,databasename,port,longpollingport,
+# path2Dockfile,docker_image_name,postgresql_username,postgresql_userpassword,hostname/ip,volumen,update 
+_fname = 'docker2update.csv'
+_reader = csv.reader(open(_fname, 'rb'))
+_mybasepath = os.getcwd()
 
-for row in reader:
-    mydb = ""
-    myport = ""
-    mypollport = ""
-    mypath = ""
-    myimage = ""
-    mydbuser = ""
-    mydbpassword = ""
-    mydbhost = ""
-    myvolumen = ""
-    myupdate = ""
+for _row in _reader:
+    _mytype = ""  # type: str
+    _mydelaytime = 0  # type: int
+    _mycontainer = ""  # type: str
+    _mydb = ""  # type: str
+    _myport = ""  # type: str
+    _mypollport = ""  # type: str
+    _mypath = ""  # type: str
+    _myimage = ""  # type: str
+    _mydbuser = ""  # type: str
+    _mydbpassword = ""  # type: str
+    _mydbhost = ""  # type: str
+    _myvolumen = ""  # type: str
+    _myupdate = ""  # type: str
 
-    # Name des Docker Containers
-    myodoocontainer = row[0]
-    if myodoocontainer.startswith('#'):
-        # Kommentarzeile
+    # name of docker containers
+    _mytype = _row[0]
+    if _mytype.startswith('#'):
+        # Don't do anything
         continue
-    # Name des Datenbank
-    mydb = row[1]
-    # Port nach außen
-    myport = row[2]
-    # longpolling_port = 8072
-    mypollport = row[3]
-    # Lokaler Pfad zum Dockerfile
-    mypath = row[4]
-    # Name des Images, das gebildet werden soll
-    myimage = row[5]
-    # Name des Datenbankbenutzers (Postgres) 
-    mydbuser = row[6]
-    # Passwort des Datenbankbenutzers (Postgres) 
-    mydbpassword = row[7]
-    # IP 
-    mydbhost = row[8]
-    # Dieser Parameter das Speichern des Filestores auf dem Host
+    # delay time before restart
+    _mydelaytime = _row[1]
+    if _mydelaytime == 0:
+        _mydelaytime = 10
+    # name of container
+    _mycontainer = _row[2]
+    # name of database
+    _mydb = _row[3]
+    # odoo outside port inside 8069
+    _myport = _row[4]
+    # odoo outside longpolling_port inside 8072
+    _mypollport = _row[5]
+    # local path Dockerfile
+    _mypath = _row[6]
+    # name of local Docker image
+    _myimage = _row[7]
+    # user Postgres db
+    _mydbuser = _row[8]
+    # password Postgres db
+    _mydbpassword = _row[9]
+    # host name or ip postgres server
+    _mydbhost = _row[10]
+    # extended docker parameter like --volume
     try:
-        myvolumen = row[9]
+        _myvolumen = _row[11]
     except:
-        print("Volumen-Parameter ist nicht vorhanden!")
-    # Dieser Parameter kann für Update mit "-u modulname" oder Installationen "-i modulname" verwendet werden
+        print("No volume paramter was set!")
+    # additional install or update command "-u modulname" or Installationen "-i modulname"
     try:
-        myupdate = row[10]
+        _myupdate = _row[12]
     except:
-        print("Update-Spalte ist nicht vorhanden!")
+        print("No update or install command!")
     # Wenn Path zum Dockerfile nicht vorhanden
-    if not os.path.isdir(mypath):
-        print("Dockerpfad stimmt nicht!")
+    if not os.path.isdir(_mypath):
+        print("Docker path isn't correct!")
         continue
-    print 'MyOdoo Container:' + myodoocontainer + '\nDatabase Name:' + mydb + '\nPort:' + myport+ '\nLongpolling-Port:' + mypollport
-    print 'Path:' + mypath + '\nImage:' + myimage + '\n'
-    print 'Volumen:' + myvolumen + '\n'
-    print 'Post Update:' + myupdate
-    if myvolumen == "":
-        os.system('mkdir ' + mypath + mydb)
-        os.system('docker cp ' + myodoocontainer + ':/opt/odoo/data/filestore/' + mydb + ' ' + mypath)
-        print 'Filestore saved...'
-    os.chdir(mypath)
-    if os.path.isfile(mypath + 'getMyOdooRelease.sh'):
-        print 'Get latest release loading...'
+    if _mytype != "F" or _mytype != "M":
+        _mytype = "F"
+    if _mytype == "F":
+        print("Full update")
+    else:
+        print("Only module copy in container")
+    print('MyOdoo Container:' + _mycontainer + '\nDatabase Name:' + _mydb + '\nPort:' + _myport + '\nLongpolling-Port:' + _mypollport)
+    print('Path:' + _mypath + '\nImage:' + _myimage + '\n')
+    if _myvolumen != "":
+        print('Volumen:' + _myvolumen + '\n')
+    if _myupdate != "":
+        print('Post Update:' + _myupdate)
+    if _myvolumen == "":
+        os.system('mkdir ' + _mypath + _mydb)
+        os.system('docker cp ' + _mycontainer + ':/opt/odoo/data/filestore/' + _mydb + ' ' + _mypath)
+        print('Filestore saved...')
+    os.chdir(_mypath)
+    # Old release manager
+    if os.path.isfile(_mypath + 'getMyOdooRelease.sh'):
+        print('Get latest release loading...')
         os.system('/bin/bash getMyOdooRelease.sh')
-    if os.path.isfile(mypath + 'check_dockerimage_myodoo.py') and os.path.isfile(mypath + 'access_myodoo.txt'):
-        print 'Get latest dockerimages changing...'
+    # release manager
+    if os.path.isfile(_mypath + 'check_dockerimage_myodoo.py') and os.path.isfile(_mypath + 'access_myodoo.txt'):
+        print('Get latest dockerimages changing...')
         os.system('python check_dockerimage_myodoo.py')
-    print myodoocontainer + ' will be stop...'
-    os.system('docker stop ' + myodoocontainer)
-    print myodoocontainer + ' stopped...'
-    os.system('docker rm ' + myodoocontainer)
-    print myodoocontainer + ' removed...'
-    os.system('docker rmi ' + myimage + ':latest')
-    print myimage + ' removed...'
-    print myimage + ' start building..'
-    os.system('docker build -t ' + myimage + ' .')
-    print myodoocontainer + ' start updating...'
-    os.system('docker run -it --rm -p ' + myport + ':8069 -p '+ mypollport + ':8072 --name="' + myodoocontainer + '" ' + myvolumen + ' ' + myimage + ' update --database=' + mydb + ' --db_user=' + mydbuser + ' --db_password=' + mydbpassword + ' --db_host=' + mydbhost)
-    print myodoocontainer + ' starting...'
-    os.system('docker run -d -p ' + myport + ':8069 -p ' + mypollport + ':8072 --name="' + myodoocontainer + '" ' + myvolumen + ' ' + myimage + ' start')
-    if os.path.isfile(mypath + 'load_translation.py'):
-        print 'Translation loading...'
-        time.sleep(10)
-        os.system("python " + mypath + 'load_translation.py')
-        print 'Translation loaded...'
-    if os.path.isfile(mypath + 'set_custom_translation.py'):
-        print 'Translation bugfixes...'
-        os.system("python " + mypath + 'set_custom_translation.py')
-        print 'Translation bugfixed...'
-    print myodoocontainer + ' restarting...'
-    os.system('docker stop ' + myodoocontainer)
-    os.system('docker rm ' + myodoocontainer)
-    if myupdate != "":
-        print 'Post update wird durchgeführt.'
-    print 'docker run -d --restart=always -p ' + myport + ':8069 -p ' + mypollport + ':8072 --name="' + myodoocontainer + '" ' + myvolumen + ' ' + myimage + ' start ' + myupdate
-    os.system('docker run -d --restart=always -p ' + myport + ':8069 -p ' + mypollport + ':8072 --name="' + myodoocontainer + '" ' + myvolumen + ' ' + myimage + ' start ' + myupdate)
-    print myodoocontainer + ' restarted...'
-    if os.path.exists(mypath + mydb + '.bak'):
-        os.system('rm -r ' + mypath + mydb + '.bak')
-    if os.path.exists(mypath + mydb):
-        os.system('mv ' + mypath + mydb + ' ' + mypath + mydb + '.bak')
-    print 'Update is done ' + mydb
+    print(_mycontainer + ' will be stop...')
+    os.system('docker stop ' + _mycontainer)
+    print(_mycontainer + ' stopped...')
+    os.system('docker rm ' + _mycontainer)
+    print(_mycontainer + ' removed...')
+    os.system('docker rmi ' + _myimage + ':latest')
+    print(_myimage + ' removed and  start building..')
+    os.system('docker build -t ' + _myimage + ' .')
+    if _mytype == "F":
+        print(_mycontainer + ' start updating...')
+        os.system(
+            'docker run -it --rm -p ' + _myport + ':8069 -p ' + _mypollport + ':8072 --name="' + _mycontainer + '" ' + _myvolumen + ' ' + _myimage + ' update --database=' + _mydb + ' --db_user=' + _mydbuser + ' --db_password=' + _mydbpassword + ' --db_host=' + _mydbhost)
+    print('docker run -d --restart=always -p ' + _myport + ':8069 -p ' + _mypollport + ':8072 --name="' + _mycontainer + '" ' + _myvolumen + ' ' + _myimage + ' start ')
+    os.system(
+        'docker run -d --restart=always -p ' + _myport + ':8069 -p ' + _mypollport + ':8072 --name="' + _mycontainer + '" ' + _myvolumen + ' ' + _myimage + ' start')
+    _dotranslate = False
+    if os.path.isfile(_mypath + 'load_translation.py'):
+        print('Translation loading...')
+        time.sleep(_mydelaytime)
+        os.system("python " + _mypath + 'load_translation.py')
+        print('Translation loaded...')
+        _dotranslate = True
+    if os.path.isfile(_mypath + 'set_custom_translation.py'):
+        print('Translation bugfixes...')
+        os.system("python " + _mypath + 'set_custom_translation.py')
+        print('Translation bugfixed...')
+        _dotranslate = True
+    print(_mycontainer + ' restarting...')
+    if _myupdate != "":
+        os.system('docker stop ' + _mycontainer)
+        os.system('docker rm ' + _mycontainer)
+        print('Post update now')
+        print('docker run -d --restart=always -p ' + _myport + ':8069 -p ' + _mypollport + ':8072 --name="' + _mycontainer + '" ' + _myvolumen + ' ' + _myimage + ' start ' + _myupdate)
+        os.system('docker run -d --restart=always -p ' + _myupdate + ':8069 -p ' + _myupdate + ':8072 --name="' + _mycontainer + '" ' + _myvolumen + ' ' + _myimage + ' start ' + _myupdate)
+        print(_mycontainer + ' restarted...')
+    if os.path.exists(_mypath + _mydb + '.bak'):
+        os.system('rm -r ' + _mypath + _mydb + '.bak')
+    if os.path.exists(_mypath + _mydb):
+        os.system('mv ' + _mypath + _mydb + ' ' + _mypath + _mydb + '.bak')
+    print('Update is done ' + _mydb)
