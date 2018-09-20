@@ -2,7 +2,7 @@
 # -*- coding: utf-8 -*-
 # Mit diesem Skript wird ein Update einer Odoo Datenbank unter Docker durchgeführt
 # With this script you can update odoo db on postgresql under Docker
-# Version 2.3.0
+# Version 2.3.1
 # Date 20.09.2018
 ##############################################################################
 #
@@ -85,16 +85,18 @@ for _row in _reader:
         _myupdate = _row[12]
     except:
         print("No update or install command!")
-    # Wenn Path zum Dockerfile nicht vorhanden
+    # Missing path to Dockerfile
     if not os.path.isdir(_mypath):
         print("Docker path isn't correct!")
         continue
-    if _mytype != "F" or _mytype != "M":
-        _mytype = "F"
+    # Update mode
     if _mytype == "F":
         print("Full update")
-    else:
+    elif _mytype == "M":
         print("Only module copy in container")
+    else:
+        print("Missing update mode")
+        continue
     print('MyOdoo Container:' + _mycontainer + '\nDatabase Name:' + _mydb + '\nPort:' + _myport + '\nLongpolling-Port:' + _mypollport)
     print('Path:' + _mypath + '\nImage:' + _myimage + '\n')
     if _myvolumen != "":
@@ -124,11 +126,9 @@ for _row in _reader:
     os.system('docker build -t ' + _myimage + ' .')
     if _mytype == "F":
         print(_mycontainer + ' start updating...')
-        os.system(
-            'docker run -it --rm -p ' + _myport + ':8069 -p ' + _mypollport + ':8072 --name="' + _mycontainer + '" ' + _myvolumen + ' ' + _myimage + ' update --database=' + _mydb + ' --db_user=' + _mydbuser + ' --db_password=' + _mydbpassword + ' --db_host=' + _mydbhost)
+        os.system('docker run -it --rm -p ' + _myport + ':8069 -p ' + _mypollport + ':8072 --name="' + _mycontainer + '" ' + _myvolumen + ' ' + _myimage + ' update --database=' + _mydb + ' --db_user=' + _mydbuser + ' --db_password=' + _mydbpassword + ' --db_host=' + _mydbhost)
     print('docker run -d --restart=always -p ' + _myport + ':8069 -p ' + _mypollport + ':8072 --name="' + _mycontainer + '" ' + _myvolumen + ' ' + _myimage + ' start ')
-    os.system(
-        'docker run -d --restart=always -p ' + _myport + ':8069 -p ' + _mypollport + ':8072 --name="' + _mycontainer + '" ' + _myvolumen + ' ' + _myimage + ' start')
+    os.system('docker run -d --restart=always -p ' + _myport + ':8069 -p ' + _mypollport + ':8072 --name="' + _mycontainer + '" ' + _myvolumen + ' ' + _myimage + ' start')
     _dotranslate = False
     if os.path.isfile(_mypath + 'load_translation.py'):
         print('Translation loading...')
