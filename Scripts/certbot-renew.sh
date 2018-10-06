@@ -6,14 +6,14 @@
 
 
 
-echo "nginx stop"
-service nginx stop
+#echo "nginx stop"
+#service nginx stop
 echo "certbot renew"
-$HOME/certbot/letsencrypt-auto renew
+$HOME/certbot/letsencrypt-auto --nginx renew
 echo "delete nginx log files older than 7 days = DSGVO konform"
 find /var/log/nginx/ -type f -mtime +7 | xargs rm
 echo "nginx start"
-service nginx start
+service nginx restart start
 service nginx status
 
 exit 0
