@@ -1,6 +1,6 @@
 # Oh my ZSH powered by MyOdoo.de
-# Version 1.2.0
-# Date 29.08.2018
+# Version 1.2.5
+# Date 14.10.2018
 # Install: sh -c "$(curl -fsSL https://raw.github.com/robbyrussell/oh-my-zsh/master/tools/install.sh)"
 
 # If you come from bash you might have to change your $PATH.
@@ -160,7 +160,7 @@ alias ls='ls --color --classify'
 alias ll='ls -al --color --classify'
 alias l='ls --color --classify -lah'
 alias grep='grep --color=auto'
-alias nano='nano --nowrap -B'
+alias nano='nano --nowrap -B -c'
 alias hg='history | grep'
 
 # ignore dangerous commands from history and make them safer
@@ -180,7 +180,7 @@ alias ngxr='sudo service nginx reload'
 alias dps='sudo docker ps -a'
 alias dpsfull='sudo docker inspect  -f "{{.Name}} {{.Config.Cmd}}" $(docker ps -a -q)'
 alias dpi='sudo docker images'
-alias syspatch='apt-get update && apt-get dist-upgrade && apt-get autoremove && apt-get autoclean && rm -rf /root/certbot && cd /root/ && git clone https://github.com/certbot/certbot'
+alias syspatch='apt-get update && apt-get dist-upgrade && apt-get autoremove && apt-get autoclean'
 alias dobk='$HOME/backup_odoo_docker_postgres_on_host.py'
 alias dobkc='$HOME/container2backup.py'
 alias doup='$HOME/update_docker_myodoo.py'
