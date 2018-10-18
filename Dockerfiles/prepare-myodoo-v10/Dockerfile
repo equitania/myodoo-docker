@@ -1,8 +1,8 @@
 FROM ubuntu:16.04
 MAINTAINER Equitania Software GmbH <info@myodoo.de>
 # For Odoo 10 powered by MyOdoo.de
-# Version 2.1.2
-# Date 26.08.2018
+# Version 2.1.3
+# Date 18.10.2018
 
 ARG DEBIAN_FRONTEND=noninteractive
 
@@ -76,7 +76,7 @@ RUN set -x; \
 
 # Python packages pip install..
 RUN set -x; \
-    python2.7 -m pip install --no-cache-dir pip==10.0.1 \
+    python2.7 -m pip install --no-cache-dir pip==18.1 \
     && python2.7 -m pip install --no-cache-dir wheel \
     && python2.7 -m pip install --no-cache-dir setuptools \
     && python2.7 -m pip install --no-cache-dir pyopenssl \
@@ -133,7 +133,7 @@ RUN set -x; \
     && python2.7 -m pip install --no-cache-dir validate_email \
     && python2.7 -m pip install --no-cache-dir pyDNS \
     && python2.7 -m pip install --no-cache-dir python-slugify \
-    && python2.7 -m pip install --no-cache-dir paramiko==1.9.0 \
+    && python2.7 -m pip install --no-cache-dir paramiko==1.16.0 \
     && python2.7 -m pip install --no-cache-dir pycrypto==2.6 \
     && python2.7 -m pip install --no-cache-dir pyinotify \
     && python2.7 -m pip install --no-cache-dir ecdsa==0.11 \
@@ -157,7 +157,7 @@ RUN set -x; \
     && python2.7 -m pip install --no-cache-dir sphinx_tabs==1.1.6 \
     && python2.7 -m pip install --no-cache-dir sphinxcontrib-httpdomain==1.5.0 \
     && python2.7 -m pip install --no-cache-dir sphinx_rtd_theme==0.2.5b2 \
-    && python2.7 -m pip install --no-cache-dir zammad-py==0.1.3 \
+    && python2.7 -m pip install --no-cache-dir zammad-py==0.1.5 \
     && python2.7 -m pip install --no-cache-dir bs4==0.0.1 \
     && python2.7 -m pip install --no-cache-dir zenpy==2.0.4 \
     && python2.7 -m pip install --no-cache-dir xmltodict==0.11.0 \
@@ -165,7 +165,7 @@ RUN set -x; \
 
 # OpenSans font install..
 RUN set -x; \
-		wget https://release.myodoo.de/fonts/opensans.zip \
+		wget https://rm.ownerp.io/staff/opensans.zip \
 		&& unzip opensans.zip \
 		&& mv opensans /usr/share/fonts/truetype/ \
 		&& rm opensans.zip
@@ -179,9 +179,8 @@ RUN set -x; \
 		&& fc-cache -f -v
 
 # PDF export engine install..
-# http://download.gna.org/wkhtmltopdf/0.12/0.12.2.1/
 RUN set -x; \
-		curl -k -o wkhtmltox.deb -SL https://release.myodoo.de/wkhtmltox-0.12.2.1_linux-trusty-amd64.deb \
+		curl -k -o wkhtmltox.deb -SL https://rm.ownerp.io/staff/wkhtmltox-0.12.1_linux-trusty-amd64.deb \
 		&& dpkg --force-depends -i wkhtmltox.deb \
         && ln -s /usr/local/bin/wkhtmltopdf /usr/bin \
         && ln -s /usr/local/bin/wkhtmltoimage /usr/bin \
