@@ -62,9 +62,9 @@ sudo mkdir /var/cache/ngx_pagespeed/
 sudo chown -R www-data:www-data /var/cache/ngx_pagespeed/
 
 # Install & start service nginx
-cp $HOME/myodoo-docker/Scripts/nginx.service /lib/systemd/system/
-systemctl enable nginx
-systemctl start nginx
+sudo cp $HOME/myodoo-docker/Scripts/nginx.service /lib/systemd/system/
+sudo systemctl enable nginx
+sudo systemctl start nginx
 
 echo "nginx installed"
 echo ""
@@ -77,5 +77,5 @@ echo "nginx check"
 nginx -t
 
 echo "Cleanup"
-rm -rf $HOME/incubator-pagespeed-ngx-latest-stable/
-rm -rf $HOME/nginx-1.*
+sudo rm -rf $HOME/incubator-pagespeed-ngx-latest-stable/
+sudo rm -rf $HOME/nginx-1.*
