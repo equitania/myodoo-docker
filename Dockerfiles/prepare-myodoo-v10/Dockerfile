@@ -1,8 +1,8 @@
 FROM ubuntu:16.04
 MAINTAINER Equitania Software GmbH <info@myodoo.de>
 # For Odoo 10 powered by MyOdoo.de
-# Version 2.1.3
-# Date 18.10.2018
+# Version 2.1.4
+# Date 19.10.2018
 
 ARG DEBIAN_FRONTEND=noninteractive
 
@@ -180,7 +180,7 @@ RUN set -x; \
 
 # PDF export engine install..
 RUN set -x; \
-		curl -k -o wkhtmltox.deb -SL https://rm.ownerp.io/staff/wkhtmltox-0.12.1_linux-trusty-amd64.deb \
+		curl -k -o wkhtmltox.deb -SL https://rm.ownerp.io/staff/wkhtmltox-0.12.2.1_linux-trusty-amd64.deb \
 		&& dpkg --force-depends -i wkhtmltox.deb \
         && ln -s /usr/local/bin/wkhtmltopdf /usr/bin \
         && ln -s /usr/local/bin/wkhtmltoimage /usr/bin \
