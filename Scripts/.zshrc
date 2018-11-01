@@ -1,5 +1,5 @@
 # Oh my ZSH powered by MyOdoo.de
-# Version 1.2.7
+# Version 1.2.8
 # Date 01.11.2018
 # Install: sh -c "$(curl -fsSL https://raw.github.com/robbyrussell/oh-my-zsh/master/tools/install.sh)"
 
@@ -192,5 +192,5 @@ alias edup='nano -B $HOME/docker2update.csv'
 alias pga='sudo -u postgres pg_activity -U postgres'
 alias showcerts='ll /etc/letsencrypt/live/'
 alias gopsql='sudo su - postgres -c "psql"'
-alias ups='./getScripts.py && cp myodoo-docker/getScripts.py $HOME/'
+alias ups='sudo $HOME/getScripts.py && sudo cp $HOME/myodoo-docker/getScripts.py $HOME/'
 alias rmtilde='rm *.*~ && rm *~.*'
