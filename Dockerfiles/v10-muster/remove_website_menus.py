@@ -4,6 +4,10 @@
 # With this script you can remove menus after system update
 # Version 1.0.0
 # Date 01.11.2018
+#
+# Prepare
+# sudo curl https://bootstrap.pypa.io/get-pip.py | sudo python
+# sudo pip install odoorpc
 ##############################################################################
 #
 #    Shell Script for Odoo, Open Source Management Solution

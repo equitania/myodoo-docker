@@ -1,6 +1,6 @@
 # Oh my ZSH powered by MyOdoo.de
-# Version 1.2.5
-# Date 14.10.2018
+# Version 1.2.6
+# Date 01.11.2018
 # Install: sh -c "$(curl -fsSL https://raw.github.com/robbyrussell/oh-my-zsh/master/tools/install.sh)"
 
 # If you come from bash you might have to change your $PATH.
@@ -12,16 +12,18 @@
 # Set name of the theme to load. Optionally, if you set this to "random"
 # it'll load a random theme each time that oh-my-zsh is loaded.
 # See https://github.com/robbyrussell/oh-my-zsh/wiki/Themes
-ZSH_THEME="robbyrussell"
-#ZSH_THEME="gallois"
-#ZSH_THEME="nanotech"
+#ZSH_THEME="robbyrussell"
+#ZSH_THEME="gnzh"
+#ZSH_THEME="juanghurtado"
+ZSH_THEME="muse"
+#ZSH_THEME="random"
 
 # Set list of themes to load
 # Setting this variable when ZSH_THEME=random
 # cause zsh load theme from this variable instead of
 # looking in ~/.oh-my-zsh/themes/
 # An empty array have no effect
-# ZSH_THEME_RANDOM_CANDIDATES=( "robbyrussell" "agnoster" )
+ZSH_THEME_RANDOM_CANDIDATES=( "robbyrussell" "gnzh" "juanghurtado" "muse" )
 
 # Uncomment the following line to use case-sensitive completion.
 # CASE_SENSITIVE="true"
@@ -191,3 +193,4 @@ alias pga='sudo -u postgres pg_activity -U postgres'
 alias showcerts='ll /etc/letsencrypt/live/'
 alias gopsql='sudo su - postgres -c "psql"'
 alias ups='./getScripts.py && cp myodoo-docker/getScripts.py $HOME/'
+alias rmtilde='rm *.*~ && rm *~'
