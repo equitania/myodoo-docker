@@ -2,8 +2,8 @@
 # -*- coding: utf-8 -*-
 # Mit diesem Skript wird ein Update einer Odoo Datenbank unter Docker durchgeführt
 # With this script you can update odoo db on postgresql under Docker
-# Version 2.3.1
-# Date 20.09.2018
+# Version 2.4.0
+# Date 01.11.2018
 ##############################################################################
 #
 #    Shell Script for Odoo, Open Source Management Solution
@@ -54,7 +54,7 @@ for _row in _reader:
         # Don't do anything
         continue
     # delay time before restart
-    _mydelaytime = _row[1]
+    _mydelaytime = int(_row[1])
     if _mydelaytime == 0:
         _mydelaytime = 10
     # name of container
@@ -129,18 +129,19 @@ for _row in _reader:
         os.system('docker run -it --rm -p ' + _myport + ':8069 -p ' + _mypollport + ':8072 --name="' + _mycontainer + '" ' + _myvolumen + ' ' + _myimage + ' update --database=' + _mydb + ' --db_user=' + _mydbuser + ' --db_password=' + _mydbpassword + ' --db_host=' + _mydbhost)
     print('docker run -d --restart=always -p ' + _myport + ':8069 -p ' + _mypollport + ':8072 --name="' + _mycontainer + '" ' + _myvolumen + ' ' + _myimage + ' start ')
     os.system('docker run -d --restart=always -p ' + _myport + ':8069 -p ' + _mypollport + ':8072 --name="' + _mycontainer + '" ' + _myvolumen + ' ' + _myimage + ' start')
-    _dotranslate = False
+    if os.path.isfile(_mypath + 'remove_website_menus.py'):
+        print('Website menus will remove...')
+        time.sleep(_mydelaytime)
+        os.system("python " + _mypath + 'remove_website_menus.py')
     if os.path.isfile(_mypath + 'load_translation.py'):
         print('Translation loading...')
         time.sleep(_mydelaytime)
         os.system("python " + _mypath + 'load_translation.py')
         print('Translation loaded...')
-        _dotranslate = True
     if os.path.isfile(_mypath + 'set_custom_translation.py'):
         print('Translation bugfixes...')
         os.system("python " + _mypath + 'set_custom_translation.py')
         print('Translation bugfixed...')
-        _dotranslate = True
     print(_mycontainer + ' restarting...')
     if _myupdate != "":
         os.system('docker stop ' + _mycontainer)
