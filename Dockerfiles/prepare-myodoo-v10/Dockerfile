@@ -1,8 +1,8 @@
 FROM ubuntu:16.04
 MAINTAINER Equitania Software GmbH <info@myodoo.de>
 # For Odoo 10 powered by MyOdoo.de
-# Version 2.1.4
-# Date 19.10.2018
+# Version 2.1.5
+# Date 05.11.2018
 
 ARG DEBIAN_FRONTEND=noninteractive
 
@@ -111,7 +111,7 @@ RUN set -x; \
     && python2.7 -m pip install --no-cache-dir PyYAML==3.12 \
     && python2.7 -m pip install --no-cache-dir qrcode==5.3 \
     && python2.7 -m pip install --no-cache-dir reportlab==3.3.0 \
-    && python2.7 -m pip install --no-cache-dir requests==2.11.1 \
+    && python2.7 -m pip install --no-cache-dir requests==2.20.0 \
     && python2.7 -m pip install --no-cache-dir six==1.10.0 \
     && python2.7 -m pip install --no-cache-dir suds-jurko==0.6 \
     && python2.7 -m pip install --no-cache-dir vatnumber==1.2 \
