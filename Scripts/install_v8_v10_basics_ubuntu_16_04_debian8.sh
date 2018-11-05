@@ -1,7 +1,7 @@
 #!/bin/bash
 # Install all basic and Python 2.7 Libs for Odoo 8/10
 # Script must run with mit root-rights
-# Version 1.0.0 - Stand 05.04.2018
+# Version 1.0.1 - Stand 05.11.2018
 ##############################################################################
 #
 #    Shell Script for Odoo, Open Source Management Solution
@@ -25,42 +25,49 @@
 apt-get update
 
 apt-get install -y --no-install-recommends \
-    ca-certificates \
-	ghostscript \
-	graphviz \
-	antiword  \
-	poppler-utils \
-	build-essential \
-	libfreetype6-dev \
-	libjpeg-dev \
-	libpq-dev \
-	python-dev \
-	libxml2-dev \
-	libxslt1-dev \
-	libldap2-dev \
-	libsasl2-dev \
-	libffi-dev \
-	sqlite3 \
-	geoip-bin \
-	geoip-database \
-	node-less \
-	node-clean-css \
-	imagemagick \
-	xfonts-75dpi \
-	xfonts-base
+		ca-certificates \
+		ghostscript \
+		graphviz \
+		antiword  \
+		poppler-utils \
+		htop \
+		dnsutils \
+		curl \
+		build-essential \
+		libfreetype6-dev \
+		libjpeg-dev \
+		libpq-dev \
+		python-dev \
+		libxml2-dev \
+		libxslt1-dev \
+		libldap2-dev \
+		libsasl2-dev \
+		libffi-dev \
+		unzip \
+		sqlite3 \
+		nano \
+		mc \
+		pkg-config \
+		geoip-bin \
+		geoip-database \
+		sudo \
+		node-less \
+		node-clean-css \
+		imagemagick \
+		xfonts-75dpi \
+		xfonts-base
 
 apt-get install -y --no-install-recommends \
-    python-software-properties \
-	python-pip  \
-	python-ldap \
-	python-magic \
-	python-libxslt1 \
-	python-imaging \
-	python-renderpm \
-	python-reportlab-accel \
-	python-tz \
-    python-zsi \
-    python-webdav
+		python-software-properties \
+		python-pip  \
+		python-magic \
+		python-libxslt1 \
+		python-imaging \
+		python-renderpm \
+		python-reportlab-accel \
+	    python-tz \
+        python-zsi \
+        python-webdav
 
 apt-get -y install -f --no-install-recommends
 apt-get purge -y --auto-remove -o APT::AutoRemove::RecommendsImportant=false -o APT::AutoRemove::SuggestsImportant=false npm

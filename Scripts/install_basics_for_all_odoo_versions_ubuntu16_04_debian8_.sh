@@ -1,7 +1,7 @@
 #!/bin/bash
 # Install basic libs for all Odoo versions
 # Script must run with mit root-rights
-# Version 1.0.0 - Stand 05.04.2018
+# Version 1.0.1 - Stand 05.11.2018
 ##############################################################################
 #
 #    Shell Script for Odoo, Open Source Management Solution
@@ -33,7 +33,7 @@ wget http://www.reportlab.com/ftp/pfbfer.zip \
 	&& rm pfbfer.zip \
 	&& fc-cache -f -v
 
-curl -k -o wkhtmltox.deb -SL https://release.myodoo.de/wkhtmltox-0.12.2.1_linux-trusty-amd64.deb \
+curl -k -o wkhtmltox.deb -SL https://rm.ownerp.io/staff/wkhtmltox-0.12.2.1_linux-trusty-amd64.deb \
 	&& dpkg --force-depends -i wkhtmltox.deb \
     && ln -s /usr/local/bin/wkhtmltopdf /usr/bin \
     && ln -s /usr/local/bin/wkhtmltoimage /usr/bin \
