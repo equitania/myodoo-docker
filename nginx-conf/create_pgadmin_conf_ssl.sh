@@ -30,7 +30,7 @@ mykey=$4
 mycrt=$5
 mylets=$6
 
-echo "Dieses Skript erstellt einen Portweiterleitung fuer NextCloud/OwnCloud auf die eingebene Domain fuer https!"
+echo "Dieses Skript erstellt einen Portweiterleitung fuer pgAdmin auf die eingebene Domain fuer https!"
 echo "Basepath: "$myscriptpath
 echo "Serverpath: "$myserverpath
 
@@ -75,7 +75,7 @@ myzert2="#zert2"
 myempty=""
 
 if [ "$myip" != "" ] || [ "$mydomain" != "" ] || [ "$myport" != "" ] || [ "$mykey" != "" ]  || [ "$mycrt" != "" ]; then
-  cp  $myscriptpath"/nextcloud_owncloud_template.conf" $myserverpath"/$mydomain.conf"
+  cp  $myscriptpath"/pgadmin_template.conf" $myserverpath"/$mydomain.conf"
   sed -i "s/$myolddomain/$mydomain/g" $myserverpath"/$mydomain.conf"
   sed -i "s/$myoldip/$myip/g" $myserverpath"/$mydomain.conf"
   sed -i "s/$myoldcrt/$mycrt/g" $myserverpath"/$mydomain.conf"
