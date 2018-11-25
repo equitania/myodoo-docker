@@ -2,7 +2,7 @@ FROM ubuntu:16.04
 MAINTAINER Equitania Software GmbH <info@myodoo.de>
 # For Odoo 10 powered by MyOdoo.de
 # Version 2.1.5
-# Date 05.11.2018
+# Date 07.11.2018
 
 ARG DEBIAN_FRONTEND=noninteractive
 
@@ -58,7 +58,8 @@ RUN set -x; \
 		node-clean-css \
 		imagemagick \
 		xfonts-75dpi \
-		xfonts-base
+		xfonts-base \
+        ttf-mscorefonts-installer
 
 # Install python libs ..
 RUN set -x; \
