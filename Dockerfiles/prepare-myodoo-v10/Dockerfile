@@ -151,7 +151,6 @@ RUN set -x; \
     && python2.7 -m pip install --no-cache-dir suds \
     && python2.7 -m pip install --no-cache-dir pycrypto==2.6.1 \
     && python2.7 -m pip install --no-cache-dir pyocclient==0.4 \
-    && python2.7 -m pip install --no-cache-dir dropbox==8.7.1 \
     && python2.7 -m pip install --no-cache-dir Office365Api==0.0.9 \
     && python2.7 -m pip install --no-cache-dir oauthlib \
     && python2.7 -m pip install --no-cache-dir sphinx==1.4.6 \
@@ -173,7 +172,7 @@ RUN set -x; \
 
 # Barcodes font install..
 RUN set -x; \
-		wget http://www.reportlab.com/ftp/pfbfer.zip \
+		wget https://rm.ownerp.io/staff/pfbfer.zip \
 		&& unzip pfbfer.zip -d fonts \
 		&& mv fonts /usr/lib/python2.7/dist-packages/reportlab/ \
 		&& rm pfbfer.zip \

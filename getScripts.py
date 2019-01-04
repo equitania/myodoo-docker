@@ -1,8 +1,8 @@
 #!/usr/bin/python
 # -*- coding: utf-8 -*-
 # Dieses Skript hilft beim Organisieren von Docker-Servern
-# Version 2.0.6
-# Date 01.11.2018
+# Version 2.0.7
+# Date 04.01.2019
 ##############################################################################
 #
 #    Shell Script for Odoo, Open Source Management Solution
@@ -37,4 +37,5 @@ os.system("cp $HOME/myodoo-docker/Scripts/update_docker_myodoo.py $HOME")
 #os.system("cp $HOME/myodoo-docker/Scripts/backup_odoo_docker_postgres_on_host.py $HOME")
 os.system("cp $HOME/myodoo-docker/Scripts/container2backup.py $HOME")
 os.system("cp $HOME/myodoo-docker/Scripts/cleanup-weblogs.sh $HOME")
+os.system("cp $HOME/myodoo-docker/Scripts/ssl-renew.sh $HOME")
 
