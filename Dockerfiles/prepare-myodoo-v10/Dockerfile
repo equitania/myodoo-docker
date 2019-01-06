@@ -1,8 +1,8 @@
 FROM ubuntu:16.04
 MAINTAINER Equitania Software GmbH <info@myodoo.de>
 # For Odoo 10 powered by MyOdoo.de
-# Version 2.1.5
-# Date 07.11.2018
+# Version 2.1.6
+# Date 05.01.2019
 
 ARG DEBIAN_FRONTEND=noninteractive
 
@@ -109,7 +109,7 @@ RUN set -x; \
     && python2.7 -m pip install --no-cache-dir python-openid==2.2.5 \
     && python2.7 -m pip install --no-cache-dir pytz==2016.7 \
     && python2.7 -m pip install --no-cache-dir pyusb==1.0.0 \
-    && python2.7 -m pip install --no-cache-dir PyYAML==3.12 \
+    && python2.7 -m pip install --no-cache-dir PyYAML==4.2b1 \
     && python2.7 -m pip install --no-cache-dir qrcode==5.3 \
     && python2.7 -m pip install --no-cache-dir reportlab==3.3.0 \
     && python2.7 -m pip install --no-cache-dir requests==2.20.0 \
@@ -180,12 +180,12 @@ RUN set -x; \
 
 # PDF export engine install..
 RUN set -x; \
-		curl -k -o wkhtmltox.deb -SL https://rm.ownerp.io/staff/wkhtmltox-0.12.2.1_linux-trusty-amd64.deb \
-		&& dpkg --force-depends -i wkhtmltox.deb \
+        curl -k -o wkhtmltox.deb -SL https://rm.ownerp.io/staff/wkhtmltox-0.12.2.1_linux-trusty-amd64.deb \
+        && dpkg --force-depends -i wkhtmltox.deb \
         && ln -s /usr/local/bin/wkhtmltopdf /usr/bin \
         && ln -s /usr/local/bin/wkhtmltoimage /usr/bin \
-		&& apt-get -y install -f --no-install-recommends \
-		&& apt-get purge -y --auto-remove -o APT::AutoRemove::RecommendsImportant=false -o APT::AutoRemove::SuggestsImportant=false npm \
-		&& rm -rf /var/lib/apt/lists/* wkhtmltox.deb
+        && apt-get -y install -f --no-install-recommends \
+        && apt-get purge -y --auto-remove -o APT::AutoRemove::RecommendsImportant=false -o APT::AutoRemove::SuggestsImportant=false npm \
+        && rm -rf /var/lib/apt/lists/* wkhtmltox.deb
 
 # Finished with build."
