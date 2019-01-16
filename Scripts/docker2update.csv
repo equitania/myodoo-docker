@@ -1,7 +1,7 @@
-# [M]odules or [F]ull update,containername,databasename,port,longpollingport,path2Dockfile,docker_image_name,postgresql_username,postgresql_userpassword,hostname/ip,volumen,update
+# [M]odules or [F]ull update,timeout(sec),containername,databasename,port,longpollingport,path2Dockfile,docker_image_name,postgresql_username,postgresql_userpassword,hostname/ip,volumen,update
 # [M]odule update will copy only new module to the container without update all - needs 2-3 minutes
 # [F]ull update will update all - needs 10-20 minutes time
-# Version 2.0.1
-# Date 20.09.2018
-# f.e. # F,ownerp,ownerp,11000,12000,/root/docker-builds/11000-ownerp/,myodoo/ownerp,myodoo,myodoo,db," --link myodoo-db:db -v /opt/ownerp/data:/opt/odoo/data ","-u mdoulename"
-# f.e. with ufw & proxy # M,ownerp,ownerp,127.0.0.1:11000,127.0.0.1:12000,/root/docker-builds/11000-ownerp/,myodoo/ownerp,myodoo,myodoo,db," --link myodoo-db:db -v /opt/ownerp/data:/opt/odoo/data ","-u modulename"
+# Version 2.0.2
+# Date 16.01.2018
+# f.e. # F,30,muster-myodoo,musterdb,11000,12000,/root/docker-builds/muster-myodoo/,myodoo/muster,myodoo,myodoo,db,"--link myodoo-db:db -v /opt/ownerp/data:/opt/odoo/data","-u mdoulename"
+# f.e. with ufw & proxy # M,10,muster-myodoo,musterdb,127.0.0.1:11000,127.0.0.1:12000,/root/docker-builds/muster-myodoo/,myodoo/myodoo,myodoo,myodoo,db,"--link myodoo-db:db -v /opt/ownerp/data:/opt/odoo/data","-u modulename"
