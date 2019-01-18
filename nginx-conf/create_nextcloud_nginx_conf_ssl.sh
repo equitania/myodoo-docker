@@ -45,7 +45,7 @@ if [ "$mydomain" = "" ]; then
 fi
 
 if [ "$myport" = "" ]; then
-  echo "Insert the odoo port | Geben Sie den Port fuer Odoo ein:"
+  echo "Insert the odoo port | Geben Sie den Port fuer NextCloud ein:"
   read myport
 fi
 
