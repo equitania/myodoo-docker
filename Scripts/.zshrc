@@ -1,6 +1,6 @@
 # Oh my ZSH powered by MyOdoo.de
-# Version 1.2.8
-# Date 01.11.2018
+# Version 1.2.9
+# Date 09.03.2019
 # Install: sh -c "$(curl -fsSL https://raw.github.com/robbyrussell/oh-my-zsh/master/tools/install.sh)"
 
 # If you come from bash you might have to change your $PATH.
@@ -15,7 +15,8 @@
 #ZSH_THEME="robbyrussell"
 #ZSH_THEME="gnzh"
 #ZSH_THEME="juanghurtado"
-ZSH_THEME="muse"
+ZSH_THEME="bira"
+#ZSH_THEME="muse"
 #ZSH_THEME="random"
 
 # Set list of themes to load
@@ -182,7 +183,7 @@ alias ngxr='sudo service nginx reload'
 alias dps='sudo docker ps -a'
 alias dpsfull='sudo docker inspect  -f "{{.Name}} {{.Config.Cmd}}" $(docker ps -a -q)'
 alias dpi='sudo docker images'
-alias syspatch='sudo apt update && sudo apt dist-upgrade && sudo apt autoremove && sudo apt autoclean'
+alias syspatch='sudo apt-get update && sudo apt-get dist-upgrade && sudo apt-get autoremove && sudo apt-get autoclean'
 alias dobk='$HOME/backup_odoo_docker_postgres_on_host.py'
 alias dobkc='$HOME/container2backup.py'
 alias doup='$HOME/update_docker_myodoo.py'
