@@ -2,7 +2,7 @@
 # -*- coding: utf-8 -*-
 # Mit diesem Skript überprüft das passende Dockerimage gemäß des Releasefiles
 # Version 1.0.5
-# Date 20.09.2018
+# Date 10.03.2019
 ##############################################################################
 #
 #    Shell Script for Odoo, Open Source Management Solution
@@ -32,7 +32,7 @@ if os.path.isfile(_access_file):
     _accesscode = open(_access_file).readline().rstrip()
     # Wenn accesscode gefüllt, wird versucht das Releasefile zu holen
     if _accesscode != "":
-        os.system('wget -q -O release.file https://v10.myodoo.de/get_csv_file/' + _accesscode)
+        os.system('wget -q -O release.file https://main.myodoo.de/get_csv_file/' + _accesscode)
         while not os.path.isfile(_release_file):
             time.sleep(0.1)
         # Wenn Releasefile gefüllt ist, beginnt der Buildprozess
