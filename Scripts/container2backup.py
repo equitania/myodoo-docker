@@ -2,8 +2,8 @@
 # -*- coding: utf-8 -*-
 # Mit diesem Skript wird ein Backup einer Odoo Datenbank inkl. FileStore unter Docker durchgeführt
 # With this script you can backup odoo db on postgresql incl. filestore under Docker
-# Version 2.0.4
-# Date 08.03.2019
+# Version 2.0.5
+# Date 11.03.2019
 ##############################################################################
 #
 #    Shell Script for Odoo, Open Source Management Solution
@@ -134,7 +134,9 @@ fname_rsync = 'rsync_targets.csv'
 if os.path.isfile(fname_rsync):
     reader2 = csv.reader(open(fname_rsync, 'rb'))
     for row in reader2:
-        if (row[0].startswith('#')) or (row[0] == '') or (row[0] == None):
+        if (not(row)):
+            continue
+        elif (row[0].startswith('#')):
             continue
         else:
             os.system(row[0])
