@@ -2,8 +2,8 @@
 # -*- coding: utf-8 -*-
 # Mit diesem Skript wird ein Update einer Odoo Datenbank unter Docker durchgeführt
 # With this script you can update odoo db on postgresql under Docker
-# Version 2.4.0
-# Date 01.11.2018
+# Version 2.4.1
+# Date 12.03.2019
 ##############################################################################
 #
 #    Shell Script for Odoo, Open Source Management Solution
@@ -50,9 +50,11 @@ for _row in _reader:
 
     # name of docker containers
     _mytype = _row[0]
-    if _mytype.startswith('#'):
-        # Don't do anything
+    if (not(_row)):
         continue
+    elif (_mytype.startswith('#')):
+        continue
+        # Kommentarzeile
     # delay time before restart
     _mydelaytime = int(_row[1])
     if _mydelaytime == 0:
