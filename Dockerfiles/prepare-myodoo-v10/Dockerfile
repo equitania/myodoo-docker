@@ -1,12 +1,12 @@
-FROM ubuntu:16.04
+FROM ubuntu:18.04
 MAINTAINER Equitania Software GmbH <info@myodoo.de>
 # For Odoo 10 powered by MyOdoo.de
-# Version 2.1.7
+# Version 2.2.0
 # Date 13.03.2019
 
 ARG DEBIAN_FRONTEND=noninteractive
 
-RUN apt-get update && apt-get -y dist-upgrade && apt-get install -y wget locales tzdata && \
+RUN apt-get update && apt-get -y dist-upgrade && apt-get install -y wget locales tzdata gnupg2 && \
     ln -sf /usr/share/zoneinfo/Europe/Berlin /etc/localtime
 
 # Set LOCALE to UTF8..
@@ -17,8 +17,8 @@ RUN echo "en_US.UTF-8 UTF-8" > /etc/locale.gen && \
 ENV LC_ALL en_US.UTF-8
 
 # Postgres 9.6 for Ubuntu
-RUN wget -q https://www.postgresql.org/media/keys/ACCC4CF8.asc -O - | apt-key add - && \
-    sh -c 'echo "deb http://apt.postgresql.org/pub/repos/apt/ xenial-pgdg main" >> /etc/apt/sources.list.d/pgdg.list' && \
+RUN wget --quiet -O - https://www.postgresql.org/media/keys/ACCC4CF8.asc | apt-key add - && \
+    sh -c 'echo "deb http://apt.postgresql.org/pub/repos/apt/ bionic-pgdg main" >> /etc/apt/sources.list.d/pgdg.list' && \
     apt-get update && \
     apt-get install -y postgresql-client-9.6
 
@@ -40,6 +40,7 @@ RUN set -x; \
 		libfreetype6-dev \
 		libjpeg-dev \
 		libpq-dev \
+		python-minimal \
 		python-dev \
 		libxml2-dev \
 		libxslt1-dev \
@@ -64,11 +65,11 @@ RUN set -x; \
 # Install python libs ..
 RUN set -x; \
 		apt-get install -y --no-install-recommends \
-		python-software-properties \
+		software-properties-common \
 		python-pip  \
 		python-magic \
 		python-libxslt1 \
-		python-imaging \
+		python-pil \
 		python-renderpm \
 		python-reportlab-accel \
 	    python-tz \
@@ -77,7 +78,7 @@ RUN set -x; \
 
 # Python packages pip install..
 RUN set -x; \
-    python2.7 -m pip install --no-cache-dir pip==18.1 \
+    python2.7 -m pip install --no-cache-dir pip \
     && python2.7 -m pip install --no-cache-dir wheel \
     && python2.7 -m pip install --no-cache-dir setuptools \
     && python2.7 -m pip install --no-cache-dir pyopenssl \
@@ -180,7 +181,7 @@ RUN set -x; \
 
 # PDF export engine install..
 RUN set -x; \
-        curl -k -o wkhtmltox.deb -SL https://rm.ownerp.io/staff/wkhtmltox_0.12.5-1.trusty_amd64.deb \
+        curl -k -o wkhtmltox.deb -SL https://rm.ownerp.io/staff/wkhtmltox_0.12.5-1.bionic_amd64.deb \
         && dpkg --force-depends -i wkhtmltox.deb \
         && ln -s /usr/local/bin/wkhtmltopdf /usr/bin \
         && ln -s /usr/local/bin/wkhtmltoimage /usr/bin \
