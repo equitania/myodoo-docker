@@ -1,8 +1,8 @@
 FROM ubuntu:16.04
 MAINTAINER Equitania Software GmbH <info@myodoo.de>
 # For Odoo 10 powered by MyOdoo.de
-# Version 2.1.6
-# Date 05.01.2019
+# Version 2.1.7
+# Date 13.03.2019
 
 ARG DEBIAN_FRONTEND=noninteractive
 
@@ -152,7 +152,7 @@ RUN set -x; \
     && python2.7 -m pip install --no-cache-dir pycrypto==2.6.1 \
     && python2.7 -m pip install --no-cache-dir pyocclient==0.4 \
     && python2.7 -m pip install --no-cache-dir Office365Api==0.0.9 \
-    && python2.7 -m pip install --no-cache-dir oauthlib \
+    && python2.7 -m pip install --no-cache-dir oauthlib==2.1.0 \
     && python2.7 -m pip install --no-cache-dir sphinx==1.4.6 \
     && python2.7 -m pip install --no-cache-dir sphinx_tabs==1.1.6 \
     && python2.7 -m pip install --no-cache-dir sphinxcontrib-httpdomain==1.5.0 \
@@ -180,7 +180,7 @@ RUN set -x; \
 
 # PDF export engine install..
 RUN set -x; \
-        curl -k -o wkhtmltox.deb -SL https://rm.ownerp.io/staff/wkhtmltox-0.12.2.1_linux-trusty-amd64.deb \
+        curl -k -o wkhtmltox.deb -SL https://rm.ownerp.io/staff/wkhtmltox_0.12.5-1.trusty_amd64.deb \
         && dpkg --force-depends -i wkhtmltox.deb \
         && ln -s /usr/local/bin/wkhtmltopdf /usr/bin \
         && ln -s /usr/local/bin/wkhtmltoimage /usr/bin \
