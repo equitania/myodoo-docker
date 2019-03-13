@@ -2,8 +2,8 @@
 # -*- coding: utf-8 -*-
 # Mit diesem Skript wird ein Backup einer Odoo Datenbank inkl. FileStore unter Docker durchgeführt
 # With this script you can backup odoo db on postgresql incl. filestore under Docker
-# Version 2.0.5
-# Date 11.03.2019
+# Version 2.0.6
+# Date 13.03.2019
 ##############################################################################
 #
 #    Shell Script for Odoo, Open Source Management Solution
@@ -29,10 +29,10 @@ import zipfile
 import datetime, time
 
 
-def zip_dir(dirpath, zippath):
-    fzip = zipfile.ZipFile(zippath, 'w', zipfile.ZIP_DEFLATED, allowZip64=True)
-    basedir = os.path.dirname(dirpath) + '/'
-    for root, dirs, files in os.walk(dirpath):
+def zip_dir(_dir_path, _zip_path):
+    fzip = zipfile.ZipFile(_zip_path, 'w', zipfile.ZIP_DEFLATED, allowZip64=True)
+    basedir = os.path.dirname(_dir_path) + '/'
+    for root, dirs, files in os.walk(_dir_path):
         if os.path.basename(root)[0] == '.':
             continue  # skip hidden directories
         dirname = root.replace(basedir, '')
@@ -56,7 +56,7 @@ mynginxpath = mybasepath + "/backups-nginx"
 if not os.path.exists(mynginxpath):
     os.mkdir(mynginxpath)
 
-print mybackuppath
+print(mybackuppath)
 
 for row in reader1:
     mydb = row[0]
@@ -68,7 +68,7 @@ for row in reader1:
     mydbuser = row[1]
     mysqlcontainer = row[2]
     mydatacontainer = row[3]
-    print 'Database Name:' + mydb + '\nDatabaseContainerName:' + mysqlcontainer + '\nMyOdooContainerName:' + mydatacontainer
+    print('Database Name:' + mydb + '\nDatabaseContainerName:' + mysqlcontainer + '\nMyOdooContainerName:' + mydatacontainer)
     mybackupfolder = mybackuppath + '/' + mydb
     if not os.path.exists(mybackupfolder):
         os.mkdir(mybackupfolder)
@@ -80,7 +80,7 @@ for row in reader1:
     os.rename(mybackupfolder + '/' + mydb, mybackupfolder + '/filestore')
     zip_dir(mybackupfolder, mybackuppath + '/' + mydatacontainer + '_dockerbackup_' + mytime + '.zip')
     os.system('rm -r ' + mybackupfolder)
-    print 'Backup is done ' + mydatacontainer
+    print('Backup is done ' + mydatacontainer)
 
 # backup nginx-conf
 if os.path.exists('/etc/nginx/conf.d/'):
@@ -112,7 +112,7 @@ for xfile in files:
 
         # delete file if older than 2 weeks
         if c < cutoff:
-            print "remove: " + mybackuppath + "/" + xfile
+            print("remove: " + mybackuppath + "/" + xfile)
             os.remove(mybackuppath + "/" + xfile)
 
 # removes any files in mynginxpath older than 14 days
@@ -124,10 +124,10 @@ for xfile in files:
 
         # delete file if older than 2 weeks
         if c < cutoff:
-            print "remove: " + mynginxpath + "/" + xfile
+            print("remove: " + mynginxpath + "/" + xfile)
             os.remove(mynginxpath + "/" + xfile)
 
-print 'Start rsync'
+print('Start rsync')
 # csv format
 # rsync --delete -avzre "ssh" /sourcepath/ user@servername:/targetpath/
 fname_rsync = 'rsync_targets.csv'
@@ -141,4 +141,4 @@ if os.path.isfile(fname_rsync):
         else:
             os.system(row[0])
 
-print 'Backup done!'
+print('Backup done!')
