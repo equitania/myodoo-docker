@@ -123,7 +123,6 @@ RUN set -x; \
     && python2.7 -m pip install --no-cache-dir XlsxWriter==0.9.3 \
     && python2.7 -m pip install --no-cache-dir xlwt==1.1.2 \
     && python2.7 -m pip install --no-cache-dir xlrd==1.0.0 \
-    && python2.7 -m pip install --no-cache-dir gdata \
     && python2.7 -m pip install --no-cache-dir simplejson \
     && python2.7 -m pip install --no-cache-dir unittest2 \
     && python2.7 -m pip install --no-cache-dir pdftools \
@@ -162,7 +161,9 @@ RUN set -x; \
     && python2.7 -m pip install --no-cache-dir bs4==0.0.1 \
     && python2.7 -m pip install --no-cache-dir zenpy==2.0.4 \
     && python2.7 -m pip install --no-cache-dir xmltodict==0.11.0 \
+    && python2.7 -m pip install --no-cache-dir gdata==2.0.18 \
     && python2.7 -m pip install --no-cache-dir email_validator
+
 
 # OpenSans font install..
 RUN set -x; \
