@@ -2,8 +2,8 @@
 # -*- coding: utf-8 -*-
 # Mit diesem Skript wird ein Update einer Odoo Datenbank unter Docker durchgeführt
 # With this script you can update odoo db on postgresql under Docker
-# Version 2.4.1
-# Date 12.03.2019
+# Version 2.4.2
+# Date 17.03.2019
 ##############################################################################
 #
 #    Shell Script for Odoo, Open Source Management Solution
@@ -29,7 +29,7 @@ import time
 
 # csv format - separator "," [M]odules or [F]ull update,containername,databasename,port,longpollingport,
 # path2Dockfile,docker_image_name,postgresql_username,postgresql_userpassword,hostname/ip,volumen,update 
-_fname = 'docker2update.csv'
+_fname = '$HOME/docker2update.csv'
 _reader = csv.reader(open(_fname, 'rb'))
 _mybasepath = os.getcwd()
 
