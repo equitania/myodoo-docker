@@ -2,8 +2,8 @@
 # -*- coding: utf-8 -*-
 # Mit diesem Skript wird ein Backup einer PostgreSQL Datenbank
 # With this script you can backup postgresql db
-# Version 1.0.0
-# Date 04.02.2018
+# Version 1.0.1
+# Date 24.03.2019
 ##############################################################################
 #
 #    Shell Script for Odoo, Open Source Management Solution
@@ -27,6 +27,7 @@ import os
 import csv
 import zipfile
 import datetime, time
+from os.path import expanduser
 
 def zip_dir(dirpath, zippath):
     fzip = zipfile.ZipFile(zippath, 'w', zipfile.ZIP_DEFLATED, allowZip64 = True)
@@ -45,7 +46,8 @@ def zip_dir(dirpath, zippath):
 
 # csv format - separator ","
 #DATABASENAME,DB_USER,DB_PASSWORD
-fname_backup = 'backup_postgres_db.csv'
+_home = expanduser("~")
+fname_backup = _home + '/backup_postgres_db.csv'
 reader1 = csv.reader(open(fname_backup, 'rb'))
 mybasepath = os.getcwd()
 mybackuppath = mybasepath + "/backups-postgres"
