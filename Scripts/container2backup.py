@@ -2,8 +2,8 @@
 # -*- coding: utf-8 -*-
 # Mit diesem Skript wird ein Backup einer Odoo Datenbank inkl. FileStore unter Docker durchgeführt
 # With this script you can backup odoo db on postgresql incl. filestore under Docker
-# Version 2.0.9
-# Date 03.04.2019
+# Version 2.1.0
+# Date 14.04.2019
 ##############################################################################
 #
 #    Shell Script for Odoo, Open Source Management Solution
@@ -68,6 +68,9 @@ for row in reader1:
     mydbuser = row[1]
     mysqlcontainer = row[2]
     mydatacontainer = row[3]
+    mystoretime = row[4]
+    if (mystoretime == None) or (mystoretime == ''):
+        mystoretime = 14
     print('Database Name:' + mydb + '\nDatabaseContainerName:' + mysqlcontainer + '\nMyOdooContainerName:' + mydatacontainer)
     mybackupfolder = mybackuppath + '/' + mydb
     if not os.path.exists(mybackupfolder):
@@ -77,7 +80,7 @@ for row in reader1:
     os.system('docker cp ' + mydatacontainer + ':/opt/odoo/data/filestore/' + mydb + ' ' + mybackupfolder + '/')
     ts = time.time()
     mytime = datetime.datetime.fromtimestamp(ts).strftime('%Y-%m-%d_%H-%M-%S')
-    os.rename(mybackupfolder + '/' + mydb, mybackupfolder + '/filestore')
+    #os.rename(mybackupfolder + '/' + mydb, mybackupfolder + '/filestore')
     zip_dir(mybackupfolder, mybackuppath + '/' + mydatacontainer + '_dockerbackup_' + mytime + '.zip')
     os.system('rm -r ' + mybackupfolder)
     print('Backup is done ' + mydatacontainer)
@@ -99,10 +102,10 @@ if os.path.exists('/etc/letsencrypt/live/'):
     os.system('zip -r ' + mynginxpath + '/letsencrypt_' + mytime + '.zip /etc/letsencrypt/live/')
 
 # run by crontab
-# removes any files in mybackuppath older than 14 days
+# removes any files in mybackuppath older than 14 days or mystoretime
 
 now = time.time()
-cutoff = now - (14 * 86400)
+cutoff = now - (mystoretime * 86400)
 
 files = os.listdir(mybackuppath + "/")
 for xfile in files:
