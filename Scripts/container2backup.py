@@ -2,7 +2,7 @@
 # -*- coding: utf-8 -*-
 # Mit diesem Skript wird ein Backup einer Odoo Datenbank inkl. FileStore unter Docker durchgeführt
 # With this script you can backup odoo db on postgresql incl. filestore under Docker
-# Version 2.1.0
+# Version 2.1.1
 # Date 14.04.2019
 ##############################################################################
 #
@@ -68,10 +68,11 @@ for row in reader1:
     mydbuser = row[1]
     mysqlcontainer = row[2]
     mydatacontainer = row[3]
-    mystoretime = row[4]
-    if (mystoretime == None) or (mystoretime == ''):
+    try:
+        mystoretime = row[4]
+    except:
         mystoretime = 14
-    print('Database Name:' + mydb + '\nDatabaseContainerName:' + mysqlcontainer + '\nMyOdooContainerName:' + mydatacontainer)
+    print('Database Name:' + mydb + '\nDatabaseContainerName:' + mysqlcontainer + '\nMyOdooContainerName:' + mydatacontainer + '\nStoreTime:' + str(mystoretime) + ' days')
     mybackupfolder = mybackuppath + '/' + mydb
     if not os.path.exists(mybackupfolder):
         os.mkdir(mybackupfolder)
@@ -105,7 +106,7 @@ if os.path.exists('/etc/letsencrypt/live/'):
 # removes any files in mybackuppath older than 14 days or mystoretime
 
 now = time.time()
-cutoff = now - (mystoretime * 86400)
+cutoff = now - (float(mystoretime) * 86400)
 
 files = os.listdir(mybackuppath + "/")
 for xfile in files:
