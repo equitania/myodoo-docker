@@ -95,7 +95,7 @@ view_ids = VIEW.search([("key", "in", view_key_to_delete)])
 VIEW.unlink(view_ids)
 
 # delete titles
-titles_to_delete = ["Miss","Doktor","Professor","Familie"]
+titles_to_delete = ["Fräulein","Miss","Doktor","Professor","Familie"]
 TITLE = _odoo.env['res.partner.title']
 title_ids = TITLE.search([("name", "in", titles_to_delete)])
 TITLE.unlink(title_ids)
