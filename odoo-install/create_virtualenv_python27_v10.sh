@@ -1,94 +1,47 @@
-FROM debian:jessie
-MAINTAINER Equitania Software GmbH <info@myodoo.de>
-# For Odoo 8 powered by MyOdoo.de
-# Version 1.0.18
-# Date 28.04.2019
+#!/bin/bash
+# Install all Python 2.7 Libs for Odoo 10
+# Version 2.1.2- Stand 28.04.2019
+##############################################################################
+#
+#    Shell Script for Odoo, Open Source Management Solution
+#    Copyright (C) 2014-now Equitania Software GmbH(<http://www.equitania.de>).
+#
+#    This program is free software: you can redistribute it and/or modify
+#    it under the terms of the GNU Affero General Public License as
+#    published by the Free Software Foundation, either version 3 of the
+#    License, or (at your option) any later version.
+#
+#    This program is distributed in the hope that it will be useful,
+#    but WITHOUT ANY WARRANTY; without even the implied warranty of
+#    MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+#    GNU Affero General Public License for more details.
+#
+#    You should have received a copy of the GNU Affero General Public License
+#    along with this program.  If not, see <http://www.gnu.org/licenses/>.
+#
+##############################################################################
 
-# "echo" "MyOdoo build will start now.."
+# To prepare your Ubuntu 18.04
+# sudo apt-get install python-pip
+# sudo pip install virtualenv
 
-ENV DEBIAN_FRONTEND noninteractive
+mypython="v10-p27"
+mypath="$HOME/venv/"
+myenv=$mypath$mypython
 
-RUN apt-get update && apt-get -y dist-upgrade && apt-get install -y locales
+if [ ! -d $myenv ]; then
+  mkdir -p $myenv
+fi
+cd $mypath
 
-# "echo" "Update bash.."
-COPY ./.bashrc /root/
+virtualenv -p /usr/bin/python2.7 $mypython
+echo '[list]\nformat=columns' > pip.conf
+source $mypython/bin/activate
 
-RUN \
-  apt-get -y install tzdata && \
-  ln -sf /usr/share/zoneinfo/Europe/Berlin /etc/localtime
-
-# "echo" "Set LOCALE to UTF8.."
-RUN echo "en_US.UTF-8 UTF-8" > /etc/locale.gen && \
-    locale-gen en_US.UTF-8 && \
-    dpkg-reconfigure locales && \
-    /usr/sbin/update-locale LANG=en_US.UTF-8
-ENV LC_ALL en_US.UTF-8
-
-
-# "echo" "Set fs.inotify.max_user_watches = 524288.."
-RUN echo "fs.inotify.max_user_watches = 524288" >> /etc/sysctl.conf
-
-# "echo" "Install basics.."
-RUN set -x; \
-		apt-get install -y --no-install-recommends \
-		ca-certificates \
-		ghostscript \
-		graphviz \
-		antiword  \
-		poppler-utils \
-		mtr \
-		dnsutils \
-		curl \
-		postgresql-client-9.4 \
-		build-essential \
-		libfreetype6-dev \
-		libjpeg-dev \
-		libpq-dev \
-		python-dev \
-		libxml2-dev \
-		libxslt1-dev \
-		libldap2-dev \
-		libsasl2-dev \
-		libffi-dev \
-		wget \
-		unzip \
-		sqlite3 \
-		nano \
-		mc \
-		pkg-config \
-		geoip-bin \
-		geoip-database \
-		sudo \
-		node-less \
-		node-clean-css \
-		tesseract-ocr \
-		imagemagick \
-		xfonts-75dpi \
-		xfonts-base
-
-# "echo" "Install python libs .."
-RUN set -x; \
-		apt-get install -y --no-install-recommends \
-		python-software-properties \
-		python-pip  \
-		python-magic \
-		python-libxslt1 \
-		python-imaging \
-		python-openssl \
-		python-renderpm \
-		python-reportlab-accel \
-		python-support \
-		python-tz \
-		python-zsi \
-		python-webdav
-
-
-# "echo" "Python packages pip install.."
-RUN set -x; \
-    python2.7 -m pip install pip==10.0.1 \
-    && python2.7 -m pip install --no-cache-dir wheel \
-    && python2.7 -m pip install --no-cache-dir setuptools \
-    && python2.7 -m pip install --no-cache-dir psycopg2==2.7.1 \
+python2.7 -m pip install --no-cache-dir pip --upgrade \
+    && python2.7 -m pip install --no-cache-dir wheel --upgrade \
+    && python2.7 -m pip install --no-cache-dir setuptools --upgrade \
+    && python2.7 -m pip install --no-cache-dir psycopg2==2.7.3.1 \
     && python2.7 -m pip install --no-cache-dir argparse==1.2.1 \
     && python2.7 -m pip install --no-cache-dir Babel==2.3.4 \
     && python2.7 -m pip install --no-cache-dir decorator==4.0.10 \
@@ -102,7 +55,7 @@ RUN set -x; \
     && python2.7 -m pip install --no-cache-dir Mako==1.0.4 \
     && python2.7 -m pip install --no-cache-dir MarkupSafe==0.23 \
     && python2.7 -m pip install --no-cache-dir mock==2.0.0 \
-    && python2.7 -m pip install --no-cache-dir ofxparse==0.15 \
+    && python2.7 -m pip install --no-cache-dir ofxparse==0.16 \
     && python2.7 -m pip install --no-cache-dir passlib==1.6.5 \
     && python2.7 -m pip install --no-cache-dir Pillow==3.4.1 \
     && python2.7 -m pip install --no-cache-dir psutil==4.3.1 \
@@ -113,13 +66,14 @@ RUN set -x; \
     && python2.7 -m pip install --no-cache-dir pyserial==3.1.1 \
     && python2.7 -m pip install --no-cache-dir Python-Chart==1.39 \
     && python2.7 -m pip install --no-cache-dir python-dateutil==2.5.3 \
+    && python2.7 -m pip install --no-cache-dir python-ldap==2.4.27 \
     && python2.7 -m pip install --no-cache-dir python-openid==2.2.5 \
     && python2.7 -m pip install --no-cache-dir pytz==2016.7 \
     && python2.7 -m pip install --no-cache-dir pyusb==1.0.0 \
     && python2.7 -m pip install --no-cache-dir PyYAML==3.12 \
     && python2.7 -m pip install --no-cache-dir qrcode==5.3 \
     && python2.7 -m pip install --no-cache-dir reportlab==3.3.0 \
-    && python2.7 -m pip install --no-cache-dir requests==2.11.1 \
+    && python2.7 -m pip install --no-cache-dir requests==2.20.0 \
     && python2.7 -m pip install --no-cache-dir six==1.10.0 \
     && python2.7 -m pip install --no-cache-dir suds-jurko==0.6 \
     && python2.7 -m pip install --no-cache-dir vatnumber==1.2 \
@@ -127,6 +81,7 @@ RUN set -x; \
     && python2.7 -m pip install --no-cache-dir Werkzeug==0.11.11 \
     && python2.7 -m pip install --no-cache-dir wsgiref==0.1.2 \
     && python2.7 -m pip install --no-cache-dir XlsxWriter==0.9.3 \
+    && python2.7 -m pip install --no-cache-dir xlrd==1.0.0 \
     && python2.7 -m pip install --no-cache-dir xlwt==1.1.2 \
     && python2.7 -m pip install --no-cache-dir gdata \
     && python2.7 -m pip install --no-cache-dir simplejson \
@@ -140,7 +95,7 @@ RUN set -x; \
     && python2.7 -m pip install --no-cache-dir validate_email \
     && python2.7 -m pip install --no-cache-dir pyDNS \
     && python2.7 -m pip install --no-cache-dir python-slugify \
-    && python2.7 -m pip install --no-cache-dir paramiko==1.9.0 \
+    && python2.7 -m pip install --no-cache-dir paramiko==1.16.0 \
     && python2.7 -m pip install --no-cache-dir pycrypto==2.6 \
     && python2.7 -m pip install --no-cache-dir pyinotify \
     && python2.7 -m pip install --no-cache-dir ecdsa==0.11 \
@@ -149,37 +104,27 @@ RUN set -x; \
     && python2.7 -m pip install --no-cache-dir egenix-mx-base \
     && python2.7 -m pip install --no-cache-dir pypdf2 \
     && python2.7 -m pip install --no-cache-dir odoorpc \
-    && python2.7 -m pip install --no-cache-dir pyelasticsearch \
+    && python2.7 -m pip install --no-cache-dir elasticsearch==6.1.1 \
     && python2.7 -m pip install --no-cache-dir openpyxl \
     && python2.7 -m pip install --no-cache-dir phonenumbers \
-    && python2.7 -m pip install --no-cache-dir pysftp
+    && python2.7 -m pip install --no-cache-dir pysftp \
+    && python2.7 -m pip install --no-cache-dir email \
+    && python2.7 -m pip install --no-cache-dir suds \
+    && python2.7 -m pip install --no-cache-dir pycrypto==2.6.1 \
+    && python2.7 -m pip install --no-cache-dir pyocclient==0.4 \
+    && python2.7 -m pip install --no-cache-dir dropbox==8.7.1 \
+    && python2.7 -m pip install --no-cache-dir Office365Api==0.0.9 \
+    && python2.7 -m pip install --no-cache-dir oauthlib \
+    && python2.7 -m pip install --no-cache-dir sphinx==1.4.6 \
+    && python2.7 -m pip install --no-cache-dir sphinx_tabs==1.1.6 \
+    && python2.7 -m pip install --no-cache-dir sphinxcontrib-httpdomain==1.5.0 \
+    && python2.7 -m pip install --no-cache-dir sphinx_rtd_theme==0.2.5b2 \
+    && python2.7 -m pip install --no-cache-dir zammad-py==0.1.5 \
+    && python2.7 -m pip install --no-cache-dir bs4==0.0.1 \
+    && python2.7 -m pip install --no-cache-dir zenpy==2.0.4 \
+    && python2.7 -m pip install --no-cache-dir xmltodict==0.11.0 \
+    && python2.7 -m pip install --no-cache-dir email_validator \
+    && python2.7 -m pip install --no-cache-dir google-api-python-client==1.7.7
 
-# "echo" "OpenSans font install.."
-RUN set -x; \
-		wget https://release.myodoo.de/fonts/opensans.zip \
-		&& unzip opensans.zip \
-		&& mv opensans /usr/share/fonts/truetype/ \
-		&& rm opensans.zip
 
-# "echo" "Barcodes font install.."
-RUN set -x; \
-		wget http://www.reportlab.com/ftp/pfbfer.zip \
-		&& unzip pfbfer.zip -d fonts \
-		&& mv fonts /usr/lib/python2.7/dist-packages/reportlab/ \
-		&& rm pfbfer.zip \
-		&& fc-cache -f -v
-
-# "echo" "PDF export engine install.."
-# http://download.gna.org/wkhtmltopdf/0.12/
-# http://nightly.odoo.com/extra/
-RUN set -x; \
-		curl -k -o wkhtmltox.deb -SL https://release.myodoo.de/wkhtmltox-0.12.1.2_linux-jessie-amd64.deb \
-		&& echo '40e8b906de658a2221b15e4e8cd82565a47d7ee8 wkhtmltox.deb' | sha1sum -c - \
-		&& dpkg --force-depends -i wkhtmltox.deb \
-        && ln -s /usr/local/bin/wkhtmltopdf /usr/bin \
-        && ln -s /usr/local/bin/wkhtmltoimage /usr/bin \
-		&& apt-get -y install -f --no-install-recommends \
-		&& apt-get purge -y --auto-remove -o APT::AutoRemove::RecommendsImportant=false -o APT::AutoRemove::SuggestsImportant=false npm \
-		&& rm -rf /var/lib/apt/lists/* wkhtmltox.deb
-
-# "echo" "Finished with build."
+cd $mypath && source $mypython/bin/activate && cd cd $HOME/gitbase/v10/v10-server/
