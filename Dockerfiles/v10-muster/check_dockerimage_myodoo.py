@@ -1,8 +1,8 @@
 #!/usr/bin/python
 # -*- coding: utf-8 -*-
 # Mit diesem Skript überprüft das passende Dockerimage gemäß des Releasefiles
-# Version 1.0.6
-# Date 27.04.2019
+# Version 1.0.7
+# Date 28.04.2019
 ##############################################################################
 #
 #    Shell Script for Odoo, Open Source Management Solution
@@ -32,6 +32,7 @@ if os.path.isfile(_access_file):
     _accesscode = open(_access_file).readline().rstrip()
     # Wenn accesscode gefüllt, wird versucht das Releasefile zu holen
     if _accesscode != "":
+        ts = time.time()
         mytime = datetime.datetime.fromtimestamp(ts).strftime('%Y-%m-%d_%H-%M-%S')
         if os.path.isfile(_release_file):
             os.rename(_release_file,_release_file + '-' + mytime)
