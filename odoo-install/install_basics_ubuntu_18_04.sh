@@ -47,11 +47,12 @@ apt-get install -y --no-install-recommends \
     libxslt1-dev \
     libldap2-dev \
     libsasl2-dev \
-    libffi-dev \		
+    libffi-dev \
     unzip \
     sqlite3 \
     nano \
     mc \
+    git \
     pkg-config \
     geoip-bin \
     geoip-database \
