@@ -175,7 +175,8 @@ RUN set -x; \
 RUN set -x; \
     wget https://rm.myodoo.net/staff/pfbfer.zip \
         && unzip pfbfer.zip -d fonts \
-        && mv fonts /usr/local/lib/python2.7/dist-packages/reportlab/ \
+        && cp fonts/* /usr/local/lib/python2.7/dist-packages/reportlab/fonts/ \
+        && rm -rf fonts/ \
         && rm pfbfer.zip \
         && fc-cache -f -v
 
