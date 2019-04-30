@@ -1,6 +1,6 @@
 #!/bin/bash
 # Install all Python 2.7 Libs for Odoo 10
-# Version 2.2.0- Stand 29.04.2019
+# Version 2.2.1- Stand 30.04.2019
 ##############################################################################
 #
 #    Shell Script for Odoo, Open Source Management Solution
@@ -127,4 +127,4 @@ python2.7 -m pip install --no-cache-dir pip --upgrade \
     && easy_install egenix-mx-base
 
 
-cd $mypath && source $mypython/bin/activate && cd cd $HOME/
+cd $mypath && source $mypython/bin/activate
