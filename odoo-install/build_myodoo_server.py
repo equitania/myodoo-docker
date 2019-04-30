@@ -25,9 +25,10 @@
 
 import os, csv, time, datetime
 from os.path import expanduser
+from shutil import copy2
 
 _mybasepath = expanduser("~")                # type: str
-_build_path = _mybasepath + '/odoo-server/'  # type: str
+_build_path = _mybasepath + '/Documents/'    # type: str
 _release_file = 'release.file'               # type: str
 _access_file = 'access_myodoo.txt'           # type: str
 
@@ -47,6 +48,7 @@ if os.path.isfile(_release_file):
     print('Starting with build at ' + _build_path)
     if not os.path.exists(_build_path):
         os.mkdir(_build_path)
+    copy2(_release_file,_build_path)
     os.chdir(_build_path)
     # Wenn Releasefile gefüllt ist, beginnt der Buildprozess
     if os.stat(_release_file).st_size != 0:
