@@ -85,9 +85,9 @@ RUN set -x; \
 
 # "echo" "Python packages pip install.."
 RUN set -x; \
-    python2.7 -m pip install pip==10.0.1 \
-    && python2.7 -m pip install --no-cache-dir wheel \
-    && python2.7 -m pip install --no-cache-dir setuptools \
+    python2.7 -m pip install pip --upgrade \
+    && python2.7 -m pip install --no-cache-dir wheel --upgrade \
+    && python2.7 -m pip install --no-cache-dir setuptools --upgrade \
     && python2.7 -m pip install --no-cache-dir psycopg2==2.7.1 \
     && python2.7 -m pip install --no-cache-dir argparse==1.2.1 \
     && python2.7 -m pip install --no-cache-dir Babel==2.3.4 \
@@ -146,7 +146,7 @@ RUN set -x; \
     && python2.7 -m pip install --no-cache-dir ecdsa==0.11 \
     && python2.7 -m pip install --no-cache-dir sphinx \
     && python2.7 -m pip install --no-cache-dir Pygments==2.0 \
-    && python2.7 -m pip install --no-cache-dir egenix-mx-base \
+    && python2.7 -m pip install --no-cache-dir egenix-mx-base --allow-external egenix-mx-base \
     && python2.7 -m pip install --no-cache-dir pypdf2 \
     && python2.7 -m pip install --no-cache-dir odoorpc \
     && python2.7 -m pip install --no-cache-dir pyelasticsearch \

@@ -1,6 +1,6 @@
 #!/bin/bash
 # Install all Python 2.7 Libs for Odoo 10
-# Version 2.1.2- Stand 28.04.2019
+# Version 2.2.0- Stand 29.04.2019
 ##############################################################################
 #
 #    Shell Script for Odoo, Open Source Management Solution
@@ -77,7 +77,7 @@ python2.7 -m pip install --no-cache-dir pip --upgrade \
     && python2.7 -m pip install --no-cache-dir six==1.10.0 \
     && python2.7 -m pip install --no-cache-dir suds-jurko==0.6 \
     && python2.7 -m pip install --no-cache-dir vatnumber==1.2 \
-    && python2.7 -m pip install --no-cache-dir vobject==0.9 \
+    && python2.7 -m pip install --no-cache-dir vobject==0.9.3 \
     && python2.7 -m pip install --no-cache-dir Werkzeug==0.11.11 \
     && python2.7 -m pip install --no-cache-dir wsgiref==0.1.2 \
     && python2.7 -m pip install --no-cache-dir XlsxWriter==0.9.3 \
@@ -101,7 +101,6 @@ python2.7 -m pip install --no-cache-dir pip --upgrade \
     && python2.7 -m pip install --no-cache-dir ecdsa==0.11 \
     && python2.7 -m pip install --no-cache-dir sphinx \
     && python2.7 -m pip install --no-cache-dir Pygments==2.0 \
-    && python2.7 -m pip install --no-cache-dir egenix-mx-base \
     && python2.7 -m pip install --no-cache-dir pypdf2 \
     && python2.7 -m pip install --no-cache-dir odoorpc \
     && python2.7 -m pip install --no-cache-dir elasticsearch==6.1.1 \
@@ -124,7 +123,8 @@ python2.7 -m pip install --no-cache-dir pip --upgrade \
     && python2.7 -m pip install --no-cache-dir zenpy==2.0.4 \
     && python2.7 -m pip install --no-cache-dir xmltodict==0.11.0 \
     && python2.7 -m pip install --no-cache-dir email_validator \
-    && python2.7 -m pip install --no-cache-dir google-api-python-client==1.7.7
+    && python2.7 -m pip install --no-cache-dir google-api-python-client==1.7.7 \
+    && easy_install egenix-mx-base
 
 
-cd $mypath && source $mypython/bin/activate && cd cd $HOME/gitbase/v10/v10-server/
+cd $mypath && source $mypython/bin/activate && cd cd $HOME/

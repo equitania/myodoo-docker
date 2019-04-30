@@ -42,7 +42,9 @@ apt-get install -y --no-install-recommends \
     libpq-dev \
     python-minimal \
     python-dev \
+    python-setuptools \
     python3-pip \
+    python3-dev \
     libxml2-dev \
     libxslt1-dev \
     libldap2-dev \
