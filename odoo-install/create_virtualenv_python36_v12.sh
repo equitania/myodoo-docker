@@ -93,4 +93,4 @@ python3.6 -m pip install --no-cache-dir wheel --upgrade \
     && python3.6 -m pip install --no-cache-dir MT-940
 
 
-cd $mypath && source $mypython/bin/activate && cd cd $HOME/gitbase/v12/v12-server/
+cd $mypath && source $mypython/bin/activate

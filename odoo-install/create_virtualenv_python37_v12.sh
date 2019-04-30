@@ -1,6 +1,6 @@
 #!/bin/bash
 # Install all Python 3.7 Libs for Odoo 12
-# Version 2.0.3 - Stand 28.04.2019
+# Version 2.0.4 - Stand 30.04.2019
 ##############################################################################
 #
 #    Shell Script for Odoo, Open Source Management Solution
@@ -105,4 +105,4 @@ python3.7 -m pip install --no-cache-dir wheel --upgrade \
     && python3.7 -m pip install --no-cache-dir MT-940
 
 
-cd $mypath && source $mypython/bin/activate && cd cd $HOME/gitbase/v12/v12-server/
+cd $mypath && source $mypython/bin/activate

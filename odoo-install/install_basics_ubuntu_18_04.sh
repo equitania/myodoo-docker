@@ -1,7 +1,7 @@
 #!/bin/bash
-# Install all basic and Python 2.7 Libs for Odoo 10
+# Install all basic and Python 2.7/3.6/3.7 Libs for Odoo 10/12
 # Script must run with mit root-rights
-# Version 1.0.0 - Stand 26.04.2019
+# Version 1.0.1 - Stand 30.04.2019
 ##############################################################################
 #
 #    Shell Script for Odoo, Open Source Management Solution
@@ -64,13 +64,13 @@ apt-get install -y --no-install-recommends \
     imagemagick \
     xfonts-75dpi \
     xfonts-base \
-    ttf-mscorefonts-installer
+    ttf-mscorefonts-installer 
 
 # PostgreSQL Server 9.6
 wget --quiet -O - https://www.postgresql.org/media/keys/ACCC4CF8.asc | apt-key add - && \
     sh -c 'echo "deb http://apt.postgresql.org/pub/repos/apt/ bionic-pgdg main" >> /etc/apt/sources.list.d/pgdg.list' && \
     apt-get update && \
-    apt-get install -y postgresql-9.6 postgresql-client-9.6
+    apt-get install -y postgresql-9.6 postgresql-client-9.6 pg-activity
 
 # Python Module
 apt-get install -y --no-install-recommends \
