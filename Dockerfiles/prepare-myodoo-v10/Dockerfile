@@ -1,8 +1,8 @@
 FROM ubuntu:18.04
 MAINTAINER Equitania Software GmbH <info@myodoo.de>
 # For Odoo 10 powered by MyOdoo.de
-# Version 2.2.2
-# Date 29.04.2019
+# Version 2.2.3
+# Date 30.04.2019
 
 ARG DEBIAN_FRONTEND=noninteractive
 
