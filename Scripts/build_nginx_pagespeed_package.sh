@@ -1,7 +1,7 @@
 #!/bin/bash
 # Install latest nginx with pagedspeed
 # Script must run with mit root-rights
-# Version 1.0.4 - Stand 03.09.2018
+# Version 1.0.5 - Stand 30.06.2019
 ##############################################################################
 #
 #    Shell Script for Odoo, Open Source Management Solution
@@ -70,11 +70,16 @@ echo "nginx installed"
 echo ""
 
 echo "nginx version"
-nginx -V
+sudo nginx -V
 echo ""
 
+sudo mkdir /etc/systemd/system/nginx.service.d
+sudo printf "[Service]\nExecStartPost=/bin/sleep 0.1\n" > /etc/systemd/system/nginx.service.d/override.conf
+sudo systemctl daemon-reload
+sudo systemctl restart nginx
+
 echo "nginx check"
-nginx -t
+sudo nginx -t
 
 echo "Cleanup"
 sudo rm -rf $HOME/incubator-pagespeed-ngx-latest-stable/
