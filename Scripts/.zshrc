@@ -1,6 +1,6 @@
 # Oh my ZSH powered by MyOdoo.de
-# Version 1.2.9
-# Date 09.03.2019
+# Version 1.3.0
+# Date 30.06.2019
 # Install: sh -c "$(curl -fsSL https://raw.github.com/robbyrussell/oh-my-zsh/master/tools/install.sh)"
 
 # If you come from bash you might have to change your $PATH.
@@ -180,6 +180,7 @@ alias ngx+='sudo service nginx start'
 alias ngx-='sudo service nginx stop'
 alias ngx#='sudo service nginx restart'
 alias ngxr='sudo service nginx reload'
+alias ngxs='sudo service nginx status'
 alias dps='sudo docker ps -a'
 alias dpsfull='sudo docker inspect  -f "{{.Name}} {{.Config.Cmd}}" $(docker ps -a -q)'
 alias dpi='sudo docker images'
