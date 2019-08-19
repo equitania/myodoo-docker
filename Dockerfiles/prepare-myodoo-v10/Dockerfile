@@ -140,7 +140,6 @@ RUN set -x; \
         && python2.7 -m pip install --no-cache-dir ecdsa==0.11 \
         && python2.7 -m pip install --no-cache-dir sphinx \
         && python2.7 -m pip install --no-cache-dir Pygments==2.0 \
-        && python2.7 -m pip install --no-cache-dir egenix-mx-base \
         && python2.7 -m pip install --no-cache-dir pypdf2 \
         && python2.7 -m pip install --no-cache-dir odoorpc \
         && python2.7 -m pip install --no-cache-dir elasticsearch==6.1.1 \
