@@ -1,6 +1,6 @@
 # Oh my ZSH powered by MyOdoo.de
-# Version 1.3.1
-# Date 20.08.2019
+# Version 1.3.2
+# Date 30.08.2019
 # Install: sh -c "$(curl -fsSL https://raw.github.com/robbyrussell/oh-my-zsh/master/tools/install.sh)"
 
 # If you come from bash you might have to change your $PATH.
@@ -176,16 +176,16 @@ alias shred=' shred -u -z'
 
 # server alias
 alias cdngx='cd /etc/nginx/conf.d/'
-alias ngx+='sudo service nginx start'
-alias ngx-='sudo service nginx stop'
-alias ngx#='sudo service nginx restart'
-alias ngxr='sudo service nginx reload'
-alias ngxs='sudo service nginx status'
+alias ngx+='sudo systemctl start nginx'
+alias ngx-='sudo systemctl stop nginx'
+alias ngx#='sudo systemctl restart nginx'
+alias ngxr='sudo systemctl reload nginx'
+alias ngxs='sudo systemctl status nginx'
 alias ngx!='sudo nginx -t'
 alias dps='sudo docker ps -a'
 alias dpsfull='sudo docker inspect  -f "{{.Name}} {{.Config.Cmd}}" $(docker ps -a -q)'
 alias dpi='sudo docker images'
-alias syspatch='sudo apt-get update && sudo apt-get dist-upgrade && sudo apt-get autoremove && sudo apt-get autoclean'
+alias syspatch='sudo apt update && sudo apt dist-upgrade && sudo apt autoremove && sudo apt autoclean'
 alias dobk='$HOME/backup_odoo_docker_postgres_on_host.py'
 alias dobkc='$HOME/container2backup.py'
 alias doup='$HOME/update_docker_myodoo.py'
@@ -196,4 +196,3 @@ alias pga='sudo -u postgres pg_activity -U postgres'
 alias showcerts='sudo certbot certificates'
 alias gopsql='sudo su - postgres -c "psql"'
 alias ups='sudo $HOME/getScripts.py && sudo cp $HOME/myodoo-docker/getScripts.py $HOME/'
-alias rmtilde='rm *.*~ && rm *~.*'
