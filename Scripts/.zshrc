@@ -1,5 +1,5 @@
 # Oh my ZSH powered by MyOdoo.de
-# Version 1.3.2
+# Version 1.3.3
 # Date 30.08.2019
 # Install: sh -c "$(curl -fsSL https://raw.github.com/robbyrussell/oh-my-zsh/master/tools/install.sh)"
 
@@ -137,24 +137,10 @@ alias ohmyzsh="nano -B ~/.oh-my-zsh"
 
 ### keybindings ###
 # vi mode
-bindkey -v
-# home/end (urxvt)
-bindkey "\e[7~" beginning-of-line
-bindkey "\e[8~" end-of-line
-# home/end (xterm)
-bindkey "\e[1~" beginning-of-line
-bindkey "\e[4~" end-of-line
-# Shift=Tab (completion)
-bindkey "\e[Z" reverse-menu-complete
-# insert
-bindkey "\e[2~" overwrite-mode
-# delete
-bindkey "\e[3~" delete-char
-# history search with started command
-bindkey "\e[A" up-line-or-search
-bindkey "\e[B" down-line-or-search
-# Ctrl+R
-bindkey '^R' history-incremental-search-backward
+bindkey -e
+# home/end
+bindkey '^[[H' beginning-of-line
+bindkey '^[[F' end-of-line
 
 
 ### aliases / functions ###
