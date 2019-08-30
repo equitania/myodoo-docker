@@ -2,7 +2,7 @@ FROM ubuntu:18.04
 MAINTAINER Equitania Software GmbH <info@myodoo.de>
 # For Odoo 10 powered by MyOdoo.de
 # Version 2.2.4
-# Date 27.08.2019
+# Date 28.08.2019
 
 ARG DEBIAN_FRONTEND=noninteractive
 
@@ -118,7 +118,7 @@ RUN set -x; \
         && python2.7 -m pip install --no-cache-dir suds-jurko==0.6 \
         && python2.7 -m pip install --no-cache-dir vatnumber==1.2 \
         && python2.7 -m pip install --no-cache-dir vobject==0.9.3 \
-        && python2.7 -m pip install --no-cache-dir Werkzeug==0.15.5 \
+        && python2.7 -m pip install --no-cache-dir Werkzeug==0.11.11 \
         && python2.7 -m pip install --no-cache-dir wsgiref==0.1.2 \
         && python2.7 -m pip install --no-cache-dir XlsxWriter==0.9.3 \
         && python2.7 -m pip install --no-cache-dir xlwt==1.1.2 \
