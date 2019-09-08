@@ -1,6 +1,6 @@
 # Oh my ZSH powered by MyOdoo.de
-# Version 1.3.4
-# Date 04.09.2019
+# Version 1.3.5
+# Date 07.09.2019
 # Install: sh -c "$(curl -fsSL https://raw.github.com/robbyrussell/oh-my-zsh/master/tools/install.sh)"
 
 # If you come from bash you might have to change your $PATH.
@@ -171,7 +171,7 @@ alias ngx!='sudo nginx -t'
 alias dps='sudo docker ps -a'
 alias dpsfull='sudo docker inspect  -f "{{.Name}} {{.Config.Cmd}}" $(docker ps -a -q)'
 alias dpi='sudo docker images'
-alias syspatch='sudo apt update && sudo apt dist-upgrade && sudo apt autoremove && sudo apt autoclean'
+alias syspatch='sudo apt -y update && sudo apt -y dist-upgrade && sudo apt -y autoremove && sudo apt -y autoclean'
 alias dobk='$HOME/backup_odoo_docker_postgres_on_host.py'
 alias dobkc='$HOME/container2backup.py'
 alias doup='$HOME/update_docker_myodoo.py'
