@@ -1,0 +1,36 @@
+Usage: docker run [OPTIONS] myodoo/projectname[:TAG] [COMMAND ...]
+
+Run odoo in a docker container.
+
+Positional arguments:
+  COMMAND          The command to run. (default: help)
+
+Commands:
+  help             Show this help message
+  start            Run odoo server in the background (accept additional arguments passed to odoo command)
+  update           Update mode for your Odoo system (accept additional arguments passed to odoo command)
+
+Examples:
+  In these examples, we link to a container named "pg94-db" which serves PostreSQL (see docker run -d -e POSTGRES_USER=odoo -e POSTGRES_PASSWORD=odoo --name pg94-db postgres:9.4)
+
+  With PostgreSQL in a Docker container:
+  ######################################
+  	  
+  Run the image with an interactive shell and remove the container on logout
+  $ docker run -ti --rm --link pg94-db:db myodoo/projectname:latest start
+  Note: Access parameter are define in the file odoo.conf
+
+  Run the image and enforce a database `DBNAME` update, then remove the container
+  $ docker run -ti --rm --link pg94-db:db myodoo/projectname:latest update --database=DBNAME db_user odoo --db_password "odoo" --db_host=db
+
+  With PostgreSQL on a host:
+  ######################################
+  	  
+  Run the image with an interactive shell and remove the container on logout
+  $ docker run -ti --rm myodoo/projectname:latest start
+  Note: Access parameter are define in the file odoo.conf
+
+  Run the image and enforce a database `DBNAME` update, then remove the container
+  $ docker run -ti --rm myodoo/projectname:latest update --database=DBNAME db_user=DBUSER --db_password "DBPASSWORD" --db_host=DBHOST
+
+  
