@@ -2,8 +2,8 @@
 # -*- coding: utf-8 -*-
 # Mit diesem Skript kann man Website Menüs nach dem Update wieder entfernen
 # With this script you can remove menus after system update
-# Version 1.0.2
-# Date 26.04.2019
+# Version 1.0.3
+# Date 11.09.2019
 #
 # Prepare
 # sudo curl https://bootstrap.pypa.io/get-pip.py | sudo python
@@ -95,7 +95,7 @@ view_ids = VIEW.search([("key", "in", view_key_to_delete)])
 VIEW.unlink(view_ids)
 
 # delete titles
-titles_to_delete = ["Fräulein","Miss","Doktor","Professor","Familie"]
+titles_to_delete = ["Frl.","Fräulein","Miss","Doktor","Professor","Familie"]
 TITLE = _odoo.env['res.partner.title']
 title_ids = TITLE.search([("name", "in", titles_to_delete)])
 TITLE.unlink(title_ids)
