@@ -1,6 +1,6 @@
 # Oh my ZSH powered by MyOdoo.de
-# Version 1.3.2
-# Date 30.08.2019
+# Version 1.3.5
+# Date 07.09.2019
 # Install: sh -c "$(curl -fsSL https://raw.github.com/robbyrussell/oh-my-zsh/master/tools/install.sh)"
 
 # If you come from bash you might have to change your $PATH.
@@ -137,24 +137,10 @@ alias ohmyzsh="nano -B ~/.oh-my-zsh"
 
 ### keybindings ###
 # vi mode
-bindkey -v
-# home/end (urxvt)
-bindkey "\e[7~" beginning-of-line
-bindkey "\e[8~" end-of-line
-# home/end (xterm)
-bindkey "\e[1~" beginning-of-line
-bindkey "\e[4~" end-of-line
-# Shift=Tab (completion)
-bindkey "\e[Z" reverse-menu-complete
-# insert
-bindkey "\e[2~" overwrite-mode
-# delete
-bindkey "\e[3~" delete-char
-# history search with started command
-bindkey "\e[A" up-line-or-search
-bindkey "\e[B" down-line-or-search
-# Ctrl+R
-bindkey '^R' history-incremental-search-backward
+bindkey -e
+# home/end
+bindkey '^[[H' beginning-of-line
+bindkey '^[[F' end-of-line
 
 
 ### aliases / functions ###
@@ -185,7 +171,7 @@ alias ngx!='sudo nginx -t'
 alias dps='sudo docker ps -a'
 alias dpsfull='sudo docker inspect  -f "{{.Name}} {{.Config.Cmd}}" $(docker ps -a -q)'
 alias dpi='sudo docker images'
-alias syspatch='sudo apt update && sudo apt dist-upgrade && sudo apt autoremove && sudo apt autoclean'
+alias syspatch='sudo apt -y update && sudo apt -y dist-upgrade && sudo apt -y autoremove && sudo apt -y autoclean'
 alias dobk='$HOME/backup_odoo_docker_postgres_on_host.py'
 alias dobkc='$HOME/container2backup.py'
 alias doup='$HOME/update_docker_myodoo.py'
@@ -196,3 +182,4 @@ alias pga='sudo -u postgres pg_activity -U postgres'
 alias showcerts='sudo certbot certificates'
 alias gopsql='sudo su - postgres -c "psql"'
 alias ups='sudo $HOME/getScripts.py && sudo cp $HOME/myodoo-docker/getScripts.py $HOME/'
+alias spacetop20='sudo du -ah / 2>/dev/null | sort -n -r | head -n 20'
