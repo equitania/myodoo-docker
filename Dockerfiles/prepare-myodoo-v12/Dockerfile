@@ -1,8 +1,8 @@
-FROM ubuntu:18.04
+FROM python:3.7.4-slim-stretch
 MAINTAINER Equitania Software GmbH <info@myodoo.de>
 # For Odoo 12 powered by MyOdoo.de
-# Version 1.0.1
-# Date 28.04.2019
+# Version 1.1.0
+# Date 07.10.2019
 
 
 ARG DEBIAN_FRONTEND=noninteractive
@@ -17,11 +17,11 @@ RUN echo "en_US.UTF-8 UTF-8" > /etc/locale.gen && \
     /usr/sbin/update-locale LANG=en_US.UTF-8
 ENV LC_ALL en_US.UTF-8
 
-#Postgres 10 for Ubuntu
+#Postgres 11 for Debian
 RUN wget -q https://www.postgresql.org/media/keys/ACCC4CF8.asc -O- | sudo apt-key add - && \
-    sh -c 'echo "deb http://apt.postgresql.org/pub/repos/apt/ bionic-pgdg main" | sudo tee /etc/apt/sources.list.d/postgresql.list' && \
+    sh -c 'echo "deb http://apt.postgresql.org/pub/repos/apt/ stretch-pgdg main" | sudo tee /etc/apt/sources.list.d/postgresql.list' && \
     apt-get update && \
-    apt-get install -y postgresql-client-10
+    apt-get install -y postgresql-client-11
 
 
 # Update bash..
@@ -41,12 +41,9 @@ RUN set -x; \
 		dnsutils \
 		curl \
 		build-essential \
-		python3-pip \
-		python3-stdnum \
 		libfreetype6-dev \
 		libjpeg-dev \
 		libpq-dev \
-		python3-dev \
 		libxml2-dev \
 		libxslt1-dev \
 		libldap2-dev \
@@ -66,7 +63,6 @@ RUN set -x; \
 		xfonts-base
 
 
-# Python packages pip install..
 RUN set -x; \
     python3 -m pip install --no-cache-dir pip --upgrade \
     && python3 -m pip install --no-cache-dir wheel --upgrade \
@@ -76,11 +72,12 @@ RUN set -x; \
     && python3 -m pip install --no-cache-dir decorator==4.0.10 \
     && python3 -m pip install --no-cache-dir docutils==0.12 \
     && python3 -m pip install --no-cache-dir feedparser==5.2.1 \
-    && python3 -m pip install --no-cache-dir gevent==1.1.2 \
-    && python3 -m pip install --no-cache-dir greenlet==0.4.10 \
+    && python3 -m pip install --no-cache-dir gevent==1.3.4 \
+    && python3 -m pip install --no-cache-dir greenlet==0.4.13 \
     && python3 -m pip install --no-cache-dir html2text==2016.9.19 \
     && python3 -m pip install --no-cache-dir Jinja2==2.10.1 \
-    && python3 -m pip install --no-cache-dir lxml==3.7.1 \
+    && python3 -m pip install --no-cache-dir libsass==0.12.3 \
+    && python3 -m pip install --no-cache-dir lxml==4.2.3 \
     && python3 -m pip install --no-cache-dir Mako==1.0.4 \
     && python3 -m pip install --no-cache-dir MarkupSafe==0.23 \
     && python3 -m pip install --no-cache-dir mock==2.0.0 \
@@ -116,30 +113,16 @@ RUN set -x; \
     && python3 -m pip install --no-cache-dir parse-accept-language \
     && python3 -m pip install --no-cache-dir MT-940
 
-# OpenSans font install..
-RUN set -x; \
-    wget https://rm.myodoo.net/staff/opensans.zip \
-        && unzip opensans.zip \
-        && mv opensans /usr/share/fonts/truetype/ \
-        && rm opensans.zip
-
-# Barcodes font install..
-RUN set -x; \
-    wget https://rm.myodoo.net/staff/pfbfer.zip \
-        && unzip pfbfer.zip -d fonts \
-        && cp fonts/* /usr/local/lib/python3.6/dist-packages/reportlab/fonts/ \
-        && rm -rf fonts/ \
-        && rm pfbfer.zip \
-        && fc-cache -f -v
 
 # PDF export engine install..
 RUN set -x; \
-    curl -k -o wkhtmltox.deb -SL https://rm.myodoo.net/staff/wkhtmltox_0.12.5-1.bionic_amd64.deb \
+    curl -k -o wkhtmltox.deb -SL https://rm.myodoo.net/staff/wkhtmltox_0.12.5-1.stretch_amd64.deb \
         && dpkg --force-depends -i wkhtmltox.deb \
         && ln -s /usr/local/bin/wkhtmltopdf /usr/bin \
         && ln -s /usr/local/bin/wkhtmltoimage /usr/bin \
         && apt-get -y install -f --no-install-recommends \
-        && apt-get purge -y --auto-remove -o APT::AutoRemove::RecommendsImportant=false -o APT::AutoRemove::SuggestsImportant=false npm \
-        && rm -rf /var/lib/apt/lists/* wkhtmltox.deb
+        && apt-get purge -y --auto-remove -o APT::AutoRemove::RecommendsImportant=false -o APT::AutoRemove::SuggestsImportant=false  \
+        && rm -rf /var/lib/apt/lists/* wkhtmltox.deb \
+        && update-alternatives --remove python /usr/bin/python2.7
 
 # Finished with build.

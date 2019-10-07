@@ -64,7 +64,7 @@ RUN set -x; \
 		&& mv Harmattan-Regular.ttf /usr/share/fonts/truetype/harmattan \
 		&& rm harmattan.zip 
 
-COPY ./pentaho-odoo.war /tomcat/webapps/
+COPY pentaho-odoo.war /tomcat/webapps/
 
 
 ADD create_tomcat_admin_user.sh /create_tomcat_admin_user.sh
