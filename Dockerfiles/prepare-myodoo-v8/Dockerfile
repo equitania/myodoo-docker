@@ -1,8 +1,8 @@
 FROM debian:jessie
 MAINTAINER Equitania Software GmbH <info@myodoo.de>
 # For Odoo 8 powered by MyOdoo.de
-# Version 1.0.18
-# Date 28.04.2019
+# Version 1.0.19
+# Date 23.09.2019
 
 # "echo" "MyOdoo build will start now.."
 
@@ -146,7 +146,6 @@ RUN set -x; \
     && python2.7 -m pip install --no-cache-dir ecdsa==0.11 \
     && python2.7 -m pip install --no-cache-dir sphinx \
     && python2.7 -m pip install --no-cache-dir Pygments==2.0 \
-    && python2.7 -m pip install --no-cache-dir egenix-mx-base --allow-external egenix-mx-base \
     && python2.7 -m pip install --no-cache-dir pypdf2 \
     && python2.7 -m pip install --no-cache-dir odoorpc \
     && python2.7 -m pip install --no-cache-dir pyelasticsearch \
@@ -154,27 +153,27 @@ RUN set -x; \
     && python2.7 -m pip install --no-cache-dir phonenumbers \
     && python2.7 -m pip install --no-cache-dir pysftp
 
-# "echo" "OpenSans font install.."
+# OpenSans font install..
 RUN set -x; \
-		wget https://release.myodoo.de/fonts/opensans.zip \
-		&& unzip opensans.zip \
-		&& mv opensans /usr/share/fonts/truetype/ \
-		&& rm opensans.zip
+    wget https://rm.myodoo.net/staff/opensans.zip \
+        && unzip opensans.zip \
+        && mv opensans /usr/share/fonts/truetype/ \
+        && rm opensans.zip
 
-# "echo" "Barcodes font install.."
+# Barcodes font install..
 RUN set -x; \
-		wget http://www.reportlab.com/ftp/pfbfer.zip \
-		&& unzip pfbfer.zip -d fonts \
-		&& mv fonts /usr/lib/python2.7/dist-packages/reportlab/ \
-		&& rm pfbfer.zip \
-		&& fc-cache -f -v
+    wget https://rm.myodoo.net/staff/pfbfer.zip \
+        && unzip pfbfer.zip -d fonts \
+        && cp fonts/* /usr/local/lib/python2.7/dist-packages/reportlab/fonts/ \
+        && rm -rf fonts/ \
+        && rm pfbfer.zip \
+        && fc-cache -f -v
 
 # "echo" "PDF export engine install.."
 # http://download.gna.org/wkhtmltopdf/0.12/
 # http://nightly.odoo.com/extra/
 RUN set -x; \
-		curl -k -o wkhtmltox.deb -SL https://release.myodoo.de/wkhtmltox-0.12.1.2_linux-jessie-amd64.deb \
-		&& echo '40e8b906de658a2221b15e4e8cd82565a47d7ee8 wkhtmltox.deb' | sha1sum -c - \
+		curl -k -o wkhtmltox.deb -SL https://rm.myodoo.net/staff/wkhtmltox-0.12.2.1_linux-jessie-amd64.deb \
 		&& dpkg --force-depends -i wkhtmltox.deb \
         && ln -s /usr/local/bin/wkhtmltopdf /usr/bin \
         && ln -s /usr/local/bin/wkhtmltoimage /usr/bin \

@@ -18,7 +18,7 @@ function start {
     if [ ! -e $1 ]; then
         echo "...with additional args: $*"
     fi
-    sudo -i -u odoo /usr/bin/python \
+    sudo -i -u odoo /usr/local/bin/python3 \
                     /opt/odoo/odoo-server/odoo-bin \
                     -c $file \
                     $*
@@ -33,7 +33,7 @@ function update {
     if [ ! -e $1 ]; then
         echo "...with additional args: $*"
     fi
-    sudo -i -u odoo /usr/bin/python \
+    sudo -i -u odoo /usr/local/bin/python3 \
                     /opt/odoo/odoo-server/odoo-bin \
                     --update=all \
                     --workers=0 \
