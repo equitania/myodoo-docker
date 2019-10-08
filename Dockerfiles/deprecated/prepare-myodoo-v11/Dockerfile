@@ -25,7 +25,7 @@ RUN wget -q https://www.postgresql.org/media/keys/ACCC4CF8.asc -O - | apt-key ad
 
 
 # Update bash..
-COPY ./.bashrc /root/
+COPY .bashrc /root/
 
 
 # Install basics..
