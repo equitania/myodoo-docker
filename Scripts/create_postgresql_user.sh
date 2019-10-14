@@ -1,7 +1,7 @@
 #!/bin/bash
 # Mit diesem Skript installiert Odoo unter /opt/odoo und bindet es in den Autostart ein
 # Skript muss mit root-Rechten ausgeführt werden
-# Version 1.2.1 - Stand 29.03.2016
+# Version 1.2.2 - Stand 14.10.2019
 ##############################################################################
 #
 #    Shell Script for Odoo, Open Source Management Solution
@@ -32,6 +32,7 @@ if [ "$mypguser" != "" ]; then
   adduser $mypguser --no-create-home --gecos "" --disabled-login
   echo "PostgreSQL Passwort $mypguser wird gesetzt ..."
   su - postgres -c "psql -U postgres -d postgres -c \"CREATE USER $mypguser with password '$myodoopwd';\""
+  su - postgres -c "psql -U postgres -d postgres -c \"ALTER USER $mypguser WITH PASSWORD '$myodoopwd';\""
   su - postgres -c "psql -U postgres -d postgres -c \"ALTER USER $mypguser CREATEDB;\""
 fi
 
