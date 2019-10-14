@@ -1,8 +1,8 @@
-FROM python:3.7.4-slim-stretch
+FROM python:3.6.9-slim-stretch
 MAINTAINER Equitania Software GmbH <info@myodoo.de>
 # For Odoo 12 powered by MyOdoo.de
-# Version 1.1.0
-# Date 07.10.2019
+# Version 1.2.0
+# Date 11.10.2019
 
 
 ARG DEBIAN_FRONTEND=noninteractive
@@ -72,12 +72,12 @@ RUN set -x; \
     && python3 -m pip install --no-cache-dir decorator==4.0.10 \
     && python3 -m pip install --no-cache-dir docutils==0.12 \
     && python3 -m pip install --no-cache-dir feedparser==5.2.1 \
-    && python3 -m pip install --no-cache-dir gevent==1.3.4 \
-    && python3 -m pip install --no-cache-dir greenlet==0.4.13 \
+    && python3 -m pip install --no-cache-dir gevent==1.1.2 \
+    && python3 -m pip install --no-cache-dir greenlet==0.4.10 \
     && python3 -m pip install --no-cache-dir html2text==2016.9.19 \
     && python3 -m pip install --no-cache-dir Jinja2==2.10.1 \
     && python3 -m pip install --no-cache-dir libsass==0.12.3 \
-    && python3 -m pip install --no-cache-dir lxml==4.2.3 \
+    && python3 -m pip install --no-cache-dir lxml==3.7.1 \
     && python3 -m pip install --no-cache-dir Mako==1.0.4 \
     && python3 -m pip install --no-cache-dir MarkupSafe==0.23 \
     && python3 -m pip install --no-cache-dir mock==2.0.0 \
