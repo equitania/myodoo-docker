@@ -1,8 +1,8 @@
-#!/usr/bin/python
+#!/usr/bin/python3
 # -*- coding: utf-8 -*-
 # Mit diesem Skript wird mittels dem Release Manager ein neuer Server gebaut
-# Version 1.1.0
-# Date 07.10.2019
+# Version 1.1.1
+# Date 15.10.2019
 ##############################################################################
 #
 #    Shell Script for Odoo, Open Source Management Solution
