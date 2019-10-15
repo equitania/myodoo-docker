@@ -1,8 +1,8 @@
 #!/usr/bin/python3
 # -*- coding: utf-8 -*-
 # Mit diesem Skript überprüft das passende Dockerimage gemäß des Releasefiles
-# Version 1.0.8
-# Date 07.10.2019
+# Version 1.0.9
+# Date 15.10.2019
 ##############################################################################
 #
 #    Shell Script for Odoo, Open Source Management Solution
@@ -41,24 +41,25 @@ if os.path.isfile(_access_file):
             time.sleep(0.1)
         # Wenn Releasefile gefüllt ist, beginnt der Buildprozess
         if os.stat(_release_file).st_size != 0:
-            _reader = csv.reader(open(_release_file, 'rb'))
-            _count = 1
-            for _row in _reader:
-                _column = _row[0]
-                _column = _column.replace(' ', '')
-                if _count == 1:
-                    _url = _column
-                elif _count == 2:
-                    if _column != '':
-                        print('dockerimage: ' + _column)
-                        _command = "sed -i '1s|.*|FROM " + _column + "|' Dockerfile"
-                        print(_command)
-                        os.system(_command)
+            with open(_release_file, encoding="utf8") as csvfile:
+                _reader = csv.reader(csvfile, delimiter=",")
+                _count = 1
+                for _row in _reader:
+                    _column = _row[0]
+                    _column = _column.replace(' ', '')
+                    if _count == 1:
+                        _url = _column
+                    elif _count == 2:
+                        if _column != '':
+                            print('dockerimage: ' + _column)
+                            _command = "sed -i '1s|.*|FROM " + _column + "|' Dockerfile"
+                            print(_command)
+                            os.system(_command)
+                        else:
+                            print('No Dockerimages defined!')
                     else:
-                        print('No Dockerimages defined!')
-                else:
-                    continue
-                _count += 1
+                        continue
+                    _count += 1
 
             print('Dockerfile image changed')
         else:
