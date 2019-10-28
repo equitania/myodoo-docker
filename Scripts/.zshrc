@@ -4,7 +4,7 @@
 # Install: sh -c "$(curl -fsSL https://raw.github.com/robbyrussell/oh-my-zsh/master/tools/install.sh)"
 
 # If you come from bash you might have to change your $PATH.
-export PATH=$HOME/bin:/usr/local/bin:$PATH:/snap/bin
+export PATH=$HOME/bin:/usr/local/bin:/snap/bin:/opt/pypy3.6/bin:$PATH
 
 # Path to your oh-my-zsh installation.
   export ZSH=$HOME/.oh-my-zsh
