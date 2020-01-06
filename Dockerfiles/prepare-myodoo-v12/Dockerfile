@@ -1,8 +1,8 @@
-FROM python:3.6.9-slim-stretch
+FROM python:3.6.10-slim-stretch
 MAINTAINER Equitania Software GmbH <info@myodoo.de>
 # For Odoo 12 powered by MyOdoo.de
-# Version 1.2.0
-# Date 11.10.2019
+# Version 1.3.0
+# Date 06.01.2020
 
 
 ARG DEBIAN_FRONTEND=noninteractive
@@ -111,7 +111,9 @@ RUN set -x; \
     && python3 -m pip install --no-cache-dir elasticsearch==6.1.1 \
     && python3 -m pip install --no-cache-dir python-slugify \
     && python3 -m pip install --no-cache-dir parse-accept-language \
-    && python3 -m pip install --no-cache-dir MT-940
+    && python3 -m pip install --no-cache-dir MT-940 \
+    && python3 -m pip install --no-cache-dir elasticsearch==7.1.0 \
+    && python3 -m pip install --no-cache-dir O365==2.0.5
 
 
 # PDF export engine install..
