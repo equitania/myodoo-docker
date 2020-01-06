@@ -1,4 +1,4 @@
-FROM myodoo/prepare-v10:2.2.0
+FROM myodoo/prepare-v10:2.2.6
 MAINTAINER Equitania Software GmbH <info@myodoo.de>
 # Mit diesem Skript überprüft das passende Dockerimage gemäß des Releasefiles
 # Date 14.04.2019
