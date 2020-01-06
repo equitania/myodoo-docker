@@ -1,8 +1,8 @@
-#!/usr/bin/python
+#!/usr/bin/python3
 # -*- coding: utf-8 -*-
 # Dieses Skript hilft beim Organisieren von Docker-Servern
-# Version 2.0.9
-# Date 18.09.2019
+# Version 3.0.0
+# Date 06.01.2020
 ##############################################################################
 #
 #    Shell Script for Odoo, Open Source Management Solution
