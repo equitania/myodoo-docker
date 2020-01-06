@@ -1,9 +1,9 @@
-#!/usr/bin/python
+#!/usr/bin/python3
 # -*- coding: utf-8 -*-
 # Mit diesem Skript wird ein Backup einer Odoo Datenbank inkl. FileStore unter Docker durchgeführt
 # With this script you can backup odoo db on postgresql incl. filestore under Docker
-# Version 2.1.4
-# Date 26.04.2019
+# Version 3.0.0
+# Date 06.01.2020
 ##############################################################################
 #
 #    Shell Script for Odoo, Open Source Management Solution
@@ -24,6 +24,7 @@
 #
 ##############################################################################
 import os
+import io
 import csv
 import zipfile
 import datetime, time
@@ -48,7 +49,6 @@ def zip_dir(_dir_path, _zip_path):
 # databasename,postgresql_containername,myodoo_containername
 mybasepath = expanduser("~")
 fname_backup = mybasepath + '/container2backup.csv'
-reader1 = csv.reader(open(fname_backup, 'rb'))
 mybackuppath = mybasepath + "/backups-docker"
 if not os.path.exists(mybackuppath):
     os.mkdir(mybackuppath)
@@ -58,33 +58,35 @@ if not os.path.exists(mynginxpath):
 
 print(mybackuppath)
 
-for row in reader1:
-    mydb = row[0]
-    if (not(row)):
-        continue
-    elif (row[0].startswith('#')):
-        continue
-        # Kommentarzeile
-    mydbuser = row[1]
-    mysqlcontainer = row[2]
-    mydatacontainer = row[3]
-    try:
-        mystoretime = row[4]
-    except:
-        mystoretime = 14
-    print('Database Name:' + mydb + '\nDatabaseContainerName:' + mysqlcontainer + '\nMyOdooContainerName:' + mydatacontainer + '\nStoreTime:' + str(mystoretime) + ' days')
-    mybackupfolder = mybackuppath + '/' + mydb
-    if not os.path.exists(mybackupfolder):
-        os.mkdir(mybackupfolder)
-    os.system('docker exec -i ' + mysqlcontainer + ' pg_dump -U ' + mydbuser + ' ' + mydb + ' > ' + mybackupfolder + '/dump.sql')
-    filestorepath = '/opt/odoo/data/filestore/'
-    os.system('docker cp ' + mydatacontainer + ':/opt/odoo/data/filestore/' + mydb + ' ' + mybackupfolder + '/')
-    ts = time.time()
-    mytime = datetime.datetime.fromtimestamp(ts).strftime('%Y-%m-%d_%H-%M-%S')
-    #os.rename(mybackupfolder + '/' + mydb, mybackupfolder + '/filestore')
-    zip_dir(mybackupfolder, mybackuppath + '/' + mydatacontainer + '_dockerbackup_' + mytime + '.zip')
-    os.system('rm -r ' + mybackupfolder)
-    print('Backup is done ' + mydatacontainer)
+with io.open(fname_backup, 'r', encoding="utf8") as csvfile:
+    _reader = csv.reader(csvfile, delimiter=",")
+    for row in _reader:
+        mydb = row[0]
+        if (not(row)):
+            continue
+        elif (row[0].startswith('#')):
+            continue
+            # Kommentarzeile
+        mydbuser = row[1]
+        mysqlcontainer = row[2]
+        mydatacontainer = row[3]
+        try:
+            mystoretime = row[4]
+        except:
+            mystoretime = 14
+        print('Database Name:' + mydb + '\nDatabaseContainerName:' + mysqlcontainer + '\nMyOdooContainerName:' + mydatacontainer + '\nStoreTime:' + str(mystoretime) + ' days')
+        mybackupfolder = mybackuppath + '/' + mydb
+        if not os.path.exists(mybackupfolder):
+            os.mkdir(mybackupfolder)
+        os.system('docker exec -i ' + mysqlcontainer + ' pg_dump -U ' + mydbuser + ' ' + mydb + ' > ' + mybackupfolder + '/dump.sql')
+        filestorepath = '/opt/odoo/data/filestore/'
+        os.system('docker cp ' + mydatacontainer + ':/opt/odoo/data/filestore/' + mydb + ' ' + mybackupfolder + '/')
+        ts = time.time()
+        mytime = datetime.datetime.fromtimestamp(ts).strftime('%Y-%m-%d_%H-%M-%S')
+        #os.rename(mybackupfolder + '/' + mydb, mybackupfolder + '/filestore')
+        zip_dir(mybackupfolder, mybackuppath + '/' + mydatacontainer + '_dockerbackup_' + mytime + '.zip')
+        os.system('rm -r ' + mybackupfolder)
+        print('Backup is done ' + mydatacontainer)
 
 # backup nginx-conf
 if os.path.exists('/etc/nginx/conf.d/'):
@@ -136,13 +138,13 @@ for xfile in files:
 fname_rsync = mybasepath + '/rsync_targets.csv'
 print('Start rsync: ' + fname_rsync)
 if os.path.isfile(fname_rsync):
-    reader2 = csv.reader(open(fname_rsync, 'rb'))
-    for row in reader2:
-        if (not(row)):
-            continue
-        elif (row[0].startswith('#')):
-            continue
-        else:
-            os.system(row[0])
-
+    with io.open(fname_rsync, 'r', encoding="utf8") as csvfile:
+        _reader_sync = csv.reader(csvfile, delimiter=",")
+        for row in _reader_sync:
+            if (not(row)):
+                continue
+            elif (row[0].startswith('#')):
+                continue
+            else:
+                os.system(row[0])
 print('Backup done!')
