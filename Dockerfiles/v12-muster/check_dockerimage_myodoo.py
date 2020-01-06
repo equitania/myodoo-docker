@@ -1,8 +1,8 @@
 #!/usr/bin/python3
 # -*- coding: utf-8 -*-
 # Mit diesem Skript überprüft das passende Dockerimage gemäß des Releasefiles
-# Version 1.0.9
-# Date 15.10.2019
+# Version 3.0.0
+# Date 06.01.2020
 ##############################################################################
 #
 #    Shell Script for Odoo, Open Source Management Solution
@@ -23,7 +23,7 @@
 #
 ##############################################################################
 
-import os, csv, time, datetime
+import os, io, csv, time, datetime
 
 _access_file = 'access_myodoo.txt' # type: str
 _release_file = 'release.file'  # type: str
@@ -41,7 +41,7 @@ if os.path.isfile(_access_file):
             time.sleep(0.1)
         # Wenn Releasefile gefüllt ist, beginnt der Buildprozess
         if os.stat(_release_file).st_size != 0:
-            with open(_release_file, encoding="utf8") as csvfile:
+            with io.open(_release_file, 'r', encoding="utf8") as csvfile:
                 _reader = csv.reader(csvfile, delimiter=",")
                 _count = 1
                 for _row in _reader:
