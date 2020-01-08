@@ -2,7 +2,7 @@
 # -*- coding: utf-8 -*-
 # Mit diesem Skript wird ein Update einer Odoo Datenbank unter Docker durchgeführt
 # With this script you can update odoo db on postgresql under Docker
-# Version 3.0.3
+# Version 3.0.4
 # Date 08.01.2020
 ##############################################################################
 #
@@ -123,7 +123,10 @@ with io.open(_fname, "r", encoding="utf8") as csvfile:
         # release manager
         if os.path.isfile(_mypath + "check_dockerimage_myodoo.py") and os.path.isfile(_mypath + "access_myodoo.txt"):
             print("Get latest dockerimages changing...")
-            os.system("python3 check_dockerimage_myodoo.py")
+            if _myversion == "12":
+                os.system("python3 check_dockerimage_myodoo.py")
+            if _myversion == "10":
+                os.system("python check_dockerimage_myodoo.py")
         print(_mycontainer + " will be stop...")
         os.system("docker stop " + _mycontainer)
         print(_mycontainer + " stopped...")
