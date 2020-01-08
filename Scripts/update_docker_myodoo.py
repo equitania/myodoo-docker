@@ -2,8 +2,8 @@
 # -*- coding: utf-8 -*-
 # Mit diesem Skript wird ein Update einer Odoo Datenbank unter Docker durchgeführt
 # With this script you can update odoo db on postgresql under Docker
-# Version 3.0.1
-# Date 07.01.2020
+# Version 3.0.2
+# Date 08.01.2020
 ##############################################################################
 #
 #    Shell Script for Odoo, Open Source Management Solution
@@ -32,12 +32,12 @@ from os.path import expanduser
 # csv format - separator "," [M]odules or [F]ull update,containername,databasename,port,longpollingport,
 # path2Dockfile,docker_image_name,postgresql_username,postgresql_userpassword,hostname/ip,volumen,odooversion 
 _mybasepath = expanduser("~")
-_fname = _mybasepath + '/docker2update.csv'
-_gitpath = 'https://github.com/equitania/myodoo-docker/blob/master/Dockerfiles/v'
-_build = '-muster/build_myodoo.py'
-_check = '-muster/check_dockerimage_myodoo.py'
+_fname = _mybasepath + "/docker2update.csv"
+_gitpath = "https://rm.myodoo.net/staff/v"
+_build = "-muster/build_myodoo.py"
+_check = "-muster/check_dockerimage_myodoo.py"
 
-with io.open(_fname, 'r', encoding="utf8") as csvfile:
+with io.open(_fname, "r", encoding="utf8") as csvfile:
     _reader = csv.reader(csvfile, delimiter=",")
     for _row in _reader:
         _mytype = ""  # type: str
@@ -58,7 +58,7 @@ with io.open(_fname, 'r', encoding="utf8") as csvfile:
         _mytype = _row[0]
         if (not(_row)):
             continue
-        elif (_mytype.startswith('#')):
+        elif (_mytype.startswith("#")):
             continue
             # Kommentarzeile
         # delay time before restart
@@ -95,7 +95,7 @@ with io.open(_fname, 'r', encoding="utf8") as csvfile:
             print("No version!")
         # Missing path to Dockerfile
         if not os.path.isdir(_mypath):
-            print("Docker path isn't correct!")
+            print("Docker path is not correct!")
             continue
         if _myversion != "":
             print("Odoo Version: " + _myversion)
@@ -107,42 +107,42 @@ with io.open(_fname, 'r', encoding="utf8") as csvfile:
         else:
             print("Missing update mode")
             continue
-        print('MyOdoo Container:' + _mycontainer + '\nDatabase Name:' + _mydb + '\nPort:' + _myport + '\nLongpolling-Port:' + _mypollport)
-        print('Path:' + _mypath + '\nImage:' + _myimage + '\n')
+        print("MyOdoo Container:" + _mycontainer + "\nDatabase Name:" + _mydb + "\nPort:" + _myport + "\nLongpolling-Port:" + _mypollport)
+        print("Path:" + _mypath + "\nImage:" + _myimage + "\n")
         if _myvolumen != "":
-            print('Volumen:' + _myvolumen + '\n')
+            print("Volumen:" + _myvolumen + "\n")
         if _myvolumen == "":
-            os.system('mkdir ' + _mypath + _mydb)
-            os.system('docker cp ' + _mycontainer + ':/opt/odoo/data/filestore/' + _mydb + ' ' + _mypath)
-            print('Filestore saved...')
+            os.system("mkdir " + _mypath + _mydb)
+            os.system("docker cp " + _mycontainer + ":/opt/odoo/data/filestore/" + _mydb + " " + _mypath)
+            print("Filestore saved...")
         os.chdir(_mypath)
         # get new version of build scripts
         if _myversion != "":
-            os.system("wget " + _gitpath + _myversion + _build)
-            os.system("wget " + _gitpath + _myversion + _check)
+            os.system("wget -q -N " + _gitpath + _myversion + _build)
+            os.system("wget -q -N " + _gitpath + _myversion + _check)
         # release manager
-        if os.path.isfile(_mypath + 'check_dockerimage_myodoo.py') and os.path.isfile(_mypath + 'access_myodoo.txt'):
-            print('Get latest dockerimages changing...')
-            os.system('python3 check_dockerimage_myodoo.py')
-        print(_mycontainer + ' will be stop...')
-        os.system('docker stop ' + _mycontainer)
-        print(_mycontainer + ' stopped...')
-        os.system('docker rm ' + _mycontainer)
-        print(_mycontainer + ' removed...')
-        os.system('docker rmi ' + _myimage + ':latest')
-        print(_myimage + ' removed and  start building..')
-        os.system('docker build -t ' + _myimage + ' .')
+        if os.path.isfile(_mypath + "check_dockerimage_myodoo.py") and os.path.isfile(_mypath + "access_myodoo.txt"):
+            print("Get latest dockerimages changing...")
+            os.system("python3 check_dockerimage_myodoo.py")
+        print(_mycontainer + " will be stop...")
+        os.system("docker stop " + _mycontainer)
+        print(_mycontainer + " stopped...")
+        os.system("docker rm " + _mycontainer)
+        print(_mycontainer + " removed...")
+        os.system("docker rmi " + _myimage + ":latest")
+        print(_myimage + " removed and  start building..")
+        os.system("docker build -t " + _myimage + " .")
         if _mytype == "F":
-            print(_mycontainer + ' start updating...')
-            os.system('docker run -it --rm -p ' + _myport + ':8069 -p ' + _mypollport + ':8072 --name="' + _mycontainer + '" ' + _myvolumen + ' ' + _myimage + ' update --database=' + _mydb + ' --db_user=' + _mydbuser + ' --db_password=' + _mydbpassword + ' --db_host=' + _mydbhost)
-        print('docker run -d --restart=always -p ' + _myport + ':8069 -p ' + _mypollport + ':8072 --name="' + _mycontainer + '" ' + _myvolumen + ' ' + _myimage + ' start ')
-        os.system('docker run -d --restart=always -p ' + _myport + ':8069 -p ' + _mypollport + ':8072 --name="' + _mycontainer + '" ' + _myvolumen + ' ' + _myimage + ' start')
-        if os.path.isfile(_mypath + 'remove_website_menus.py'):
-            print('Website menus will remove...')
+            print(_mycontainer + " start updating...")
+            os.system("docker run -it --rm -p " + _myport + ":8069 -p " + _mypollport + ":8072 --name="" + _mycontainer + "" " + _myvolumen + " " + _myimage + " update --database=" + _mydb + " --db_user=" + _mydbuser + " --db_password=" + _mydbpassword + " --db_host=" + _mydbhost)
+        print("docker run -d --restart=always -p " + _myport + ":8069 -p " + _mypollport + ":8072 --name="" + _mycontainer + "" " + _myvolumen + " " + _myimage + " start ")
+        os.system("docker run -d --restart=always -p " + _myport + ":8069 -p " + _mypollport + ":8072 --name="" + _mycontainer + "" " + _myvolumen + " " + _myimage + " start")
+        if os.path.isfile(_mypath + "remove_website_menus.py"):
+            print("Website menus will remove...")
             time.sleep(_mydelaytime)
-            os.system("python3 " + _mypath + 'remove_website_menus.py')
-        if os.path.exists(_mypath + _mydb + '.bak'):
-            os.system('rm -r ' + _mypath + _mydb + '.bak')
+            os.system("python3 " + _mypath + "remove_website_menus.py")
+        if os.path.exists(_mypath + _mydb + ".bak"):
+            os.system("rm -r " + _mypath + _mydb + ".bak")
         if os.path.exists(_mypath + _mydb):
-            os.system('mv ' + _mypath + _mydb + ' ' + _mypath + _mydb + '.bak')
-        print('Update is done ' + _mydb)
+            os.system("mv " + _mypath + _mydb + " " + _mypath + _mydb + ".bak")
+        print("Update is done " + _mydb)
