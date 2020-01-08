@@ -136,7 +136,7 @@ with io.open(_fname, "r", encoding="utf8") as csvfile:
             print(_mycontainer + " start updating...")
             os.system("docker run -it --rm -p " + _myport + ":8069 -p " + _mypollport + ":8072 --name=" + _mycontainer + " " + _myvolumen + " " + _myimage + " update --database=" + _mydb + " --db_user=" + _mydbuser + " --db_password=" + _mydbpassword + " --db_host=" + _mydbhost)
         print("docker run -d --restart=always -p " + _myport + ":8069 -p " + _mypollport + ":8072 --name=" + _mycontainer + " " + _myvolumen + " " + _myimage + " start ")
-        os.system("docker run -d --restart=always -p " + _myport + ":8069 -p " + _mypollport + ":8072 --name= + _mycontainer + " " + _myvolumen + " " + _myimage + " start")
+        os.system("docker run -d --restart=always -p " + _myport + ":8069 -p " + _mypollport + ":8072 --name=" + _mycontainer + " " + _myvolumen + " " + _myimage + " start")
         if os.path.isfile(_mypath + "remove_website_menus.py"):
             print("Website menus will remove...")
             time.sleep(_mydelaytime)
