@@ -1,7 +1,7 @@
 FROM myodoo/prepare-v12:1.3.0
 MAINTAINER Equitania Software GmbH <info@myodoo.de>
 # Mit diesem Skript überprüft das passende Dockerimage gemäß des Releasefiles
-# Date 06.01.2020
+# Date 13.01.2020
 
 CMD "echo" "MyOdoo build will start now.."
 
@@ -21,7 +21,7 @@ COPY release.file /opt/odoo/
 
 RUN /bin/bash -c "mkdir -p /opt/odoo/{bin,etc,sources/odoo,data,data/filestore}" && \
     cd /opt/odoo/ && \
-    python build_myodoo.py
+    python3 build_myodoo.py
 
 RUN /bin/bash -c "mkdir -p /opt/odoo/var/{run,log,egg-cache}"
 
