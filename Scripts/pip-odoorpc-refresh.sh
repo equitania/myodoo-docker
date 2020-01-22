@@ -1,7 +1,11 @@
 #!/bin/bash
 # Refresh python libs and other important system things
 # 20.01.2020
-# 1.0.2
+# 1.0.3
+
+echo "pypy3"
+cd /opt && wget https://bitbucket.org/pypy/pypy/downloads/pypy3.6-v7.3.0-aarch64.tar.bz2 && tar xf pypy3.6-v7.3.0-linux64.tar.bz2 && mv pypy3.6-v7.3.0-linux64 pypy3.6 && ln -s /opt/pypy3.6/bin/pypy3 /usr/bin/pypy3
+curl https://bootstrap.pypa.io/get-pip.py | sudo pypy3
 
 echo "Refresh python 2"
 sudo python2 -m pip install pip --upgrade
