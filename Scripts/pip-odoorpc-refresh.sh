@@ -1,8 +1,7 @@
 #!/bin/bash
-# Erneuert die von Let's encrypt erstellten Zertifikate und nginx logs älter als 14 Tage löschen
-# Einstellung für crontab -e
-# Renew certificates every wednesday at 0:00 h
-# 0 0 * * 3 /root/ssl-renew.sh >/dev/null 2>&1
+# Refresh python libs and other important system things
+# 20.01.2020
+# 1.0.1
 
 echo "Refresh python 2"
 sudo python2 -m pip install pip --upgrade
@@ -21,6 +20,10 @@ sudo pypy3 -m pip install pip --upgrade
 sudo pypy3 -m pip install setuptools --upgrade
 sudo pypy3 -m pip install wheel --upgrade
 sudo pypy3 -m pip install odoorpc --upgrade
+
+echo "CTOP docker shell tool"
+sudo wget https://github.com/bcicen/ctop/releases/download/v0.7.3/ctop-0.7.3-linux-amd64 -O /usr/local/bin/ctop
+sudo chmod +x /usr/local/bin/ctop
 
 exit 0
 
