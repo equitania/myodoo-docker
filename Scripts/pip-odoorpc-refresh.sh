@@ -26,7 +26,7 @@ sudo wget https://github.com/bcicen/ctop/releases/download/v0.7.3/ctop-0.7.3-lin
 sudo chmod +x /usr/local/bin/ctop
 
 echo "code-server"
-sudo wget https://github.com/cdr/code-server/releases/download/2.1698/code-server2.1698-vsc1.41.1-linux-x86_64.tar.gz  
+wget https://github.com/cdr/code-server/releases/download/2.1698/code-server2.1698-vsc1.41.1-linux-x86_64.tar.gz  
 tar xvfz code-server2.1698-vsc1.41.1-linux-x86_64.tar.gz && sudo mv code-server2.1698-vsc1.41.1-linux-x86_64/code-server /bin && rm -rf code-server2.1698-vsc1.41.1-linux-x86_64*
 
 exit 0
