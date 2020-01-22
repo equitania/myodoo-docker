@@ -1,7 +1,7 @@
 #!/bin/bash
 # Refresh python libs and other important system things
 # 20.01.2020
-# 1.0.5
+# 1.0.6
 
 echo "pypy3"
 FILE="/usr/bin/pypy3"
@@ -10,8 +10,8 @@ mkdir -p /root/.local/bin
 if [ -f "$FILE" ]; then
     sudo rm /usr/bin/pypy3
 fi
-sudo pypy3 -m ensurepip --user
 sudo snap install pypy3 --classic
+sudo pypy3 -m ensurepip --user
 
 echo "Refresh python 2"
 sudo python2 -m pip install pip --upgrade
