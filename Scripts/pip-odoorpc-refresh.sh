@@ -1,11 +1,11 @@
 #!/bin/bash
 # Refresh python libs and other important system things
 # 20.01.2020
-# 1.0.6
+# 1.0.7
 
 echo "pypy3"
 FILE="/usr/bin/pypy3"
-mkdir -p /root/.local/bin
+mkdir -p $HOME/.local/bin
 [ -d "/opt/pypy3.6" ] && sudo rm -rf /opt/pypy3.6
 if [ -f "$FILE" ]; then
     sudo rm /usr/bin/pypy3
