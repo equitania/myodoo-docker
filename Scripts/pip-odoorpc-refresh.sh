@@ -1,11 +1,15 @@
 #!/bin/bash
 # Refresh python libs and other important system things
 # 20.01.2020
-# 1.0.3
+# 1.0.5
 
 echo "pypy3"
-sudo rm -rf /opt/pypy3.6
-sudo rm /usr/bin/pypy3
+FILE="/usr/bin/pypy3"
+mkdir -p /root/.local/bin
+[ -d "/opt/pypy3.6" ] && sudo rm -rf /opt/pypy3.6
+if [ -f "$FILE" ]; then
+    sudo rm /usr/bin/pypy3
+fi
 sudo pypy3 -m ensurepip --user
 sudo snap install pypy3 --classic
 
