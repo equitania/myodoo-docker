@@ -1,7 +1,7 @@
 FROM python:3.6.10-slim-stretch
 MAINTAINER Equitania Software GmbH <info@myodoo.de>
-# For Odoo 12 powered by MyOdoo.de
-# Version 1.4.0
+# For Odoo 13 powered by MyOdoo.de
+# Version 1.0.0
 # Date 09.02.2020
 
 
@@ -66,46 +66,46 @@ RUN set -x; \
 RUN set -x; \
     python3 -m pip install --no-cache-dir pip --upgrade \
     && python3 -m pip install --no-cache-dir wheel --upgrade \
-    && python3 -m pip install --no-cache-dir setuptools --upgrade \
-    && python3 -m pip install --no-cache-dir Babel==2.3.4 \
+    && python3 -m pip install --no-cache-dir Babel==2.6.0 \
     && python3 -m pip install --no-cache-dir chardet==3.0.4 \
-    && python3 -m pip install --no-cache-dir decorator==4.0.10 \
-    && python3 -m pip install --no-cache-dir docutils==0.12 \
+    && python3 -m pip install --no-cache-dir decorator==4.3.0 \
+    && python3 -m pip install --no-cache-dir docutils==0.14 \
     && python3 -m pip install --no-cache-dir ebaysdk==2.1.5 \
     && python3 -m pip install --no-cache-dir feedparser==5.2.1 \
-    && python3 -m pip install --no-cache-dir gevent==1.1.2 \
+    && python3 -m pip install --no-cache-dir gevent==1.1.2\
     && python3 -m pip install --no-cache-dir greenlet==0.4.10 \
-    && python3 -m pip install --no-cache-dir html2text==2016.9.19 \
+    && python3 -m pip install --no-cache-dir html2text==2018.1.9 \
     && python3 -m pip install --no-cache-dir Jinja2==2.10.1 \
-    && python3 -m pip install --no-cache-dir libsass==0.12.3 \
-    && python3 -m pip install --no-cache-dir lxml==4.2.3 \
-    && python3 -m pip install --no-cache-dir Mako==1.0.4 \
-    && python3 -m pip install --no-cache-dir MarkupSafe==0.23 \
+    && python3 -m pip install --no-cache-dir libsass==0.17.0 \
+    && python3 -m pip install --no-cache-dir lxml==3.7.1 \
+    && python3 -m pip install --no-cache-dir Mako==1.0.7\
+    && python3 -m pip install --no-cache-dir MarkupSafe==1.1.0 \
     && python3 -m pip install --no-cache-dir mock==2.0.0 \
     && python3 -m pip install --no-cache-dir num2words==0.5.6 \
-    && python3 -m pip install --no-cache-dir ofxparse==0.16 \
-    && python3 -m pip install --no-cache-dir passlib==1.6.5 \
-    && python3 -m pip install --no-cache-dir Pillow==4.0.0 \
-    && python3 -m pip install --no-cache-dir psutil==4.3.1 \
-    && python3 -m pip install --no-cache-dir psycopg2==2.7.3.1 \
-    && python3 -m pip install --no-cache-dir pydot==1.2.3 \
-    && python3 -m pip install --no-cache-dir pyldap==2.4.28 \
-    && python3 -m pip install --no-cache-dir pyparsing==2.1.10 \
+    && python3 -m pip install --no-cache-dir ofxparse==0.19 \
+    && python3 -m pip install --no-cache-dir passlib==1.7.1 \
+    && python3 -m pip install --no-cache-dir Pillow==5.4.1 \
+    && python3 -m pip install --no-cache-dir polib==1.1.0 \
+    && python3 -m pip install --no-cache-dir psutil==5.5.1 \
+    && python3 -m pip install --no-cache-dir psycopg2==2.7.7 \
+    && python3 -m pip install --no-cache-dir pydot==1.4.1 \
+    && python3 -m pip install --no-cache-dir python-ldap==3.1.0 \
+    && python3 -m pip install --no-cache-dir pyparsing==2.2.0 \
     && python3 -m pip install --no-cache-dir PyPDF2==1.26.0 \
-    && python3 -m pip install --no-cache-dir pyserial==3.1.1 \
-    && python3 -m pip install --no-cache-dir python-dateutil==2.5.3 \
-    && python3 -m pip install --no-cache-dir pytz==2016.7 \
-    && python3 -m pip install --no-cache-dir pyusb==1.0.0 \
-    && python3 -m pip install --no-cache-dir qrcode==5.3 \
-    && python3 -m pip install --no-cache-dir reportlab==3.3.0 \
-    && python3 -m pip install --no-cache-dir requests==2.20.0 \
-    && python3 -m pip install --no-cache-dir suds-jurko==0.6 \
+    && python3 -m pip install --no-cache-dir pyserial==3.4 \
+    && python3 -m pip install --no-cache-dir python-dateutil==2.7.3 \
+    && python3 -m pip install --no-cache-dir pytz==2019.1 \
+    && python3 -m pip install --no-cache-dir pyusb==1.0.2 \
+    && python3 -m pip install --no-cache-dir qrcode==6.1 \
+    && python3 -m pip install --no-cache-dir reportlab==3.5.13 \
+    && python3 -m pip install --no-cache-dir requests==2.21.0 \
+    && python3 -m pip install --no-cache-dir zeep==3.2.0 \
     && python3 -m pip install --no-cache-dir vatnumber==1.2 \
-    && python3 -m pip install --no-cache-dir vobject==0.9.3 \
-    && python3 -m pip install --no-cache-dir Werkzeug==0.11.15 \
-    && python3 -m pip install --no-cache-dir XlsxWriter==0.9.3 \
+    && python3 -m pip install --no-cache-dir vobject==0.9.6.1 \
+    && python3 -m pip install --no-cache-dir Werkzeug==0.14.1 \
+    && python3 -m pip install --no-cache-dir XlsxWriter==1.1.2 \
     && python3 -m pip install --no-cache-dir xlwt==1.3.* \
-    && python3 -m pip install --no-cache-dir xlrd==1.0.0 \
+    && python3 -m pip install --no-cache-dir xlrd==1.1.0 \
     && python3 -m pip install --no-cache-dir openpyxl \
     && python3 -m pip install --no-cache-dir O365==2.0.5 \
     && python3 -m pip install --no-cache-dir elasticsearch==7.1.0 \
