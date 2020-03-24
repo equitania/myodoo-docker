@@ -2,5 +2,5 @@
 # [M]odule update will copy only new module to the container without update all - needs 2-3 minutes
 # [F]ull update will update all - needs 10-20 minutes time
 # Date 24.03.2020
-F,30,live-myodoo,live_db,127.0.0.1:11000,127.0.0.1:12000,/root/docker-builds/live-myodoo/,myodoo/live,ownerp,ownerp2020,dbserver,"--link live-db:db -v /opt/myodoo/live/data:/opt/odoo/data","12"
-#F,30,test-myodoo,test_db,127.0.0.1:13000,127.0.0.1:14000,/root/docker-builds/test-myodoo/,myodoo/test,ownerp,ownerp2020,dbserver,"--link test-db:db -v /opt/myodoo/test/data:/opt/odoo/data","12"
+F,30,live-myodoo,live_db,127.0.0.1:11000,127.0.0.1:12000,/root/docker-builds/live-myodoo/,myodoo/live,ownerp,ownerp2020,dbserver,"--link live-db:dbserver -v /opt/myodoo/live/data:/opt/odoo/data","12"
+#F,30,test-myodoo,test_db,127.0.0.1:13000,127.0.0.1:14000,/root/docker-builds/test-myodoo/,myodoo/test,ownerp,ownerp2020,dbserver,"--link test-db:dbserver -v /opt/myodoo/test/data:/opt/odoo/data","12"
