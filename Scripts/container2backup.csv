@@ -1,4 +1,4 @@
-# Version 2.1,1
-# Date 14.04.2019
+# Date 24.03.2020
 #DATABASENAME,DBUSER,CONTAINERNAME-DB,MYODOO-CONTAINERNAME,STORETIME(How many days the backup will be store)
-#ownerp,myodoo,ownerp-db,ownerp-myodoo,10
+#live_db,ownerp,live-db,live-myodoo,10
+#test_db,ownerp,test-db,test-myodoo,10
