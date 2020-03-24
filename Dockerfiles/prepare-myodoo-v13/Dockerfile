@@ -1,8 +1,8 @@
 FROM python:3.6.10-slim-stretch
 MAINTAINER Equitania Software GmbH <info@myodoo.de>
 # For Odoo 13 powered by MyOdoo.de
-# Version 1.0.0
-# Date 09.02.2020
+# Version 1.0.2
+# Date 21.03.2020
 
 
 ARG DEBIAN_FRONTEND=noninteractive
@@ -86,7 +86,7 @@ RUN set -x; \
     && python3 -m pip install --no-cache-dir passlib==1.7.1 \
     && python3 -m pip install --no-cache-dir Pillow==5.4.1 \
     && python3 -m pip install --no-cache-dir polib==1.1.0 \
-    && python3 -m pip install --no-cache-dir psutil==5.5.1 \
+    && python3 -m pip install --no-cache-dir psutil==5.6.6 \
     && python3 -m pip install --no-cache-dir psycopg2==2.7.7 \
     && python3 -m pip install --no-cache-dir pydot==1.4.1 \
     && python3 -m pip install --no-cache-dir python-ldap==3.1.0 \
@@ -109,6 +109,9 @@ RUN set -x; \
     && python3 -m pip install --no-cache-dir openpyxl \
     && python3 -m pip install --no-cache-dir O365==2.0.5 \
     && python3 -m pip install --no-cache-dir elasticsearch==7.1.0 \
+    && python3 -m pip install --no-cache-dir pycryptodome==3.9.0 \
+    && python3 -m pip install --no-cache-dir pyocclient==0.4 \
+    && python3 -m pip install --no-cache-dir xmltodict==0.12.0 \
     && python3 -m pip install --no-cache-dir phonenumbers \
     && python3 -m pip install --no-cache-dir odoorpc \
     && python3 -m pip install --no-cache-dir python-slugify \
