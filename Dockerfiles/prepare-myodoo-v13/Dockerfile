@@ -1,8 +1,8 @@
 FROM python:3.6.10-slim-stretch
 MAINTAINER Equitania Software GmbH <info@myodoo.de>
 # For Odoo 13 powered by MyOdoo.de
-# Version 1.0.3
-# Date 02.04.2020
+# Version 1.0.4
+# Date 06.04.2020
 
 
 ARG DEBIAN_FRONTEND=noninteractive
@@ -118,6 +118,7 @@ RUN set -x; \
     && python3 -m pip install --no-cache-dir python-slugify \
     && python3 -m pip install --no-cache-dir parse-accept-language \
     && python3 -m pip install --no-cache-dir MT-940 \
+    && python3 -m pip install --no-cache-dir wget \
     && python3 -m pip install --no-cache-dir Faker \
     && python3 -m pip install --no-cache-dir randomuser
 
