@@ -1,7 +1,7 @@
-FROM myodoo/prepare-v13:1.0.2
+FROM myodoo/prepare-v13:1.0.4
 MAINTAINER Equitania Software GmbH <info@myodoo.de>
 # Mit diesem Skript überprüft das passende Dockerimage gemäß des Releasefiles
-# Date 24.03.2020
+# Date 06.04.2020
 
 CMD "echo" "MyOdoo build will start now.."
 
