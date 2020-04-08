@@ -2,8 +2,8 @@
 # -*- coding: utf-8 -*-
 # Mit diesem Skript wird ein Update einer Odoo Datenbank unter Docker durchgeführt
 # With this script you can update odoo db on postgresql under Docker
-# Version 3.0.4
-# Date 08.01.2020
+# Version 3.1.0
+# Date 08.04.2020
 ##############################################################################
 #
 #    Shell Script for Odoo, Open Source Management Solution
@@ -40,19 +40,19 @@ _check = "-muster/check_dockerimage_myodoo.py"
 with io.open(_fname, "r", encoding="utf8") as csvfile:
     _reader = csv.reader(csvfile, delimiter=",")
     for _row in _reader:
-        _mytype = ""  # type: str
-        _mydelaytime = 0  # type: int
-        _mycontainer = ""  # type: str
-        _mydb = ""  # type: str
-        _myport = ""  # type: str
-        _mypollport = ""  # type: str
-        _mypath = ""  # type: str
-        _myimage = ""  # type: str
-        _mydbuser = ""  # type: str
+        _mytype = ""        # type: str
+        _mydelaytime = 0    # type: int
+        _mycontainer = ""   # type: str
+        _mydb = ""          # type: str
+        _myport = ""        # type: str
+        _mypollport = ""    # type: str
+        _mypath = ""        # type: str
+        _myimage = ""       # type: str
+        _mydbuser = ""      # type: str
         _mydbpassword = ""  # type: str
-        _mydbhost = ""  # type: str
-        _myvolumen = ""  # type: str
-        _myversion = ""  # type: str
+        _mydbhost = ""      # type: str
+        _myvolumen = ""     # type: str
+        _myversion = ""     # type: str
 
         # name of docker containers
         _mytype = _row[0]
@@ -118,15 +118,17 @@ with io.open(_fname, "r", encoding="utf8") as csvfile:
         os.chdir(_mypath)
         # get new version of build scripts
         if _myversion != "":
+            print("wget -q -N " + _gitpath + _myversion + _build)
             os.system("wget -q -N " + _gitpath + _myversion + _build)
+            print("wget -q -N " + _gitpath + _myversion + _check)
             os.system("wget -q -N " + _gitpath + _myversion + _check)
         # release manager
         if os.path.isfile(_mypath + "check_dockerimage_myodoo.py") and os.path.isfile(_mypath + "access_myodoo.txt"):
             print("Get latest dockerimages changing...")
-            if _myversion == "12":
-                os.system("python3 check_dockerimage_myodoo.py")
-            if _myversion == "10":
+            if _myversion == "10" or _myversion == "8":
                 os.system("python check_dockerimage_myodoo.py")
+            else:
+                os.system("python3 check_dockerimage_myodoo.py")
         print(_mycontainer + " will be stop...")
         os.system("docker stop " + _mycontainer)
         print(_mycontainer + " stopped...")
@@ -144,6 +146,8 @@ with io.open(_fname, "r", encoding="utf8") as csvfile:
             print("Website menus will remove...")
             time.sleep(_mydelaytime)
             os.system("python3 " + _mypath + "remove_website_menus.py")
+            if os.path.isfile(_mypath + "cleanup_odoo.py"):
+                os.system("python3 " + _mypath + "cleanup_odoo.py")
         if os.path.exists(_mypath + _mydb + ".bak"):
             os.system("rm -r " + _mypath + _mydb + ".bak")
         if os.path.exists(_mypath + _mydb):
