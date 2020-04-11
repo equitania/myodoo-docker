@@ -1,8 +1,8 @@
 #!/usr/bin/python3
 # -*- coding: utf-8 -*-
 # Dieses Skript hilft beim Organisieren von Docker-Servern
-# Version 3.0.0
-# Date 06.01.2020
+# Version 3.0.1
+# Date 11.04.2020
 ##############################################################################
 #
 #    Shell Script for Odoo, Open Source Management Solution
@@ -39,3 +39,5 @@ os.system("cp $HOME/myodoo-docker/Scripts/container2backup.py $HOME")
 os.system("cp $HOME/myodoo-docker/Scripts/cleanup-weblogs.sh $HOME")
 os.system("cp $HOME/myodoo-docker/Scripts/ssl-renew.sh $HOME")
 os.system("cp $HOME/myodoo-docker/getScripts.py $HOME")
+os.system("pip3 install thefuck --upgrade")
+os.system("pip3 install odoorpc --upgrade")
