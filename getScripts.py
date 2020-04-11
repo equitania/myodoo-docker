@@ -1,7 +1,7 @@
 #!/usr/bin/python3
 # -*- coding: utf-8 -*-
 # Dieses Skript hilft beim Organisieren von Docker-Servern
-# Version 3.0.1
+# Version 3.0.2
 # Date 11.04.2020
 ##############################################################################
 #
@@ -39,5 +39,7 @@ os.system("cp $HOME/myodoo-docker/Scripts/container2backup.py $HOME")
 os.system("cp $HOME/myodoo-docker/Scripts/cleanup-weblogs.sh $HOME")
 os.system("cp $HOME/myodoo-docker/Scripts/ssl-renew.sh $HOME")
 os.system("cp $HOME/myodoo-docker/getScripts.py $HOME")
+os.system("pip3 install pip --upgrade")
+os.system("pip3 install wheel --upgrade")
 os.system("pip3 install thefuck --upgrade")
 os.system("pip3 install odoorpc --upgrade")
