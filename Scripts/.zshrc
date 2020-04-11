@@ -1,13 +1,14 @@
 # Oh my ZSH powered by MyOdoo.de
-# Version 1.3.8
-# Date 27.02.2020
+# Version 1.4.0
+# Date 11.04.2020
 # Install: sh -c "$(curl -fsSL https://raw.github.com/robbyrussell/oh-my-zsh/master/tools/install.sh)"
 
 # If you come from bash you might have to change your $PATH.
 export PATH=$HOME/bin:/usr/local/bin:/snap/bin:/opt/pypy3.6/bin:$PATH
 
 # Path to your oh-my-zsh installation.
-  export ZSH=$HOME/.oh-my-zsh
+export ZSH=$HOME/.oh-my-zsh
+eval $(thefuck --alias)
 
 # Set name of the theme to load. Optionally, if you set this to "random"
 # it'll load a random theme each time that oh-my-zsh is loaded.
