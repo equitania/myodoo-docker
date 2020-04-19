@@ -1,7 +1,7 @@
 #!/bin/bash
 # Install latest nginx with pagedspeed
 # Script must run with mit root-rights
-# Version 1.0.5 - Stand 30.06.2019
+# Version 1.1.0 - Stand 19.04.2020
 ##############################################################################
 #
 #    Shell Script for Odoo, Open Source Management Solution
@@ -23,7 +23,7 @@
 ##############################################################################
 
 # Update OS and get dependencies
-sudo apt-get update && sudo apt-get -y dist-upgrade && sudo apt-get install -y sudo python-dev build-essential zlib1g-dev unzip uuid-dev curl libpcre3-dev wget libssl-dev
+sudo apt update && sudo apt -y dist-upgrade && sudo apt install -y build-essential zlib1g-dev unzip uuid-dev curl libpcre3-dev wget libssl-dev
 
 # Install latest nginx with pagespeed
 # Quelle: https://github.com/apache/incubator-pagespeed-ngx/blob/master/scripts/build_ngx_pagespeed.sh
