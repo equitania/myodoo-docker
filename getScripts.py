@@ -1,8 +1,8 @@
 #!/usr/bin/python3
 # -*- coding: utf-8 -*-
 # Dieses Skript hilft beim Organisieren von Docker-Servern
-# Version 3.0.2
-# Date 11.04.2020
+# Version 3.0.3
+# Date 21.04.2020
 ##############################################################################
 #
 #    Shell Script for Odoo, Open Source Management Solution
@@ -31,15 +31,16 @@ os.chdir(myhome + "/" + "myodoo-docker")
 os.system("git checkout "+global_server_version)
 os.system("git pull")
 os.system("find . -name '*.pyc' -type f -print0 | xargs -0 /bin/rm -f")
-os.system("cp $HOME/myodoo-docker/Scripts/.zshrc $HOME/.zshrc")
+os.system("cp $HOME/myodoo-docker/scripts/.zshrc $HOME/.zshrc")
 os.system("cp -r $HOME/myodoo-docker/nginx-conf $HOME")
-os.system("cp $HOME/myodoo-docker/Scripts/update_docker_myodoo.py $HOME")
-#os.system("cp $HOME/myodoo-docker/Scripts/backup_odoo_docker_postgres_on_host.py $HOME")
-os.system("cp $HOME/myodoo-docker/Scripts/container2backup.py $HOME")
-os.system("cp $HOME/myodoo-docker/Scripts/cleanup-weblogs.sh $HOME")
-os.system("cp $HOME/myodoo-docker/Scripts/ssl-renew.sh $HOME")
+os.system("cp $HOME/myodoo-docker/scripts/update_docker_myodoo.py $HOME")
+#os.system("cp $HOME/myodoo-docker/scripts/backup_odoo_docker_postgres_on_host.py $HOME")
+os.system("cp $HOME/myodoo-docker/scripts/container2backup.py $HOME")
+os.system("cp $HOME/myodoo-docker/scripts/cleanup-weblogs.sh $HOME")
+os.system("cp $HOME/myodoo-docker/scripts/ssl-renew.sh $HOME")
 os.system("cp $HOME/myodoo-docker/getScripts.py $HOME")
 os.system("pip3 install pip --upgrade")
 os.system("pip3 install wheel --upgrade")
 os.system("pip3 install thefuck --upgrade")
 os.system("pip3 install odoorpc --upgrade")
+os.system("pip3 install ansible --upgrade")
