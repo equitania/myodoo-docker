@@ -1,4 +1,4 @@
-#!/usr/bin/python2
+#!/usr/bin/python
 # -*- coding: utf-8 -*-
 # Mit diesem Skript kann man Website Menüs nach dem Update wieder entfernen
 # With this script you can remove menus after system update
