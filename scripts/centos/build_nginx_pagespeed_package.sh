@@ -1,7 +1,7 @@
 #!/bin/bash
 # Install latest nginx with pagedspeed
 # Script must run with mit root-rights
-# Version 1.0.0 - Stand 18.04.2020
+# Version 1.0.1 - Stand 18.04.2020
 ##############################################################################
 #
 #    Shell Script for Odoo, Open Source Management Solution
@@ -28,7 +28,7 @@ id -u nginx &>/dev/null || sudo adduser -r nginx
 
 # Install latest nginx with pagespeed
 # Quelle: https://github.com/apache/incubator-pagespeed-ngx/blob/master/scripts/build_ngx_pagespeed.sh
-sudo bash $HOME/myodoo-docker/Scripts/build_ngx_pagespeed.sh \
+sudo bash $HOME/myodoo-docker/scripts/build_ngx_pagespeed.sh \
     --nginx-version latest --assume-yes \
     --additional-nginx-configure-arguments '--prefix=/etc/nginx --sbin-path=/usr/sbin/nginx --modules-path=/usr/lib/nginx/modules --conf-path=/etc/nginx/nginx.conf --error-log-path=/var/log/nginx/error.log --http-log-path=/var/log/nginx/access.log --pid-path=/var/run/nginx.pid --lock-path=/var/run/nginx.lock --http-client-body-temp-path=/var/cache/nginx/client_temp --http-proxy-temp-path=/var/cache/nginx/proxy_temp --http-fastcgi-temp-path=/var/cache/nginx/fastcgi_temp --http-uwsgi-temp-path=/var/cache/nginx/uwsgi_temp --http-scgi-temp-path=/var/cache/nginx/scgi_temp --user=nginx --group=nginx --with-http_ssl_module --with-http_v2_module'
 
@@ -65,7 +65,7 @@ sudo mkdir -p /var/cache/ngx_pagespeed/
 sudo chown -R nginx:nginx /var/cache/ngx_pagespeed/
 
 # Install & start service nginx
-sudo cp $HOME/myodoo-docker/Scripts/centos/nginx.service /lib/systemd/system/
+sudo cp $HOME/myodoo-docker/nginx-conf/centos/nginx.service /lib/systemd/system/
 sudo systemctl enable nginx
 sudo systemctl start nginx
 
