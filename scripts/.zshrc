@@ -1,5 +1,5 @@
 # Oh my ZSH powered by MyOdoo.de
-# Version 1.4.2
+# Version 1.4.3
 # Date 22.04.2020
 # Install: sh -c "$(curl -fsSL https://raw.github.com/robbyrussell/oh-my-zsh/master/tools/install.sh)"
 
@@ -102,7 +102,7 @@ COMPLETION_WAITING_DOTS="true"
 # Example format: plugins=(rails git textmate ruby lighthouse)
 # Add wisely, as too many plugins slow down shell startup.
 plugins=(
-  git git-extras history jsontools last-working-dir pip python screen web-search ansible docker thefuck
+  git git-extras history jsontools last-working-dir pip python screen web-search ansible docker
 )
 
 source $ZSH/oh-my-zsh.sh
