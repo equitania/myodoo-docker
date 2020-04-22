@@ -1,8 +1,8 @@
 #!/usr/bin/python3
 # -*- coding: utf-8 -*-
 # Mit diesem Skript wird mittels dem Release Manager ein neuer Server gebaut
-# Version 1.1.1
-# Date 15.10.2019
+# Version 1.1.2
+# Date 22.04.2020
 ##############################################################################
 #
 #    Shell Script for Odoo, Open Source Management Solution
@@ -23,7 +23,10 @@
 #
 ##############################################################################
 
-import os, csv, time
+import os
+import csv
+import time
+import wget
 
 _build_path = '/opt/odoo'
 _release_file = 'release.file'
@@ -52,19 +55,29 @@ if os.path.isfile(_release_file):
                         print('kernel is missing .. stop!')
                         exit()
                     else:
-                        os.system('wget -qq ' + _url + '/' + _column)
                         os.system('mkdir -p odoo-server/addons')
-                        while not os.path.isfile(_column):
-                            time.sleep(0.1)
-                        os.system('unzip -q ' + _column + ' -d odoo-server')
-                        print('kernel: ' + _column + ' loaded and installed..')
+                        _zip_url = _url + '/' + _column
+                        try:
+                            wget.download(_zip_url)
+                        except:
+                            print('ERROR: file: ' + _column + ' NOT loaded and installed..')
+                        else:
+                            while not os.path.isfile(_column):
+                                time.sleep(0.1)
+                            os.system('unzip -q ' + _column + ' -d odoo-server')
+                            print('kernel: ' + _column + ' loaded and installed..')
                 else:
                     if _column.find('.zip') is not -1:
-                        os.system('wget -qq ' + _url + '/' + _column)
-                        while not os.path.isfile(_column):
-                            time.sleep(0.1)
-                        os.system('unzip -q ' + _column + ' -d odoo-server/addons')
-                        print('file: ' + _column + ' loaded and installed..')
+                        _zip_url = _url + '/' + _column
+                        try:
+                            wget.download(_zip_url)
+                        except:
+                            print('ERROR: file: ' + _column + ' NOT loaded and installed..')
+                        else:
+                            while not os.path.isfile(_column):
+                                time.sleep(0.1)
+                            os.system('unzip -q ' + _column + ' -d odoo-server/addons')
+                            print('file: ' + _column + ' loaded and installed..')
                     else:
                         continue
                 _count += 1

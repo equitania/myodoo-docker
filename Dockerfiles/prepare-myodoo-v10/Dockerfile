@@ -1,8 +1,8 @@
 FROM ubuntu:18.04
 MAINTAINER Equitania Software GmbH <info@myodoo.de>
 # For Odoo 10 powered by MyOdoo.de
-# Version 2.2.7
-# Date 02.04.2020
+# Version 2.2.9
+# Date 22.04.2020
 
 ARG DEBIAN_FRONTEND=noninteractive
 
@@ -148,6 +148,7 @@ RUN set -x; \
         && python2.7 -m pip install --no-cache-dir pysftp \
         && python2.7 -m pip install --no-cache-dir email \
         && python2.7 -m pip install --no-cache-dir suds \
+        && python2.7 -m pip install --no-cache-dir wget \
         && python2.7 -m pip install --no-cache-dir pycrypto==2.6.1 \
         && python2.7 -m pip install --no-cache-dir pyocclient==0.4 \
         && python2.7 -m pip install --no-cache-dir Office365Api==0.0.9 \
@@ -161,7 +162,8 @@ RUN set -x; \
         && python2.7 -m pip install --no-cache-dir zenpy==2.0.4 \
         && python2.7 -m pip install --no-cache-dir xmltodict==0.11.0 \
         && python2.7 -m pip install --no-cache-dir gdata==2.0.18 \
-        && python2.7 -m pip install --no-cache-dir email_validator
+        && python2.7 -m pip install --no-cache-dir email_validator \
+        && python2.7 -m pip install --no-cache-dir python-docx
 
 # OpenSans font install..
 RUN set -x; \
