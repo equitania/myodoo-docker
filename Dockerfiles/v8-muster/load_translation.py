@@ -1,4 +1,4 @@
-#!/usr/bin/python2
+#!/usr/bin/python
 # -*- coding: utf-8 -*-
 # Mit diesem Skript werden alle Übersetzungen auf Deutsch neu geladen
 # With this script you can backup odoo db on postgresql incl. filestore under Docker
