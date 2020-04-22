@@ -1,5 +1,5 @@
 # Oh my ZSH powered by MyOdoo.de
-# Version 1.4.3
+# Version 1.4.4
 # Date 22.04.2020
 # Install: sh -c "$(curl -fsSL https://raw.github.com/robbyrussell/oh-my-zsh/master/tools/install.sh)"
 
@@ -184,5 +184,5 @@ alias pga='sudo -u postgres pg_activity -U postgres'
 alias showcerts='sudo certbot certificates'
 alias gopsql='sudo su - postgres -c "psql"'
 alias ups='sudo $HOME/getScripts.py && sudo cp $HOME/myodoo-docker/getScripts.py $HOME/'
-alias ups-all='sudo $HOME/getScripts.py && sudo cp $HOME/myodoo-docker/getScripts.py $HOME/ && sudo $HOME/myodoo-docker/Scripts/pip-odoorpc-refresh.sh'
+alias ups-all='sudo $HOME/getScripts.py && sudo cp $HOME/myodoo-docker/getScripts.py $HOME/ && sudo $HOME/myodoo-docker/scripts/pip-odoorpc-refresh.sh'
 alias spacetop20='sudo du -ah / 2>/dev/null | sort -n -r | head -n 20'
