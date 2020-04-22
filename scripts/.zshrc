@@ -1,5 +1,5 @@
 # Oh my ZSH powered by MyOdoo.de
-# Version 1.4.1
+# Version 1.4.2
 # Date 22.04.2020
 # Install: sh -c "$(curl -fsSL https://raw.github.com/robbyrussell/oh-my-zsh/master/tools/install.sh)"
 
