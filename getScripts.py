@@ -1,7 +1,7 @@
 #!/usr/bin/python3
 # -*- coding: utf-8 -*-
 # Dieses Skript hilft beim Organisieren von Docker-Servern
-# Version 3.0.5
+# Version 3.0.6
 # Date 22.04.2020
 ##############################################################################
 #
@@ -23,6 +23,7 @@
 #
 ##############################################################################
 import os
+import platform
 
 # main
 global_server_version = 'master'
@@ -44,3 +45,6 @@ os.system("python3 -m pip install wheel --upgrade")
 #os.system("python3 -m pip install thefuck --upgrade")
 os.system("python3 -m pip install odoorpc --upgrade")
 os.system("python3 -m pip install ansible --upgrade")
+myos=platform.dist()
+if myos[0]=='centos':
+    os.system("python3 -m pip install certbot --upgrade")
