@@ -1,8 +1,8 @@
 # For build of the docker image
 # For Odoo 12 powered by MyOdoo.de
-# Version 1.4.2
-# Date 02.04.2020
-docker build -t myodoo/prepare-v12:1.4.2 .
-docker push myodoo/prepare-v12:1.4.2
+# Version 1.4.3
+# Date 22.04.2020
+docker build -t myodoo/prepare-v12:1.4.3 .
+docker push myodoo/prepare-v12:1.4.3
 
 #This is only a prepare script for the release images of myodoo.
