@@ -23,7 +23,7 @@
 ##############################################################################
 
 # Update OS and get dependencies
-sudo yum update && sudo yum group install 'Development Tools' && sudo yum install perl-core zlib-devel openssl-devel
+sudo yum update && sudo yum -y group install 'Development Tools' && sudo yum -y install perl-core zlib-devel openssl-devel
 id -u nginx &>/dev/null || sudo adduser -r nginx
 
 # Install latest nginx with pagespeed
