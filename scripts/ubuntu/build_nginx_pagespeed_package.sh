@@ -1,7 +1,7 @@
 #!/bin/bash
 # Install latest nginx with pagedspeed
 # Script must run with mit root-rights
-# Version 1.1.0 - Stand 19.04.2020
+# Version 1.1.1 - Stand 25.04.2020
 ##############################################################################
 #
 #    Shell Script for Odoo, Open Source Management Solution
@@ -62,7 +62,7 @@ sudo mkdir /var/cache/ngx_pagespeed/
 sudo chown -R www-data:www-data /var/cache/ngx_pagespeed/
 
 # Install & start service nginx
-sudo cp $HOME/myodoo-docker/Scripts/nginx.service /lib/systemd/system/
+sudo cp $HOME/myodoo-docker/scripts/nginx.service /lib/systemd/system/
 sudo systemctl enable nginx
 sudo systemctl start nginx
 
