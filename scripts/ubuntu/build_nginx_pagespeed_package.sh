@@ -58,6 +58,7 @@ if [ ! -f "$FILE" ]; then
     sudo cp $HOME/myodoo-docker/nginx-conf/nginx.conf /etc/nginx/
 else 
     sudo mv /etc/nginx/nginx.conf /etc/nginx/nginx.conf.backup
+    sudo cp $HOME/myodoo-docker/nginx-conf/nginx.conf /etc/nginx/
 fi
 
 # Maintenance Message
@@ -97,8 +98,10 @@ if [ ! -d "$FOLDER" ]; then
    sudo systemctl restart nginx
 fi
 
+echo "**********************************************"
 echo "nginx check"
 sudo nginx -t
+echo "**********************************************"
 
 echo "Cleanup"
 sudo rm -rf $HOME/incubator-pagespeed-ngx-latest-stable/

@@ -1,7 +1,7 @@
 #!/bin/bash
 # Install latest nginx with pagedspeed
 # Script must run with mit root-rights
-# Version 1.0.1 - Stand 18.04.2020
+# Version 1.0.2 - Stand 25.04.2020
 ##############################################################################
 #
 #    Shell Script for Odoo, Open Source Management Solution
@@ -51,38 +51,60 @@ sudo bash $HOME/myodoo-docker/scripts/build_ngx_pagespeed.sh \
 # --with-http_v2_module
 
 # prepare nginx
-sudo mkdir -p /var/cache/nginx/client_temp
-sudo mkdir -p /etc/nginx/
-sudo mkdir -p /etc/nginx/html/
-sudo mkdir -p /etc/nginx/conf.d/
-sudo mv /etc/nginx/nginx.conf /etc/nginx/nginx.conf.backup
-sudo cp $HOME/myodoo-docker/nginx-conf/centos/nginx.conf /etc/nginx/
-sudo cp $HOME/myodoo-docker/nginx-conf/custom_50x.html /etc/nginx/html/
-#/usr/share/nginx/html
+[ ! -d /var/cache/nginx/client_temp ] && sudo mkdir -p /var/cache/nginx/client_temp
+[ ! -d /etc/nginx/ ] && sudo mkdir -p 
+[ ! -d /etc/nginx/html/ ] && sudo mkdir -p /etc/nginx/html/
+[ ! -d /etc/nginx/conf.d/ ] && sudo mkdir -p /etc/nginx/conf.d/
+
+FILE=/etc/nginx/nginx.conf
+if [ ! -f "$FILE" ]; then
+    sudo cp $HOME/myodoo-docker/nginx-conf/centos/nginx.conf /etc/nginx/
+else 
+    sudo mv /etc/nginx/nginx.conf /etc/nginx/nginx.conf.backup
+    sudo cp $HOME/myodoo-docker/nginx-conf/centos/nginx.conf /etc/nginx/
+fi
+
+# Maintenance Message
+[ ! -f /etc/nginx/html/custom_50x.html ] && sudo cp $HOME/myodoo-docker/nginx-conf/custom_50x.html /etc/nginx/html/
 
 # prepare pagespeed
-sudo mkdir -p /var/cache/ngx_pagespeed/
-sudo chown -R nginx:nginx /var/cache/ngx_pagespeed/
+FOLDER=/var/cache/ngx_pagespeed/
+if [ ! -d "$FOLDER" ]; then
+    sudo -p mkdir /var/cache/ngx_pagespeed/
+    sudo chown -R www-data:www-data /var/cache/ngx_pagespeed/
+fi
 
 # Install & start service nginx
-sudo cp $HOME/myodoo-docker/nginx-conf/centos/nginx.service /lib/systemd/system/
-sudo systemctl enable nginx
-sudo systemctl start nginx
+FILE=/lib/systemd/system/nginx.service
+if [ ! -f "$FILE" ]; then
+    sudo cp $HOME/myodoo-docker/scripts/centos/nginx.service /lib/systemd/system/
+    sudo systemctl enable nginx
+    sudo systemctl start nginx
+else
+   sudo systemctl daemon-reload
+   sudo systemctl restart nginx
+fi
 
+echo "**********************************************"
 echo "nginx installed"
-echo ""
-
+echo "**********************************************"
 echo "nginx version"
 sudo nginx -V
+echo "**********************************************"
 echo ""
 
-sudo mkdir -p /etc/systemd/system/nginx.service.d
-sudo printf "[Service]\nExecStartPost=/bin/sleep 0.1\n" > /etc/systemd/system/nginx.service.d/override.conf
-sudo systemctl daemon-reload
-sudo systemctl restart nginx
+FOLDER=/etc/systemd/system/nginx.service.d
+if [ ! -d "$FOLDER" ]; then
+   sudo mkdir /etc/systemd/system/nginx.service.d
+   sudo printf "[Service]\nExecStartPost=/bin/sleep 0.1\n" > /etc/systemd/system/nginx.service.d/override.conf
+   sudo systemctl daemon-reload
+   sudo systemctl restart nginx
+fi
 
+echo "**********************************************"
 echo "nginx check"
 sudo nginx -t
+echo "**********************************************"
 
 echo "Cleanup"
 sudo rm -rf $HOME/incubator-pagespeed-ngx-latest-stable/
