@@ -1,7 +1,7 @@
 #!/bin/bash
 # Install latest nginx with pagedspeed
 # Script must run with mit root-rights
-# Version 1.1.2 - Stand 25.04.2020
+# Version 1.1.3 - Stand 25.04.2020
 ##############################################################################
 #
 #    Shell Script for Odoo, Open Source Management Solution
@@ -106,3 +106,4 @@ echo "**********************************************"
 echo "Cleanup"
 sudo rm -rf $HOME/incubator-pagespeed-ngx-latest-stable/
 sudo rm -rf $HOME/nginx-1.*
+sudo apt autoremove && apt autoclean
