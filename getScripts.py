@@ -1,8 +1,8 @@
 #!/usr/bin/python3
 # -*- coding: utf-8 -*-
 # Dieses Skript hilft beim Organisieren von Docker-Servern
-# Version 3.0.6
-# Date 22.04.2020
+# Version 3.0.7
+# Date 24.05.2020
 ##############################################################################
 #
 #    Shell Script for Odoo, Open Source Management Solution
@@ -45,6 +45,7 @@ os.system("python3 -m pip install wheel --upgrade")
 #os.system("python3 -m pip install thefuck --upgrade")
 os.system("python3 -m pip install odoorpc --upgrade")
 os.system("python3 -m pip install ansible --upgrade")
+os.system("python3 -m pip install pip-review --upgrade")
 myos=platform.dist()
 if myos[0]=='centos':
     os.system("python3 -m pip install certbot --upgrade")
