@@ -1,8 +1,8 @@
 FROM python:3.6.10-slim-stretch
 MAINTAINER Equitania Software GmbH <info@myodoo.de>
 # For Odoo 13 powered by MyOdoo.de
-# Version 1.0.4
-# Date 06.04.2020
+# Version 1.0.6
+# Date 10.06.2020
 
 
 ARG DEBIAN_FRONTEND=noninteractive
@@ -21,7 +21,7 @@ ENV LC_ALL en_US.UTF-8
 RUN wget -q https://www.postgresql.org/media/keys/ACCC4CF8.asc -O- | sudo apt-key add - && \
     sh -c 'echo "deb http://apt.postgresql.org/pub/repos/apt/ stretch-pgdg main" | sudo tee /etc/apt/sources.list.d/postgresql.list' && \
     apt-get update && \
-    apt-get install -y postgresql-client-11
+    apt-get install -y postgresql-client
 
 
 # Update bash..
@@ -98,7 +98,7 @@ RUN set -x; \
     && python3 -m pip install --no-cache-dir pyusb==1.0.2 \
     && python3 -m pip install --no-cache-dir qrcode==6.1 \
     && python3 -m pip install --no-cache-dir reportlab==3.5.13 \
-    && python3 -m pip install --no-cache-dir requests==2.21.0 \
+    && python3 -m pip install --no-cache-dir requests==2.22.0 \
     && python3 -m pip install --no-cache-dir zeep==3.2.0 \
     && python3 -m pip install --no-cache-dir vatnumber==1.2 \
     && python3 -m pip install --no-cache-dir vobject==0.9.6.1 \
@@ -107,12 +107,13 @@ RUN set -x; \
     && python3 -m pip install --no-cache-dir xlwt==1.3.* \
     && python3 -m pip install --no-cache-dir xlrd==1.1.0 \
     && python3 -m pip install --no-cache-dir openpyxl \
-    && python3 -m pip install --no-cache-dir O365==2.0.5 \
-    && python3 -m pip install --no-cache-dir elasticsearch==7.1.0 \
+    && python3 -m pip install --no-cache-dir O365==2.0.9 \
+    && python3 -m pip install --no-cache-dir elasticsearch==7.6.0 \
     && python3 -m pip install --no-cache-dir pycryptodome==3.9.0 \
     && python3 -m pip install --no-cache-dir pyocclient==0.4 \
     && python3 -m pip install --no-cache-dir xmltodict==0.12.0 \
     && python3 -m pip install --no-cache-dir holidays==0.10.1 \
+    && python3 -m pip install --no-cache-dir python-gitlab==2.2.0 \
     && python3 -m pip install --no-cache-dir phonenumbers \
     && python3 -m pip install --no-cache-dir odoorpc \
     && python3 -m pip install --no-cache-dir python-slugify \
