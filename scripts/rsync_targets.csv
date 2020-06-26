@@ -1,1 +1,2 @@
 #rsync --delete -avzre "ssh" /root/ username@rsync.hidrive.strato.com:/users/username/foldername/
+#rsync --delete -avzre "ssh" /opt/backups/ username@rsync.hidrive.strato.com:/users/username/foldername/
