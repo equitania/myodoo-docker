@@ -2,7 +2,7 @@
 # -*- coding: utf-8 -*-
 # Mit diesem Skript wird ein Backup einer Odoo Datenbank inkl. FileStore unter Docker durchgeführt
 # With this script you can backup odoo db on postgresql incl. filestore under Docker
-# Version 3.0.1
+# Version 3.0.2
 # Date 26.06.2020
 ##############################################################################
 #
@@ -48,7 +48,9 @@ def zip_dir(_dir_path, _zip_path):
 # csv format - separator ","
 # databasename,postgresql_containername,myodoo_containername,number_of_days
 mybasepath = expanduser("~")
-mybackuppath = "/opt/backups"
+ = "/opt/backups"
+if not os.path.exists(mybackuppath):
+    os.system("mkdir -p "+mybackuppath)
 fname_backup = mybasepath + '/container2backup.csv'
 mynginxpath = mybackuppath + "/nginx"
 if not os.path.exists(mynginxpath):
