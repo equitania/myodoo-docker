@@ -2,7 +2,7 @@
 # -*- coding: utf-8 -*-
 # Mit diesem Skript wird ein Backup einer Odoo Datenbank inkl. FileStore unter Docker durchgeführt
 # With this script you can backup odoo db on postgresql incl. filestore under Docker
-# Version 3.0.2
+# Version 3.0.3
 # Date 26.06.2020
 ##############################################################################
 #
@@ -48,13 +48,20 @@ def zip_dir(_dir_path, _zip_path):
 # csv format - separator ","
 # databasename,postgresql_containername,myodoo_containername,number_of_days
 mybasepath = expanduser("~")
- = "/opt/backups"
-if not os.path.exists(mybackuppath):
-    os.system("mkdir -p "+mybackuppath)
 fname_backup = mybasepath + '/container2backup.csv'
+
+mybackuppath = "/opt/backups"
+if not os.path.exists(mybackuppath):
+    os.system("mkdir -p " + mybackuppath)
+
 mynginxpath = mybackuppath + "/nginx"
 if not os.path.exists(mynginxpath):
     os.mkdir(mynginxpath)
+
+mydockerbuildpath = mybackuppath + "/docker-builds"
+if not os.path.exists(mydockerbuildpath):
+    os.mkdir(mydockerbuildpath)
+
 mybackuppath = mybackuppath + "/docker"
 if not os.path.exists(mybackuppath):
     os.mkdir(mybackuppath)
@@ -93,19 +100,21 @@ with io.open(fname_backup, 'r', encoding="utf8") as csvfile:
 
 # backup nginx-conf
 if os.path.exists('/etc/nginx/conf.d/'):
-    if not os.path.exists(mynginxpath):
-        os.mkdir(mynginxpath)
     ts = time.time()
     mytime = datetime.datetime.fromtimestamp(ts).strftime('%Y-%m-%d_%H-%M-%S')
     os.system('zip -r ' + mynginxpath + '/nginx-confs_' + mytime + '.zip /etc/nginx/')
 
 # backup letsencrypt
 if os.path.exists('/etc/letsencrypt/live/'):
-    if not os.path.exists(mynginxpath):
-        os.mkdir(mynginxpath)
     ts = time.time()
     mytime = datetime.datetime.fromtimestamp(ts).strftime('%Y-%m-%d_%H-%M-%S')
     os.system('zip -r ' + mynginxpath + '/letsencrypt_' + mytime + '.zip /etc/letsencrypt/live/')
+
+# backup docker-builds
+if os.path.exists('/root/docker-builds'):
+    ts = time.time()
+    mytime = datetime.datetime.fromtimestamp(ts).strftime('%Y-%m-%d_%H-%M-%S')
+    os.system('zip -r ' + mydockerbuildpath + '/docker-builds' + mytime + '.zip /root/docker-builds/')
 
 # run by crontab
 # removes any files in mybackuppath older than 14 days or mystoretime
@@ -135,6 +144,19 @@ for xfile in files:
         if c < cutoff:
             print("remove: " + mynginxpath + "/" + xfile)
             os.remove(mynginxpath + "/" + xfile)
+
+# removes any files in mydockerbuildpath older than 14 days
+files = os.listdir(mydockerbuildpath + "/")
+for xfile in files:
+    if os.path.isfile(mydockerbuildpath + "/" + xfile):
+        t = os.stat(mydockerbuildpath + "/" + xfile)
+        c = t.st_ctime
+
+        # delete file if older than 2 weeks
+        if c < cutoff:
+            print("remove: " + mydockerbuildpath + "/" + xfile)
+            os.remove(mydockerbuildpath + "/" + xfile)
+
 
 # csv format
 # rsync --delete -avzre "ssh" /sourcepath/ user@servername:/targetpath/
