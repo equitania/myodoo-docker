@@ -48,12 +48,12 @@ def zip_dir(_dir_path, _zip_path):
 # csv format - separator ","
 # databasename,postgresql_containername,myodoo_containername,number_of_days
 mybasepath = expanduser("~")
-mybackuppath = "/opt"
+mybackuppath = "/opt/backups"
 fname_backup = mybasepath + '/container2backup.csv'
-mynginxpath = mybackuppath + "/backups-nginx"
+mynginxpath = mybackuppath + "/nginx"
 if not os.path.exists(mynginxpath):
     os.mkdir(mynginxpath)
-mybackuppath = mybackuppath + "/backups-docker"
+mybackuppath = mybackuppath + "/docker"
 if not os.path.exists(mybackuppath):
     os.mkdir(mybackuppath)
 
