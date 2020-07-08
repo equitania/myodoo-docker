@@ -1,7 +1,7 @@
 #!/bin/bash
 # Install latest nginx with pagedspeed
 # Script must run with mit root-rights
-# Version 1.0.2 - Stand 25.04.2020
+# Version 1.1.0 - Stand 08.07.2020
 ##############################################################################
 #
 #    Shell Script for Odoo, Open Source Management Solution
@@ -23,7 +23,7 @@
 ##############################################################################
 
 # Update OS and get dependencies
-sudo yum update && sudo yum -y group install 'Development Tools' && sudo yum -y install perl-core zlib-devel openssl-devel
+sudo yum update && sudo yum -y group install 'Development Tools' && sudo yum -y install perl-core zlib-devel openssl-devel memcached
 id -u nginx &>/dev/null || sudo adduser -r nginx
 
 # Install latest nginx with pagespeed
@@ -105,6 +105,14 @@ echo "**********************************************"
 echo "nginx check"
 sudo nginx -t
 echo "**********************************************"
+
+echo "**********************************************"
+echo "memcached check"
+sudo systemctl enable memcached
+sudo systemctl start memcached
+sudo systemctl status memcached
+echo "**********************************************"
+
 
 echo "Cleanup"
 sudo rm -rf $HOME/incubator-pagespeed-ngx-latest-stable/
