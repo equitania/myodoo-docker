@@ -1,7 +1,7 @@
 #!/bin/bash
 # Install latest nginx with pagedspeed
 # Script must run with mit root-rights
-# Version 1.4.0 - Stand 08.07.2020
+# Version 1.4.1 - Stand 08.07.2020
 ##############################################################################
 #
 #    Shell Script for Odoo, Open Source Management Solution
@@ -108,7 +108,7 @@ echo "memcached check"
 sudo systemctl enable memcached
 sudo systemctl start memcached
 sudo systemctl status memcached
-echo "*
+echo "**********************************************"
 
 echo "Cleanup"
 sudo rm -rf $HOME/incubator-pagespeed-ngx-latest-stable/
