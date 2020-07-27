@@ -1,8 +1,8 @@
-FROM python:3.6.10-slim-stretch
+FROM python:3.6.11-slim-stretch
 MAINTAINER Equitania Software GmbH <info@myodoo.de>
 # For Odoo 13 powered by MyOdoo.de
-# Version 1.0.6
-# Date 10.06.2020
+# Version 1.0.8
+# Date 27.07.2020
 
 
 ARG DEBIAN_FRONTEND=noninteractive
@@ -114,6 +114,7 @@ RUN set -x; \
     && python3 -m pip install --no-cache-dir xmltodict==0.12.0 \
     && python3 -m pip install --no-cache-dir holidays==0.10.1 \
     && python3 -m pip install --no-cache-dir python-gitlab==2.2.0 \
+    && python3 -m pip install --no-cache-dir bleach==3.1.5 \
     && python3 -m pip install --no-cache-dir phonenumbers \
     && python3 -m pip install --no-cache-dir odoorpc \
     && python3 -m pip install --no-cache-dir python-slugify \
@@ -121,8 +122,8 @@ RUN set -x; \
     && python3 -m pip install --no-cache-dir MT-940 \
     && python3 -m pip install --no-cache-dir wget \
     && python3 -m pip install --no-cache-dir Faker \
-    && python3 -m pip install --no-cache-dir randomuser
-
+    && python3 -m pip install --no-cache-dir randomuser \
+    && python3 -m pip install --no-cache-dir openupgradelib
 
 # PDF export engine install..
 RUN set -x; \
