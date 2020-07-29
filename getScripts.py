@@ -1,8 +1,8 @@
 #!/usr/bin/python3
 # -*- coding: utf-8 -*-
 # Dieses Skript hilft beim Organisieren von Docker-Servern
-# Version 3.0.7
-# Date 24.05.2020
+# Version 3.0.8
+# Date 29.07.2020
 ##############################################################################
 #
 #    Shell Script for Odoo, Open Source Management Solution
@@ -40,12 +40,11 @@ os.system("cp $HOME/myodoo-docker/scripts/container2backup.py $HOME")
 os.system("cp $HOME/myodoo-docker/scripts/cleanup-weblogs.sh $HOME")
 os.system("cp $HOME/myodoo-docker/scripts/ssl-renew.sh $HOME")
 os.system("cp $HOME/myodoo-docker/getScripts.py $HOME")
-os.system("python3 -m pip install pip --upgrade")
-os.system("python3 -m pip install wheel --upgrade")
-#os.system("python3 -m pip install thefuck --upgrade")
-os.system("python3 -m pip install odoorpc --upgrade")
-os.system("python3 -m pip install ansible --upgrade")
-os.system("python3 -m pip install pip-review --upgrade")
+os.system("python3 -m pip install pip --upgrade --user")
+os.system("python3 -m pip install wheel --upgrade --user")
+os.system("python3 -m pip install odoorpc --upgrade --user")
+os.system("python3 -m pip install ansible --upgrade --user")
+os.system("python3 -m pip install pip-review --upgrade --user")
 myos=platform.dist()
 if myos[0]=='centos':
-    os.system("python3 -m pip install certbot --upgrade")
+    os.system("python3 -m pip install certbot --upgrade --user")
