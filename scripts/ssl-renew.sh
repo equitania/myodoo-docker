@@ -5,12 +5,12 @@
 # 0 0 * * 3 /root/ssl-renew.sh >/dev/null 2>&1
 
 echo "nginx stop"
-sudo service nginx stop
+service nginx stop
 echo "certbot renew"
-sudo certbot renew
+certbot renew
 echo "nginx start"
-sudo service nginx start
-sudo service nginx status
+service nginx start
+service nginx status
 
 exit 0
 
