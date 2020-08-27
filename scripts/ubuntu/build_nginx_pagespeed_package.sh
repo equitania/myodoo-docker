@@ -1,7 +1,7 @@
 #!/bin/bash
 # Install latest nginx with pagedspeed
 # Script must run with mit root-rights
-# Version 1.4.1 - Stand 08.07.2020
+# Version 1.4.2 - Stand 27.08.2020
 ##############################################################################
 #
 #    Shell Script for Odoo, Open Source Management Solution
@@ -55,10 +55,10 @@ sudo bash $HOME/myodoo-docker/scripts/build_ngx_pagespeed.sh \
 
 FILE=/etc/nginx/nginx.conf
 if [ ! -f "$FILE" ]; then
-    sudo cp $HOME/myodoo-docker/nginx-conf/nginx.conf /etc/nginx/
+    sudo cp $HOME/myodoo-docker/scripts/ubuntu/nginx.conf /etc/nginx/
 else 
     sudo mv /etc/nginx/nginx.conf /etc/nginx/nginx.conf.backup
-    sudo cp $HOME/myodoo-docker/nginx-conf/nginx.conf /etc/nginx/
+    sudo cp $HOME/myodoo-docker/scripts/ubuntu/nginx.conf /etc/nginx/
 fi
 
 # Maintenance Message
@@ -74,10 +74,11 @@ fi
 # Install & start service nginx
 FILE=/lib/systemd/system/nginx.service
 if [ ! -f "$FILE" ]; then
-    sudo cp $HOME/myodoo-docker/scripts/nginx.service /lib/systemd/system/
+    sudo cp $HOME/myodoo-docker/scripts/ubuntu/nginx.service /lib/systemd/system/
     sudo systemctl enable nginx
     sudo systemctl start nginx
 else
+   sudo cp $HOME/myodoo-docker/scripts/ubuntu/nginx.service /lib/systemd/system/
    sudo systemctl daemon-reload
    sudo systemctl restart nginx
 fi
