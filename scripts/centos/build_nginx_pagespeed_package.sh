@@ -1,7 +1,7 @@
 #!/bin/bash
 # Install latest nginx with pagedspeed
 # Script must run with mit root-rights
-# Version 1.1.0 - Stand 08.07.2020
+# Version 1.1.1 - Stand 27.08.2020
 ##############################################################################
 #
 #    Shell Script for Odoo, Open Source Management Solution
@@ -23,7 +23,7 @@
 ##############################################################################
 
 # Update OS and get dependencies
-sudo yum update && sudo yum -y group install 'Development Tools' && sudo yum -y install perl-core zlib-devel openssl-devel memcached
+sudo yum -y update && sudo yum -y group install 'Development Tools' && sudo yum -y install perl-core zlib-devel openssl-devel memcached
 id -u nginx &>/dev/null || sudo adduser -r nginx
 
 # Install latest nginx with pagespeed
@@ -58,10 +58,10 @@ sudo bash $HOME/myodoo-docker/scripts/build_ngx_pagespeed.sh \
 
 FILE=/etc/nginx/nginx.conf
 if [ ! -f "$FILE" ]; then
-    sudo cp $HOME/myodoo-docker/nginx-conf/centos/nginx.conf /etc/nginx/
+    sudo cp $HOME/myodoo-docker/scripts/centos/nginx.conf /etc/nginx/
 else 
     sudo mv /etc/nginx/nginx.conf /etc/nginx/nginx.conf.backup
-    sudo cp $HOME/myodoo-docker/nginx-conf/centos/nginx.conf /etc/nginx/
+    sudo cp $HOME/myodoo-docker/scripts/centos/nginx.conf /etc/nginx/
 fi
 
 # Maintenance Message
@@ -81,6 +81,7 @@ if [ ! -f "$FILE" ]; then
     sudo systemctl enable nginx
     sudo systemctl start nginx
 else
+   sudo cp $HOME/myodoo-docker/scripts/centos/nginx.service /lib/systemd/system/
    sudo systemctl daemon-reload
    sudo systemctl restart nginx
 fi
