@@ -1,20 +1,22 @@
 FROM debian:jessie
 MAINTAINER Equitania Software GmbH <info@myodoo.de>
 # For Odoo 8 powered by MyOdoo.de
-# Version 1.0.20
-# Date 03.09.2020
+# Version 1.0.21
+# Date 21.09.2020
 
 # "echo" "MyOdoo build will start now.."
 
 ENV DEBIAN_FRONTEND noninteractive
 
-RUN apt-get update && apt-get -y dist-upgrade && apt-get install -y locales
+RUN apt-get update && apt-get -y dist-upgrade && apt-get install -y locales wget sudo
+RUN sudo sh -c 'echo "deb http://apt.postgresql.org/pub/repos/apt/ jessie-pgdg main" > /etc/apt/sources.list.d/pgdg.list'
+RUN wget --quiet -O - https://www.postgresql.org/media/keys/ACCC4CF8.asc | sudo apt-key add -
 
 # "echo" "Update bash.."
 COPY ./.bashrc /root/
 
 RUN \
-  apt-get -y install tzdata && \
+  apt-get update && apt-get -y install tzdata && \
   ln -sf /usr/share/zoneinfo/Europe/Berlin /etc/localtime
 
 # "echo" "Set LOCALE to UTF8.."
@@ -39,7 +41,7 @@ RUN set -x; \
 		mtr \
 		dnsutils \
 		curl \
-		postgresql-client-9.4 \
+		postgresql-client-9.6 \
 		build-essential \
 		libfreetype6-dev \
 		libjpeg-dev \
