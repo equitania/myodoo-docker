@@ -1,8 +1,8 @@
 FROM ubuntu:18.04
 MAINTAINER Equitania Software GmbH <info@myodoo.de>
 # For Odoo 10 powered by MyOdoo.de
-# Version 2.3.0
-# Date 14.07.2020
+# Version 2.3.1
+# Date 22.09.2020
 
 ARG DEBIAN_FRONTEND=noninteractive
 
@@ -24,6 +24,9 @@ RUN wget --quiet -O - https://www.postgresql.org/media/keys/ACCC4CF8.asc | apt-k
 
 # Update bash..
 COPY ./.bashrc /root/
+
+RUN echo ttf-mscorefonts-installer msttcorefonts/accepted-mscorefonts-eula \
+    select true | debconf-set-selections
 
 # Install basics..
 RUN set -x; \
@@ -163,7 +166,8 @@ RUN set -x; \
         && python2.7 -m pip install --no-cache-dir xmltodict==0.11.0 \
         && python2.7 -m pip install --no-cache-dir gdata==2.0.18 \
         && python2.7 -m pip install --no-cache-dir email_validator \
-        && python2.7 -m pip install --no-cache-dir python-docx
+        && python2.7 -m pip install --no-cache-dir python-docx \
+        && python2.7 -m pip install --no-cache-dir pyotp
 
 # OpenSans font install..
 RUN set -x; \
