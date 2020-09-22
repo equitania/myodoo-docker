@@ -1,9 +1,9 @@
-#!/usr/bin/python
+#!/usr/bin/python2
 # -*- coding: utf-8 -*-
 # Mit diesem Skript kann man Website Menüs nach dem Update wieder entfernen
 # With this script you can remove menus after system update
-# Version 1.0.4
-# Date 22.04.2020
+# Version 1.0.5
+# Date 22.09.2020
 #
 # Prepare
 # sudo curl https://bootstrap.pypa.io/get-pip.py | sudo python
