@@ -1,8 +1,8 @@
-FROM python:3.6.12-slim-stretch
+FROM python:3.9.0-slim-buster
 MAINTAINER Equitania Software GmbH <info@myodoo.de>
 # For Odoo 13 powered by MyOdoo.de
-# Version 1.0.9
-# Date 22.09.2020
+# Version 2.0.0
+# Date 26.10.2020
 
 
 ARG DEBIAN_FRONTEND=noninteractive
@@ -17,16 +17,8 @@ RUN echo "en_US.UTF-8 UTF-8" > /etc/locale.gen && \
     /usr/sbin/update-locale LANG=en_US.UTF-8
 ENV LC_ALL en_US.UTF-8
 
-#Postgres 11 for Debian
-RUN wget -q https://www.postgresql.org/media/keys/ACCC4CF8.asc -O- | sudo apt-key add - && \
-    sh -c 'echo "deb http://apt.postgresql.org/pub/repos/apt/ stretch-pgdg main" | sudo tee /etc/apt/sources.list.d/postgresql.list' && \
-    apt-get update && \
-    apt-get install -y postgresql-client
-
-
 # Update bash..
 COPY ./.bashrc /root/
-
 
 # Install basics..
 RUN set -x; \
@@ -51,8 +43,10 @@ RUN set -x; \
 		libffi-dev \		
 		unzip \
 		sqlite3 \
+		postgresql-client \
 		nano \
 		mc \
+		tmux \
 		pkg-config \
 		geoip-bin \
 		geoip-database \
@@ -72,22 +66,22 @@ RUN set -x; \
     && python3 -m pip install --no-cache-dir docutils==0.14 \
     && python3 -m pip install --no-cache-dir ebaysdk==2.1.5 \
     && python3 -m pip install --no-cache-dir feedparser==5.2.1 \
-    && python3 -m pip install --no-cache-dir gevent==1.1.2\
-    && python3 -m pip install --no-cache-dir greenlet==0.4.10 \
+    && python3 -m pip install --no-cache-dir gevent==1.5.0 \
+    && python3 -m pip install --no-cache-dir greenlet==0.4.15 \
     && python3 -m pip install --no-cache-dir html2text==2018.1.9 \
     && python3 -m pip install --no-cache-dir Jinja2==2.10.1 \
     && python3 -m pip install --no-cache-dir libsass==0.17.0 \
-    && python3 -m pip install --no-cache-dir lxml==3.7.1 \
+    && python3 -m pip install --no-cache-dir lxml==4.3.2 \
     && python3 -m pip install --no-cache-dir Mako==1.0.7\
     && python3 -m pip install --no-cache-dir MarkupSafe==1.1.0 \
     && python3 -m pip install --no-cache-dir mock==2.0.0 \
     && python3 -m pip install --no-cache-dir num2words==0.5.6 \
     && python3 -m pip install --no-cache-dir ofxparse==0.19 \
     && python3 -m pip install --no-cache-dir passlib==1.7.1 \
-    && python3 -m pip install --no-cache-dir Pillow==5.4.1 \
+    && python3 -m pip install --no-cache-dir Pillow==6.1.0 \
     && python3 -m pip install --no-cache-dir polib==1.1.0 \
     && python3 -m pip install --no-cache-dir psutil==5.6.6 \
-    && python3 -m pip install --no-cache-dir psycopg2==2.7.7 \
+    && python3 -m pip install --no-cache-dir psycopg2==2.8.3 \
     && python3 -m pip install --no-cache-dir pydot==1.4.1 \
     && python3 -m pip install --no-cache-dir python-ldap==3.1.0 \
     && python3 -m pip install --no-cache-dir pyparsing==2.2.0 \
@@ -107,7 +101,6 @@ RUN set -x; \
     && python3 -m pip install --no-cache-dir xlwt==1.3.* \
     && python3 -m pip install --no-cache-dir xlrd==1.1.0 \
     && python3 -m pip install --no-cache-dir openpyxl \
-    && python3 -m pip install --no-cache-dir O365 \
     && python3 -m pip install --no-cache-dir elasticsearch \
     && python3 -m pip install --no-cache-dir pycryptodome==3.9.0 \
     && python3 -m pip install --no-cache-dir pyocclient \
@@ -123,11 +116,12 @@ RUN set -x; \
     && python3 -m pip install --no-cache-dir wget \
     && python3 -m pip install --no-cache-dir Faker \
     && python3 -m pip install --no-cache-dir randomuser \
+    && python3 -m pip install --no-cache-dir python-docx \
     && python3 -m pip install --no-cache-dir pyotp
 
 # PDF export engine install..
 RUN set -x; \
-    curl -k -o wkhtmltox.deb -SL https://rm.myodoo.net/staff/wkhtmltox_0.12.5-1.stretch_amd64.deb \
+    curl -k -o wkhtmltox.deb -SL https://rm.myodoo.net/staff/wkhtmltox_0.12.5-1.buster_amd64.deb \
         && dpkg --force-depends -i wkhtmltox.deb \
         && ln -s /usr/local/bin/wkhtmltopdf /usr/bin \
         && ln -s /usr/local/bin/wkhtmltoimage /usr/bin \
