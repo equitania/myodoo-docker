@@ -7,7 +7,7 @@
 echo "nginx stop"
 service nginx stop
 echo "certbot renew"
-certbot renew
+certbot renew  --force-renew
 echo "nginx start"
 service nginx start
 service nginx status
