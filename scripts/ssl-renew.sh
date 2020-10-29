@@ -4,7 +4,7 @@
 # Renew certificates every wednesday at 0:00 h
 # 0 0 * * 3 /root/ssl-renew.sh >> /var/log/ssl-renew.log 2>&1
 
-rm -f /var/log/ssl-renew.log
+echo -n "" > /var/log/ssl-renew.log
 
 dt=$(date '+%d.%m.%Y %H:%M:%S');
 echo "#######################################"
