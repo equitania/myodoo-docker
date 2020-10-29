@@ -2,15 +2,19 @@
 # Erneuert die von Let's encrypt erstellten Zertifikate und nginx logs älter als 14 Tage löschen
 # Einstellung für crontab -e
 # Renew certificates every wednesday at 0:00 h
-# 0 0 * * 3 /root/ssl-renew.sh >/dev/null 2>&1
+# 0 0 * * 3 /root/ssl-renew.sh >> /var/log/ssl-renew.log 2>&1
+
+rm -f /var/log/ssl-renew.log
+
+dt=$(date '+%d.%m.%Y %H:%M:%S');
+echo "#######################################"
+echo "Start at $dt"
+echo "#######################################"
 
 echo "nginx stop"
-service nginx stop
-echo "certbot renew"
-certbot renew  --force-renew
+systemctl stop nginx
+echo "certbot renew --force-renew"
+certbot renew
 echo "nginx start"
-service nginx start
-service nginx status
-
-exit 0
-
+systemctl start nginx
+systemctl status nginx
