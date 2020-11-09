@@ -74,5 +74,6 @@ alias mv='mv -i'
 alias cdo='cd /opt/odoo/'
 alias olog='cat /opt/odoo/var/log/odoo-server.log'
 alias rolog='rm /opt/odoo/var/log/odoo-server.log'
+alias edconf='nano /opt/odoo/etc/odoo.conf'
 
 export EDITOR=nano

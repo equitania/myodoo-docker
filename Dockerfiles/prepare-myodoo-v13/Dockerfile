@@ -1,8 +1,8 @@
-FROM python:3.9.0-slim-buster
+FROM python:3.8.6-slim-buster
 MAINTAINER Equitania Software GmbH <info@myodoo.de>
 # For Odoo 13 powered by MyOdoo.de
-# Version 2.0.0
-# Date 26.10.2020
+# Version 2.0.1
+# Date 28.10.2020
 
 
 ARG DEBIAN_FRONTEND=noninteractive
@@ -16,6 +16,12 @@ RUN echo "en_US.UTF-8 UTF-8" > /etc/locale.gen && \
     dpkg-reconfigure locales && \
     /usr/sbin/update-locale LANG=en_US.UTF-8
 ENV LC_ALL en_US.UTF-8
+
+#Postgres for Debian
+RUN wget -q https://www.postgresql.org/media/keys/ACCC4CF8.asc -O- | sudo apt-key add - && \
+    sh -c 'echo "deb http://apt.postgresql.org/pub/repos/apt/ stretch-pgdg main" | sudo tee /etc/apt/sources.list.d/postgresql.list' && \
+    apt-get update && \
+    apt-get install -y postgresql-client-12
 
 # Update bash..
 COPY ./.bashrc /root/
@@ -43,7 +49,6 @@ RUN set -x; \
 		libffi-dev \		
 		unzip \
 		sqlite3 \
-		postgresql-client \
 		nano \
 		mc \
 		tmux \
@@ -72,7 +77,7 @@ RUN set -x; \
     && python3 -m pip install --no-cache-dir Jinja2==2.10.1 \
     && python3 -m pip install --no-cache-dir libsass==0.17.0 \
     && python3 -m pip install --no-cache-dir lxml==4.3.2 \
-    && python3 -m pip install --no-cache-dir Mako==1.0.7\
+    && python3 -m pip install --no-cache-dir Mako==1.0.7 \
     && python3 -m pip install --no-cache-dir MarkupSafe==1.1.0 \
     && python3 -m pip install --no-cache-dir mock==2.0.0 \
     && python3 -m pip install --no-cache-dir num2words==0.5.6 \
@@ -117,6 +122,7 @@ RUN set -x; \
     && python3 -m pip install --no-cache-dir Faker \
     && python3 -m pip install --no-cache-dir randomuser \
     && python3 -m pip install --no-cache-dir python-docx \
+    && python3 -m pip install --no-cache-dir paramiko \
     && python3 -m pip install --no-cache-dir pyotp
 
 # PDF export engine install..
