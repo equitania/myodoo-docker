@@ -1,8 +1,8 @@
 #!/usr/bin/python3
 # -*- coding: utf-8 -*-
 # Mit diesem Skript wird mittels dem Release Manager ein neuer Server gebaut
-# Version 1.1.2
-# Date 22.04.2020
+# Version 1.1.3
+# Date 28.10.2020
 ##############################################################################
 #
 #    Shell Script for Odoo, Open Source Management Solution
@@ -67,7 +67,7 @@ if os.path.isfile(_release_file):
                             os.system('unzip -q ' + _column + ' -d odoo-server')
                             print('kernel: ' + _column + ' loaded and installed..')
                 else:
-                    if _column.find('.zip') is not -1:
+                    if _column.find('.zip') != -1:
                         _zip_url = _url + '/' + _column
                         try:
                             wget.download(_zip_url)
