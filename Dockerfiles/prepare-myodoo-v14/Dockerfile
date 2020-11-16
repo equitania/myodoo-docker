@@ -1,7 +1,7 @@
 FROM python:3.8.6-slim-buster
 MAINTAINER Equitania Software GmbH <info@myodoo.de>
-# For Odoo 13 powered by MyOdoo.de
-# Version 2.0.4
+# For Odoo 14 powered by MyOdoo.de
+# Version 1.0.0
 # Date 16.11.2020
 
 
@@ -69,15 +69,16 @@ RUN set -x; \
     && python3 -m pip install --no-cache-dir docutils==0.14 \
     && python3 -m pip install --no-cache-dir ebaysdk==2.1.5 \
     && python3 -m pip install --no-cache-dir feedparser==5.2.1 \
+    && python3 -m pip install --no-cache-dir freezegun==0.3.11 \
     && python3 -m pip install --no-cache-dir gevent==1.5.0 \
     && python3 -m pip install --no-cache-dir greenlet==0.4.15 \
     && python3 -m pip install --no-cache-dir html2text==2018.1.9 \
+    && python3 -m pip install --no-cache-dir idna==2.6 \
     && python3 -m pip install --no-cache-dir Jinja2==2.10.1 \
     && python3 -m pip install --no-cache-dir libsass==0.17.0 \
     && python3 -m pip install --no-cache-dir lxml==4.3.2 \
     && python3 -m pip install --no-cache-dir Mako==1.0.7 \
     && python3 -m pip install --no-cache-dir MarkupSafe==1.1.0 \
-    && python3 -m pip install --no-cache-dir mock==2.0.0 \
     && python3 -m pip install --no-cache-dir num2words==0.5.6 \
     && python3 -m pip install --no-cache-dir ofxparse==0.19 \
     && python3 -m pip install --no-cache-dir passlib==1.7.1 \
@@ -97,7 +98,7 @@ RUN set -x; \
     && python3 -m pip install --no-cache-dir reportlab==3.5.13 \
     && python3 -m pip install --no-cache-dir requests==2.22.0 \
     && python3 -m pip install --no-cache-dir zeep==3.2.0 \
-    && python3 -m pip install --no-cache-dir vatnumber==1.2 \
+    && python3 -m pip install --no-cache-dir python-stdnum==1.8 \
     && python3 -m pip install --no-cache-dir vobject==0.9.6.1 \
     && python3 -m pip install --no-cache-dir Werkzeug==0.14.1 \
     && python3 -m pip install --no-cache-dir XlsxWriter==1.1.2 \
@@ -123,9 +124,8 @@ RUN set -x; \
     && python3 -m pip install --no-cache-dir paramiko \
     && python3 -m pip install --no-cache-dir pyotp \
     && python3 -m pip install --no-cache-dir debugpy \
-    && python3 -m pip install --no-cache-dir cachetools \
-    && python3 -m pip install --no-cache-dir pysftp
-    
+    && python3 -m pip install --no-cache-dir cachetools    
+
 # PDF export engine install..
 RUN set -x; \
     curl -k -o wkhtmltox.deb -SL https://rm.myodoo.net/staff/wkhtmltox_0.12.5-1.buster_amd64.deb \
@@ -135,5 +135,4 @@ RUN set -x; \
         && apt-get -y install -f --no-install-recommends \
         && apt-get purge -y --auto-remove -o APT::AutoRemove::RecommendsImportant=false -o APT::AutoRemove::SuggestsImportant=false  \
         && rm -rf /var/lib/apt/lists/* wkhtmltox.deb
-
 # Finished with build.
