@@ -5,7 +5,7 @@ MAINTAINER Equitania Software GmbH <info@myodoo.de>
 
 ARG DEBIAN_FRONTEND=noninteractive
 
-RUN apt-get update && apt-get -y dist-upgrade && apt-get install -y wget gnupg2 locales tzdata && \
+RUN apt-get update && apt-get -y dist-upgrade && apt-get install -y wget gnupg2 locales tzdata software-properties-common && \
     ln -sf /usr/share/zoneinfo/Europe/Berlin /etc/localtime
 
 # Set LOCALE to UTF8..
@@ -21,29 +21,58 @@ RUN wget -q https://www.postgresql.org/media/keys/ACCC4CF8.asc -O- | sudo apt-ke
     apt-get update && \
     apt-get install -y postgresql-client-12
 
+# Python 3.8
+RUN sudo add-apt-repository ppa:deadsnakes/ppa -y && \
+    sudo apt -y update && \
+    sudo apt -y install python3.8 python3.8-dev python3-pip
+
 # Install basics..
 RUN set -x; \
 		apt-get install -y --no-install-recommends \
 		ca-certificates \
-        python3 \
-        python3-distutils \
+		ghostscript \
+		graphviz \
+		antiword  \
+		poppler-utils \
 		htop \
 		dnsutils \
-        iputils-ping \
 		curl \
+		build-essential \
+		libfreetype6-dev \
+		libjpeg-dev \
+		libpq-dev \
+		libxml2-dev \
+		libxslt1-dev \
+		libldap2-dev \
+		libsasl2-dev \
+		libffi-dev \		
 		unzip \
-		zip \
+		sqlite3 \
+		nano \
 		mc \
-		screen \
 		tmux \
-		zsh
+		pkg-config \
+		geoip-bin \
+		geoip-database \
+		node-less \
+		node-clean-css \
+		imagemagick \
+		xfonts-75dpi \
+		xfonts-base
 
 # TODO tmux
 # https://askubuntu.com/questions/442766/tmux-exited-on-startup
 
-RUN sh -c "curl https://bootstrap.pypa.io/get-pip.py | sudo python3"
-
 RUN sh -c "sudo chsh --shell=/usr/bin/zsh $USER"
+RUN set -x; \
+    python3.8 -m pip install --no-cache-dir pip --upgrade \
+    && python3.8 -m pip install --no-cache-dir wheel --upgrade \
+    && python3.8 -m pip install --no-cache-dir odoorpc \
+    && python3.8 -m pip install --no-cache-dir wget \
+    && python3.8 -m pip install --no-cache-dir Faker \
+    && python3.8 -m pip install --no-cache-dir randomuser \
+    && python3.8 -m pip install --no-cache-dir debugpy \
+    && python3.8 -m pip install --no-cache-dir virtualenv
 
 # https://gist.github.com/MichalZalecki/4a87880bbe7a3a5428b5aebebaa5cd97
 # terminal colors with xterm
@@ -56,18 +85,25 @@ RUN wget https://github.com/robbyrussell/oh-my-zsh/raw/master/tools/install.sh -
 
 # Update bash..
 COPY ./.zshrc /config/
+COPY create_virtualenv_python38_v13.sh .
 
+RUN /bin/bash -c "./create_virtualenv_python38_v13.sh"
+
+# PDF export engine install..
 RUN set -x; \
-    python3 -m pip install --no-cache-dir pip --upgrade \
-    && python3 -m pip install --no-cache-dir wheel --upgrade \
-    && python3 -m pip install --no-cache-dir odoorpc \
-    && python3 -m pip install --no-cache-dir wget \
-    && python3 -m pip install --no-cache-dir Faker \
-    && python3 -m pip install --no-cache-dir randomuser \
-    && python3 -m pip install --no-cache-dir debugpy
+    curl -k -o wkhtmltox.deb -SL https://rm.myodoo.net/staff/wkhtmltox_0.12.5-1.bionic_amd64.deb \
+        && dpkg --force-depends -i wkhtmltox.deb \
+        && ln -s /usr/local/bin/wkhtmltopdf /usr/bin \
+        && ln -s /usr/local/bin/wkhtmltoimage /usr/bin \
+        && apt-get -y install -f --no-install-recommends \
+        && apt-get purge -y --auto-remove -o APT::AutoRemove::RecommendsImportant=false -o APT::AutoRemove::SuggestsImportant=false npm \
+        && rm -rf /var/lib/apt/lists/* wkhtmltox.deb
 
 RUN set -x; \
     apt -y autoremove \
     && apt -y autoclean
+
+# Expose the odoo ports (for linked containers)
+EXPOSE 8069 8072
 
 # Finished with build.
