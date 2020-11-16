@@ -1,8 +1,8 @@
 FROM python:3.8.6-slim-buster
 MAINTAINER Equitania Software GmbH <info@myodoo.de>
 # For Odoo 12 powered by MyOdoo.de
-# Version 2.0.0
-# Date 09.11.2020
+# Version 2.0.1
+# Date 16.11.2020
 
 
 ARG DEBIAN_FRONTEND=noninteractive
@@ -19,7 +19,7 @@ ENV LC_ALL en_US.UTF-8
 
 #Postgres for Debian
 RUN wget -q https://www.postgresql.org/media/keys/ACCC4CF8.asc -O- | sudo apt-key add - && \
-    sh -c 'echo "deb http://apt.postgresql.org/pub/repos/apt/ stretch-pgdg main" | sudo tee /etc/apt/sources.list.d/postgresql.list' && \
+    sh -c 'echo "deb http://apt.postgresql.org/pub/repos/apt/ buster-pgdg main" | sudo tee /etc/apt/sources.list.d/postgresql.list' && \
     apt-get update && \
     apt-get install -y postgresql-client-12
 
@@ -32,7 +32,6 @@ COPY ./.bashrc /root/
 RUN set -x; \
 		apt-get install -y --no-install-recommends \
 		ca-certificates \
-		locales \
 		ghostscript \
 		graphviz \
 		antiword  \
@@ -56,7 +55,6 @@ RUN set -x; \
 		sqlite3 \
 		nano \
 		mc \
-		tmux \
 		pkg-config \
 		geoip-bin \
 		geoip-database \
@@ -130,7 +128,9 @@ RUN set -x; \
     && python3 -m pip install --no-cache-dir MT-940 \
     && python3 -m pip install --no-cache-dir Faker \
     && python3 -m pip install --no-cache-dir randomuser \
-    && python3 -m pip install --no-cache-dir pyotp
+    && python3 -m pip install --no-cache-dir pyotp \
+    && python3 -m pip install --no-cache-dir debugpy \
+    && python3 -m pip install --no-cache-dir cachetools    
 
 # PDF export engine install..
 RUN set -x; \
