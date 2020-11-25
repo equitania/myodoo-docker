@@ -9,7 +9,7 @@
 
 
 mypython="v13-p38"
-mypath="$HOME/venv/"
+mypath="/venv/"
 myenv=$mypath$mypython
 
 # delete old

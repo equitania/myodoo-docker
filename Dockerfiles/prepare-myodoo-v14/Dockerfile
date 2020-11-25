@@ -103,7 +103,7 @@ RUN set -x; \
     && python3 -m pip install --no-cache-dir Werkzeug==0.14.1 \
     && python3 -m pip install --no-cache-dir XlsxWriter==1.1.2 \
     && python3 -m pip install --no-cache-dir xlwt==1.3.* \
-    && python3 -m pip install --no-cache-dir xlrd==1.1.0 \
+    && python3 -m pip install --no-cache-dir xlrd==1.2.0 \
     && python3 -m pip install --no-cache-dir openpyxl \
     && python3 -m pip install --no-cache-dir elasticsearch \
     && python3 -m pip install --no-cache-dir pycryptodome==3.9.0 \
