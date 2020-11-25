@@ -1,8 +1,8 @@
 FROM python:3.8.6-slim-buster
 MAINTAINER Equitania Software GmbH <info@myodoo.de>
 # For Odoo 12 powered by MyOdoo.de
-# Version 2.0.1
-# Date 16.11.2020
+# Version 2.0.2
+# Date 25.11.2020
 
 
 ARG DEBIAN_FRONTEND=noninteractive
@@ -107,7 +107,7 @@ RUN set -x; \
     && python3 -m pip install --no-cache-dir Werkzeug==0.16.0 \
     && python3 -m pip install --no-cache-dir XlsxWriter==0.9.3 \
     && python3 -m pip install --no-cache-dir xlwt==1.3.* \
-    && python3 -m pip install --no-cache-dir xlrd==1.0.0 \
+    && python3 -m pip install --no-cache-dir xlrd==1.2.0 \
     && python3 -m pip install --no-cache-dir openpyxl \
     && python3 -m pip install --no-cache-dir O365 \
     && python3 -m pip install --no-cache-dir elasticsearch \

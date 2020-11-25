@@ -1,7 +1,7 @@
-FROM linuxserver/code-server:version-v3.6.2
+FROM linuxserver/code-server:version-v3.7.1
 MAINTAINER Equitania Software GmbH <info@myodoo.de>
-# Version 3.6.2
-# Date 09.11.2020
+# Version 3.7.1
+# Date 19.11.2020
 
 ARG DEBIAN_FRONTEND=noninteractive
 
@@ -17,7 +17,7 @@ ENV LC_ALL en_US.UTF-8
 
 #Postgres for Debian
 RUN wget -q https://www.postgresql.org/media/keys/ACCC4CF8.asc -O- | sudo apt-key add - && \
-    sh -c 'echo "deb http://apt.postgresql.org/pub/repos/apt/ stretch-pgdg main" | sudo tee /etc/apt/sources.list.d/postgresql.list' && \
+    sh -c 'echo "deb http://apt.postgresql.org/pub/repos/apt/ bionic-pgdg main" | sudo tee /etc/apt/sources.list.d/postgresql.list' && \
     apt-get update && \
     apt-get install -y postgresql-client-12
 
@@ -58,33 +58,31 @@ RUN set -x; \
 		node-clean-css \
 		imagemagick \
 		xfonts-75dpi \
-		xfonts-base
-
-# TODO tmux
-# https://askubuntu.com/questions/442766/tmux-exited-on-startup
-
-RUN sh -c "sudo chsh --shell=/usr/bin/zsh $USER"
-RUN set -x; \
-    python3.8 -m pip install --no-cache-dir pip --upgrade \
-    && python3.8 -m pip install --no-cache-dir wheel --upgrade \
-    && python3.8 -m pip install --no-cache-dir odoorpc \
-    && python3.8 -m pip install --no-cache-dir wget \
-    && python3.8 -m pip install --no-cache-dir Faker \
-    && python3.8 -m pip install --no-cache-dir randomuser \
-    && python3.8 -m pip install --no-cache-dir debugpy \
-    && python3.8 -m pip install --no-cache-dir virtualenv
-
-# https://gist.github.com/MichalZalecki/4a87880bbe7a3a5428b5aebebaa5cd97
-# terminal colors with xterm
-ENV TERM xterm
-# set the zsh theme
-ENV ZSH_THEME bira
+		xfonts-base \
+		zsh
 
 # run the installation script
 RUN wget https://github.com/robbyrussell/oh-my-zsh/raw/master/tools/install.sh -O - | zsh || true
 
 # Update bash..
 COPY ./.zshrc /config/
+
+# TODO tmux
+# https://askubuntu.com/questions/442766/tmux-exited-on-startup
+
+RUN sh -c "sudo chsh --shell=/usr/bin/zsh root"
+RUN set -x; \
+    python3 -m pip install --no-cache-dir pip --upgrade \
+    && python3 -m pip install --no-cache-dir wheel --upgrade \
+    && python3 -m pip install --no-cache-dir setuptools --upgrade \
+    && python3 -m pip install --no-cache-dir odoorpc \
+    && python3 -m pip install --no-cache-dir wget \
+    && python3 -m pip install --no-cache-dir Faker \
+    && python3 -m pip install --no-cache-dir randomuser \
+    && python3 -m pip install --no-cache-dir debugpy \
+    && python3 -m pip install --no-cache-dir virtualenv \
+    && python3 -m pip install --no-cache-dir six
+
 COPY create_virtualenv_python38_v13.sh .
 
 RUN /bin/bash -c "./create_virtualenv_python38_v13.sh"

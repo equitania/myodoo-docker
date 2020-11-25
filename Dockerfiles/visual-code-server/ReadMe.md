@@ -1,10 +1,10 @@
 #### For build of the docker image
 #### For Visual Code Odoo Development powered by MyOdoo.de
 #### Based on https://github.com/linuxserver/docker-code-server/blob/master/Dockerfile
-#### Version 3.6.2
-#### Date 09.11.2020
-docker build -t myodoo/code-server:3.6.2 .
-docker push myodoo/code-server:3.6.2
+#### Version 3.7.1
+#### Date 19.11.2020
+docker build -t myodoo/code-server:3.7.1 .
+docker push myodoo/code-server:3.7.1
 
 ## Usage
 
@@ -42,7 +42,7 @@ docker run -d \
   --name=code-server \
   -e PUID=1000 \
   -e PGID=1000 \
-  -e TZ=Europe/London \
+  -e TZ=Europe/Berlin \
   -e PASSWORD=password `#optional` \
   -e SUDO_PASSWORD=password `#optional` \
   -e PROXY_DOMAIN=code-server.my.domain `#optional` \
