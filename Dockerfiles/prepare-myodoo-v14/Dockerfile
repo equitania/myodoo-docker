@@ -1,8 +1,8 @@
 FROM python:3.8.6-slim-buster
 MAINTAINER Equitania Software GmbH <info@myodoo.de>
 # For Odoo 14 powered by MyOdoo.de
-# Version 1.0.0
-# Date 16.11.2020
+# Version 1.0.1
+# Date 02.12.2020
 
 
 ARG DEBIAN_FRONTEND=noninteractive
@@ -69,23 +69,23 @@ RUN set -x; \
     && python3 -m pip install --no-cache-dir docutils==0.14 \
     && python3 -m pip install --no-cache-dir ebaysdk==2.1.5 \
     && python3 -m pip install --no-cache-dir feedparser==5.2.1 \
-    && python3 -m pip install --no-cache-dir freezegun==0.3.11 \
+    && python3 -m pip install --no-cache-dir freezegun==0.3.15 \
     && python3 -m pip install --no-cache-dir gevent==1.5.0 \
-    && python3 -m pip install --no-cache-dir greenlet==0.4.15 \
+    && python3 -m pip install --no-cache-dir greenlet==0.4.17 \
     && python3 -m pip install --no-cache-dir html2text==2018.1.9 \
     && python3 -m pip install --no-cache-dir idna==2.6 \
-    && python3 -m pip install --no-cache-dir Jinja2==2.10.1 \
+    && python3 -m pip install --no-cache-dir Jinja2==2.11.2 \
     && python3 -m pip install --no-cache-dir libsass==0.17.0 \
-    && python3 -m pip install --no-cache-dir lxml==4.3.2 \
+    && python3 -m pip install --no-cache-dir lxml==4.6.1 \
     && python3 -m pip install --no-cache-dir Mako==1.0.7 \
     && python3 -m pip install --no-cache-dir MarkupSafe==1.1.0 \
     && python3 -m pip install --no-cache-dir num2words==0.5.6 \
     && python3 -m pip install --no-cache-dir ofxparse==0.19 \
     && python3 -m pip install --no-cache-dir passlib==1.7.1 \
-    && python3 -m pip install --no-cache-dir Pillow==6.1.0 \
+    && python3 -m pip install --no-cache-dir Pillow==8.0.1 \
     && python3 -m pip install --no-cache-dir polib==1.1.0 \
     && python3 -m pip install --no-cache-dir psutil==5.6.6 \
-    && python3 -m pip install --no-cache-dir psycopg2==2.8.3 \
+    && python3 -m pip install --no-cache-dir psycopg2==2.8.5 \
     && python3 -m pip install --no-cache-dir pydot==1.4.1 \
     && python3 -m pip install --no-cache-dir python-ldap==3.1.0 \
     && python3 -m pip install --no-cache-dir pyparsing==2.2.0 \
@@ -95,7 +95,7 @@ RUN set -x; \
     && python3 -m pip install --no-cache-dir pytz==2019.1 \
     && python3 -m pip install --no-cache-dir pyusb==1.0.2 \
     && python3 -m pip install --no-cache-dir qrcode==6.1 \
-    && python3 -m pip install --no-cache-dir reportlab==3.5.13 \
+    && python3 -m pip install --no-cache-dir reportlab==3.5.55 \
     && python3 -m pip install --no-cache-dir requests==2.22.0 \
     && python3 -m pip install --no-cache-dir zeep==3.2.0 \
     && python3 -m pip install --no-cache-dir python-stdnum==1.8 \

@@ -1,7 +1,7 @@
-FROM myodoo/prepare-v13:2.0.1
+FROM myodoo/prepare-v13:2.0.5
 MAINTAINER Equitania Software GmbH <info@myodoo.de>
 # Mit diesem Skript überprüft das passende Dockerimage gemäß des Releasefiles
-# Date 10.11.2020
+# Date 13.12.2020
 
 CMD "echo" "MyOdoo build will start now.."
 
@@ -13,13 +13,12 @@ RUN chown -R odoo:odoo /opt/odoo/
 # makes the container more unlikely to be unwillingly changed in interactive mode
 USER odoo
 
-RUN /bin/bash -c "mkdir -p /opt/odoo/{odoo-server/odoo,bin,etc,sources/odoo,data,data/filestore}"
+RUN /bin/bash -c "mkdir -p /opt/odoo/{odoo-server/odoo,bin,etc,data,data/filestore}"
 
 COPY build_myodoo.py /opt/odoo/
 COPY release.file /opt/odoo/
-#COPY ./testdb/ /opt/odoo/data/filestore/testdb/
 
-RUN /bin/bash -c "mkdir -p /opt/odoo/{bin,etc,sources/odoo,data,data/filestore}" && \
+RUN /bin/bash -c "mkdir -p /opt/odoo/{bin,etc,data,data/filestore}" && \
     cd /opt/odoo/ && \
     python3 build_myodoo.py
 
