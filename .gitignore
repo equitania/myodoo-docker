@@ -55,3 +55,6 @@ pip-selfcheck.json
 
 # Release
 odoo-ce.zip
+
+#vs code
+.vscode
