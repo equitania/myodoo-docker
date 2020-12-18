@@ -26,12 +26,12 @@
 myscriptpath="$PWD"
 
 myserverpath="/etc/nginx/conf.d/"
-myserverpath="/mnt/c/Users/Martin Schmid/Documents/temp/"
+myserverpath="/home/devops/temp/"
 myconf=$1
 myip=$2
 mydomain=$3
 myport=$4
-mycertname=$5
+mycert=$5
 mypollport=$6
 
 
@@ -52,6 +52,7 @@ if [ "$myconf" = "" ]; then
   echo "- ngx_pwa"
   echo "- ngx_redirect_ssl"
   echo "- ngx_redirect"
+  echo "->"
   read myconf
 fi
 
@@ -66,13 +67,8 @@ if [ "$mydomain" = "" ]; then
 fi
 
 if [ "$myport" = "" ]; then
-  echo "Insert the odoo port | Geben Sie den Port für Odoo ein:"
+  echo "Insert the expose port | Geben Sie den Port für Odoo ein:"
   read myport
-fi
-
-if [ "$mypollport" = "" ]; then
-  echo "Insert the odoo polling port | Geben Sie den Port für Odoo ein:"
-  read mypollport
 fi
 
 if [ "$mycert" = "" ]; then
@@ -80,20 +76,20 @@ if [ "$mycert" = "" ]; then
   read mycert
 fi
 
-if [ "$mycrt" = "" ]; then
-  echo "Insert the ssl crt file name | Geben Sie den Name der SSL crt Datei ein:"
-  read mycrt
+if [ "$mypollport" = "" ]  | [ "$myconf" = "ngx_odoo_http" ] || [ "$myconf" = "ngx_odoo_ssl_pagespeed" ] || [ "$myconf" = "ngx_odoo_ssl" ]; then
+  echo "Insert the polling expose port | Geben Sie den Port für Odoo ein:"
+  read mypollport
 fi
 
 
 myolddomain="server.domain.de"
 myoldip="ip.ip.ip.ip"
 myoldport="oldport"
-myoldpollport="pollport"
+myoldpollport="oldpollport"
 myoldcrt="zertifikat.crt"
 myoldkey="zertifikat.key"
 
-if [ "$myconf" != "" ] || [ "$myip" != "" ] || [ "$mydomain" != "" ] || [ "$myport" != "" ] || [ "$mykey" != "" ]  || [ "$mycrt" != "" ]; then
+if [ "$myconf" != "" ] || [ "$myip" != "" ] || [ "$mydomain" != "" ] || [ "$myport" != "" ] || [ "$mycert" != "" ]; then
   echo "Copy" $myscriptpath"/$myconf.conf" $myserverpath"/$mydomain.conf"
   cp  $myscriptpath"/$myconf.conf" $myserverpath"/$mydomain.conf"
   echo "Set domain name in conf to "$mydomain
