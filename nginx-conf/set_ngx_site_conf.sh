@@ -1,11 +1,10 @@
 #!/bin/bash
-# Erzeugt man eine nginx Konfiguration inkl. SSL
-# Skript muss mit root-Rechten ausgeführt werden
-# Version 2.0.0
-# Date 14.06.2018
+# Create nginx configuration at /etc/nginx/conf.d/
+# Script needs root-rights 
+# Version 1.0.0
+# Date 18.12.2020
 ##############################################################################
 #
-#    Shell Script for Odoo, Open Source Management Solution
 #    Copyright (C) 2014-now Equitania Software GmbH(<http://www.equitania.de>).
 #
 #    This program is free software: you can redistribute it and/or modify
@@ -23,19 +22,38 @@
 #
 ##############################################################################
 
-myscriptpath="$PWD"
-myserverpath="/etc/nginx/conf.d/"
-myip=$1
-mydomain=$2
-myport=$3
-mypollport=$4
-mykey=$5
-mycrt=$6
-mylets=$7
 
-echo "Dieses Skript erstellt einen Portweiterleitung auf die eingebene Domain für https!"
+myscriptpath="$PWD"
+
+myserverpath="/etc/nginx/conf.d/"
+myserverpath="/mnt/c/Users/Martin Schmid/Documents/temp/"
+myconf=$1
+myip=$2
+mydomain=$3
+myport=$4
+mycertname=$5
+mypollport=$6
+
+
+echo "Starting create nginx conf "
 echo "Basepath: "$myscriptpath
 echo "Serverpath: "$myserverpath
+
+if [ "$myconf" = "" ]; then
+  echo "Insert the conf-template | Geben Sie die conf-Vorlage an:"
+  echo "We support:"
+  echo "- ngx_code_server"
+  echo "- ngx_fast_report"
+  echo "- ngx_nextcloud"
+  echo "- ngx_odoo_http"
+  echo "- ngx_odoo_ssl_pagespeed"
+  echo "- ngx_odoo_ssl"
+  echo "- ngx_pgadmin"
+  echo "- ngx_pwa"
+  echo "- ngx_redirect_ssl"
+  echo "- ngx_redirect"
+  read myconf
+fi
 
 if [ "$myip" = "" ]; then
   echo "Insert the server ip address | Geben Sie die Server IP Adresse ein:"
@@ -57,19 +75,14 @@ if [ "$mypollport" = "" ]; then
   read mypollport
 fi
 
-if [ "$mykey" = "" ]; then
-  echo "Insert the ssl key file name | Geben Sie den Name der SSL key Datei ein:"
-  read mykey
+if [ "$mycert" = "" ]; then
+  echo "Insert the Let's encrypted cert name | Geben Sie den Name des Let's encrypted Zertikates ein:"
+  read mycert
 fi
 
 if [ "$mycrt" = "" ]; then
   echo "Insert the ssl crt file name | Geben Sie den Name der SSL crt Datei ein:"
   read mycrt
-fi
-
-if [ "$mylets" = "" ]; then
-  echo "Use let's encrypt | Wollen Sie let's encrypt verwenden? (y/n):"
-  read mylets
 fi
 
 
@@ -79,22 +92,22 @@ myoldport="oldport"
 myoldpollport="pollport"
 myoldcrt="zertifikat.crt"
 myoldkey="zertifikat.key"
-myzert1="#zert1"
-myzert2="#zert2"
-myempty=""
 
-if [ "$myip" != "" ] || [ "$mydomain" != "" ] || [ "$myport" != "" ] || [ "$mykey" != "" ]  || [ "$mycrt" != "" ]; then
-  cp  $myscriptpath"/nginx.server.domain_ssl.conf" $myserverpath"/$mydomain.conf"
+if [ "$myconf" != "" ] || [ "$myip" != "" ] || [ "$mydomain" != "" ] || [ "$myport" != "" ] || [ "$mykey" != "" ]  || [ "$mycrt" != "" ]; then
+  echo "Copy" $myscriptpath"/$myconf.conf" $myserverpath"/$mydomain.conf"
+  cp  $myscriptpath"/$myconf.conf" $myserverpath"/$mydomain.conf"
+  echo "Set domain name in conf to "$mydomain
   sed -i "s/$myolddomain/$mydomain/g" $myserverpath"/$mydomain.conf"
+  echo "Set ip in conf to "$myip
   sed -i "s/$myoldip/$myip/g" $myserverpath"/$mydomain.conf"
-  sed -i "s/$myoldcrt/$mycrt/g" $myserverpath"/$mydomain.conf"
-  sed -i "s/$myoldkey/$mykey/g" $myserverpath"/$mydomain.conf"
+  echo "Set cert name in conf to "$mycert
+  sed -i "s/$myoldcrt/$mycert/g" $myserverpath"/$mydomain.conf"
+  sed -i "s/$myoldkey/$mycert/g" $myserverpath"/$mydomain.conf"
+  echo "Set port in conf to "$myport
   sed -i "s/$myoldport/$myport/g" $myserverpath"/$mydomain.conf"
-  sed -i "s/$myoldpollport/$mypollport/g" $myserverpath"/$mydomain.conf"
-  if [ "$mylets" = "y" ]; then
-    sed -i "s/$myzert2/$myempty/g" $myserverpath"/$mydomain.conf"
-  else
-    sed -i "s/$myzert1/$myempty/g" $myserverpath"/$mydomain.conf"
+  if [ "$mypollport" != "" ]; then
+    echo "Set polling port in conf to "$mypollport
+    sed -i "s/$myoldpollport/$mypollport/g" $myserverpath"/$mydomain.conf"
   fi
   echo "Finished!"
 else
