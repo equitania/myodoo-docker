@@ -1,11 +1,11 @@
 #!/usr/bin/python3
 # -*- coding: utf-8 -*-
 # Dieses Skript hilft beim Organisieren von Docker-Servern
-# Version 3.0.9
-# Date 22.09.2020
+# Version 3.1.0
+# Date 21.12.2020
 ##############################################################################
 #
-#    Shell Script for Odoo, Open Source Management Solution
+#    Shell Script for devops
 #    Copyright (C) 2014-now Equitania Software GmbH(<http://www.equitania.de>).
 #
 #    This program is free software: you can redistribute it and/or modify
@@ -23,10 +23,9 @@
 #
 ##############################################################################
 import os
-#import platform
 
 # main
-global_server_version = 'master'
+global_server_version = '2020'
 myhome = os.path.expanduser('~')
 os.chdir(myhome + "/" + "myodoo-docker")
 os.system("git checkout "+global_server_version)
@@ -35,7 +34,6 @@ os.system("find . -name '*.pyc' -type f -print0 | xargs -0 /bin/rm -f")
 os.system("cp $HOME/myodoo-docker/scripts/.zshrc $HOME/.zshrc")
 os.system("cp -r $HOME/myodoo-docker/nginx-conf $HOME")
 os.system("cp $HOME/myodoo-docker/scripts/update_docker_myodoo.py $HOME")
-#os.system("cp $HOME/myodoo-docker/scripts/backup_odoo_docker_postgres_on_host.py $HOME")
 os.system("cp $HOME/myodoo-docker/scripts/container2backup.py $HOME")
 os.system("cp $HOME/myodoo-docker/scripts/cleanup-weblogs.sh $HOME")
 os.system("cp $HOME/myodoo-docker/scripts/ssl-renew.sh $HOME")
@@ -43,8 +41,4 @@ os.system("cp $HOME/myodoo-docker/getScripts.py $HOME")
 os.system("python3 -m pip install pip --upgrade --user")
 os.system("python3 -m pip install wheel --upgrade --user")
 os.system("python3 -m pip install odoorpc --upgrade --user")
-os.system("python3 -m pip install ansible --upgrade --user")
-os.system("python3 -m pip install pip-review --upgrade --user")
-#myos=platform.dist()
-#if myos[0]=='centos':
-#    os.system("python3 -m pip install certbot --upgrade --user")
+#os.system("python3 -m pip install ansible --upgrade --user")
