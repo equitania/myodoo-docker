@@ -143,6 +143,7 @@ alias showcerts='certbot certificates'
 alias ups='sudo $HOME/getScripts.py && sudo cp $HOME/myodoo-docker/getScripts.py $HOME/'
 alias dusort='du /var --max-depth=1 | sort -nr | cut -f2 | xargs -n 1 du -hs'
 alias syspatch='sudo journalctl --vacuum-time=7d && sudo journalctl --vacuum-size=2G && sudo apt -y update && sudo apt -y dist-upgrade && sudo apt -y autoremove && sudo apt -y autoclean'
+alias bash#='source ~/.bashrc'
 
 eval "$(starship init bash)"
 cd $HOME
