@@ -1,7 +1,7 @@
 #!/bin/bash
 # Create nginx configuration at /etc/nginx/conf.d/
 # Script needs root-rights 
-# Version 1.0.0
+# Version 1.0.1
 # Date 18.12.2020
 ##############################################################################
 #
@@ -24,9 +24,11 @@
 
 
 myscriptpath="$PWD"
-
 myserverpath="/etc/nginx/conf.d/"
-myserverpath="/home/devops/temp/"
+
+#test cases
+#myserverpath="/home/devops/temp/"
+
 myconf=$1
 myip=$2
 mydomain=$3

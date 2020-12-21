@@ -22,7 +22,6 @@ Wir benutzen es bei unseren täglichen Administrationstätigkeiten mit den Kunde
   
 1. Dockerfiles
 2. Postgres Konfigurationen
-3. nginx Templates & Konfigurationen
-4. Hilfsskripte für Installation, Updates & Backups
+3. Hilfsskripte für Installation, Updates & Backups
 
 Weiterführende Informationen finden Sie in unserem WIKI https://equitania.atlassian.net/wiki/spaces/MW/overview 
