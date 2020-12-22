@@ -146,5 +146,23 @@ alias syspatch='sudo journalctl --vacuum-time=7d && sudo journalctl --vacuum-siz
 alias bash#='source ~/.bashrc'
 alias dnw='docker network inspect ownerp-net >/dev/null 2>&1 || \
     docker network create ownerp-net'
+# docker volume Odoo live
+alias dnw='docker network inspect ownerp-net >/dev/null 2>&1 || \
+    docker network create ownerp-net'
+# docker volume Odoo test
+alias dvol='docker volume inspect vol-odoo-live >/dev/null 2>&1 || \
+    docker volume create vol-odoo-live'
+alias dvot='docker volume inspect vol-odoo-test >/dev/null 2>&1 || \
+    docker volume create vol-odoo-test'
+# docker volume PostgreSQL live
+alias dvpl='docker volume inspect vol-pg-live >/dev/null 2>&1 || \
+    docker volume create vol-pg-live'
+# docker volume PostgreSQL test
+alias dvpt='docker volume inspect vol-pg-test >/dev/null 2>&1 || \
+    docker volume create vol-pg-test'
+# docker volume PostgreSQL test
+alias dvfr='docker volume inspect vol-fast-report >/dev/null 2>&1 || \
+    docker volume create vol-fast-report'
+
 eval "$(starship init bash)"
 cd $HOME
