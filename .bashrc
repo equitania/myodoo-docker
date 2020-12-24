@@ -1,6 +1,6 @@
 # bash for ubuntu 20.x powered by MyOdoo.de
-# Version 1.0.0
-# Date 21.12.2020
+# Version 1.0.1
+# Date 22.12.2020
 
 # ~/.bashrc: executed by bash(1) for non-login shells.
 # see /usr/share/doc/bash/examples/startup-files (in the package bash-doc)
@@ -144,6 +144,25 @@ alias ups='sudo $HOME/getScripts.py && sudo cp $HOME/myodoo-docker/getScripts.py
 alias dusort='du /var --max-depth=1 | sort -nr | cut -f2 | xargs -n 1 du -hs'
 alias syspatch='sudo journalctl --vacuum-time=7d && sudo journalctl --vacuum-size=2G && sudo apt -y update && sudo apt -y dist-upgrade && sudo apt -y autoremove && sudo apt -y autoclean'
 alias bash#='source ~/.bashrc'
+alias dnw='docker network inspect ownerp-net >/dev/null 2>&1 || \
+    docker network create ownerp-net'
+# docker volume Odoo live
+alias dnw='docker network inspect ownerp-net >/dev/null 2>&1 || \
+    docker network create ownerp-net'
+# docker volume Odoo test
+alias dvol='docker volume inspect vol-odoo-live >/dev/null 2>&1 || \
+    docker volume create vol-odoo-live'
+alias dvot='docker volume inspect vol-odoo-test >/dev/null 2>&1 || \
+    docker volume create vol-odoo-test'
+# docker volume PostgreSQL live
+alias dvpl='docker volume inspect vol-pg-live >/dev/null 2>&1 || \
+    docker volume create vol-pg-live'
+# docker volume PostgreSQL test
+alias dvpt='docker volume inspect vol-pg-test >/dev/null 2>&1 || \
+    docker volume create vol-pg-test'
+# docker volume PostgreSQL test
+alias dvfr='docker volume inspect vol-fast-report >/dev/null 2>&1 || \
+    docker volume create vol-fast-report'
 
 eval "$(starship init bash)"
 cd $HOME
