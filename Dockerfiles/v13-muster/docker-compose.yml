@@ -1,20 +1,10 @@
 version: '3'
 
 volumes:
-  vol-odoo-live:
   vol-pg-live:
+  vol-odoo-live:
 
 services:
-    live-myodoo:
-        image: myodoo/live:latest
-        ports: 
-          - 127.0.0.1:8069:8069
-          - 127.0.0.1:8072:8072
-        networks:
-          - ownerp-net  
-        volumes:
-          - vol-odoo-live:/opt/odoo/data
-        restart: always
     live-db:
         image: postgres:12.5-alpine
         environment:
@@ -26,7 +16,17 @@ services:
         volumes:
           - vol-pg-live:/var/lib/postgresql/data/
         restart: always
-
+    live-myodoo:
+        image: myodoo/live:latest
+        ports: 
+          - 127.0.0.1:8069:8069
+          - 127.0.0.1:8072:8072
+        networks:
+          - ownerp-net  
+        volumes:
+          - vol-odoo-live:/opt/odoo/data
+        restart: always
+        command: start
 networks:
     ownerp-net:
         driver: bridge
