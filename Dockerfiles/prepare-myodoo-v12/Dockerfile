@@ -1,8 +1,8 @@
-FROM python:3.8.6-slim-buster
+FROM python:3.8.7-slim-buster
 MAINTAINER Equitania Software GmbH <info@myodoo.de>
 # For Odoo 12 powered by MyOdoo.de
-# Version 2.0.2
-# Date 25.11.2020
+# Version 2.0.3
+# Date 29.12.2020
 
 
 ARG DEBIAN_FRONTEND=noninteractive
