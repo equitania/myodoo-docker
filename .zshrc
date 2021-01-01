@@ -1,13 +1,12 @@
 #ZSH powered by MyOdoo.de
-# Version 2.0.0
-# Date 31.12.2020
+# Version 2.0.1
+# Date 01.01.2021
 
 # If you come from bash you might have to change your $PATH.
 export PATH=$HOME/bin:/usr/local/bin:$PATH
 
 # Path to your oh-my-zsh installation.
 export ZSH=$HOME/.oh-my-zsh
-#eval $(thefuck --alias)
 
 # Set name of the theme to load. Optionally, if you set this to "random"
 # it'll load a random theme each time that oh-my-zsh is loaded.
@@ -55,43 +54,11 @@ ZSH_THEME_RANDOM_CANDIDATES=( "robbyrussell" "gnzh" "juanghurtado" "muse" )
 # Uncomment the following line to change how often to auto-update (in days).
 export UPDATE_ZSH_DAYS=13
 
-# Uncomment the following line to disable colors in ls.
-# DISABLE_LS_COLORS="true"
-
-# Uncomment the following line to disable auto-setting terminal title.
-# DISABLE_AUTO_TITLE="true"
-
 # Uncomment the following line to enable command auto-correction.
 #ENABLE_CORRECTION="true"
 
 # Uncomment the following line to display red dots whilst waiting for completion.
 COMPLETION_WAITING_DOTS="true"
-
-# Uncomment the following line if you want to disable marking untracked files
-# under VCS as dirty. This makes repository status check for large repositories
-# much, much faster.
-# DISABLE_UNTRACKED_FILES_DIRTY="true"
-
-# Uncomment the following # --prefix=/etc/nginx
-# --sbin-path=/usr/sbin/nginx
-# --modules-path=/usr/lib/nginx/modules
-# --conf-path=/etc/nginx/nginx.conf
-# --error-log-path=/var/log/nginx/error.log
-# --http-log-path=/var/log/nginx/access.log
-# --pid-path=/var/run/nginx.pid
-# --lock-path=/var/run/nginx.lock
-# --http-client-body-temp-path=/var/cache/nginx/client_temp
-# --http-proxy-temp-path=/var/cache/nginx/proxy_temp
-# --http-fastcgi-temp-path=/var/cache/nginx/fastcgi_temp
-# --http-uwsgi-temp-path=/var/cache/nginx/uwsgi_temp
-# --http-scgi-temp-path=/var/cache/nginx/scgi_temp
-# --user=nginx
-# --group=nginx
-# --with-http_ssl_module
-# --with-http_v2_moduleline if you want to change the command execution time
-# stamp shown in the history command output.
-# The optional three formats: "mm/dd/yyyy"|"dd.mm.yyyy"|"yyyy-mm-dd"
-# HIST_STAMPS="mm/dd/yyyy"
 
 # Would you like to use another custom folder than $ZSH/custom?
 # ZSH_CUSTOM=/path/to/new-custom-folder
@@ -103,28 +70,12 @@ COMPLETION_WAITING_DOTS="true"
 plugins=(
   git git-extras history jsontools last-working-dir pip python screen web-search ansible docker
 )
-
 source $ZSH/oh-my-zsh.sh
 
 # User configuration
 
-# export MANPATH="/usr/local/man:$MANPATH"
-
 # You may need to manually set your language environment
 # export LANG=en_US.UTF-8
-
-# Preferred editor for local and remote sessions
-# if [[ -n $SSH_CONNECTION ]]; then
-#   export EDITOR='vim'
-# else
-#   export EDITOR='mvim'
-# fi
-
-# Compilation flags
-# export ARCHFLAGS="-arch x86_64"
-
-# ssh
-# export SSH_KEY_PATH="~/.ssh/rsa_id"
 
 # Set personal aliases, overriding those provided by oh-my-zsh libs,
 # plugins, and themes. Aliases can be placed here, though oh-my-zsh

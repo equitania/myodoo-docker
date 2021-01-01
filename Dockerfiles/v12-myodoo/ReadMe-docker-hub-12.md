@@ -2,7 +2,7 @@
   
 ### Create network
 ```
-docker network create ownerp-net`  
+docker network create ownerp-net  
 ```
 ### Create volumes
 ```
