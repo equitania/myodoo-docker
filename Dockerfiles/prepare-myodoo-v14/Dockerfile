@@ -1,5 +1,5 @@
 FROM python:3.8.6-slim-buster
-MAINTAINER Equitania Software GmbH <info@myodoo.de>
+LABEL maintainer=info@myodoo.de
 # For Odoo 14 powered by MyOdoo.de
 # Version 1.0.1
 # Date 02.12.2020

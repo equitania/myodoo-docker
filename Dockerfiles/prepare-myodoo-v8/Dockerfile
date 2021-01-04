@@ -1,5 +1,5 @@
 FROM debian:jessie
-MAINTAINER Equitania Software GmbH <info@myodoo.de>
+LABEL maintainer=info@myodoo.de
 # For Odoo 8 powered by MyOdoo.de
 # Version 1.0.21
 # Date 21.09.2020

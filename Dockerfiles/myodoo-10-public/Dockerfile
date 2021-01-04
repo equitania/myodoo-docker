@@ -1,5 +1,5 @@
 FROM myodoo/prepare-v10:2.1.2
-MAINTAINER Equitania Software GmbH <info@myodoo.de>
+LABEL maintainer=info@myodoo.de
 
 CMD "echo" "MyOdoo build will start now.."
 
