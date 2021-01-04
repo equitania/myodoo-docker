@@ -1,6 +1,5 @@
 FROM openjdk:jre-alpine
-
-MAINTAINER Equitania Software GmbH <info@myodoo.de>
+LABEL maintainer=info@myodoo.de
 ## Version 6.1.3
 ## Date 09.02.2018
 

@@ -1,5 +1,5 @@
 FROM ubuntu:18.04
-MAINTAINER Equitania Software GmbH <info@myodoo.de>
+LABEL maintainer=info@myodoo.de
 # For Odoo 10 powered by MyOdoo.de
 # Version 2.3.1
 # Date 22.09.2020

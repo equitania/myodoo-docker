@@ -1,0 +1,32 @@
+version: '3'
+
+volumes:
+  vol-pg-live:
+  vol-odoo-live:
+
+services:
+    live-db:
+        image: postgres:12.5-alpine
+        environment:
+          - POSTGRES_USER=ownerp
+          - POSTGRES_PASSWORD=ownerp2020
+          - POSTGRES_DB=postgres 
+        networks:
+          - ownerp-net  
+        volumes:
+          - vol-pg-live:/var/lib/postgresql/data/
+        restart: always
+    live-myodoo:
+        image: myodoo/live:latest
+        ports: 
+          - 127.0.0.1:8069:8069
+          - 127.0.0.1:8072:8072
+        networks:
+          - ownerp-net  
+        volumes:
+          - vol-odoo-live:/opt/odoo/data
+        restart: always
+        command: start
+networks:
+    ownerp-net:
+        driver: bridge
