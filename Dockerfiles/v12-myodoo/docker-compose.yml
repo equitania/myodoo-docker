@@ -1,3 +1,5 @@
+# Docker Compose for Odoo 12
+# 13.01.2021
 version: '3'
 
 volumes:
@@ -9,23 +11,25 @@ services:
         image: postgres:12.5-alpine
         environment:
           - POSTGRES_USER=ownerp
-          - POSTGRES_PASSWORD=ownerp2020
+          - POSTGRES_PASSWORD=ownerp2021
           - POSTGRES_DB=postgres 
         networks:
-          - ownerp-net  
+          - ownerp-net
         volumes:
           - vol-pg-live:/var/lib/postgresql/data/
         restart: always
+        container_name: live-db
     live-myodoo:
-        image: myodoo/live:latest
+        image: myodoo/myodoo-12-public:210113
         ports: 
-          - 127.0.0.1:8069:8069
-          - 127.0.0.1:8072:8072
+          - 8069:8069
+          - 8072:8072
         networks:
           - ownerp-net  
         volumes:
           - vol-odoo-live:/opt/odoo/data
         restart: always
+        container_name: live-myodoo
         command: start
 networks:
     ownerp-net:

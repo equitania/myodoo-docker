@@ -1,6 +1,6 @@
 #ZSH powered by MyOdoo.de
-# Version 2.0.1
-# Date 01.01.2021
+# Version 2.0.2
+# Date 15.01.2021
 
 # If you come from bash you might have to change your $PATH.
 export PATH=$HOME/bin:/usr/local/bin:$PATH
@@ -14,16 +14,10 @@ export ZSH=$HOME/.oh-my-zsh
 #ZSH_THEME="robbyrussell"
 #ZSH_THEME="gnzh"
 #ZSH_THEME="juanghurtado"
-ZSH_THEME="bira"
+#ZSH_THEME="bira"
 #ZSH_THEME="muse"
 #ZSH_THEME="random"
-
-# Set list of themes to load
-# Setting this variable when ZSH_THEME=random
-# cause zsh load theme from this variable instead of
-# looking in ~/.oh-my-zsh/themes/
-# An empty array have no effect
-ZSH_THEME_RANDOM_CANDIDATES=( "robbyrussell" "gnzh" "juanghurtado" "muse" )
+ZSH_THEME="avid"
 
 # Uncomment the following line to use case-sensitive completion.
 # CASE_SENSITIVE="true"

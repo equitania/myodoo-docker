@@ -1,4 +1,4 @@
-# Current status 29.12.2020 - **Password ../web/database/manager: ownerp2020**  
+# Current status 13.01.202 - **Password ../web/database/manager: ownerp2021**  
   
 ### Create network
 ```
@@ -13,7 +13,7 @@ docker volume create vol-odoo-live
 ```
 docker run -d --restart=always \
        -e POSTGRES_USER=ownerp \
-       -e POSTGRES_PASSWORD=ownerp2020 \
+       -e POSTGRES_PASSWORD=ownerp2021 \
        -e POSTGRES_DB=postgres \
        --name=live-db \
        --network=ownerp-net \
@@ -23,7 +23,7 @@ docker run -d --restart=always \
 ```
 docker run -d --restart=always \
        -e POSTGRES_USER=ownerp \
-       -e POSTGRES_PASSWORD=ownerp2020 \
+       -e POSTGRES_PASSWORD=ownerp2021 \
        -e POSTGRES_DB=postgres \
        --name=live-db \
        --network=ownerp-net \
@@ -57,7 +57,7 @@ docker run -d --restart=always \
        -p 8072:8072 \
        --network ownerp-net \
        --name=myodoo-13-public \
-       myodoo/myodoo-13-public:201229 start
+       myodoo/myodoo-13-public:210113 start
 ```
 ### Test
 ```
@@ -66,7 +66,7 @@ docker run -it --rm --restart=always \
        --port=8072:8072 \
        --network ownerp-net \
        --name=myodoo-13-public \
-       myodoo/myodoo-13-public:201229 start
+       myodoo/myodoo-13-public:210113 start
 ```
 ### Filestore mount to docker volume
 ```
@@ -76,7 +76,7 @@ docker run -d --restart=always \
        --network ownerp-net \
        --name=myodoo-13-public \
        --volume=vol-odoo-live:/opt/odoo/data \
-       myodoo/myodoo-13-public:201229 start
+       myodoo/myodoo-13-public:210113 start
 ```
 ### nginx
 [Templates for nginx for Odoo](https://github.com/equitania/myodoo-docker/tree/2020/nginx-conf)  
@@ -87,10 +87,10 @@ docker run -d --restart=always \
 docker run -it --rm --restart=always \
        --network ownerp-net \
        --name=myodoo-13-public \
-       myodoo/myodoo-13-public:201229 update \
+       myodoo/myodoo-13-public:210113 update \
        --database=test \
        --db_user=ownerp \
-       --db_password=ownerp2020 \
+       --db_password=ownerp2021 \
        --db_host=live-db
 ```
 or  
@@ -100,10 +100,10 @@ docker run -it --rm --restart=always \
        --network ownerp-net \
        --volume=vol-odoo-live:/opt/odoo/data \
        --name=myodoo-13-public \
-       myodoo/myodoo-13-public:201229 update \
+       myodoo/myodoo-13-public:210113 update \
        --database=test \
        --db_user=ownerp \
-       --db_password=ownerp2020 \
+       --db_password=ownerp2021 \
        --db_host=live-db
 ```
 
@@ -116,7 +116,7 @@ sudo -i -u odoo /usr/bin/python3 \
     --no-xmlrpc \  
     --database=test \  
     --db_user=ownerp \  
-    --db_password=ownerp2020 \  
+    --db_password=ownerp2021 \  
     --db_host=live-db \  
     --stop-after-init`    
 ```
