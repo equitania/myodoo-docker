@@ -5,9 +5,9 @@
 ### Public
 ``` shell
 ./check_dockerimage_myodoo.py
-docker build -t myodoo/myodoo-12-public:201229 .
+docker build -t myodoo/myodoo-12-public:210113 .
 # optional
-docker push myodoo/myodoo-12-public:201229
+docker push myodoo/myodoo-12-public:210113
 ```
 
 ### Get actual release file
