@@ -1,6 +1,6 @@
 #ZSH powered by MyOdoo.de
-# Version 2.0.2
-# Date 15.01.2021
+# Version 2.0.3
+# Date 18.01.2021
 
 # If you come from bash you might have to change your $PATH.
 export PATH=$HOME/bin:/usr/local/bin:$PATH
@@ -17,7 +17,7 @@ export ZSH=$HOME/.oh-my-zsh
 #ZSH_THEME="bira"
 #ZSH_THEME="muse"
 #ZSH_THEME="random"
-ZSH_THEME="avid"
+ZSH_THEME="avit"
 
 # Uncomment the following line to use case-sensitive completion.
 # CASE_SENSITIVE="true"
