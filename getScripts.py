@@ -1,8 +1,8 @@
 #!/usr/bin/python3
 # -*- coding: utf-8 -*-
 # Dieses Skript hilft beim Organisieren von Docker-Servern
-# Version 3.1.1
-# Date 13.01.2021
+# Version 3.1.2
+# Date 20.01.2021
 ##############################################################################
 #
 #    Shell Script for devops
@@ -33,6 +33,7 @@ os.system("git pull")
 os.system("find . -name '*.pyc' -type f -print0 | xargs -0 /bin/rm -f")
 os.system("cp $HOME/myodoo-docker/.bashrc $HOME/.bashrc")
 os.system("cp $HOME/myodoo-docker/.zshrc $HOME/.zshrc")
+os.system("rm -rf $HOME/nginx-conf")
 os.system("cp -r $HOME/myodoo-docker/nginx-conf $HOME")
 os.system("cp $HOME/myodoo-docker/scripts/update_docker_myodoo.py $HOME")
 os.system("cp $HOME/myodoo-docker/scripts/container2backup.py $HOME")
