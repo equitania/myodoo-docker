@@ -1,8 +1,8 @@
 FROM python:3.8.6-slim-buster
 LABEL maintainer=info@myodoo.de
 # For Odoo 14 powered by MyOdoo.de
-# Version 1.0.1
-# Date 02.12.2020
+# Version 1.0.2
+# Date 29.01.2021
 
 
 ARG DEBIAN_FRONTEND=noninteractive
@@ -103,7 +103,7 @@ RUN set -x; \
     && python3 -m pip install --no-cache-dir Werkzeug==0.14.1 \
     && python3 -m pip install --no-cache-dir XlsxWriter==1.1.2 \
     && python3 -m pip install --no-cache-dir xlwt==1.3.* \
-    && python3 -m pip install --no-cache-dir xlrd==1.2.0 \
+    && python3 -m pip install --no-cache-dir xlrd==2.0.1 \
     && python3 -m pip install --no-cache-dir openpyxl \
     && python3 -m pip install --no-cache-dir elasticsearch \
     && python3 -m pip install --no-cache-dir pycryptodome==3.9.0 \
@@ -124,7 +124,7 @@ RUN set -x; \
     && python3 -m pip install --no-cache-dir paramiko \
     && python3 -m pip install --no-cache-dir pyotp \
     && python3 -m pip install --no-cache-dir debugpy \
-    && python3 -m pip install --no-cache-dir cachetools    
+    && python3 -m pip install --no-cache-dir cachetools
 
 # PDF export engine install..
 RUN set -x; \
@@ -135,4 +135,5 @@ RUN set -x; \
         && apt-get -y install -f --no-install-recommends \
         && apt-get purge -y --auto-remove -o APT::AutoRemove::RecommendsImportant=false -o APT::AutoRemove::SuggestsImportant=false  \
         && rm -rf /var/lib/apt/lists/* wkhtmltox.deb
+
 # Finished with build.
