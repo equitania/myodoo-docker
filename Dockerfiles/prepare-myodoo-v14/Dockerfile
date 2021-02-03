@@ -1,8 +1,8 @@
 FROM python:3.8.6-slim-buster
 LABEL maintainer=info@myodoo.de
 # For Odoo 14 powered by MyOdoo.de
-# Version 1.0.2
-# Date 29.01.2021
+# Version 1.0.3
+# Date 03.02.2021
 
 
 ARG DEBIAN_FRONTEND=noninteractive
@@ -122,6 +122,7 @@ RUN set -x; \
     && python3 -m pip install --no-cache-dir randomuser \
     && python3 -m pip install --no-cache-dir python-docx \
     && python3 -m pip install --no-cache-dir paramiko \
+    && python3 -m pip install --no-cache-dir openupgradelib \
     && python3 -m pip install --no-cache-dir pyotp \
     && python3 -m pip install --no-cache-dir debugpy \
     && python3 -m pip install --no-cache-dir cachetools

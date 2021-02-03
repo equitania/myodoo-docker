@@ -1,10 +1,12 @@
 # Docker Compose for Odoo 12
-# 13.01.2021
-version: '3'
+# 01.02.2021
+version: '3.4'
 
 volumes:
   vol-pg-live:
+      name: vol-pg-live
   vol-odoo-live:
+      name: vol-odoo-live
 
 services:
     live-db:
@@ -34,3 +36,4 @@ services:
 networks:
     ownerp-net:
         driver: bridge
+        name: ownerp-net

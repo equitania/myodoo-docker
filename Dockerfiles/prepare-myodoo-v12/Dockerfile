@@ -1,8 +1,8 @@
 FROM python:3.8.7-slim-buster
 LABEL maintainer=info@myodoo.de
 # For Odoo 12 powered by MyOdoo.de
-# Version 2.0.4
-# Date 29.01.2021
+# Version 2.0.5
+# Date 03.02.2021
 
 
 ARG DEBIAN_FRONTEND=noninteractive
@@ -128,6 +128,7 @@ RUN set -x; \
     && python3 -m pip install --no-cache-dir MT-940 \
     && python3 -m pip install --no-cache-dir Faker \
     && python3 -m pip install --no-cache-dir randomuser \
+    && python3 -m pip install --no-cache-dir openupgradelib \
     && python3 -m pip install --no-cache-dir pyotp \
     && python3 -m pip install --no-cache-dir debugpy \
     && python3 -m pip install --no-cache-dir cachetools    
