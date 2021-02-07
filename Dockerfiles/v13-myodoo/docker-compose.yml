@@ -1,5 +1,5 @@
 # Docker Compose for Odoo 13
-# 01.02.2021
+# 06.02.2021
 version: '3.4'
 
 volumes:
@@ -14,7 +14,7 @@ services:
         environment:
           - POSTGRES_USER=ownerp
           - POSTGRES_PASSWORD=ownerp2021
-          - POSTGRES_DB=postgres 
+          - POSTGRES_DB=postgres
         networks:
           - ownerp-net
         volumes:
@@ -22,7 +22,7 @@ services:
         restart: always
         container_name: live-db
     live-myodoo:
-        image: myodoo/myodoo-13-public:210113
+        image: myodoo/myodoo-13-public:210206
         ports: 
           - 8069:8069
           - 8072:8072

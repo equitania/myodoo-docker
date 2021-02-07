@@ -1,7 +1,7 @@
 # For build of the docker image
 # For Odoo 13 powered by MyOdoo.de
-# Version 2.0.7
-# Date 29.01.2021
+# Version 2.0.8
+# Date 03.02.2021
 docker pull python:3.8.7-slim-buster
 docker build -t myodoo/prepare-v13:2.0.8 .
 docker push myodoo/prepare-v13:2.0.8

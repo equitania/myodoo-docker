@@ -1,4 +1,4 @@
-# Current status 13.01.202 - **Password ../web/database/manager: ownerp2021**  
+# Current status 06.02.2021 - **Password ../web/database/manager: ownerp2021**  
   
 ### Create network
 ```
@@ -33,7 +33,7 @@ docker run -d --restart=always \
 ### Path to volume
 ```
 docker inspect -f '{{ .Mounts }}' live-db
-or all containers
+# or all containers
 docker ps -q | xargs docker container inspect -f '{{ .Name }} {{ .HostConfig.Binds }}'
 ```
 ### bash acces Postgres
@@ -57,7 +57,7 @@ docker run -d --restart=always \
        -p 8072:8072 \
        --network ownerp-net \
        --name=myodoo-13-public \
-       myodoo/myodoo-13-public:210113 start
+       myodoo/myodoo-13-public:210206 start
 ```
 ### Test
 ```
@@ -66,7 +66,7 @@ docker run -it --rm --restart=always \
        --port=8072:8072 \
        --network ownerp-net \
        --name=myodoo-13-public \
-       myodoo/myodoo-13-public:210113 start
+       myodoo/myodoo-13-public:210206 start
 ```
 ### Filestore mount to docker volume
 ```
@@ -76,7 +76,7 @@ docker run -d --restart=always \
        --network ownerp-net \
        --name=myodoo-13-public \
        --volume=vol-odoo-live:/opt/odoo/data \
-       myodoo/myodoo-13-public:210113 start
+       myodoo/myodoo-13-public:210206 start
 ```
 ### nginx
 [Templates for nginx for Odoo](https://github.com/equitania/myodoo-docker/tree/2020/nginx-conf)  
@@ -87,7 +87,7 @@ docker run -d --restart=always \
 docker run -it --rm --restart=always \
        --network ownerp-net \
        --name=myodoo-13-public \
-       myodoo/myodoo-13-public:210113 update \
+       myodoo/myodoo-13-public:210206 update \
        --database=test \
        --db_user=ownerp \
        --db_password=ownerp2021 \
@@ -100,7 +100,7 @@ docker run -it --rm --restart=always \
        --network ownerp-net \
        --volume=vol-odoo-live:/opt/odoo/data \
        --name=myodoo-13-public \
-       myodoo/myodoo-13-public:210113 update \
+       myodoo/myodoo-13-public:210206 update \
        --database=test \
        --db_user=ownerp \
        --db_password=ownerp2021 \

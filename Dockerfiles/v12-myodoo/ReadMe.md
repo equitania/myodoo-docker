@@ -5,17 +5,17 @@
 ### Public
 ``` shell
 ./check_dockerimage_myodoo.py
-docker build -t myodoo/myodoo-12-public:210113 .
+docker build -t myodoo/myodoo-12-public:210206 .
 # optional
-docker push myodoo/myodoo-12-public:210113
+docker push myodoo/myodoo-12-public:210206
 ```
 
 ### Get actual release file
 ``` shell
 ./check_dockerimage_myodoo.py
 ..
-dockerimage: myodoo/prepare-v12:2.0.3
-sed -i '1s|.*|FROM myodoo/prepare-v12:2.0.3|' Dockerfile
+dockerimage: myodoo/prepare-v12:2.0.5
+sed -i '1s|.*|FROM myodoo/prepare-v12:2.0.5|' Dockerfile
 Dockerfile image changed
 Cleanup and finished!
 

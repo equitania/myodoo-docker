@@ -1,5 +1,5 @@
 # Docker Compose for Odoo 12
-# 01.02.2021
+# 06.02.2021
 version: '3.4'
 
 volumes:
@@ -14,7 +14,7 @@ services:
         environment:
           - POSTGRES_USER=ownerp
           - POSTGRES_PASSWORD=ownerp2021
-          - POSTGRES_DB=postgres 
+          - POSTGRES_DB=postgres
         networks:
           - ownerp-net
         volumes:
@@ -27,7 +27,7 @@ services:
           - 8069:8069
           - 8072:8072
         networks:
-          - ownerp-net  
+          - ownerp-net
         volumes:
           - vol-odoo-live:/opt/odoo/data
         restart: always
