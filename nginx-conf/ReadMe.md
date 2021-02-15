@@ -47,3 +47,6 @@ Options:
   --pollport TEXT  Secondary Docker container port for odoo pollings
   --help           Show this message and exit.
 ```
+
+For more infomations [MyOdoo.de](https://www.myodoo.de) or [ownERP.com](https://www.ownerp.com)  
+[Technical source](https://github.com/equitania/myodoo-docker)

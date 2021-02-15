@@ -9,9 +9,9 @@
 
 ### danach
 
-`cp myodoo-docker/updateMyscripts.py /root/`
+`cp myodoo-docker/getScripts.py /root/`
 
-`./updateMyscripts.py`
+`./getScripts.py`
 
 ## Skripte
 
@@ -25,3 +25,7 @@ Wir benutzen es bei unseren täglichen Administrationstätigkeiten mit den Kunde
 3. Hilfsskripte für Installation, Updates & Backups
 
 Weiterführende Informationen finden Sie in unserem WIKI https://equitania.atlassian.net/wiki/spaces/MW/overview 
+
+
+For more infomations [MyOdoo.de](https://www.myodoo.de) or [ownERP.com](https://www.ownerp.com)  
+[Technical source](https://github.com/equitania/myodoo-docker)
