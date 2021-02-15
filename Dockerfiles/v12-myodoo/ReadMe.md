@@ -35,3 +35,6 @@ docker build -t myodoo/live .
 ``` shell
 docker-compose up
 ```
+  
+For more infomations [MyOdoo.de](https://www.myodoo.de) or [ownERP.com](https://www.ownerp.com)  
+[Technical source](https://github.com/equitania/myodoo-docker)

@@ -17,7 +17,7 @@ docker run -d --restart=always \
        -e POSTGRES_DB=postgres \
        --name=live-db \
        --network=ownerp-net \
-       postgres:12.5-alpine
+       postgres:12.6-alpine
 ```
 ### Start Postgres Container with Docker volume mount
 ```
@@ -28,7 +28,7 @@ docker run -d --restart=always \
        --name=live-db \
        --network=ownerp-net \
        --volume=vol-pg-live:/var/lib/postgresql/data/ \
-       postgres:12.5-alpine
+       postgres:12.6-alpine
 ```
 ### Path to volume
 ```
