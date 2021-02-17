@@ -1,6 +1,6 @@
 #ZSH powered by MyOdoo.de
-# Version 2.0.3
-# Date 18.01.2021
+# Version 2.0.4
+# Date 17.02.2021
 
 # If you come from bash you might have to change your $PATH.
 export PATH=$HOME/bin:/usr/local/bin:$PATH
@@ -92,7 +92,8 @@ bindkey '^[[F' end-of-line
 ### aliases / functions ###
 # default settings
 alias ls='ls --color --classify'
-alias ll='exa --long --header'
+alias ll='ls -al --color --classify'
+alias lle='exa --long --header'
 alias lg='exa --long --header --git'
 alias grep='grep --color=auto'
 alias nano='nano --nowrap -B -c'
