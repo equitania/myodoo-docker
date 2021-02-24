@@ -1,6 +1,6 @@
 #ZSH powered by MyOdoo.de
-# Version 2.0.4
-# Date 17.02.2021
+# Version 2.0.5
+# Date 24.02.2021
 
 # If you come from bash you might have to change your $PATH.
 export PATH=$HOME/bin:/usr/local/bin:$PATH
@@ -129,3 +129,8 @@ alias edup='nano -B $HOME/docker2update.csv'
 alias showcerts='certbot certificates'
 alias ups='sudo $HOME/getScripts.py && sudo cp $HOME/myodoo-docker/getScripts.py $HOME/'
 alias dusort='du /var --max-depth=1 | sort -nr | cut -f2 | xargs -n 1 du -hs'
+
+if [ -f /usr/bin/neofetch ]
+then
+    neofetch
+fi
