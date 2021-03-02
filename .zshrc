@@ -1,6 +1,6 @@
 #ZSH powered by MyOdoo.de
-# Version 2.0.6
-# Date 25.02.2021
+# Version 2.0.7
+# Date 02.03.2021
 
 # If you come from bash you might have to change your $PATH.
 export PATH=$HOME/bin:/usr/local/bin:$HOME/.local/bin:$PATH
@@ -62,7 +62,17 @@ COMPLETION_WAITING_DOTS="true"
 # Example format: plugins=(rails git textmate ruby lighthouse)
 # Add wisely, as too many plugins slow down shell startup.
 plugins=(
-  git git-extras history jsontools last-working-dir pip python screen web-search ansible docker
+  ansible 
+  docker
+  git 
+  history 
+  last-working-dir 
+  pip 
+  python 
+  screen 
+  tmux
+  web-search 
+  zsh_reload
 )
 source $ZSH/oh-my-zsh.sh
 
@@ -107,7 +117,7 @@ alias shred=' shred -u -z'
 #alias cp='cp -i'
 #alias mv='mv -i'
 
-# server alias
+# nginx alias
 alias cdngx='cd /etc/nginx/conf.d/'
 alias ngx+='sudo systemctl start nginx'
 alias ngx-='sudo systemctl stop nginx'
@@ -115,20 +125,38 @@ alias ngx#='sudo systemctl restart nginx'
 alias ngxr='sudo systemctl reload nginx'
 alias ngxs='sudo systemctl status nginx'
 alias ngx!='sudo nginx -t'
-alias dps='sudo docker ps -a'
-alias dpsfull='sudo docker inspect  -f "{{.Name}} {{.Config.Cmd}}" $(docker ps -a -q)'
-alias dpi='sudo docker images'
+alias showcerts='certbot certificates'
+
+
+# system alias
 alias syspatch='sudo journalctl --vacuum-time=7d && sudo journalctl --vacuum-size=2G && sudo apt -y update && sudo apt -y dist-upgrade && sudo apt -y autoremove && sudo apt -y autoclean'
-alias dpv='sudo docker volume ls'
+alias dusort='du /var --max-depth=1 | sort -nr | cut -f2 | xargs -n 1 du -hs'
+
+# MyOdoo alias
 alias dobk='$HOME/container2backup.py'
 alias dobkc='$HOME/container2backup.py'
 alias doup='$HOME/update_docker_myodoo.py'
 alias edbk='nano -B $HOME/container2backup.csv'
 alias edbkc='nano -B $HOME/container2backup.csv'
 alias edup='nano -B $HOME/docker2update.csv'
-alias showcerts='certbot certificates'
 alias ups='sudo $HOME/getScripts.py && sudo cp $HOME/myodoo-docker/getScripts.py $HOME/'
-alias dusort='du /var --max-depth=1 | sort -nr | cut -f2 | xargs -n 1 du -hs'
+
+# Docker alias
+alias dkps="docker ps -a"
+alias dkst="docker stats"
+alias dkpsa="docker ps -a"
+alias dps="docker ps -a"
+alias dkimgs="docker images"
+alias dpi="docker images"
+alias dkcpup="docker-compose up -d"
+alias dkcpdown="docker-compose down"
+alias dkcpstart="docker-compose start"
+alias dkcpstop="docker-compose stop"
+alias dkprs="docker system prune"
+alias dkprv="docker volume prune"
+alias dklsv="docker volume ls"
+alias dpsfull='docker inspect  -f "{{.Name}} {{.Config.Cmd}}" $(docker ps -a -q)'
+
 
 if [ -f /usr/bin/neofetch ]
 then
