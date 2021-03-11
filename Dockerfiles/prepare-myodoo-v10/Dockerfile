@@ -1,8 +1,8 @@
 FROM ubuntu:18.04
 LABEL maintainer=info@myodoo.de
 # For Odoo 10 powered by MyOdoo.de
-# Version 2.3.2
-# Date 29.01.2021
+# Version 2.3.3
+# Date 11.03.2021
 
 ARG DEBIAN_FRONTEND=noninteractive
 

@@ -1,8 +1,8 @@
-FROM python:3.8.7-slim-buster
+FROM python:3.8.8-slim-buster
 LABEL maintainer=info@myodoo.de
 # For Odoo 13 powered by MyOdoo.de
-# Version 2.0.8
-# Date 03.02.2021
+# Version 2.0.9
+# Date 11.03.2021
 
 
 ARG DEBIAN_FRONTEND=noninteractive
