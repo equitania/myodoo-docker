@@ -1,8 +1,8 @@
 #!/usr/bin/python3
 # -*- coding: utf-8 -*-
 # Dieses Skript hilft beim Organisieren von Docker-Servern
-# Version 3.1.3
-# Date 25.02.2021
+# Version 3.1.4
+# Date 15.03.2021
 ##############################################################################
 #
 #    Shell Script for devops
@@ -29,6 +29,7 @@ global_server_version = '2020'
 myhome = os.path.expanduser('~')
 os.chdir(myhome + "/" + "myodoo-docker")
 os.system("git checkout "+global_server_version)
+os.system("git config pull.ff only")
 os.system("git pull")
 os.system("find . -name '*.pyc' -type f -print0 | xargs -0 /bin/rm -f")
 os.system("cp $HOME/myodoo-docker/.bashrc $HOME/.bashrc")
