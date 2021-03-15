@@ -13,7 +13,7 @@ echo "#######################################"
 echo "nginx stop"
 systemctl stop nginx
 echo "certbot renew --force-renew"
-certbot renew
+/usr/local/bin/certbot renew --force-renew
 echo "nginx start"
 systemctl start nginx
 systemctl status nginx
