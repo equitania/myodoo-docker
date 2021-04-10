@@ -1,8 +1,8 @@
 #!/usr/bin/python3
 # -*- coding: utf-8 -*-
 # Dieses Skript hilft beim Organisieren von Docker-Servern
-# Version 3.1.5
-# Date 25.03.2021
+# Version 3.1.6
+# Date 10.04.2021
 ##############################################################################
 #
 #    Shell Script for devops
@@ -46,5 +46,5 @@ os.system("python3 -m pip install pip --upgrade --user")
 os.system("python3 -m pip install wheel --upgrade --user")
 os.system("python3 -m pip install odoorpc --upgrade --user")
 os.system("python3 -m pip install click --upgrade --user")
-os.system("python3 -m pip install ansible --upgrade --user")
+# os.system("python3 -m pip install ansible --upgrade --user")
 os.system("python3 -m pip install bpytop --upgrade --user")
