@@ -1,6 +1,6 @@
 #ZSH powered by MyOdoo.de
-# Version 2.0.7
-# Date 02.03.2021
+# Version 2.0.8
+# Date 24.04.2021
 
 # If you come from bash you might have to change your $PATH.
 export PATH=$HOME/bin:/usr/local/bin:$HOME/.local/bin:$PATH
@@ -129,8 +129,9 @@ alias showcerts='certbot certificates'
 
 
 # system alias
-alias syspatch='sudo journalctl --vacuum-time=7d && sudo journalctl --vacuum-size=2G && sudo apt -y update && sudo apt -y dist-upgrade && sudo apt -y autoremove && sudo apt -y autoclean'
+alias syspatch='sudo screen -S sysupdate && sudo journalctl --vacuum-time=7d && sudo journalctl --vacuum-size=2G && sudo apt -y update && sudo apt -y dist-upgrade && sudo apt -y autoremove && sudo apt -y autoclean && exit'
 alias dusort='du /var --max-depth=1 | sort -nr | cut -f2 | xargs -n 1 du -hs'
+alias f2b='fail2ban-client status '
 
 # MyOdoo alias
 alias dobk='$HOME/container2backup.py'
