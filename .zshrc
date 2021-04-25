@@ -1,6 +1,6 @@
 #ZSH powered by MyOdoo.de
-# Version 2.0.8
-# Date 24.04.2021
+# Version 2.0.9
+# Date 25.04.2021
 
 # If you come from bash you might have to change your $PATH.
 export PATH=$HOME/bin:/usr/local/bin:$HOME/.local/bin:$PATH
@@ -141,7 +141,7 @@ alias doup='$HOME/update_docker_myodoo.py'
 alias edbk='nano -B $HOME/container2backup.csv'
 alias edbkc='nano -B $HOME/container2backup.csv'
 alias edup='nano -B $HOME/docker2update.csv'
-alias ups='sudo $HOME/getScripts.py && sudo cp $HOME/myodoo-docker/getScripts.py $HOME/'
+alias ups='sudo $HOME/getScripts.py && sudo cp $HOME/myodoo-docker/getScripts.py $HOME/ && source ~/.zshrc'
 
 # Docker alias
 alias dkps="docker ps -a"
