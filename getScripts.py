@@ -49,4 +49,4 @@ os.system("python3 -m pip --user install odoorpc --upgrade --no-warn-script-loca
 os.system("python3 -m pip --user install click --upgrade --no-warn-script-location")
 os.system("python3 -m pip --user install bpytop --upgrade --no-warn-script-location")
 os.system("wget https://rm.myodoo.net/staff/neofetch/config.conf -O $HOME/.config/neofetch/config.conf")
-os.system("source ~/.zshrc")
+os.system(". ~/.zshrc")
