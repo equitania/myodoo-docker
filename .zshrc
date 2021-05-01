@@ -1,9 +1,9 @@
 #ZSH powered by MyOdoo.de
-# Version 2.0.9
-# Date 25.04.2021
+# Version 2.1.0
+# Date 01.05.2021
 
 # If you come from bash you might have to change your $PATH.
-export PATH=$HOME/bin:/usr/local/bin:$HOME/.local/bin:$PATH
+export PATH=$HOME/bin:/usr/local/bin:$HOME/.local/bin:/root/.local/bin:$PATH
 
 # Path to your oh-my-zsh installation.
 export ZSH=$HOME/.oh-my-zsh
