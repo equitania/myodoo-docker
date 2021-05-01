@@ -1,8 +1,8 @@
 #!/usr/bin/python3
 # -*- coding: utf-8 -*-
 # Dieses Skript hilft beim Organisieren von Docker-Servern
-# Version 3.1.7
-# Date 25.04.2021
+# Version 3.1.8
+# Date 01.05.2021
 ##############################################################################
 #
 #    Shell Script for devops
@@ -42,9 +42,11 @@ os.system("cp $HOME/myodoo-docker/scripts/cleanup-weblogs.sh $HOME")
 os.system("cp $HOME/myodoo-docker/scripts/ssl-renew.sh $HOME")
 os.system("cp $HOME/myodoo-docker/scripts/restore-zip.sh $HOME")
 os.system("cp $HOME/myodoo-docker/getScripts.py $HOME")
-os.system("python3 -m pip install pip --upgrade --user")
-os.system("python3 -m pip install wheel --upgrade --user")
-os.system("python3 -m pip install odoorpc --upgrade --user")
-os.system("python3 -m pip install click --upgrade --user")
-os.system("python3 -m pip install bpytop --upgrade --user")
+os.system("python3 -m pip install pip --upgrade --user --no-warn-script-location")
+os.system("python3 -m pip install wheel --upgrade --user --no-warn-script-location")
+os.system("python3 -m pip install setuptools --upgrade --user --no-warn-script-location")
+os.system("python3 -m pip install odoorpc --upgrade --user --no-warn-script-location")
+os.system("python3 -m pip install click --upgrade --user --no-warn-script-location")
+os.system("python3 -m pip install bpytop --upgrade --user --no-warn-script-location")
 os.system("wget https://rm.myodoo.net/staff/neofetch/config.conf -O $HOME/.config/neofetch/config.conf")
+os.system("source ~/.zshrc")
