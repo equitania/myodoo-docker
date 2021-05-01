@@ -1,7 +1,7 @@
 #!/usr/bin/python3
 # -*- coding: utf-8 -*-
 # Dieses Skript hilft beim Organisieren von Docker-Servern
-# Version 3.1.8
+# Version 3.1.9
 # Date 01.05.2021
 ##############################################################################
 #
@@ -42,11 +42,12 @@ os.system("cp $HOME/myodoo-docker/scripts/cleanup-weblogs.sh $HOME")
 os.system("cp $HOME/myodoo-docker/scripts/ssl-renew.sh $HOME")
 os.system("cp $HOME/myodoo-docker/scripts/restore-zip.sh $HOME")
 os.system("cp $HOME/myodoo-docker/getScripts.py $HOME")
-os.system("python3 -m pip --user install pip --upgrade --no-warn-script-location")
-os.system("python3 -m pip --user install wheel --upgrade --no-warn-script-location")
-os.system("python3 -m pip --user install setuptools --upgrade --no-warn-script-location")
-os.system("python3 -m pip --user install odoorpc --upgrade --no-warn-script-location")
-os.system("python3 -m pip --user install click --upgrade --no-warn-script-location")
-os.system("python3 -m pip --user install bpytop --upgrade --no-warn-script-location")
+os.system("python3 -m pip install --user pip --user --upgrade --no-warn-script-location")
+os.system("python3 -m pip install --user wheel --upgrade --no-warn-script-location")
+os.system("python3 -m pip install --user setuptools --upgrade --no-warn-script-location")
+os.system("python3 -m pip install --user odoorpc --upgrade --no-warn-script-location")
+os.system("python3 -m pip install --user click --upgrade --no-warn-script-location")
+os.system("python3 -m pip install --user bpytop --upgrade --no-warn-script-location")
+os.system("python3 -m pip install --user odoo-fast-report-mapper-equitania --upgrade --no-warn-script-location")
 os.system("wget https://rm.myodoo.net/staff/neofetch/config.conf -O $HOME/.config/neofetch/config.conf")
 os.system(". ~/.zshrc")
