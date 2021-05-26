@@ -1,7 +1,7 @@
-FROM myodoo/prepare-v13:2.0.6
+FROM myodoo/prepare-v13:2.1.1
 LABEL maintainer=info@myodoo.de
 # Mit diesem Skript überprüft das passende Dockerimage gemäß des Releasefiles
-# Date 29.12.2020
+# Date 26.05.2021
 
 CMD "echo" "MyOdoo build will start now.."
 
@@ -17,6 +17,7 @@ RUN /bin/bash -c "mkdir -p /opt/odoo/{odoo-server/odoo,bin,etc,data,data/filesto
 
 COPY build_myodoo.py /opt/odoo/
 COPY release.file /opt/odoo/
+#COPY custom_modules.* /opt/odoo/
 
 RUN /bin/bash -c "mkdir -p /opt/odoo/{bin,etc,data,data/filestore}" && \
     cd /opt/odoo/ && \
