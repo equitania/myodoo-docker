@@ -1,8 +1,8 @@
 #!/usr/bin/python3
 # -*- coding: utf-8 -*-
 # Dieses Skript hilft beim Organisieren von Docker-Servern
-# Version 3.2.0
-# Date 01.05.2021
+# Version 3.2.1
+# Date 16.06.2021
 ##############################################################################
 #
 #    Shell Script for devops
@@ -49,4 +49,5 @@ os.system("python3 -m pip install --user odoorpc --upgrade --no-warn-script-loca
 os.system("python3 -m pip install --user click --upgrade --no-warn-script-location")
 os.system("python3 -m pip install --user bpytop --upgrade --no-warn-script-location")
 os.system("python3 -m pip install --user odoo-fast-report-mapper-equitania --upgrade --no-warn-script-location")
+os.system("python3 -m pip install --user nginx-set-conf-equitania --upgrade --no-warn-script-location")
 os.system("wget https://rm.myodoo.net/staff/neofetch/config.conf -O $HOME/.config/neofetch/config.conf")
