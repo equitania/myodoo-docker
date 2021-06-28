@@ -1,4 +1,4 @@
-# Current status 28.02.2021 - **Password ../web/database/manager: ownerp2021**
+# Current status 28.06.2021 - **Password ../web/database/manager: ownerp2021**
 
 ### Create network
 ```
@@ -56,8 +56,8 @@ docker run -d --restart=always \
        -p 8069:8069 \
        -p 8072:8072 \
        --network ownerp-net \
-       --name=myodoo-13-public \
-       myodoo/myodoo-13-public:latest start
+       --name=myodoo-14-public \
+       myodoo/myodoo-14-public:latest start
 ```
 ### Test
 ```
@@ -65,8 +65,8 @@ docker run -it --rm --restart=always \
        --port=8069:8069 \
        --port=8072:8072 \
        --network ownerp-net \
-       --name=myodoo-13-public \
-       myodoo/myodoo-13-public:latest start
+       --name=myodoo-14-public \
+       myodoo/myodoo-14-public:latest start
 ```
 ### Filestore mount to docker volume
 ```
@@ -86,8 +86,8 @@ docker run -d --restart=always \
 ```
 docker run -it --rm --restart=always \
        --network ownerp-net \
-       --name=myodoo-13-public \
-       myodoo/myodoo-13-public:latest update \
+       --name=myodoo-14-public \
+       myodoo/myodoo-14-public:latest update \
        --database=test \
        --db_user=ownerp \
        --db_password=ownerp2021 \
@@ -99,8 +99,8 @@ or
 docker run -it --rm --restart=always \
        --network ownerp-net \
        --volume=vol-odoo-live:/opt/odoo/data \
-       --name=myodoo-13-public \
-       myodoo/myodoo-13-public:latest update \
+       --name=myodoo-14-public \
+       myodoo/myodoo-14-public:latest update \
        --database=test \
        --db_user=ownerp \
        --db_password=ownerp2021 \
@@ -122,7 +122,7 @@ sudo -i -u odoo /usr/bin/python3 \
 ```
 
 ### bash access
-`docker exec -ti "myodoo-13-public" env COLUMNS=$COLUMNS LINES=$LINES TERM=$TERM bash -l`
+`docker exec -ti "myodoo-14-public" env COLUMNS=$COLUMNS LINES=$LINES TERM=$TERM bash -l`
 
 For more infomations [MyOdoo.de](https://www.myodoo.de) or [ownERP.com](https://www.ownerp.com)
 [Technical source](https://github.com/equitania/myodoo-docker)

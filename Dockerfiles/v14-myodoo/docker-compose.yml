@@ -22,7 +22,7 @@ services:
         restart: always
         container_name: live-db
     live-myodoo:
-        image: myodoo/myodoo-13-public:210206
+        image: myodoo/myodoo-14-public:latest
         ports:
           - 8069:8069
           - 8072:8072
