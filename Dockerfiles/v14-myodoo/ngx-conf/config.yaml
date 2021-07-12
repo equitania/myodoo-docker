@@ -1,13 +1,13 @@
 # nginx conf assistent
 # pip install nginx-set-conf-equitania --upgrade
-# nginx-set-conf --config_path="$HOME/docker-builds/v13-myodoo/ngx-conf/"
+# nginx-set-conf --config_path="$HOME/docker-builds/live-myodoo/ngx-conf/"
 live:
   config_template: ngx_odoo_ssl_pagespeed
   ip: 0.0.0.0
   domain: live.ownerp.app
   port: 11000
-  cert_name: dev05.ownerp.app
-  pollport: 1200
+  cert_name: live.ownerp.app
+  pollport: 12000
 test:
   config_template: ngx_odoo_ssl_pagespeed
   ip: 0.0.0.0
