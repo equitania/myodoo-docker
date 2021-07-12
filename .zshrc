@@ -1,6 +1,6 @@
 #ZSH powered by MyOdoo.de
-# Version 2.1.0
-# Date 01.05.2021
+# Version 2.1.1
+# Date 28.06.2021
 
 # If you come from bash you might have to change your $PATH.
 export PATH=$HOME/bin:/usr/local/bin:$HOME/.local/bin:/root/.local/bin:$PATH
@@ -16,8 +16,8 @@ export ZSH=$HOME/.oh-my-zsh
 #ZSH_THEME="juanghurtado"
 #ZSH_THEME="bira"
 #ZSH_THEME="muse"
-#ZSH_THEME="random"
-ZSH_THEME="avit"
+ZSH_THEME="fino-time"
+#ZSH_THEME="avit"
 
 # Uncomment the following line to use case-sensitive completion.
 # CASE_SENSITIVE="true"
@@ -62,16 +62,15 @@ COMPLETION_WAITING_DOTS="true"
 # Example format: plugins=(rails git textmate ruby lighthouse)
 # Add wisely, as too many plugins slow down shell startup.
 plugins=(
-  ansible 
   docker
-  git 
-  history 
-  last-working-dir 
-  pip 
-  python 
-  screen 
+  git
+  history
+  last-working-dir
+  pip
+  python
+  screen
   tmux
-  web-search 
+  web-search
   zsh_reload
 )
 source $ZSH/oh-my-zsh.sh
@@ -131,6 +130,7 @@ alias showcerts='certbot certificates'
 # system alias
 alias prepatch='sudo screen -S sysupdate'
 alias syspatch='sudo journalctl --vacuum-time=7d && sudo journalctl --vacuum-size=2G && sudo apt -y update && sudo apt -y dist-upgrade && sudo apt -y autoremove && sudo apt -y autoclean'
+alias syspatcha='sudo journalctl --vacuum-time=7d && sudo journalctl --vacuum-size=2G && sudo dnf -y update'
 alias dusort='du /var --max-depth=1 | sort -nr | cut -f2 | xargs -n 1 du -hs'
 alias f2b='fail2ban-client status '
 
