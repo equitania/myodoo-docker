@@ -1,7 +1,7 @@
 #!/bin/bash
 # Install latest nginx with pagedspeed
 # Script must run with mit root-rights
-# Version 1.2.0 - Stand 17.07.2021
+# Version 1.2.1 - Stand 17.07.2021
 ##############################################################################
 #
 #    Shell Script for Odoo, Open Source Management Solution
@@ -62,6 +62,7 @@ if [ ! -f "$FILE" ]; then
 else
     sudo mv /etc/nginx/nginx.conf /etc/nginx/nginx.conf.backup
     sudo cp $HOME/myodoo-docker/scripts/build_nginx/nginx.conf /etc/nginx/
+    sed -i '1s|.*|user nginx;|' /etc/nginx/nginx.conf
 fi
 
 # Maintenance Message
