@@ -1,7 +1,7 @@
 #!/bin/bash
 # Install latest nginx with pagedspeed
 # Script must run with mit root-rights
-# Version 1.5.0 - Stand 21.12.2020
+# Version 1.5.1 - Stand 17.07.2021
 ##############################################################################
 #
 #    Shell Script for Odoo, Open Source Management Solution
@@ -56,7 +56,7 @@ sudo bash $HOME/myodoo-docker/scripts/build_nginx/build_ngx_pagespeed.sh \
 FILE=/etc/nginx/nginx.conf
 if [ ! -f "$FILE" ]; then
     sudo cp $HOME/myodoo-docker/scripts/build_nginx/nginx.conf /etc/nginx/
-else 
+else
     sudo mv /etc/nginx/nginx.conf /etc/nginx/nginx.conf.backup
     sudo cp $HOME/myodoo-docker/scripts/build_nginx/nginx.conf /etc/nginx/
 fi
