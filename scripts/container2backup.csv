@@ -1,4 +1,4 @@
-# Date 24.03.2020
+# Date 18.07.2021
 #DATABASENAME,DBUSER,CONTAINERNAME-DB,MYODOO-CONTAINERNAME,STORETIME(How many days the backup will be store)
-#live_db,ownerp,live-db,live-myodoo,10
-#test_db,ownerp,test-db,test-myodoo,10
+#live_db,ownerp,live-db,live-myodoo,5
+#test_db,ownerp,test-db,test-myodoo,5
