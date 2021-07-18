@@ -1,6 +1,6 @@
 #ZSH powered by MyOdoo.de
-# Version 2.1.1
-# Date 28.06.2021
+# Version 2.1.2
+# Date 18.07.2021
 
 # If you come from bash you might have to change your $PATH.
 export PATH=$HOME/bin:/usr/local/bin:$HOME/.local/bin:/root/.local/bin:$PATH
@@ -100,21 +100,20 @@ bindkey '^[[F' end-of-line
 
 ### aliases / functions ###
 # default settings
-alias ls='ls --color --classify'
-alias ll='ls -al --color --classify'
+alias ls='ls -h --color --classify'
+alias ll='ls -alh --color --classify'
 alias le='exa --long --header'
 alias lg='lazygit'
 alias grep='grep --color=auto'
 alias nano='nano --nowrap -B -c'
 alias hg='history | grep'
+alias nf='neofetch'
 
 # ignore dangerous commands from history and make them safer
 alias rm='rm -I'
 alias chmod=' chmod -c'
 alias chown=' chown -c'
 alias shred=' shred -u -z'
-#alias cp='cp -i'
-#alias mv='mv -i'
 
 # nginx alias
 alias cdngx='cd /etc/nginx/conf.d/'
@@ -133,31 +132,27 @@ alias syspatch='sudo journalctl --vacuum-time=7d && sudo journalctl --vacuum-siz
 alias syspatcha='sudo journalctl --vacuum-time=7d && sudo journalctl --vacuum-size=2G && sudo dnf -y update'
 alias dusort='du /var --max-depth=1 | sort -nr | cut -f2 | xargs -n 1 du -hs'
 alias f2b='fail2ban-client status '
+alias ups='sudo $HOME/getScripts.py && sudo cp $HOME/myodoo-docker/getScripts.py $HOME/ && source ~/.zshrc'
 
 # MyOdoo alias
 alias dobk='$HOME/container2backup.py'
-alias dobkc='$HOME/container2backup.py'
 alias doup='$HOME/update_docker_myodoo.py'
 alias edbk='nano -B $HOME/container2backup.csv'
-alias edbkc='nano -B $HOME/container2backup.csv'
 alias edup='nano -B $HOME/docker2update.csv'
-alias ups='sudo $HOME/getScripts.py && sudo cp $HOME/myodoo-docker/getScripts.py $HOME/ && source ~/.zshrc'
+
 
 # Docker alias
-alias dkps="docker ps -a"
-alias dkst="docker stats"
-alias dkpsa="docker ps -a"
 alias dps="docker ps -a"
-alias dkimgs="docker images"
 alias dpi="docker images"
+alias dkpsf='docker inspect  -f "{{.Name}} {{.Config.Cmd}}" $(docker ps -a -q)'
+alias dkps="docker ps -a"
+alias dkpi="docker images"
+alias dkcp="docker-compose "
 alias dkcpup="docker-compose up -d"
 alias dkcpdown="docker-compose down"
-alias dkcpstart="docker-compose start"
-alias dkcpstop="docker-compose stop"
 alias dkprs="docker system prune"
 alias dkprv="docker volume prune"
-alias dklsv="docker volume ls"
-alias dpsfull='docker inspect  -f "{{.Name}} {{.Config.Cmd}}" $(docker ps -a -q)'
+alias dkpri="docker image prune -a"
 
 
 if [ -f /usr/bin/neofetch ]
