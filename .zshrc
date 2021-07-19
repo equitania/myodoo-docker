@@ -1,6 +1,6 @@
 #ZSH powered by MyOdoo.de
-# Version 2.1.2
-# Date 18.07.2021
+# Version 2.1.3
+# Date 19.07.2021
 
 # If you come from bash you might have to change your $PATH.
 export PATH=$HOME/bin:/usr/local/bin:$HOME/.local/bin:/root/.local/bin:$PATH
@@ -142,6 +142,7 @@ alias edup='nano -B $HOME/docker2update.csv'
 
 
 # Docker alias
+alias dk="docker "
 alias dps="docker ps -a"
 alias dpi="docker images"
 alias dkpsf='docker inspect  -f "{{.Name}} {{.Config.Cmd}}" $(docker ps -a -q)'
