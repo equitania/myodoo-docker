@@ -1,7 +1,7 @@
-FROM myodoo/prepare-v13:2.1.1
+FROM myodoo/prepare-v13:21.09.02
 LABEL maintainer=info@myodoo.de
 # Mit diesem Skript überprüft das passende Dockerimage gemäß des Releasefiles
-# Date 26.05.2021
+# Date 12.08.2021
 
 CMD "echo" "MyOdoo build will start now.."
 

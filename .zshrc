@@ -1,6 +1,6 @@
 #ZSH powered by MyOdoo.de
-# Version 2.1.3
-# Date 19.07.2021
+# Version 2.1.4
+# Date 02.11.2021
 
 # If you come from bash you might have to change your $PATH.
 export PATH=$HOME/bin:/usr/local/bin:$HOME/.local/bin:/root/.local/bin:$PATH
@@ -69,9 +69,6 @@ plugins=(
   pip
   python
   screen
-  tmux
-  web-search
-  zsh_reload
 )
 source $ZSH/oh-my-zsh.sh
 
