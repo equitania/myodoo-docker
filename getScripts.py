@@ -56,13 +56,13 @@ os.system("python3 -m pip install --user nginx-set-conf-equitania --upgrade --no
 os.system("wget https://rm.myodoo.net/staff/neofetch/config.conf -O $HOME/.config/neofetch/config.conf")
 # https://github.com/jesseduffield/lazydocker
 os.system("curl https://raw.githubusercontent.com/jesseduffield/lazydocker/master/scripts/install_update_linux.sh | bash")
-_nano_path = "$HOME/.nano/backups/"
+_nano_path = Path("$HOME/.nano/backups/")
 if _nano_path.exists():
     os.system("rm $HOME/.nanorc && cd $HOME && wget https://rm.myodoo.net/staff/.nanorc")
 else:
     os.system("mkdir -p " + _nano_path + " && wget https://raw.githubusercontent.com/scopatz/nanorc/master/install.sh -O- | sh && rm $HOME/.nanorc && cd $HOME && wget https://rm.myodoo.net/staff/.nanorc")
 # https://github.com/FrederikRogalski/compose-update
-_cu_path = "$HOME/compose-update/" 
+_cu_path = Path("$HOME/compose-update/")
 if _cu_path.exists():
     os.chdir(_cu_path)
     os.system("git config pull.ff only")
