@@ -1,9 +1,9 @@
 #ZSH powered by MyOdoo.de
-# Version 2.1.4
-# Date 02.11.2021
+# Version 3.0.0
+# Date 06.01.2022
 
 # If you come from bash you might have to change your $PATH.
-export PATH=$HOME/bin:/usr/local/bin:$HOME/.local/bin:/root/.local/bin:$PATH
+export PATH=$HOME/bin:/usr/local/bin:$HOME/.local/bin:/root/.local/bin:$HOME/compose-update/:$PATH
 
 # Path to your oh-my-zsh installation.
 export ZSH=$HOME/.oh-my-zsh
@@ -101,6 +101,7 @@ alias ls='ls -h --color --classify'
 alias ll='ls -alh --color --classify'
 alias le='exa --long --header'
 alias lg='lazygit'
+alias l-d='lazydocker'
 alias grep='grep --color=auto'
 alias nano='nano --nowrap -B -c'
 alias hg='history | grep'

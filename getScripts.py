@@ -1,8 +1,8 @@
 #!/usr/bin/python3
 # -*- coding: utf-8 -*-
 # Dieses Skript hilft beim Organisieren von Docker-Servern
-# Version 3.2.1
-# Date 16.06.2021
+# Version 4.0.0
+# Date 06.01.2022
 ##############################################################################
 #
 #    Shell Script for devops
@@ -23,19 +23,17 @@
 #
 ##############################################################################
 import os
+from pathlib import Path
 
 # main
-global_server_version = '2020'
+global_server_version = '2022'
 myhome = os.path.expanduser('~')
 os.chdir(myhome + "/" + "myodoo-docker")
 os.system("git checkout "+global_server_version)
 os.system("git config pull.ff only")
 os.system("git pull")
 os.system("find . -name '*.pyc' -type f -print0 | xargs -0 /bin/rm -f")
-os.system("cp $HOME/myodoo-docker/.bashrc $HOME/.bashrc")
 os.system("cp $HOME/myodoo-docker/.zshrc $HOME/.zshrc")
-os.system("rm -rf $HOME/nginx-conf")
-os.system("cp -r $HOME/myodoo-docker/nginx-conf $HOME")
 os.system("cp $HOME/myodoo-docker/scripts/update_docker_myodoo.py $HOME")
 os.system("cp $HOME/myodoo-docker/scripts/container2backup.py $HOME")
 os.system("cp $HOME/myodoo-docker/scripts/cleanup-weblogs.sh $HOME")
@@ -45,9 +43,33 @@ os.system("cp $HOME/myodoo-docker/getScripts.py $HOME")
 os.system("python3 -m pip install --user pip --user --upgrade --no-warn-script-location")
 os.system("python3 -m pip install --user wheel --upgrade --no-warn-script-location")
 os.system("python3 -m pip install --user setuptools --upgrade --no-warn-script-location")
+# https://pypi.org/project/OdooRPC/
 os.system("python3 -m pip install --user odoorpc --upgrade --no-warn-script-location")
+# https://pypi.org/project/click/
 os.system("python3 -m pip install --user click --upgrade --no-warn-script-location")
+# https://pypi.org/project/bpytop/
 os.system("python3 -m pip install --user bpytop --upgrade --no-warn-script-location")
+#https://pypi.org/project/odoo-fast-report-mapper-equitania/
 os.system("python3 -m pip install --user odoo-fast-report-mapper-equitania --upgrade --no-warn-script-location")
+# https://pypi.org/project/nginx-set-conf-equitania/
 os.system("python3 -m pip install --user nginx-set-conf-equitania --upgrade --no-warn-script-location")
 os.system("wget https://rm.myodoo.net/staff/neofetch/config.conf -O $HOME/.config/neofetch/config.conf")
+# https://github.com/jesseduffield/lazydocker
+os.system("curl https://raw.githubusercontent.com/jesseduffield/lazydocker/master/scripts/install_update_linux.sh | bash")
+_nano_path = "$HOME/.nano/backups/"
+if _nano_path.exists():
+    os.system("rm $HOME/.nanorc && cd $HOME && wget https://rm.myodoo.net/staff/.nanorc")
+else:
+    os.system("mkdir -p " + _nano_path + " && wget https://raw.githubusercontent.com/scopatz/nanorc/master/install.sh -O- | sh && rm $HOME/.nanorc && cd $HOME && wget https://rm.myodoo.net/staff/.nanorc")
+# https://github.com/FrederikRogalski/compose-update
+_cu_path = "$HOME/compose-update/" 
+if _cu_path.exists():
+    os.chdir(_cu_path)
+    os.system("git config pull.ff only")
+    os.system("git pull")
+    os.system("chmod +x compose-update")
+else:
+    os.system("git clone https://github.com/FrederikRogalski/compose-update.git")
+    os.chdir(_cu_path)
+    os.system("pip3 install -r requirements.txt")
+    os.system("chmod +x compose-update")
