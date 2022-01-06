@@ -60,16 +60,16 @@ _nano_path = Path("$HOME/.nano/backups/")
 if _nano_path.exists():
     os.system("rm $HOME/.nanorc && cd $HOME && wget https://rm.myodoo.net/staff/.nanorc")
 else:
-    os.system("mkdir -p " + _nano_path + " && wget https://raw.githubusercontent.com/scopatz/nanorc/master/install.sh -O- | sh && rm $HOME/.nanorc && cd $HOME && wget https://rm.myodoo.net/staff/.nanorc")
+    os.system("mkdir -p $HOME/.nano/backups/ && wget https://raw.githubusercontent.com/scopatz/nanorc/master/install.sh -O- | sh && rm $HOME/.nanorc && cd $HOME && wget https://rm.myodoo.net/staff/.nanorc")
 # https://github.com/FrederikRogalski/compose-update
 _cu_path = Path("$HOME/compose-update/")
 if _cu_path.exists():
-    os.chdir(_cu_path)
+    os.chdir("$HOME/compose-update/")
     os.system("git config pull.ff only")
     os.system("git pull")
     os.system("chmod +x compose-update")
 else:
     os.system("git clone https://github.com/FrederikRogalski/compose-update.git")
-    os.chdir(_cu_path)
+    os.chdir("$HOME/compose-update/")
     os.system("pip3 install -r requirements.txt")
     os.system("chmod +x compose-update")
