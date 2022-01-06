@@ -27,9 +27,9 @@ from pathlib import Path
 
 # main
 global_server_version = '2022'
-myhome = os.path.expanduser('~')
-os.chdir(myhome + "/" + "myodoo-docker")
-os.system("git checkout "+global_server_version)
+_myhome = os.path.expanduser('~')
+os.chdir(_myhome + "/" + "myodoo-docker")
+os.system("git checkout " + global_server_version)
 os.system("git config pull.ff only")
 os.system("git pull")
 os.system("find . -name '*.pyc' -type f -print0 | xargs -0 /bin/rm -f")
@@ -56,20 +56,22 @@ os.system("python3 -m pip install --user nginx-set-conf-equitania --upgrade --no
 os.system("wget https://rm.myodoo.net/staff/neofetch/config.conf -O $HOME/.config/neofetch/config.conf")
 # https://github.com/jesseduffield/lazydocker
 os.system("curl https://raw.githubusercontent.com/jesseduffield/lazydocker/master/scripts/install_update_linux.sh | bash")
-_nano_path = Path("$HOME/.nano/backups/")
-if _nano_path.exists():
+_nano_path = _myhome + "/.nano/backups/"
+_nano_path_check = Path(_nano_path)
+if _nano_path_check.exists():
     os.system("rm $HOME/.nanorc && cd $HOME && wget https://rm.myodoo.net/staff/.nanorc")
 else:
     os.system("mkdir -p $HOME/.nano/backups/ && wget https://raw.githubusercontent.com/scopatz/nanorc/master/install.sh -O- | sh && rm $HOME/.nanorc && cd $HOME && wget https://rm.myodoo.net/staff/.nanorc")
 # https://github.com/FrederikRogalski/compose-update
-_cu_path = Path("$HOME/compose-update/")
-if _cu_path.exists():
-    os.chdir("$HOME/compose-update/")
+_cu_path = _myhome + "/compose-update"
+_cu_path_check = Path(_cu_path)
+if _cu_path_check.exists():
+    os.chdir(_cu_path)
     os.system("git config pull.ff only")
     os.system("git pull")
     os.system("chmod +x compose-update")
 else:
     os.system("git clone https://github.com/FrederikRogalski/compose-update.git")
-    os.chdir("$HOME/compose-update/")
+    os.chdir(_cu_path)
     os.system("pip3 install -r requirements.txt")
     os.system("chmod +x compose-update")
