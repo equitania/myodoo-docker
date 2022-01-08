@@ -23,11 +23,13 @@
 #
 ##############################################################################
 import os
+import platform
 from pathlib import Path
 
 # main
 global_server_version = '2022'
 _myhome = os.path.expanduser('~')
+_platform = platform.platform()
 os.chdir(_myhome + "/" + "myodoo-docker")
 os.system("git checkout " + global_server_version)
 os.system("git config pull.ff only")
@@ -60,7 +62,10 @@ os.system("curl https://raw.githubusercontent.com/jesseduffield/lazydocker/maste
 _nano_path = _myhome + "/.nano/backups/"
 _nano_path_check = Path(_nano_path)
 if _nano_path_check.exists():
-    os.system("rm $HOME/.nanorc && cd $HOME && wget https://rm.myodoo.net/staff/.nanorc")
+    if 'alma' in _platform:
+        os.system("rm $HOME/.nanorc && cd $HOME && curl -k -o .nanorc -SL https://rm.myodoo.net/staff/.nanorc.alma")
+    else:    
+        os.system("rm $HOME/.nanorc && cd $HOME && wget https://rm.myodoo.net/staff/.nanorc")
 else:
     os.system("mkdir -p $HOME/.nano/backups/ && wget https://raw.githubusercontent.com/scopatz/nanorc/master/install.sh -O- | sh && rm $HOME/.nanorc && cd $HOME && wget https://rm.myodoo.net/staff/.nanorc")
 # https://github.com/FrederikRogalski/compose-update
