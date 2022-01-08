@@ -1,8 +1,8 @@
 #!/usr/bin/python3
 # -*- coding: utf-8 -*-
 # Dieses Skript hilft beim Organisieren von Docker-Servern
-# Version 4.0.0
-# Date 06.01.2022
+# Version 4.0.1
+# Date 08.01.2022
 ##############################################################################
 #
 #    Shell Script for devops
@@ -61,13 +61,12 @@ os.system("wget https://rm.myodoo.net/staff/neofetch/config.conf -O $HOME/.confi
 os.system("curl https://raw.githubusercontent.com/jesseduffield/lazydocker/master/scripts/install_update_linux.sh | bash")
 _nano_path = _myhome + "/.nano/backups/"
 _nano_path_check = Path(_nano_path)
-if _nano_path_check.exists():
-    if 'alma' in _platform:
-        os.system("rm $HOME/.nanorc && cd $HOME && curl -k -o .nanorc -SL https://rm.myodoo.net/staff/.nanorc.alma")
-    else:    
-        os.system("rm $HOME/.nanorc && cd $HOME && wget https://rm.myodoo.net/staff/.nanorc")
-else:
-    os.system("mkdir -p $HOME/.nano/backups/ && wget https://raw.githubusercontent.com/scopatz/nanorc/master/install.sh -O- | sh && rm $HOME/.nanorc && cd $HOME && wget https://rm.myodoo.net/staff/.nanorc")
+if not _nano_path_check.exists():
+    os.system("mkdir -p $HOME/.nano/backups/ && wget https://raw.githubusercontent.com/scopatz/nanorc/master/install.sh -O- | sh")
+if 'alma' in _platform:
+    os.system("rm $HOME/.nanorc && cd $HOME && curl -k -o .nanorc -SL https://rm.myodoo.net/staff/.nanorc.alma")
+else:    
+    os.system("rm $HOME/.nanorc && cd $HOME && wget https://rm.myodoo.net/staff/.nanorc")
 # https://github.com/FrederikRogalski/compose-update
 _cu_path = _myhome + "/compose-update"
 _cu_path_check = Path(_cu_path)
