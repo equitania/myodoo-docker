@@ -2,8 +2,8 @@
 # -*- coding: utf-8 -*-
 # Mit diesem Skript wird ein Update einer Odoo Datenbank unter Docker durchgeführt
 # With this script you can update odoo db on postgresql under Docker
-# Version 4.0.0
-# Date 06.01.2022
+# Version 4.0.1
+# Date 11.01.2022
 ##############################################################################
 #
 #    Shell Script for Odoo, Open Source Management Solution
@@ -134,9 +134,11 @@ with io.open(_fname, "r", encoding="utf8") as csvfile:
         os.system("docker rmi " + _myimage + ":latest")
         print(_myimage + " removed and  start building..")
         os.system("docker build -t " + _myimage + " .")
+        # full update
         if _mytype == "F":
             print(_mycontainer + " start updating...")
-            os.system("docker run -it --rm -p " + _myport + ":8069 -p " + _mypollport + ":8072 --name=" + _mycontainer + " " + _myvolumen + " " + _myimage + " update --database=" + _mydb + " --db_user=" + _mydbuser + " --db_password=" + _mydbpassword + " --db_host=" + _mydbhost)
+            os.system("docker run -it --rm -p " + _myport + ":8069 -p " + _mypollport + ":8072 --name=" + _mycontainer + " " + _myvolumen + " " + _myimage + " update --database=" + _mydb + " --db_user=" + _mydbuser + " --db_password=" + _mydbpassword + " --db_host=" + _mydbhost + " --i18n-overwrite --load-language=de_DE")
+        # restart
         print("docker run -d --restart=always -p " + _myport + ":8069 -p " + _mypollport + ":8072 --name=" + _mycontainer + " " + _myvolumen + " " + _myimage + " start ")
         os.system("docker run -d --restart=always -p " + _myport + ":8069 -p " + _mypollport + ":8072 --name=" + _mycontainer + " " + _myvolumen + " " + _myimage + " start")
         if os.path.isfile(_mypath + "remove_website_menus.py"):
