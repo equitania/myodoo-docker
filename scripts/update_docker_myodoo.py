@@ -2,8 +2,8 @@
 # -*- coding: utf-8 -*-
 # Mit diesem Skript wird ein Update einer Odoo Datenbank unter Docker durchgeführt
 # With this script you can update odoo db on postgresql under Docker
-# Version 4.0.1
-# Date 11.01.2022
+# Version 4.0.2
+# Date 21.02.2022
 ##############################################################################
 #
 #    Shell Script for Odoo, Open Source Management Solution
@@ -53,6 +53,7 @@ with io.open(_fname, "r", encoding="utf8") as csvfile:
         _mydbhost = ""      # type: str
         _myvolumen = ""     # type: str
         _myversion = ""     # type: str
+        _mytranslation = "" # type: str
 
         # name of docker containers
         _mytype = _row[0]
@@ -93,6 +94,11 @@ with io.open(_fname, "r", encoding="utf8") as csvfile:
             _myversion = _row[12]
         except:
             print("No version!")
+        # additional run load translation
+        try:
+            _mytranslation= _row[13]
+        except:
+            print("No translation")
         # Missing path to Dockerfile
         if not os.path.isdir(_mypath):
             print("Docker path is not correct!")
@@ -134,10 +140,14 @@ with io.open(_fname, "r", encoding="utf8") as csvfile:
         os.system("docker rmi " + _myimage + ":latest")
         print(_myimage + " removed and  start building..")
         os.system("docker build -t " + _myimage + " .")
+        if _mytranslation == "Y" or _mytranslation=="y":
+            _load_translation = " --i18n-overwrite --load-language=de_DE"
+        else:
+            _load_translation = ""
         # full update
         if _mytype == "F":
             print(_mycontainer + " start updating...")
-            os.system("docker run -it --rm -p " + _myport + ":8069 -p " + _mypollport + ":8072 --name=" + _mycontainer + " " + _myvolumen + " " + _myimage + " update --database=" + _mydb + " --db_user=" + _mydbuser + " --db_password=" + _mydbpassword + " --db_host=" + _mydbhost + " --i18n-overwrite --load-language=de_DE")
+            os.system("docker run -it --rm -p " + _myport + ":8069 -p " + _mypollport + ":8072 --name=" + _mycontainer + " " + _myvolumen + " " + _myimage + " update --database=" + _mydb + " --db_user=" + _mydbuser + " --db_password=" + _mydbpassword + " --db_host=" + _mydbhost + _load_translation)
         # restart
         print("docker run -d --restart=always -p " + _myport + ":8069 -p " + _mypollport + ":8072 --name=" + _mycontainer + " " + _myvolumen + " " + _myimage + " start ")
         os.system("docker run -d --restart=always -p " + _myport + ":8069 -p " + _mypollport + ":8072 --name=" + _mycontainer + " " + _myvolumen + " " + _myimage + " start")
