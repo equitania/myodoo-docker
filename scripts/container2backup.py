@@ -28,6 +28,7 @@ import io
 import csv
 import zipfile
 import datetime, time
+import os.path
 from os.path import expanduser
 
 def zip_dir(_dir_path, _zip_path):
@@ -61,13 +62,13 @@ _mybasepath = expanduser("~")
 _fname_backup = _mybasepath + '/container2backup.csv'
 _fname_backup_path = _mybasepath + '/container2backup_path.csv'
 
-if _fname_backup_path.exists():
+if os.path.exists(_fname_backup_path):
     _mybackup_file  = open(_fname_backup_path, 'r', encoding="utf8")
     _mybackuppath = _mybackup_file.readline()
+    _mybackuppath = _mybackuppath.strip('\n')
 else:
+    print("No "+ _fname_backup_path + " found!")
     _mybackuppath = "/opt/backups"
-
-print("Backup path: " + _mybackuppath)
 
 if not os.path.exists(_mybackuppath):
     os.system("mkdir -p " + _mybackuppath)
