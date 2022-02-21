@@ -2,7 +2,7 @@
 # -*- coding: utf-8 -*-
 # Mit diesem Skript wird ein Update einer Odoo Datenbank unter Docker durchgeführt
 # With this script you can update odoo db on postgresql under Docker
-# Version 4.0.2
+# Version 4.0.3
 # Date 21.02.2022
 ##############################################################################
 #
@@ -147,10 +147,13 @@ with io.open(_fname, "r", encoding="utf8") as csvfile:
         # full update
         if _mytype == "F":
             print(_mycontainer + " start updating...")
-            os.system("docker run -it --rm -p " + _myport + ":8069 -p " + _mypollport + ":8072 --name=" + _mycontainer + " " + _myvolumen + " " + _myimage + " update --database=" + _mydb + " --db_user=" + _mydbuser + " --db_password=" + _mydbpassword + " --db_host=" + _mydbhost + _load_translation)
+            _update_command = "docker run -it --rm -p " + _myport + ":8069 -p " + _mypollport + ":8072 --name=" + _mycontainer + " " + _myvolumen + " " + _myimage + " update --database=" + _mydb + " --db_user=" + _mydbuser + " --db_password=" + _mydbpassword + " --db_host=" + _mydbhost + _load_translation
+            print(_update_command)
+            os.system(_update_command)
         # restart
-        print("docker run -d --restart=always -p " + _myport + ":8069 -p " + _mypollport + ":8072 --name=" + _mycontainer + " " + _myvolumen + " " + _myimage + " start ")
-        os.system("docker run -d --restart=always -p " + _myport + ":8069 -p " + _mypollport + ":8072 --name=" + _mycontainer + " " + _myvolumen + " " + _myimage + " start")
+        _restart_command = "docker run -d --restart=always -p " + _myport + ":8069 -p " + _mypollport + ":8072 --name=" + _mycontainer + " " + _myvolumen + " " + _myimage + " start"
+        print(_restart_command)
+        os.system(_restart_command)
         if os.path.isfile(_mypath + "remove_website_menus.py"):
             print("Website menus will remove...")
             time.sleep(_mydelaytime)
