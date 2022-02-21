@@ -1,6 +1,6 @@
 #ZSH powered by MyOdoo.de
-# Version 3.0.0
-# Date 06.01.2022
+# Version 3.0.1
+# Date 21.02.2022
 
 # If you come from bash you might have to change your $PATH.
 export PATH=$HOME/bin:/usr/local/bin:$HOME/.local/bin:/root/.local/bin:$HOME/compose-update/:$PATH
@@ -46,7 +46,7 @@ ZSH_THEME="fino-time"
 # DISABLE_AUTO_UPDATE="true"
 
 # Uncomment the following line to change how often to auto-update (in days).
-export UPDATE_ZSH_DAYS=13
+export UPDATE_ZSH_DAYS=90
 
 # Uncomment the following line to enable command auto-correction.
 #ENABLE_CORRECTION="true"
