@@ -1,6 +1,6 @@
 #ZSH powered by MyOdoo.de
-# Version 3.0.1
-# Date 21.02.2022
+# Version 3.0.2
+# Date 06.03.2022
 
 # If you come from bash you might have to change your $PATH.
 export PATH=$HOME/bin:/usr/local/bin:$HOME/.local/bin:/root/.local/bin:$HOME/compose-update/:$PATH
@@ -126,8 +126,8 @@ alias showcerts='certbot certificates'
 
 # system alias
 alias prepatch='sudo screen -S sysupdate'
-alias syspatch='sudo journalctl --vacuum-time=7d && sudo journalctl --vacuum-size=2G && sudo apt -y update && sudo apt -y dist-upgrade && sudo apt -y autoremove && sudo apt -y autoclean'
-alias syspatcha='sudo journalctl --vacuum-time=7d && sudo journalctl --vacuum-size=2G && sudo dnf -y update'
+alias syspatch='sudo cat /dev/null > /var/lib/docker/containers/*/*-json.log && sudo journalctl --vacuum-time=7d && sudo journalctl --vacuum-size=2G && sudo apt -y update && sudo apt -y dist-upgrade && sudo apt -y autoremove && sudo apt -y autoclean'
+alias syspatcha='sudo cat /dev/null > /var/lib/docker/containers/*/*-json.log && sudo journalctl --vacuum-time=7d && sudo journalctl --vacuum-size=2G && sudo dnf -y update'
 alias dusort='du /var --max-depth=1 | sort -nr | cut -f2 | xargs -n 1 du -hs'
 alias f2b='fail2ban-client status '
 alias ups='sudo $HOME/getScripts.py && sudo cp $HOME/myodoo-docker/getScripts.py $HOME/ && source ~/.zshrc'
