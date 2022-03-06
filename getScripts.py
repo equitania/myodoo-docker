@@ -1,8 +1,8 @@
 #!/usr/bin/python3
 # -*- coding: utf-8 -*-
 # Dieses Skript hilft beim Organisieren von Docker-Servern
-# Version 4.0.1
-# Date 08.01.2022
+# Version 4.0.2
+# Date 06.03.2022
 ##############################################################################
 #
 #    Shell Script for devops
@@ -39,6 +39,7 @@ os.system("cp $HOME/myodoo-docker/.zshrc $HOME/.zshrc")
 os.system("cp $HOME/myodoo-docker/scripts/update_docker_myodoo.py $HOME")
 os.system("cp $HOME/myodoo-docker/scripts/container2backup.py $HOME")
 os.system("cp $HOME/myodoo-docker/scripts/cleanup-weblogs.sh $HOME")
+os.system("cp $HOME/myodoo-docker/scripts/cleanup-weblogs.py $HOME")
 os.system("cp $HOME/myodoo-docker/scripts/ssl-renew.sh $HOME")
 os.system("cp $HOME/myodoo-docker/scripts/restore-zip.sh $HOME")
 os.system("cp $HOME/myodoo-docker/getScripts.py $HOME")
