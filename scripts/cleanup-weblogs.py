@@ -2,7 +2,7 @@
 # -*- coding: utf-8 -*-
 # Mit diesem Skript wird ein Backup einer Odoo Datenbank inkl. FileStore unter Docker durchgeführt
 # With this script you can backup odoo db on postgresql incl. filestore under Docker
-# Version 1.0.0
+# Version 1.0.1
 # Date 06.03.2022
 ##############################################################################
 #
@@ -25,6 +25,10 @@
 ##############################################################################
 import os
 import time
+import shutil
+import glob
+from datetime import datetime, timedelta
+
 
 def cleanup_backups(_cleanup_path, _cutoff_days):
     _files = os.listdir(_cleanup_path + "/")
@@ -38,13 +42,17 @@ def cleanup_backups(_cleanup_path, _cutoff_days):
                 os.remove(_cleanup_path + "/" + _xfile)
 
 
-_LOGS_PATH = '/var/log/nginx'
-_YESTERDAY = '$(date -d "yesterday" +%Y-%m-%d)'
+_LOGS_PATH = '/var/log/nginx/'
+_yesterday_datetime = datetime.now() - timedelta(days=1)
+_yesterday_date = _yesterday_datetime.strftime('%Y-%m-%d')
 _mystoretime = 7
-os.system('for i in $' + _LOGS_PATH + '/*.log; do mv -- "$i" "${i%}_${' + _YESTERDAY + '}.log"; done')
+
+_files = glob.glob(_LOGS_PATH + '*.log')
+for i in range(len(_files)):
+   shutil.move(_files[i], _files[i] + _yesterday_date +'.bak')
 
 # run by crontab
-# removes any files in mybackuppath older than 14 days or mystoretime
+# removes any files in mybackuppath older than 7 days or mystoretime
 
 now = time.time()
 _cutoff = now - (float(_mystoretime) * 86400)
@@ -52,4 +60,7 @@ _cutoff = now - (float(_mystoretime) * 86400)
 # remove docker backups
 cleanup_backups(_LOGS_PATH, _cutoff)
 
+os.system('echo "nginx start"')
+os.system('systemctl start nginx')
+os.system('systemctl status nginx')
 print('Cleanup done!')
