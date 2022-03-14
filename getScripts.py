@@ -1,8 +1,8 @@
 #!/usr/bin/python3
 # -*- coding: utf-8 -*-
 # Dieses Skript hilft beim Organisieren von Docker-Servern
-# Version 4.0.2
-# Date 06.03.2022
+# Version 4.0.3
+# Date 14.03.2022
 ##############################################################################
 #
 #    Shell Script for devops
@@ -49,6 +49,8 @@ os.system("python3 -m pip install --user wheel --upgrade --no-warn-script-locati
 os.system("python3 -m pip install --user setuptools --upgrade --no-warn-script-location")
 # https://pypi.org/project/OdooRPC/
 os.system("python3 -m pip install --user odoorpc --upgrade --no-warn-script-location")
+# https://pypi.org/project/thefuck/
+os.system("python3 -m pip install --user thefuck --upgrade --no-warn-script-location")
 # https://pypi.org/project/click/
 os.system("python3 -m pip install --user click --upgrade --no-warn-script-location")
 # https://pypi.org/project/bpytop/
