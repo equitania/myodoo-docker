@@ -1,7 +1,7 @@
 #!/bin/bash
 # Install latest nginx with pagedspeed
 # Script must run with mit root-rights
-# Version 1.5.1 - Stand 17.07.2021
+# Version 1.6.0 - Stand 14.04.2022
 ##############################################################################
 #
 #    Shell Script for Odoo, Open Source Management Solution
@@ -53,12 +53,20 @@ sudo bash $HOME/myodoo-docker/scripts/build_nginx/build_ngx_pagespeed.sh \
 [ ! -d /var/cache/nginx/client_temp ] && sudo mkdir -p /var/cache/nginx/client_temp
 [ ! -d /etc/nginx/conf.d/ ] && sudo mkdir /etc/nginx/conf.d/
 
-FILE=/etc/nginx/nginx.conf
+FILE=/etc/nginx/pagespeed_main.conf
 if [ ! -f "$FILE" ]; then
-    sudo cp $HOME/myodoo-docker/scripts/build_nginx/nginx.conf /etc/nginx/
+    sudo cp $HOME/myodoo-docker/scripts/build_nginx/$FILE /etc/nginx/
 else
-    sudo mv /etc/nginx/nginx.conf /etc/nginx/nginx.conf.backup
-    sudo cp $HOME/myodoo-docker/scripts/build_nginx/nginx.conf /etc/nginx/
+    sudo mv /etc/nginx/$FILE /etc/nginx/$FILE.backup
+    sudo cp $HOME/myodoo-docker/scripts/build_nginx/$FILE /etc/nginx/
+fi
+
+FILE=/etc/nginx/pagespeed_rules.conf
+if [ ! -f "$FILE" ]; then
+    sudo cp $HOME/myodoo-docker/scripts/build_nginx/$FILE /etc/nginx/
+else
+    sudo mv /etc/nginx/$FILE /etc/nginx/$FILE.backup
+    sudo cp $HOME/myodoo-docker/scripts/build_nginx/$FILE /etc/nginx/
 fi
 
 # Maintenance Message
