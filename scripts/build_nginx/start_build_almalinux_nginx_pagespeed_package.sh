@@ -1,7 +1,7 @@
 #!/bin/bash
 # Install latest nginx with pagedspeed
 # Script must run with mit root-rights
-# Version 1.3.0 - Stand 14.04.2022
+# Version 1.3.1 - Stand 17.04.2022
 ##############################################################################
 #
 #    Shell Script for Odoo, Open Source Management Solution
@@ -51,13 +51,15 @@ sudo bash $HOME/myodoo-docker/scripts/build_nginx/build_ngx_pagespeed.sh \
 # --with-http_v2_module
 
 # prepare nginx
-[ ! -d /var/cache/nginx/client_temp ] && sudo mkdir -p /var/cache/nginx/client_temp
-[ ! -d /etc/nginx/ ] && sudo mkdir -p
-[ ! -d /etc/nginx/html/ ] && sudo mkdir -p /etc/nginx/html/
-[ ! -d /etc/nginx/conf.d/ ] && sudo mkdir -p /etc/nginx/conf.d/
+FILE_PATH=/etc/nginx/
 
-FILE=/etc/nginx/nginx.conf
-if [ ! -f "$FILE" ]; then
+[ ! -d /var/cache/nginx/client_temp ] && sudo mkdir -p /var/cache/nginx/client_temp
+[ ! -d $FILE_PATH ] && sudo mkdir -p
+[ ! -d $FILE_PATH"html/" ] && sudo mkdir -p $FILE_PATH"html/"
+[ ! -d $FILE_PATH"conf.d/" ] && sudo mkdir -p $FILE_PATH"conf.d/"
+
+FILE=nginx.conf
+if [ ! -f "$FILE_PATH$FILE" ]; then
     sudo cp $HOME/myodoo-docker/scripts/build_nginx/$FILE /etc/nginx/
 else
     sudo mv /etc/nginx/$FILE /etc/nginx/$FILE.backup
@@ -65,22 +67,21 @@ else
     sed -i '1s|.*|user nginx;|' /etc/nginx/$FILE
 fi
 
-FILE=/etc/nginx/pagespeed_main.conf
-if [ ! -f "$FILE" ]; then
+FILE=pagespeed_main.conf
+if [ ! -f "$FILE_PATH$FILE" ]; then
     sudo cp $HOME/myodoo-docker/scripts/build_nginx/$FILE /etc/nginx/
 else
     sudo mv /etc/nginx/$FILE /etc/nginx/$FILE.backup
     sudo cp $HOME/myodoo-docker/scripts/build_nginx/$FILE /etc/nginx/
 fi
 
-FILE=/etc/nginx/pagespeed_rules.conf
-if [ ! -f "$FILE" ]; then
+FILE=pagespeed_rules.conf
+if [ ! -f "$FILE_PATH$FILE" ]; then
     sudo cp $HOME/myodoo-docker/scripts/build_nginx/$FILE /etc/nginx/
 else
     sudo mv /etc/nginx/$FILE /etc/nginx/$FILE.backup
     sudo cp $HOME/myodoo-docker/scripts/build_nginx/$FILE /etc/nginx/
 fi
-
 
 # Maintenance Message
 [ ! -f /etc/nginx/html/custom_50x.html ] && sudo cp $HOME/myodoo-docker/nginx-conf/custom_50x.html /etc/nginx/html/
