@@ -2,8 +2,8 @@
 # -*- coding: utf-8 -*-
 # Mit diesem Skript wird ein Backup einer Odoo Datenbank inkl. FileStore unter Docker durchgeführt
 # With this script you can backup odoo db on postgresql incl. filestore under Docker
-# Version 1.0.1
-# Date 06.03.2022
+# Version 1.0.2
+# Date 01.05.2022
 ##############################################################################
 #
 #    Shell Script for Odoo, Open Source Management Solution
@@ -58,8 +58,9 @@ now = time.time()
 _cutoff = now - (float(_mystoretime) * 86400)
 
 # remove docker backups
+os.system('systemctl stop nginx')
 cleanup_backups(_LOGS_PATH, _cutoff)
-
+os.system('sudo touch /var/cache/ngx_pagespeed/cache.flush')
 os.system('echo "nginx start"')
 os.system('systemctl start nginx')
 os.system('systemctl status nginx')
