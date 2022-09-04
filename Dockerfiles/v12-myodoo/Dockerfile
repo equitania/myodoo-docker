@@ -1,7 +1,7 @@
-FROM myodoo/prepare-v12:21.09.01
+FROM myodoo/prepare-v12:22.08.01-pyston_lite_autoload
 LABEL maintainer=info@myodoo.de
 # Mit diesem Skript überprüft das passende Dockerimage gemäß des Releasefiles
-# Date 02.11.2021
+# Date 04.09.2022
 
 CMD "echo" "MyOdoo build will start now.."
 
@@ -17,7 +17,7 @@ RUN /bin/bash -c "mkdir -p /opt/odoo/{odoo-server/odoo,bin,etc,sources/odoo,data
 
 COPY build_myodoo.py /opt/odoo/
 COPY release.file /opt/odoo/
-#COPY ./testdb/ /opt/odoo/data/filestore/testdb/
+#COPY custom_modules.* /opt/odoo/
 
 RUN /bin/bash -c "mkdir -p /opt/odoo/{bin,etc,sources/odoo,data,data/filestore}" && \
     cd /opt/odoo/ && \

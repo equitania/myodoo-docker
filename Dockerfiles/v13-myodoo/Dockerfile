@@ -1,7 +1,7 @@
-FROM myodoo/prepare-v13:21.09.02
+FROM myodoo/prepare-v13:22.08.01-pyston_lite_autoload
 LABEL maintainer=info@myodoo.de
 # Mit diesem Skript überprüft das passende Dockerimage gemäß des Releasefiles
-# Date 12.08.2021
+# Date 04.09.2022
 
 CMD "echo" "MyOdoo build will start now.."
 
