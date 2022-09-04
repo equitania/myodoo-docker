@@ -1,8 +1,8 @@
 #!/usr/bin/python3
 # -*- coding: utf-8 -*-
 # Mit diesem Skript wird mittels dem Release Manager ein neuer Server gebaut
-# Version 1.1.3
-# Date 28.10.2020
+# Version 1.1.4
+# Date 02.09.2022
 ##############################################################################
 #
 #    Shell Script for Odoo, Open Source Management Solution
@@ -81,6 +81,9 @@ if os.path.isfile(_release_file):
                     else:
                         continue
                 _count += 1
+        if os.path.exists('custom_modules.zip'):
+            os.system('unzip -q custom_modules.zip -d odoo-server/addons')
+            print('file: custom_modules.zip loaded and installed..') 
     else:
         print('No valid release file :(')
         exit()
