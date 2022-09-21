@@ -1,5 +1,5 @@
-# Docker Compose for Odoo 14
-# 28.06.2021
+# Docker Compose for Odoo 13
+# 21.09.2022
 version: '3.9'
 
 volumes:
@@ -10,7 +10,7 @@ volumes:
 
 services:
     live-db:
-        image: postgres:12.7-alpine
+        image: postgres:14.5-alpine
         environment:
           - POSTGRES_USER=ownerp
           - POSTGRES_PASSWORD=ownerp2021
