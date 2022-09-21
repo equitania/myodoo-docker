@@ -1,7 +1,33 @@
 #!/bin/bash
 #
 # This script is designed to be run inside the container
+# Version 2.0.0
+# Date 20.09.2022
+##############################################################################
 #
+#    Shell Script for Odoo Docker Container
+#    Copyright (C) 2014-now Equitania Software GmbH(<http://www.equitania.de>).
+#
+#    This program is free software: you can redistribute it and/or modify
+#    it under the terms of the GNU Affero General Public License as
+#    published by the Free Software Foundation, either version 3 of the
+#    License, or (at your option) any later version.
+#
+#    This program is distributed in the hope that it will be useful,
+#    but WITHOUT ANY WARRANTY; without even the implied warranty of
+#    MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+#    GNU Affero General Public License for more details.
+#
+#    You should have received a copy of the GNU Affero General Public License
+#    along with this program.  If not, see <http://www.gnu.org/licenses/>.
+#
+##############################################################################
+
+currentdate=`date +"%d.%m.%Y %T"`
+echo "Odoo Container starting now: $currentdate"
+
+# config path
+file="/opt/odoo/etc/odoo.conf"
 
 # fail hard and fast even on pipelines
 set -eo pipefail
@@ -18,7 +44,7 @@ function start {
     if [ ! -e $1 ]; then
         echo "...with additional args: $*"
     fi
-    sudo -i -u odoo /usr/local/bin/python3 \
+    sudo -i -u odoo python3 \
                     /opt/odoo/odoo-server/odoo-bin \
                     -c $file \
                     $*
@@ -33,7 +59,7 @@ function update {
     if [ ! -e $1 ]; then
         echo "...with additional args: $*"
     fi
-    sudo -i -u odoo /usr/local/bin/python3 \
+    sudo -i -u odoo python3 \
                     /opt/odoo/odoo-server/odoo-bin \
                     --update=all \
                     --workers=0 \
@@ -53,18 +79,6 @@ function on_exit() {
 }
 trap on_exit INT TERM
 
-echo "Search conf file"
-if [[ -z "$ODOO_CONF" ]];
-then
-    file="/opt/odoo/etc/odoo.conf"
-else
-    file=$ODOO_CONF
-fi
-if [ ! -f "$file" ]; then
-    cp /opt/sources/odoo.conf $file
-    echo "Copy template as conf file $file"
-fi
-chown -R odoo /opt/odoo
 echo "Running command..."
 for arg in "$*"
 do
