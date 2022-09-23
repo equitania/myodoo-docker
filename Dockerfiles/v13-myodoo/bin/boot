@@ -1,8 +1,8 @@
 #!/bin/bash
 #
 # This script is designed to be run inside the container
-# Version 2.0.0
-# Date 20.09.2022
+# Version 2.0.1
+# Date 23.09.2022
 ##############################################################################
 #
 #    Shell Script for Odoo Docker Container
@@ -31,12 +31,6 @@ file="/opt/odoo/etc/odoo.conf"
 
 # fail hard and fast even on pipelines
 set -eo pipefail
-
-function help {
-    set +e
-    cat bin/help.txt
-    set -e
-}
 
 function start {
     echo "Running odoo..."
@@ -79,7 +73,7 @@ function on_exit() {
 }
 trap on_exit INT TERM
 
-echo "Running command..."
+echo "Running parameters..."
 for arg in "$*"
 do
     $arg
