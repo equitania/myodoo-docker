@@ -1,8 +1,8 @@
 #!/bin/bash
 #
 # This script is designed to be run inside the container
-# Version 2.0.1
-# Date 23.09.2022
+# Version 2.0.2
+# Date 03.10.2022
 ##############################################################################
 #
 #    Shell Script for Odoo Docker Container
@@ -72,7 +72,8 @@ function on_exit() {
     exit 0
 }
 trap on_exit INT TERM
-
+echo "Set rights data to odoo..."
+chown -R odoo /opt/odoo/data
 echo "Running parameters..."
 for arg in "$*"
 do
