@@ -72,8 +72,15 @@ function on_exit() {
     exit 0
 }
 trap on_exit INT TERM
-echo "Set rights data to odoo..."
-chown -R odoo /opt/odoo/data
+
+datadir="/opt/odoo/data"
+if [ "$(ls -A $datadir)" ]; then
+    echo "$datadir is already exists"
+else
+    echo "Set rights data to odoo..."
+    chown -R odoo $datadir
+fi
+
 echo "Running parameters..."
 for arg in "$*"
 do
