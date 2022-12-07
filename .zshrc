@@ -3,7 +3,7 @@
 # Date 14.03.2022
 
 # If you come from bash you might have to change your $PATH.
-export PATH=$HOME/bin:/usr/local/bin:$HOME/.local/bin:/root/.local/bin:$HOME/compose-update/:$PATH
+export PATH=$HOME/bin:/usr/local/bin:$HOME/.local/bin:/root/.local/bin:$PATH
 
 # Path to your oh-my-zsh installation.
 export ZSH=$HOME/.oh-my-zsh
@@ -103,11 +103,9 @@ alias ls='ls -h --color --classify'
 alias ll='ls -alh --color --classify'
 alias le='exa --long --header'
 alias lg='lazygit'
-alias l-d='lazydocker'
 alias grep='grep --color=auto'
 alias nano='nano --nowrap -B -c'
 alias hg='history | grep'
-alias nf='neofetch'
 
 # ignore dangerous commands from history and make them safer
 alias rm='rm -I'
@@ -116,14 +114,14 @@ alias chown=' chown -c'
 alias shred=' shred -u -z'
 
 # nginx alias
-alias cdngx='cd /etc/nginx/conf.d/'
-alias ngx+='sudo systemctl start nginx'
-alias ngx-='sudo systemctl stop nginx'
-alias ngx#='sudo systemctl restart nginx'
-alias ngxr='sudo systemctl reload nginx'
-alias ngxs='sudo systemctl status nginx'
-alias ngx!='sudo nginx -t'
-alias showcerts='certbot certificates'
+# alias cdngx='cd /etc/nginx/conf.d/'
+# alias ngx+='sudo systemctl start nginx'
+# alias ngx-='sudo systemctl stop nginx'
+# alias ngx#='sudo systemctl restart nginx'
+# alias ngxr='sudo systemctl reload nginx'
+# alias ngxs='sudo systemctl status nginx'
+# alias ngx!='sudo nginx -t'
+# alias showcerts='certbot certificates'
 
 # system alias
 alias prepatch='sudo screen -S sysupdate'
@@ -156,9 +154,9 @@ alias dkprv="docker volume prune"
 alias dkpri="docker image prune -a"
 
 
-if [ -f /usr/bin/neofetch ]
-then
-    neofetch
-fi
+# if [ -f /usr/bin/neofetch ]
+# then
+#     neofetch
+# fi
 
 cd $HOME
