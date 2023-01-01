@@ -1,7 +1,7 @@
 #!/bin/bash
 # Install latest nginx with pagedspeed
 # Script must run with mit root-rights
-# Version 1.7.0 - Stand 23.12.2022
+# Version 1.22.1 - Stand 01.01.2023
 ##############################################################################
 #
 #    Shell Script for Odoo, Open Source Management Solution
@@ -22,6 +22,8 @@
 #
 ##############################################################################
 
+NGX_VERSION=1.22.1
+
 # Update OS and get dependencies
 sudo apt update && sudo apt -y dist-upgrade && sudo apt install -y build-essential zlib1g-dev unzip uuid-dev curl libpcre3-dev wget libssl-dev memcached libmemcached-tools
 
@@ -29,7 +31,7 @@ sudo apt update && sudo apt -y dist-upgrade && sudo apt install -y build-essenti
 # source: https://github.com/apache/incubator-pagespeed-ngx/blob/master/scripts/build_ngx_pagespeed.sh
 # https://raw.githubusercontent.com/pagespeed/ngx_pagespeed/master/scripts/build_ngx_pagespeed.sh
 sudo bash $HOME/myodoo-docker/scripts/build_nginx/build_ngx_pagespeed.sh \
-    --nginx-version latest --assume-yes \
+    --nginx-version $NGX_VERSION --assume-yes \
     --additional-nginx-configure-arguments '--prefix=/etc/nginx --sbin-path=/usr/sbin/nginx --modules-path=/usr/lib/nginx/modules --conf-path=/etc/nginx/nginx.conf --error-log-path=/var/log/nginx/error.log --http-log-path=/var/log/nginx/access.log --pid-path=/var/run/nginx.pid --lock-path=/var/run/nginx.lock --http-client-body-temp-path=/var/cache/nginx/client_temp --http-proxy-temp-path=/var/cache/nginx/proxy_temp --http-fastcgi-temp-path=/var/cache/nginx/fastcgi_temp --http-uwsgi-temp-path=/var/cache/nginx/uwsgi_temp --http-scgi-temp-path=/var/cache/nginx/scgi_temp --user=nginx --group=nginx --with-http_ssl_module --with-http_v2_module'
 
 # --prefix=/etc/nginx
@@ -50,6 +52,8 @@ sudo bash $HOME/myodoo-docker/scripts/build_nginx/build_ngx_pagespeed.sh \
 # --with-http_ssl_module
 # --with-http_v2_module
 
+#bash <(curl -f -L -sS https://ngxpagespeed.com/install) --nginx-version 1.22.1
+#--with-http_ssl_module --with-http_v2_module
 # prepare nginx
 FILE_PATH=/etc/nginx/
 
