@@ -1,0 +1,35 @@
+# nginx conf assistent
+# pip install nginx-set-conf-equitania --upgrade
+# nginx-set-conf --config_path="$HOME/docker-builds/live-myodoo/ngx-conf/"
+live:
+  config_template: ngx_odoo_ssl_pagespeed
+  ip: 0.0.0.0
+  domain: live.ownerp.app
+  port: 11000
+  cert_name: live.ownerp.app
+  pollport: 12000
+test:
+  config_template: ngx_odoo_ssl_pagespeed
+  ip: 0.0.0.0
+  domain: test.ownerp.app
+  port: 13000
+  cert_name: test.ownerp.app
+  pollport: 14000
+fast-report:
+  config_template: ngx_fast_report
+  ip: 0.0.0.0
+  domain: fr.ownerp.app
+  port: 8899
+  cert_name: fr.ownerp.app
+pgAdmin:
+  config_template: ngx_pgadmin
+  ip: 0.0.0.0
+  domain: pg.ownerp.app
+  port: 5050
+  cert_name: pg.ownerp.app
+vscode:
+  config_template: ngx_code_server
+  ip: 0.0.0.0
+  domain: vsownerp.app
+  port: 8443
+  cert_name: vs.ownerp.app

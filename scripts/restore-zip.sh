@@ -1,5 +1,5 @@
 #!/bin/bash
-# Version 1.0.0 - Stand 25.03.2021
+# Version 1.1.0 - Stand 02.02.2023
 # Mit diesem Skript wird ein Restore einer Odoo Datenbank auf Basis von Docker durchgeführt
 # Das FileStore wird in den Odoo Container und die Datenbank in den PostgreSQL Container eingespielt
 # With this script you can restore a Odoo db in postgresql on base of Docker
@@ -7,7 +7,7 @@
 ###############################################################################################################################
 # ./restore-zip.sh
 #  -backup_kind(../web/database/manager (1) or automatic backups scripts (2))
-#  -runsql (v10,v12,v13)
+#  -runsql (v10,v12,v13,14,v15,16)
 #  -orginal-dbname
 #  -dbname
 #  -drop database(Y/n)
@@ -188,14 +188,14 @@ then
     fi
     if [ "$myrunsql" == "" ]
     then
-        echo "Do you want to sql statements in $mydb [v10/v12/13]:"
+        echo "Do you want to sql statements in $mydb [v10/v12/v13/v14/v15/v16]:"
         read myrunsql
     fi
     echo "Starting Docker Container "$myodoocontainer 
     docker start $myodoocontainer
     sleep 3
     cd $HOME
-    if [ "$myrunsql" == "v10" ] || [ "$myrunsql" == "v12" ] || [ "$myrunsql" == "v13" ]
+    if [ "$myrunsql" == "v10" ] || [ "$myrunsql" == "v12" ] || [ "$myrunsql" == "v13" || [ "$myrunsql" == "v14" || [ "$myrunsql" == "v15" || [ "$myrunsql" == "v16" ]
     then
         echo "UPDATE ir_cron SET active = FALSE;"
         docker exec -i $mydbcontainer env PGPASSWORD=$mypgpassword psql -d $mydb -U $mydbuser -h $mydbserver -c $'UPDATE ir_cron SET active = FALSE;'
@@ -223,7 +223,7 @@ then
             docker exec -i $mydbcontainer env PGPASSWORD=$mypgpassword psql -d $mydb -U $mydbuser -h $mydbserver -c $'UPDATE res_users set eq_client_id = NULL;'
             echo "UPDATE res_users SET  eq_client_secret = NULL;"
             docker exec -i $mydbcontainer env PGPASSWORD=$mypgpassword psql -d $mydb -U $mydbuser -h $mydbserver -c $'UPDATE res_users SET eq_client_secret = NULL;'
-        elif [ "$myrunsql" == "v13" ]
+        elif [ "$myrunsql" == "v13" || [ "$myrunsql" == "v14" || [ "$myrunsql" == "v15" || [ "$myrunsql" == "v16" ]
         then
             echo "update res_config_settings set eq_ignore_ssl = false, eq_cloud_url = null, eq_cloud_username = null, eq_cloud_password = null, eq_is_log_attachment_enabled = false, eq_is_log_enabled = false, eq_is_cloud_connector_enabled = false, eq_is_delete_allowed = false;"
             docker exec -i $mydbcontainer env PGPASSWORD=$mypgpassword psql -d $mydb -U $mydbuser -h $mydbserver -c $'update res_config_settings set eq_ignore_ssl = false, eq_cloud_url = NULL, eq_cloud_username = NULL, eq_cloud_password = NULL, eq_is_log_attachment_enabled = false, eq_is_log_enabled = false, eq_is_cloud_connector_enabled = false, eq_is_delete_allowed = false;'
