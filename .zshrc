@@ -101,8 +101,6 @@ bindkey '^[[F' end-of-line
 # default settings
 alias ls='ls -h --color --classify'
 alias ll='ls -alh --color --classify'
-alias le='exa --long --header'
-alias lg='lazygit'
 alias grep='grep --color=auto'
 alias nano='nano --nowrap -B -c'
 alias hg='history | grep'
