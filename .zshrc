@@ -1,9 +1,9 @@
 #ZSH powered by MyOdoo.de
-# Version 3.0.3
-# Date 14.03.2022
+# Version 3.1.0
+# Date 06.02.2023
 
 # If you come from bash you might have to change your $PATH.
-export PATH=$HOME/bin:/usr/local/bin:$HOME/.local/bin:/root/.local/bin:$PATH
+export PATH=$HOME/bin:/usr/local/bin:$HOME/.local/bin:/root/.local/bin:$HOME/compose-update/:$PATH
 
 # Path to your oh-my-zsh installation.
 export ZSH=$HOME/.oh-my-zsh
@@ -101,9 +101,11 @@ bindkey '^[[F' end-of-line
 # default settings
 alias ls='ls -h --color --classify'
 alias ll='ls -alh --color --classify'
+alias lg='lazygit'
 alias grep='grep --color=auto'
 alias nano='nano --nowrap -B -c'
 alias hg='history | grep'
+alias nf='neofetch'
 
 # ignore dangerous commands from history and make them safer
 alias rm='rm -I'
@@ -112,14 +114,14 @@ alias chown=' chown -c'
 alias shred=' shred -u -z'
 
 # nginx alias
-# alias cdngx='cd /etc/nginx/conf.d/'
-# alias ngx+='sudo systemctl start nginx'
-# alias ngx-='sudo systemctl stop nginx'
-# alias ngx#='sudo systemctl restart nginx'
-# alias ngxr='sudo systemctl reload nginx'
-# alias ngxs='sudo systemctl status nginx'
-# alias ngx!='sudo nginx -t'
-# alias showcerts='certbot certificates'
+alias cdngx='cd /etc/nginx/conf.d/'
+alias ngx+='sudo systemctl start nginx'
+alias ngx-='sudo systemctl stop nginx'
+alias ngx#='sudo systemctl restart nginx'
+alias ngxr='sudo systemctl reload nginx'
+alias ngxs='sudo systemctl status nginx'
+alias ngx!='sudo nginx -t'
+alias showcerts='certbot certificates'
 
 # system alias
 alias prepatch='sudo screen -S sysupdate'
@@ -152,9 +154,9 @@ alias dkprv="docker volume prune"
 alias dkpri="docker image prune -a"
 
 
-# if [ -f /usr/bin/neofetch ]
-# then
-#     neofetch
-# fi
+if [ -f /usr/bin/neofetch ]
+then
+    neofetch
+fi
 
 cd $HOME
