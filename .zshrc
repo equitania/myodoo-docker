@@ -1,6 +1,6 @@
-#ZSH powered by MyOdoo.de
-# Version 3.1.0
-# Date 06.02.2023
+#ZSH powered by ownerp.com
+# Version 3.1.1
+# Date 05.03.2023
 
 # If you come from bash you might have to change your $PATH.
 export PATH=$HOME/bin:/usr/local/bin:$HOME/.local/bin:/root/.local/bin:$HOME/compose-update/:$PATH
@@ -126,8 +126,8 @@ alias showcerts='certbot certificates'
 # system alias
 alias prepatch='sudo screen -S sysupdate'
 alias cleandlog='sudo cat /dev/null > /var/lib/docker/containers/*/*-json.log'
-alias syspatch='sudo journalctl --vacuum-time=7d && sudo journalctl --vacuum-size=2G && sudo apt -y update && sudo apt -y dist-upgrade && sudo apt -y autoremove && sudo apt -y autoclean'
-alias syspatcha='sudo journalctl --vacuum-time=7d && sudo journalctl --vacuum-size=2G && sudo dnf -y update'
+alias syspatch='sudo journalctl --vacuum-time=7d && sudo journalctl --vacuum-size=2G && sudo apt -y update && sudo apt -y dist-upgrade && sudo apt -y autoremove && sudo apt -y autoclean && docker system prune && docker volume prune'
+alias syspatcha='sudo journalctl --vacuum-time=7d && sudo journalctl --vacuum-size=2G && sudo dnf -y update && docker system prune && docker volume prune'
 alias dusort='du /var --max-depth=1 | sort -nr | cut -f2 | xargs -n 1 du -hs'
 alias f2b='fail2ban-client status '
 alias ups='sudo $HOME/getScripts.py && sudo cp $HOME/myodoo-docker/getScripts.py $HOME/ && source ~/.zshrc'
