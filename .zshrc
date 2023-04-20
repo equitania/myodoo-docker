@@ -1,6 +1,6 @@
 #ZSH powered by ownerp.com
-# Version 3.1.1
-# Date 05.03.2023
+# Version 3.1.2
+# Date 20.04.2023
 
 # If you come from bash you might have to change your $PATH.
 export PATH=$HOME/bin:/usr/local/bin:$HOME/.local/bin:/root/.local/bin:$HOME/compose-update/:$PATH
@@ -85,8 +85,8 @@ source $ZSH/oh-my-zsh.sh
 # For a full list of active aliases, run `alias`.
 #
 
-alias zshcfg="nano -B ~/.zshrc"
-alias ohmyzsh="nano -B ~/.oh-my-zsh"
+alias zshcfg="mcedit ~/.zshrc"
+alias ohmyzsh="mcedit ~/.oh-my-zsh"
 
 
 ### keybindings ###
@@ -106,6 +106,7 @@ alias grep='grep --color=auto'
 alias nano='nano --nowrap -B -c'
 alias hg='history | grep'
 alias nf='neofetch'
+alias mce='mcedit'
 
 # ignore dangerous commands from history and make them safer
 alias rm='rm -I'
@@ -135,8 +136,8 @@ alias ups='sudo $HOME/getScripts.py && sudo cp $HOME/myodoo-docker/getScripts.py
 # MyOdoo alias
 alias dobk='$HOME/container2backup.py'
 alias doup='$HOME/update_docker_myodoo.py'
-alias edbk='nano -B $HOME/container2backup.csv'
-alias edup='nano -B $HOME/docker2update.csv'
+alias edbk='mcedit $HOME/container2backup.csv'
+alias edup='mcedit $HOME/docker2update.csv'
 
 
 # Docker alias
