@@ -35,5 +35,5 @@ cd $HOME && rm -rf myodoo-docker && rm -rf nginx-conf && \
   $HOME/getScripts.py && source ~/.zshrc
 ```
 
-For more infomations [MyOdoo.de](https://www.myodoo.de) or [ownERP.com](https://www.ownerp.com)
+For more infomations [ownERP.com](https://www.ownerp.com)
 [Technical source](https://github.com/equitania/myodoo-docker)
