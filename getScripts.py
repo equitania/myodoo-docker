@@ -1,8 +1,8 @@
 #!/usr/bin/python3
 # -*- coding: utf-8 -*-
 # Dieses Skript hilft beim Organisieren von Docker-Servern
-# Version 5.2.0
-# Date 02.05.2023
+# Version 5.3.0
+# Date 07.07.2023
 ##############################################################################
 #
 #    Shell Script for devops
@@ -43,12 +43,12 @@ os.system("cp $HOME/myodoo-docker/scripts/container2backup.py $HOME")
 os.system("cp $HOME/myodoo-docker/scripts/restore-zip.sh $HOME")
 os.system("cp $HOME/myodoo-docker/getScripts.py $HOME")
 os.chdir(_myhome)
-os.system("python3 -m pip install --user pip --user --upgrade --no-warn-script-location")
-os.system("python3 -m pip install --user wheel --upgrade --no-warn-script-location")
-os.system("python3 -m pip install --user setuptools --upgrade --no-warn-script-location")
+os.system("pip3 install pip --upgrade --no-warn-script-location --break-system-packages")
+os.system("pip3 install wheel --upgrade --no-warn-script-location --break-system-packages")
+os.system("pip3 install setuptools --upgrade --no-warn-script-location --break-system-packages")
 # https://pypi.org/project/OdooRPC/
-os.system("python3 -m pip install --user odoorpc-toolbox --upgrade --no-warn-script-location")
-os.system("python3 -m pip install --user nginx-set-conf-equitania --upgrade --no-warn-script-location")
+os.system("pip3 install odoorpc-toolbox --upgrade --no-warn-script-location --break-system-packages")
+os.system("pip3 install nginx-set-conf-equitania --upgrade --no-warn-script-location --break-system-packages")
 _nano_path = _myhome + "/.nano/backups/"
 _nano_path_check = Path(_nano_path)
 if not _nano_path_check.exists():
