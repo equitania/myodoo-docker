@@ -2,6 +2,6 @@
 # Translate = Y loads all translations new - Also e-mail templates!
 # [M]odule update will copy only new module to the container without update all - needs 2-3 minutes
 # [F]ull update will update all - needs 10-20 minutes time
-# Date 02.02.2023
-F,30,live-myodoo,live_db,127.0.0.1:11000,127.0.0.1:12000,/root/docker-builds/live-myodoo/,myodoo/live,ownerp,ownerp2021,live-db,"--network ownerp-net -v vol-odoo-live:/opt/odoo/data","16"
-#F,30,test-myodoo,test_db,127.0.0.1:13000,127.0.0.1:14000,/root/docker-builds/test-myodoo/,myodoo/test,ownerp,ownerp2021,test-db,"--network ownerp-net -v vol-odoo-test:/opt/odoo/data","16"
+# Date 07.07.2023
+F,30,live-myodoo,live_db,127.0.0.1:11000,127.0.0.1:12000,/root/docker-builds/live-myodoo/,myodoo/live,ownerp,ownerp2023,live-db,"--network live-net -v vol-odoo-live:/opt/odoo/data","16","Y"
+#F,30,test-myodoo,test_db,127.0.0.1:13000,127.0.0.1:14000,/root/docker-builds/test-myodoo/,myodoo/test,ownerp,ownerp2023,test-db,"--network test-net -v vol-odoo-test:/opt/odoo/data","16","Y"

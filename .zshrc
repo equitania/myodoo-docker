@@ -1,6 +1,6 @@
 #ZSH powered by ownerp.com
-# Version 3.1.2
-# Date 20.04.2023
+# Version 3.1.3
+# Date 07.07.2023
 
 # If you come from bash you might have to change your $PATH.
 export PATH=$HOME/bin:/usr/local/bin:$HOME/.local/bin:/root/.local/bin:$HOME/compose-update/:$PATH
@@ -133,7 +133,7 @@ alias dusort='du /var --max-depth=1 | sort -nr | cut -f2 | xargs -n 1 du -hs'
 alias f2b='fail2ban-client status '
 alias ups='sudo $HOME/getScripts.py && sudo cp $HOME/myodoo-docker/getScripts.py $HOME/ && source ~/.zshrc'
 
-# MyOdoo alias
+# ownERP alias
 alias dobk='$HOME/container2backup.py'
 alias doup='$HOME/update_docker_myodoo.py'
 alias edbk='mcedit $HOME/container2backup.csv'
@@ -145,15 +145,6 @@ alias dk="docker "
 alias dps="docker ps -a"
 alias dpi="docker images"
 alias dkpsf='docker inspect  -f "{{.Name}} {{.Config.Cmd}}" $(docker ps -a -q)'
-alias dkps="docker ps -a"
-alias dkpi="docker images"
-alias dkcp="docker-compose "
-alias dkcpup="docker-compose up -d"
-alias dkcpdown="docker-compose down"
-alias dkprs="docker system prune"
-alias dkprv="docker volume prune"
-alias dkpri="docker image prune -a"
-
 
 if [ -f /usr/bin/neofetch ]
 then
