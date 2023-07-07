@@ -1,7 +1,7 @@
 #!/usr/bin/python3
 # -*- coding: utf-8 -*-
 # Dieses Skript hilft beim Organisieren von Docker-Servern
-# Version 5.3.0
+# Version 5.3.1
 # Date 07.07.2023
 ##############################################################################
 #
@@ -46,16 +46,6 @@ os.chdir(_myhome)
 os.system("pip3 install pip --upgrade --no-warn-script-location --break-system-packages")
 os.system("pip3 install wheel --upgrade --no-warn-script-location --break-system-packages")
 os.system("pip3 install setuptools --upgrade --no-warn-script-location --break-system-packages")
-# https://pypi.org/project/OdooRPC/
 os.system("pip3 install odoorpc-toolbox --upgrade --no-warn-script-location --break-system-packages")
 os.system("pip3 install nginx-set-conf-equitania --upgrade --no-warn-script-location --break-system-packages")
-_nano_path = _myhome + "/.nano/backups/"
-_nano_path_check = Path(_nano_path)
-if not _nano_path_check.exists():
-    os.system("mkdir -p $HOME/.nano/backups/ && wget https://raw.githubusercontent.com/scopatz/nanorc/master/install.sh -O- | sh")
-if 'alma' in _platform:
-    os.system("rm $HOME/.nanorc && cd $HOME && curl -k -o .nanorc -SL https://rm.ownerp.io/staff/.nanorc.alma")
-    os.system("rm $HOME/.config/neofetch/config.conf && wget https://rm.ownerp.io/staff/neofetch/config.conf -O $HOME/.config/neofetch/config.conf")
-else:    
-    os.system("rm $HOME/.nanorc && cd $HOME && wget https://rm.ownerp.io/staff/.nanorc")
-    os.system("rm $HOME/.config/neofetch/config.conf && wget https://rm.ownerp.io/staff/neofetch/config.conf -O $HOME/.config/neofetch/config.conf")
+os.system("pip3 install thefuck --upgrade --no-warn-script-location --break-system-packages")
