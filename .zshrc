@@ -1,9 +1,9 @@
 #ZSH powered by ownerp.com
-# Version 3.1.3
-# Date 07.07.2023
+# Version 3.1.4
+# Date 11.07.2023
 
 # If you come from bash you might have to change your $PATH.
-export PATH=$HOME/bin:/usr/local/bin:$HOME/.local/bin:/root/.local/bin:$HOME/compose-update/:$PATH
+export PATH=$HOME/bin:/usr/local/bin:$HOME/.local/bin:/root/.local/bin:$PATH
 
 # Path to your oh-my-zsh installation.
 export ZSH=$HOME/.oh-my-zsh
@@ -150,5 +150,8 @@ if [ -f /usr/bin/neofetch ]
 then
     neofetch
 fi
+
+[ ! "$(find ~/.zcompdump -mtime 1)" ] || compinit
+compinit -C
 
 cd $HOME
