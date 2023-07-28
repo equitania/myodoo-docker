@@ -1,8 +1,8 @@
 #!/usr/bin/python3
 # -*- coding: utf-8 -*-
 # Dieses Skript hilft beim Organisieren von Docker-Servern
-# Version 5.3.1
-# Date 07.07.2023
+# Version 5.3.2
+# Date 28.07.2023
 ##############################################################################
 #
 #    Shell Script for devops
@@ -41,6 +41,7 @@ os.system("cp $HOME/myodoo-docker/scripts/docker-clean-logs.sh $HOME")
 os.system("cp $HOME/myodoo-docker/scripts/cleanup-weblogs.py $HOME")
 os.system("cp $HOME/myodoo-docker/scripts/container2backup.py $HOME")
 os.system("cp $HOME/myodoo-docker/scripts/restore-zip.sh $HOME")
+os.system("cp $HOME/myodoo-docker/scripts/ssl-renew.sh $HOME")
 os.system("cp $HOME/myodoo-docker/getScripts.py $HOME")
 os.chdir(_myhome)
 os.system("pip3 install pip --upgrade --no-warn-script-location --break-system-packages")
@@ -49,3 +50,4 @@ os.system("pip3 install setuptools --upgrade --no-warn-script-location --break-s
 os.system("pip3 install odoorpc-toolbox --upgrade --no-warn-script-location --break-system-packages")
 os.system("pip3 install nginx-set-conf-equitania --upgrade --no-warn-script-location --break-system-packages")
 os.system("pip3 install thefuck --upgrade --no-warn-script-location --break-system-packages")
+os.system("pip3 install odoo-fast-report-mapper-equitania --upgrade --no-warn-script-location --break-system-packages")
