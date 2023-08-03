@@ -1,7 +1,7 @@
 #!/usr/bin/python3
 # -*- coding: utf-8 -*-
 # Dieses Skript hilft beim Organisieren von Docker-Servern
-# Version 5.3.4
+# Version 5.3.5
 # Date 03.08.2023
 ##############################################################################
 #
@@ -48,11 +48,11 @@ if 'alma' or 'ubuntu' in _platform:
     _pip_add = ""
 else:
     _pip_add = "--break-system-packages"
-os.system("pip3 install pip --upgrade --no-warn-script-location " + _pip_add)
-os.system("pip3 install wheel --upgrade --no-warn-script-location " + _pip_add)
-os.system("pip3 install setuptools --upgrade --no-warn-script-location " + _pip_add)
-os.system("pip3 install distro-info --upgrade --no-warn-script-location " + _pip_add)
-os.system("pip3 install odoorpc-toolbox --upgrade --no-warn-script-location " + _pip_add)
-os.system("pip3 install nginx-set-conf-equitania --upgrade --no-warn-script-location " + _pip_add)
-os.system("pip3 install thefuck --upgrade --no-warn-script-location " + _pip_add)
-os.system("pip3 install odoo-fast-report-mapper-equitania --upgrade --no-warn-script-location " + _pip_add)
+os.system("pip3 install pip --upgrade --quiet --no-warn-script-location " + _pip_add)
+os.system("pip3 install wheel --upgrade --quiet --no-warn-script-location " + _pip_add)
+os.system("pip3 install setuptools --upgrade --quiet --no-warn-script-location " + _pip_add)
+os.system("pip3 install distro-info --upgrade --quiet --no-warn-script-location " + _pip_add)
+os.system("pip3 install odoorpc-toolbox --upgrade --quiet --no-warn-script-location " + _pip_add)
+os.system("pip3 install nginx-set-conf-equitania --upgrade --quiet --no-warn-script-location " + _pip_add)
+os.system("pip3 install thefuck --upgrade --quiet --no-warn-script-location " + _pip_add)
+os.system("pip3 install odoo-fast-report-mapper-equitania --upgrade --quiet --no-warn-script-location " + _pip_add)
