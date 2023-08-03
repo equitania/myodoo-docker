@@ -1,7 +1,7 @@
 #!/usr/bin/python3
 # -*- coding: utf-8 -*-
 # Dieses Skript hilft beim Organisieren von Docker-Servern
-# Version 5.3.3
+# Version 5.3.4
 # Date 03.08.2023
 ##############################################################################
 #
@@ -51,6 +51,7 @@ else:
 os.system("pip3 install pip --upgrade --no-warn-script-location " + _pip_add)
 os.system("pip3 install wheel --upgrade --no-warn-script-location " + _pip_add)
 os.system("pip3 install setuptools --upgrade --no-warn-script-location " + _pip_add)
+os.system("pip3 install distro-info --upgrade --no-warn-script-location " + _pip_add)
 os.system("pip3 install odoorpc-toolbox --upgrade --no-warn-script-location " + _pip_add)
 os.system("pip3 install nginx-set-conf-equitania --upgrade --no-warn-script-location " + _pip_add)
 os.system("pip3 install thefuck --upgrade --no-warn-script-location " + _pip_add)
