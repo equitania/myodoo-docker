@@ -1,7 +1,7 @@
 #!/usr/bin/python3
 # -*- coding: utf-8 -*-
 # Dieses Skript hilft beim Organisieren von Docker-Servern
-# Version 5.3.5
+# Version 5.3.6
 # Date 03.08.2023
 ##############################################################################
 #
@@ -44,15 +44,12 @@ os.system("cp $HOME/myodoo-docker/scripts/restore-zip.sh $HOME")
 os.system("cp $HOME/myodoo-docker/scripts/ssl-renew.sh $HOME")
 os.system("cp $HOME/myodoo-docker/getScripts.py $HOME")
 os.chdir(_myhome)
-if 'alma' or 'ubuntu' in _platform:
-    _pip_add = ""
-else:
-    _pip_add = "--break-system-packages"
-os.system("pip3 install pip --upgrade --quiet --no-warn-script-location " + _pip_add)
-os.system("pip3 install wheel --upgrade --quiet --no-warn-script-location " + _pip_add)
-os.system("pip3 install setuptools --upgrade --quiet --no-warn-script-location " + _pip_add)
-os.system("pip3 install distro-info --upgrade --quiet --no-warn-script-location " + _pip_add)
-os.system("pip3 install odoorpc-toolbox --upgrade --quiet --no-warn-script-location " + _pip_add)
-os.system("pip3 install nginx-set-conf-equitania --upgrade --quiet --no-warn-script-location " + _pip_add)
-os.system("pip3 install thefuck --upgrade --quiet --no-warn-script-location " + _pip_add)
-os.system("pip3 install odoo-fast-report-mapper-equitania --upgrade --quiet --no-warn-script-location " + _pip_add)
+
+os.system("pip3 install pip --upgrade --quiet --no-warn-script-location ")
+os.system("pip3 install wheel --upgrade --quiet --no-warn-script-location ")
+os.system("pip3 install setuptools --upgrade --quiet --no-warn-script-location ")
+os.system("pip3 install distro-info --upgrade --quiet --no-warn-script-location ")
+os.system("pip3 install odoorpc-toolbox --upgrade --quiet --no-warn-script-location ")
+os.system("pip3 install nginx-set-conf-equitania --upgrade --quiet --no-warn-script-location ")
+os.system("pip3 install thefuck --upgrade --quiet --no-warn-script-location ")
+os.system("pip3 install odoo-fast-report-mapper-equitania --upgrade --quiet --no-warn-script-location ")
