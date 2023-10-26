@@ -1,8 +1,8 @@
 #!/usr/bin/python3
 # -*- coding: utf-8 -*-
 # Mit diesem Skript wird mittels dem Release Manager ein neuer Server gebaut
-# Version 1.4.0
-# Date 02.02.2023
+# Version 2.0.0
+# Date 09.10.2023
 ##############################################################################
 #
 #    Shell Script for Odoo, Open Source Management Solution
@@ -25,11 +25,13 @@
 
 import os
 import csv
-import time
-import wget
+import urllib3
 
 _build_path = '/opt/odoo'
 _release_file = 'release.file'
+
+# Create an urllib3.PoolManager instance
+http = urllib3.PoolManager()
 
 if os.path.isfile(_release_file):
     print('Starting with build at ' + _build_path)
@@ -57,28 +59,34 @@ if os.path.isfile(_release_file):
                     else:
                         os.system('mkdir -p odoo-server/addons')
                         _zip_url = _url + '/' + _column
-                        try:
-                            wget.download(_zip_url)
-                        except:
-                            print('ERROR: file: ' + _column + ' NOT loaded and installed..')
+                        # Send an HTTP GET request to the URL
+                        response = http.request('GET', _zip_url)
+                        # Check if the request was successful (status code 200)
+                        if response.status == 200:
+                            # Open the local file in binary write mode and write the downloaded content to it
+                            with open(_column, 'wb') as f:
+                                f.write(response.data)
+                            print(f"File downloaded successfully to {_column}")
                         else:
-                            while not os.path.isfile(_column):
-                                time.sleep(0.1)
-                            os.system('unzip -q ' + _column + ' -d odoo-server')
-                            print('kernel: ' + _column + ' loaded and installed..')
+                            print(f"Failed to download file. Status code: {response.status}")
+                        os.system('unzip -q ' + _column + ' -d odoo-server')
+                        print('kernel: ' + _column + ' loaded and installed..')
                 else:
                     # Get and extract modules
                     if _column.find('.zip') != -1:
                         _zip_url = _url + '/' + _column
-                        try:
-                            wget.download(_zip_url)
-                        except:
-                            print('ERROR: file: ' + _column + ' NOT loaded and installed..')
-                        else:
-                            while not os.path.isfile(_column):
-                                time.sleep(0.1)
+                        # Send an HTTP GET request to the URL
+                        response = http.request('GET', _zip_url)
+                        # Check if the request was successful (status code 200)
+                        if response.status == 200:
+                            # Open the local file in binary write mode and write the downloaded content to it
+                            with open(_column, 'wb') as f:
+                                f.write(response.data)
+                            print(f"File downloaded successfully to {_column}")
                             os.system('unzip -q ' + _column + ' -d odoo-server/addons')
                             print('file: ' + _column + ' loaded and installed..')
+                        else:
+                            print(f"Failed to download file. Status code: {response.status}")
                     else:
                         continue
                 _count += 1
@@ -90,7 +98,8 @@ if os.path.isfile(_release_file):
         exit()
     print('Build finished!')
     os.system('rm -f *.zip')
-    # os.system('rm -f release.file')
+    os.system('rm -f build_myodoo.py')
+    os.system('rm -f release.file')
     print('Cleanup and finished!')
 else:
     print('*********************************************')
