@@ -54,4 +54,4 @@ os.system("pip3 install nginx-set-conf-equitania --upgrade --quiet --no-warn-scr
 os.system("pip3 install thefuck --upgrade --quiet --no-warn-script-location --break-system-packages")
 os.system("pip3 install odoo-fast-report-mapper-equitania --upgrade --quiet --no-warn-script-location --break-system-packages")
 os.system("curl -sS https://raw.githubusercontent.com/ajeetdsouza/zoxide/main/install.sh | bash")
-os.system("rm .zcompdump-* -y")
+os.system("rm .zcompdump-*")
