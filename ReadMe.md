@@ -28,9 +28,9 @@ Weiterführende Informationen finden Sie in unserem WIKI https://equitania.atlas
 
 #### Exchange branch
 
-```
+```shell
 cd $HOME && rm -rf myodoo-docker && rm -rf nginx-conf && \
-  git clone -b 2023 https://github.com/equitania/myodoo-docker.git && \
+  git clone -b 2024 https://github.com/equitania/myodoo-docker.git && \
   cp myodoo-docker/getScripts.py $HOME && \
   $HOME/getScripts.py && source ~/.zshrc
 ```

@@ -1,8 +1,8 @@
 #!/usr/bin/python3
 # -*- coding: utf-8 -*-
 # Dieses Skript hilft beim Organisieren von Docker-Servern
-# Version 5.3.6
-# Date 03.08.2023
+# Version 5.4.0
+# Date 13.03.2024
 ##############################################################################
 #
 #    Shell Script for devops
@@ -27,7 +27,7 @@ import platform
 from pathlib import Path
 
 # main
-global_server_version = '2023'
+global_server_version = '2024'
 _myhome = os.path.expanduser('~')
 _platform = platform.platform()
 os.chdir(_myhome + "/" + "myodoo-docker")
@@ -45,11 +45,13 @@ os.system("cp $HOME/myodoo-docker/scripts/ssl-renew.sh $HOME")
 os.system("cp $HOME/myodoo-docker/getScripts.py $HOME")
 os.chdir(_myhome)
 
-os.system("pip3 install pip --upgrade --quiet --no-warn-script-location ")
-os.system("pip3 install wheel --upgrade --quiet --no-warn-script-location ")
-os.system("pip3 install setuptools --upgrade --quiet --no-warn-script-location ")
-os.system("pip3 install distro-info --upgrade --quiet --no-warn-script-location ")
-os.system("pip3 install odoorpc-toolbox --upgrade --quiet --no-warn-script-location ")
-os.system("pip3 install nginx-set-conf-equitania --upgrade --quiet --no-warn-script-location ")
-os.system("pip3 install thefuck --upgrade --quiet --no-warn-script-location ")
-os.system("pip3 install odoo-fast-report-mapper-equitania --upgrade --quiet --no-warn-script-location ")
+os.system("pip3 install pip --upgrade --quiet --no-warn-script-location --break-system-packages")
+os.system("pip3 install wheel --upgrade --quiet --no-warn-script-location --break-system-packages")
+os.system("pip3 install setuptools --upgrade --quiet --no-warn-script-location --break-system-packages")
+os.system("pip3 install distro-info --upgrade --quiet --no-warn-script-location --break-system-packages")
+os.system("pip3 install odoorpc-toolbox --upgrade --quiet --no-warn-script-location --break-system-packages")
+os.system("pip3 install nginx-set-conf-equitania --upgrade --quiet --no-warn-script-location --break-system-packages")
+os.system("pip3 install thefuck --upgrade --quiet --no-warn-script-location --break-system-packages")
+os.system("pip3 install odoo-fast-report-mapper-equitania --upgrade --quiet --no-warn-script-location --break-system-packages")
+os.system("curl -sS https://raw.githubusercontent.com/ajeetdsouza/zoxide/main/install.sh | bash")
+os.system("rm .zcompdump-* -y")
