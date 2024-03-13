@@ -1,12 +1,15 @@
 #ZSH powered by ownerp.com
-# Version 3.1.4
-# Date 11.07.2023
+# Version 3.2.0
+# Date 13.03.2024
 
 # If you come from bash you might have to change your $PATH.
 export PATH=$HOME/bin:/usr/local/bin:$HOME/.local/bin:/root/.local/bin:$PATH
 
 # Path to your oh-my-zsh installation.
 export ZSH=$HOME/.oh-my-zsh
+
+# Set name of the theme to load.
+eval "$(zoxide init zsh)"
 
 # Set name of the theme to load. Optionally, if you set this to "random"
 # it'll load a random theme each time that oh-my-zsh is loaded.

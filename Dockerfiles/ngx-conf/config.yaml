@@ -1,42 +1,82 @@
 # nginx conf assistent
 # pip install nginx-set-conf-equitania --upgrade
 # nginx-set-conf --config_path="$HOME/docker-builds/ngx-conf/"
-# 21.02.2023
-live:
-  config_template: ngx_odoo_ssl_pagespeed
-  ip: 0.0.0.0
-  domain: live.ownerp.app
+# 13.03.2024
+odoo-https:
+  config_template: ngx_odoo_ssl
+  ip: 
+  domain: www.
   port: 11000
-  cert_name: live.ownerp.app
+  cert_name: www.
   pollport: 12000
-test:
-  config_template: ngx_odoo_ssl_pagespeed
-  ip: 0.0.0.0
-  domain: test.ownerp.app
-  port: 13000
-  cert_name: test.ownerp.app
-  pollport: 14000
-fast-report:
+  #auth_file: authfile
+Odoo only http:
+  config_template: ngx_odoo_http
+  ip: 
+  domain: www.
+  port: 11000
+  pollport: 12000
+  #auth_file: authfile
+Fast Report:
   config_template: ngx_fast_report
-  ip: 0.0.0.0
-  domain: fr.ownerp.app
+  ip: 
+  domain: www.
   port: 8899
-  cert_name: fr.ownerp.app
-fast-report-test:
-  config_template: ngx_fast_report
-  ip: 0.0.0.0
-  domain: fr-test.ownerp.app
-  port: 8898
-  cert_name: fr-test.ownerp.app
+  cert_name: www.
+  #auth_file: authfile
+Code Server:
+  config_template: ngx_code_server
+  ip: 
+  domain: www.
+  port: 
+  cert_name: www.
+  #auth_file: authfile
+NextCloud:
+  config_template: ngx_nextcloud
+  ip: 
+  domain: www.
+  port: 
+  cert_name: www.
+  #auth_file: authfile
+Portainer:
+  config_template: ngx_portainer
+  ip: 
+  domain: www.
+  port: 
+  cert_name: www.
+  #auth_file: authfile
 pgAdmin:
   config_template: ngx_pgadmin
-  ip: 0.0.0.0
-  domain: pg.ownerp.app
-  port: 5050
-  cert_name: pg.ownerp.app
-vscode:
-  config_template: ngx_code_server
-  ip: 0.0.0.0
-  domain: vs.ownerp.app
-  port: 8443
-  cert_name: vs.ownerp.app
+  ip: 
+  domain: www.
+  port: 
+  cert_name: www.
+  #auth_file: authfile
+PWA:
+  config_template: ngx_pwa
+  ip: 
+  domain: www.
+  port: 
+  cert_name: www.
+  #auth_file: authfile
+mailhog:
+  config_template: ngx_mailhog
+  ip: 
+  domain: www.
+  port: 
+  cert_name: www.
+  #auth_file: authfile
+Redirect:
+  config_template: ngx_redirect
+  ip: 
+  domain: www.
+  redirect_domain: www.
+  #auth_file: authfile
+Redirect_SSL:
+  config_template: ngx_redirect_ssl
+  ip: 
+  domain: www.
+  cert_name: www.
+  redirect_domain: www.
+  #auth_file: authfile
+

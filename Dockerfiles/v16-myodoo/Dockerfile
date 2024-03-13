@@ -1,7 +1,7 @@
-FROM myodoo/prepare-v16:23.02.05
+FROM myodoo/prepare-v16:24.02.01
 LABEL maintainer=info@ownerp.com
 # Mit diesem Skript überprüft das passende Dockerimage gemäß des Releasefiles
-# Date 21.02.2023
+# Date 13.03.2024
 
 CMD "echo" "ownERP Odoo Conatiner build will start now.."
 
