@@ -97,3 +97,6 @@ os.system("rm .zcompdump-*")
 
 # Überprüfen und Installieren von fastfetch
 install_fastfetch_if_needed()
+
+# .zshrc neu laden
+os.system("source ~/.zshrc")
