@@ -1,12 +1,12 @@
 #!/usr/bin/python3
 # -*- coding: utf-8 -*-
 # Dieses Skript hilft beim Organisieren von Docker-Servern
-# Version 5.4.0
-# Date 13.03.2024
+# Version 5.5.0
+# Date 05.07.2024
 ##############################################################################
 #
 #    Shell Script for devops
-#    Copyright (C) 2014-now Equitania Software GmbH(<http://www.equitania.de>).
+#    Copyright © 2014-now Equitania Software GmbH(<http://www.equitania.de>).
 #
 #    This program is free software: you can redistribute it and/or modify
 #    it under the terms of the GNU Affero General Public License as
@@ -24,12 +24,50 @@
 ##############################################################################
 import os
 import platform
+import subprocess
+import requests
 from pathlib import Path
+
+# Funktion zur Überprüfung und Installation von fastfetch
+def is_fastfetch_installed():
+    try:
+        result = subprocess.run(["fastfetch", "--version"], capture_output=True, text=True)
+        return result.returncode == 0, result.stdout.strip().split()[-1]
+    except FileNotFoundError:
+        return False, None
+
+def download_and_install_deb(url, filename):
+    response = requests.get(url)
+    with open(filename, 'wb') as file:
+        file.write(response.content)
+    subprocess.run(["sudo", "dpkg", "-i", filename])
+    os.remove(filename)
+
+def install_fastfetch_if_needed():
+    DESIRED_VERSION = "2.17.2"
+    DEB_URL = f"https://github.com/fastfetch-cli/fastfetch/releases/download/{DESIRED_VERSION}/fastfetch-linux-amd64.deb"
+    DEB_FILE = "fastfetch-linux-amd64.deb"
+
+    installed, version = is_fastfetch_installed()
+    
+    if installed:
+        if version == DESIRED_VERSION:
+            print(f"Fastfetch Version {DESIRED_VERSION} ist bereits installiert.")
+            return
+        else:
+            print(f"Fastfetch Version {version} ist installiert, aber Version {DESIRED_VERSION} wird benötigt.")
+    else:
+        print("Fastfetch ist nicht installiert.")
+    
+    print(f"Lade Fastfetch Version {DESIRED_VERSION} herunter und installiere sie...")
+    download_and_install_deb(DEB_URL, DEB_FILE)
+    print(f"Fastfetch Version {DESIRED_VERSION} wurde erfolgreich installiert.")
 
 # main
 global_server_version = '2024'
 _myhome = os.path.expanduser('~')
 _platform = platform.platform()
+os.system("sudo timedatectl set-timezone Europe/Berlin")
 os.chdir(_myhome + "/" + "myodoo-docker")
 os.system("git checkout " + global_server_version)
 os.system("git config pull.ff only")
@@ -40,6 +78,7 @@ os.system("cp $HOME/myodoo-docker/scripts/update_docker_myodoo.py $HOME")
 os.system("cp $HOME/myodoo-docker/scripts/docker-clean-logs.sh $HOME")
 os.system("cp $HOME/myodoo-docker/scripts/cleanup-weblogs.py $HOME")
 os.system("cp $HOME/myodoo-docker/scripts/container2backup.py $HOME")
+os.system("cp $HOME/myodoo-docker/scripts/container2backup_zstd.py $HOME")
 os.system("cp $HOME/myodoo-docker/scripts/restore-zip.sh $HOME")
 os.system("cp $HOME/myodoo-docker/scripts/ssl-renew.sh $HOME")
 os.system("cp $HOME/myodoo-docker/getScripts.py $HOME")
@@ -55,3 +94,6 @@ os.system("pip3 install thefuck --upgrade --quiet --no-warn-script-location --br
 os.system("pip3 install odoo-fast-report-mapper-equitania --upgrade --quiet --no-warn-script-location --break-system-packages")
 os.system("curl -sS https://raw.githubusercontent.com/ajeetdsouza/zoxide/main/install.sh | bash")
 os.system("rm .zcompdump-*")
+
+# Überprüfen und Installieren von fastfetch
+install_fastfetch_if_needed()
