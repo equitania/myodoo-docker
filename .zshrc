@@ -1,6 +1,6 @@
 #ZSH powered by ownerp.com
-# Version 3.2.0
-# Date 13.03.2024
+# Version 3.2.1
+# Date 05.07.2024
 
 # If you come from bash you might have to change your $PATH.
 export PATH=$HOME/bin:/usr/local/bin:$HOME/.local/bin:/root/.local/bin:$PATH
@@ -152,6 +152,11 @@ alias dkpsf='docker inspect  -f "{{.Name}} {{.Config.Cmd}}" $(docker ps -a -q)'
 if [ -f /usr/bin/neofetch ]
 then
     neofetch
+fi
+
+if [ -f /usr/bin/fastfetch ]
+then
+    fastfetch
 fi
 
 [ ! "$(find ~/.zcompdump -mtime 1)" ] || compinit
