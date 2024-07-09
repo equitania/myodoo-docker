@@ -1,9 +1,7 @@
-FROM myodoo/prepare-v16:24.02.01
+FROM myodoo/prepare-v16:24.06.02
 LABEL maintainer=info@ownerp.com
 # Mit diesem Skript überprüft das passende Dockerimage gemäß des Releasefiles
-# Date 13.03.2024
-
-CMD "echo" "ownERP Odoo Conatiner build will start now.."
+# Date 08.07.2024
 
 # create the odoo user
 RUN adduser --home=/opt/odoo --disabled-password --gecos "" --shell=/bin/bash odoo
@@ -30,6 +28,7 @@ VOLUME ["/opt/odoo/var", "/opt/odoo/etc", "/opt/odoo/data"]
 # Set the default entrypoint (non overridable) to run when starting the container
 ENTRYPOINT ["/app/bin/boot"]
 CMD ["help"]
+
 # Expose the odoo ports (for linked containers)
 EXPOSE 8069 8072
 ADD bin /app/bin/

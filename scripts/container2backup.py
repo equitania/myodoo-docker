@@ -2,7 +2,7 @@
 # -*- coding: utf-8 -*-
 # Mit diesem Skript wird ein Backup einer Odoo Datenbank inkl. FileStore unter Docker durchgeführt
 # With this script you can backup odoo db on postgresql incl. filestore under Docker
-# Version 4.0.0
+# Version 3.1.1
 # Date 04.09.2022
 ##############################################################################
 #
@@ -23,70 +23,27 @@
 #    along with this program.  If not, see <http://www.gnu.org/licenses/>.
 #
 ##############################################################################
-import csv
-import datetime
-import io
 import os
-import os.path
-import subprocess
-import time
+import io
+import csv
 import zipfile
+import datetime, time
+import os.path
 from os.path import expanduser
 
-def zstd_compress_encrypt_dir(dir_path, output_path, password):
-    start_time = time.time()  # Measure start time
-
-    # Determine the target directory's name and the path leading to it
-    base_dir = os.path.dirname(dir_path)
-    dir_name = os.path.basename(dir_path)
-
-    # Temporary tar file
-    tar_path = output_path + '.tar'
-    # Zstd compressed file path adjusted to not double-append extensions
-    zstd_path = output_path if password == '' else output_path + '.zst'
-
-    # Create a tar archive of the directory with relative paths
-    with open(tar_path, "wb") as tar_file:
-        subprocess.run(["tar", "-cf", "-", "-C", base_dir, dir_name], stdout=tar_file)
-
-    # Compress the tar archive with zstd specifying the compression level
-    subprocess.run(["zstd", "-10", "-f", tar_path, "-o", zstd_path])
-
-    # Remove the temporary tar file
-    os.remove(tar_path)
-
-    # Encrypt the zstd file with gpg and password protection if a password is provided
-    if password != '':
-        encrypted_path = output_path + '.gpg'  # Ensure the file ends with .gpg after encryption
-        subprocess.run(['gpg', '--symmetric', '--batch', '--passphrase', password, '-o', encrypted_path, zstd_path])
-        os.remove(zstd_path)  # Remove the uncompressed zstd file after encryption
-
-    end_time = time.time()  # Measure end time
-    compression_time = end_time - start_time  # Calculate the difference
-
-    print(f"Compression completed in {compression_time} secs.")
-
-
 def zip_dir(_dir_path, _zip_path):
-    start_time = time.time()  # Startzeit messen
-
-    fzip = zipfile.ZipFile(_zip_path, "w", zipfile.ZIP_DEFLATED, allowZip64=True)
-    basedir = os.path.dirname(_dir_path) + "/"
+    fzip = zipfile.ZipFile(_zip_path, 'w', zipfile.ZIP_DEFLATED, allowZip64=True)
+    basedir = os.path.dirname(_dir_path) + '/'
     for root, dirs, files in os.walk(_dir_path):
-        if os.path.basename(root)[0] == ".":
+        if os.path.basename(root)[0] == '.':
             continue  # skip hidden directories
-        dirname = root.replace(basedir, "")
+        dirname = root.replace(basedir, '')
         for f in files:
-            if f[-1] == "~" or (f[0] == "." and f != ".htaccess"):
+            if f[-1] == '~' or (f[0] == '.' and f != '.htaccess'):
                 continue
-            fzip.write(root + "/" + f, dirname + "/" + f)
+            fzip.write(root + '/' + f, dirname + '/' + f)
     fzip.close()
-    end_time = time.time()  # Endzeit messen
-    compression_time = end_time - start_time  # Differenz berechnen
-
-    print(f"compressiontime {compression_time} secs.")
-    return
-
+    return;
 
 def cleanup_backups(_cleanup_path, _cutoff_days):
     _files = os.listdir(_cleanup_path + "/")
@@ -99,19 +56,18 @@ def cleanup_backups(_cleanup_path, _cutoff_days):
                 print("remove: " + _cleanup_path + "/" + _xfile)
                 os.remove(_cleanup_path + "/" + _xfile)
 
-
 # csv format - separator ","
-# databasename,postgresql_containername,myodoo_containername,number_of_days,password
+# databasename,postgresql_containername,myodoo_containername,number_of_days
 _mybasepath = expanduser("~")
-_fname_backup = _mybasepath + "/container2backup.csv"
-_fname_backup_path = _mybasepath + "/container2backup_path.csv"
+_fname_backup = _mybasepath + '/container2backup.csv'
+_fname_backup_path = _mybasepath + '/container2backup_path.csv'
 
 if os.path.exists(_fname_backup_path):
-    _mybackup_file = open(_fname_backup_path, "r", encoding="utf8")
+    _mybackup_file  = open(_fname_backup_path, 'r', encoding="utf8")
     _mybackuppath = _mybackup_file.readline()
-    _mybackuppath = _mybackuppath.strip("\n")
+    _mybackuppath = _mybackuppath.strip('\n')
 else:
-    print("No " + _fname_backup_path + " found!")
+    print("No "+ _fname_backup_path + " found!")
     _mybackuppath = "/opt/backups"
 
 if not os.path.exists(_mybackuppath):
@@ -131,13 +87,13 @@ if not os.path.exists(_mybackuppath):
 
 print(_mybackuppath)
 
-with io.open(_fname_backup, "r", encoding="utf8") as csvfile:
+with io.open(_fname_backup, 'r', encoding="utf8") as csvfile:
     _reader = csv.reader(csvfile, delimiter=",")
     for row in _reader:
         _mydb = row[0]
-        if not (row):
+        if (not(row)):
             continue
-        elif row[0].startswith("#"):
+        elif (row[0].startswith('#')):
             continue
             # Kommentarzeile
         _mydbuser = row[1]
@@ -147,106 +103,37 @@ with io.open(_fname_backup, "r", encoding="utf8") as csvfile:
             _mystoretime = row[4]
         except:
             _mystoretime = 14
-        # Password
-        try:
-            _mypassword = row[5]
-        except:
-            _mypassword = ''
-        print(
-            "Database Name:"
-            + _mydb
-            + "\nDatabaseContainerName:"
-            + _mysqlcontainer
-            + "\nMyOdooContainerName:"
-            + _mydatacontainer
-            + "\nStoreTime:"
-            + str(_mystoretime)
-            + " days"
-            + "\nPassword:"
-            + _mypassword
-            )
-        _mybackupfolder = _mybackuppath + "/" + _mydb
+        print('Database Name:' + _mydb + '\nDatabaseContainerName:' + _mysqlcontainer + '\nMyOdooContainerName:' + _mydatacontainer + '\nStoreTime:' + str(_mystoretime) + ' days')
+        _mybackupfolder = _mybackuppath + '/' + _mydb
         if not os.path.exists(_mybackupfolder):
             os.mkdir(_mybackupfolder)
-        os.system(
-            "docker exec -i "
-            + _mysqlcontainer
-            + " pg_dump -U "
-            + _mydbuser
-            + " "
-            + _mydb
-            + " > "
-            + _mybackupfolder
-            + "/dump.sql"
-        )
-        filestorepath = "/opt/odoo/data/filestore/"
-        os.system(
-            "docker cp "
-            + _mydatacontainer
-            + ":/opt/odoo/data/filestore/"
-            + _mydb
-            + " "
-            + _mybackupfolder
-            + "/"
-        )
+        os.system('docker exec -i ' + _mysqlcontainer + ' pg_dump -U ' + _mydbuser + ' ' + _mydb + ' > ' + _mybackupfolder + '/dump.sql')
+        filestorepath = '/opt/odoo/data/filestore/'
+        os.system('docker cp ' + _mydatacontainer + ':/opt/odoo/data/filestore/' + _mydb + ' ' + _mybackupfolder + '/')
         ts = time.time()
-        mytime = datetime.datetime.fromtimestamp(ts).strftime("%Y-%m-%d_%H-%M-%S")
-        # os.rename(mybackupfolder + '/' + mydb, mybackupfolder + '/filestore')
-        zstd_compress_encrypt_dir(
-            _mybackupfolder,
-            _mybackuppath
-            + "/"
-            + _mydb
-            + "_"
-            + _mydatacontainer
-            + "_dockerbackup_"
-            + mytime
-            + ".tar.zst",
-            _mypassword
-        )
-        #zip_dir(
-        #    _mybackupfolder,
-        #    _mybackuppath
-        #    + "/"
-        #    + _mydb
-        #    + "_"
-        #    + _mydatacontainer
-        #    + "_dockerbackup_"
-        #    + mytime
-        #    + ".zip",
-        #)
-        os.system("rm -r " + _mybackupfolder)
-        print("Backup is done " + _mydatacontainer)
+        mytime = datetime.datetime.fromtimestamp(ts).strftime('%Y-%m-%d_%H-%M-%S')
+        #os.rename(mybackupfolder + '/' + mydb, mybackupfolder + '/filestore')
+        zip_dir(_mybackupfolder, _mybackuppath + '/' + _mydb + '_' + _mydatacontainer + '_dockerbackup_' + mytime + '.zip')
+        os.system('rm -r ' + _mybackupfolder)
+        print('Backup is done ' + _mydatacontainer)
 
 # backup nginx-conf
-if os.path.exists("/etc/nginx/conf.d/"):
+if os.path.exists('/etc/nginx/conf.d/'):
     ts = time.time()
-    mytime = datetime.datetime.fromtimestamp(ts).strftime("%Y-%m-%d_%H-%M-%S")
-    os.system("zip -r " + _mynginxpath + "/nginx-confs_" + mytime + ".zip /etc/nginx/")
+    mytime = datetime.datetime.fromtimestamp(ts).strftime('%Y-%m-%d_%H-%M-%S')
+    os.system('zip -r ' + _mynginxpath + '/nginx-confs_' + mytime + '.zip /etc/nginx/')
 
 # backup letsencrypt
-if os.path.exists("/etc/letsencrypt/live/"):
+if os.path.exists('/etc/letsencrypt/live/'):
     ts = time.time()
-    mytime = datetime.datetime.fromtimestamp(ts).strftime("%Y-%m-%d_%H-%M-%S")
-    os.system(
-        "zip -r "
-        + _mynginxpath
-        + "/letsencrypt_"
-        + mytime
-        + ".zip /etc/letsencrypt/live/"
-    )
+    mytime = datetime.datetime.fromtimestamp(ts).strftime('%Y-%m-%d_%H-%M-%S')
+    os.system('zip -r ' + _mynginxpath + '/letsencrypt_' + mytime + '.zip /etc/letsencrypt/live/')
 
 # backup docker-builds
-if os.path.exists("/root/docker-builds"):
+if os.path.exists('/root/docker-builds'):
     ts = time.time()
-    mytime = datetime.datetime.fromtimestamp(ts).strftime("%Y-%m-%d_%H-%M-%S")
-    os.system(
-        "zip -r "
-        + _mydockerbuildpath
-        + "/docker-builds"
-        + mytime
-        + ".zip /root/docker-builds/"
-    )
+    mytime = datetime.datetime.fromtimestamp(ts).strftime('%Y-%m-%d_%H-%M-%S')
+    os.system('zip -r ' + _mydockerbuildpath + '/docker-builds' + mytime + '.zip /root/docker-builds/')
 
 # run by crontab
 # removes any files in mybackuppath older than 14 days or mystoretime
@@ -265,16 +152,16 @@ cleanup_backups(_mydockerbuildpath, _cutoff)
 
 # csv format
 # rsync --delete -avzre "ssh" /sourcepath/ user@servername:/targetpath/
-fname_rsync = _mybasepath + "/rsync_targets.csv"
-print("Start rsync: " + fname_rsync)
+fname_rsync = _mybasepath + '/rsync_targets.csv'
+print('Start rsync: ' + fname_rsync)
 if os.path.isfile(fname_rsync):
-    with io.open(fname_rsync, "r", encoding="utf8") as csvfile:
+    with io.open(fname_rsync, 'r', encoding="utf8") as csvfile:
         _reader_sync = csv.reader(csvfile, delimiter=",")
         for row in _reader_sync:
-            if not (row):
+            if (not(row)):
                 continue
-            elif row[0].startswith("#"):
+            elif (row[0].startswith('#')):
                 continue
             else:
                 os.system(row[0])
-print("Backup done!")
+print('Backup done!')
