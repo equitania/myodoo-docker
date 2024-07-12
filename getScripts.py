@@ -23,7 +23,6 @@
 #
 ##############################################################################
 import os
-import platform
 import subprocess
 import requests
 from pathlib import Path
@@ -80,7 +79,6 @@ global_server_version = '2024'
 _myhome = os.path.expanduser('~')
 config_directory = os.path.join(_myhome, ".config", "fastfetch")
 ensure_directory_exists(config_directory)
-#_platform = platform.platform()
 os.system("sudo timedatectl set-timezone Europe/Berlin")
 os.chdir(_myhome + "/" + "myodoo-docker")
 os.system("git checkout " + global_server_version)
@@ -118,4 +116,4 @@ install_fastfetch_if_needed()
 
 # .zshrc neu laden
 print("Reloading .zshrc...")
-os.system("bash -c 'source ~/.zshrc'")
+os.system("/bin/zsh -c 'source ~/.zshrc'")
