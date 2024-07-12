@@ -1,8 +1,8 @@
 #!/usr/bin/python3
 # -*- coding: utf-8 -*-
 # Dieses Skript hilft beim Organisieren von Docker-Servern
-# Version 5.5.0
-# Date 05.07.2024
+# Version 5.5.1
+# Date 12.07.2024
 ##############################################################################
 #
 #    Shell Script for devops
@@ -115,4 +115,4 @@ install_fastfetch_if_needed()
 
 # .zshrc neu laden
 print("Reloading .zshrc...")
-os.system("source ~/.zshrc")
+os.system("bash -c 'source ~/.zshrc'")
