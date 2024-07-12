@@ -1,7 +1,7 @@
 #!/usr/bin/python3
 # -*- coding: utf-8 -*-
 # Dieses Skript hilft beim Organisieren von Docker-Servern
-# Version 5.5.1
+# Version 5.5.2
 # Date 12.07.2024
 ##############################################################################
 #
@@ -99,14 +99,17 @@ os.system("cp $HOME/myodoo-docker/scripts/ssl-renew.sh $HOME")
 os.system("cp $HOME/myodoo-docker/getScripts.py $HOME")
 os.chdir(_myhome)
 
-os.system("pip3 install pip --upgrade --quiet --no-warn-script-location --break-system-packages")
-os.system("pip3 install wheel --upgrade --quiet --no-warn-script-location --break-system-packages")
-os.system("pip3 install setuptools --upgrade --quiet --no-warn-script-location --break-system-packages")
-os.system("pip3 install distro-info --upgrade --quiet --no-warn-script-location --break-system-packages")
-os.system("pip3 install odoorpc-toolbox --upgrade --quiet --no-warn-script-location --break-system-packages")
-os.system("pip3 install nginx-set-conf-equitania --upgrade --quiet --no-warn-script-location --break-system-packages")
-os.system("pip3 install thefuck --upgrade --quiet --no-warn-script-location --break-system-packages")
-os.system("pip3 install odoo-fast-report-mapper-equitania --upgrade --quiet --no-warn-script-location --break-system-packages")
+os.system("pip3 install pip --upgrade --quiet --no-warn-script-location --break-system-packages --root-user-action=ignore")
+os.system("pip3 install wheel --upgrade --quiet --no-warn-script-location --break-system-packages --root-user-action=ignore")
+os.system("pip3 install setuptools --upgrade --quiet --no-warn-script-location --break-system-packages --root-user-action=ignore")
+os.system("pip3 install distro-info --upgrade --quiet --no-warn-script-location --break-system-packages --root-user-action=ignore")
+os.system("pip3 install odoorpc-toolbox --upgrade --quiet --no-warn-script-location --break-system-packages --root-user-action=ignore")
+os.system("pip3 install nginx-set-conf-equitania --upgrade --quiet --no-warn-script-location --break-system-packages --root-user-action=ignore")
+os.system("pip3 install thefuck --upgrade --quiet --no-warn-script-location --break-system-packages --root-user-action=ignore")
+os.system("pip3 install odoo-fast-report-mapper-equitania --upgrade --quiet --no-warn-script-location --break-system-packages --root-user-action=ignore")
+os.system("pip3 install nginx-set-conf-equitania --upgrade --quiet --no-warn-script-location --break-system-packages --root-user-action=ignore")
+os.system("pip3 install thefuck --upgrade --quiet --no-warn-script-location --break-system-packages --root-user-action=ignore")
+os.system("pip3 install odoo-fast-report-mapper-equitania --upgrade --quiet --no-warn-script-location --break-system-packages --root-user-action=ignore")
 os.system("curl -sS https://raw.githubusercontent.com/ajeetdsouza/zoxide/main/install.sh | bash")
 os.system("rm .zcompdump-*")
 
