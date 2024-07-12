@@ -109,6 +109,7 @@ alias grep='grep --color=auto'
 alias nano='nano --nowrap -B -c'
 alias hg='history | grep'
 alias nf='neofetch'
+alias ff='fastfetch'
 alias mce='mcedit'
 
 # ignore dangerous commands from history and make them safer

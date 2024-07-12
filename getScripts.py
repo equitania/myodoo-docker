@@ -32,8 +32,13 @@ from pathlib import Path
 def is_fastfetch_installed():
     try:
         result = subprocess.run(["fastfetch", "--version"], capture_output=True, text=True)
-        return result.returncode == 0, result.stdout.strip().split()[-1]
+        if result.returncode == 0:
+            return True, result.stdout.strip().split()[-1]
+        else:
+            print("Fastfetch repead:", result.stderr)
+            return False, None
     except FileNotFoundError:
+        print("Fastfetch not found.")
         return False, None
 
 def download_and_install_deb(url, filename):
@@ -44,7 +49,7 @@ def download_and_install_deb(url, filename):
     os.remove(filename)
 
 def install_fastfetch_if_needed():
-    DESIRED_VERSION = "2.17.2"
+    DESIRED_VERSION = "2.18.1"
     DEB_URL = f"https://github.com/fastfetch-cli/fastfetch/releases/download/{DESIRED_VERSION}/fastfetch-linux-amd64.deb"
     DEB_FILE = "fastfetch-linux-amd64.deb"
 
@@ -52,21 +57,30 @@ def install_fastfetch_if_needed():
     
     if installed:
         if version == DESIRED_VERSION:
-            print(f"Fastfetch Version {DESIRED_VERSION} ist bereits installiert.")
+            print(f"Fastfetch Version {DESIRED_VERSION} are already installed.")
             return
         else:
-            print(f"Fastfetch Version {version} ist installiert, aber Version {DESIRED_VERSION} wird benötigt.")
+            print(f"Fastfetch Version {version} is installed but version {DESIRED_VERSION} is required.")
     else:
-        print("Fastfetch ist nicht installiert.")
+        print("Fastfetch is not installed.")
     
-    print(f"Lade Fastfetch Version {DESIRED_VERSION} herunter und installiere sie...")
+    print(f"Loading Fastfetch Version {DESIRED_VERSION} ...")
     download_and_install_deb(DEB_URL, DEB_FILE)
-    print(f"Fastfetch Version {DESIRED_VERSION} wurde erfolgreich installiert.")
+    print(f"Fastfetch Version {DESIRED_VERSION} was successfully installed.")
+
+def ensure_directory_exists(directory):
+    if not os.path.exists(directory):
+        os.makedirs(directory)
+        print(f"Directory '{directory}' was created.")
+    else:
+        print(f"Directory '{directory}' already exists.")
 
 # main
 global_server_version = '2024'
 _myhome = os.path.expanduser('~')
-_platform = platform.platform()
+config_directory = os.path.join(_myhome, ".config", "fastfetch")
+ensure_directory_exists(config_directory)
+#_platform = platform.platform()
 os.system("sudo timedatectl set-timezone Europe/Berlin")
 os.chdir(_myhome + "/" + "myodoo-docker")
 os.system("git checkout " + global_server_version)
@@ -74,6 +88,7 @@ os.system("git config pull.ff only")
 os.system("git pull")
 os.system("find . -name '*.pyc' -type f -print0 | xargs -0 /bin/rm -f")
 os.system("cp $HOME/myodoo-docker/.zshrc $HOME/.zshrc")
+os.system("cp $HOME/myodoo-docker/scripts/fastfetch/config.jsonc $HOME/.config/fastfetch/")
 os.system("cp $HOME/myodoo-docker/scripts/update_docker_myodoo.py $HOME")
 os.system("cp $HOME/myodoo-docker/scripts/docker-clean-logs.sh $HOME")
 os.system("cp $HOME/myodoo-docker/scripts/cleanup-weblogs.py $HOME")
@@ -99,4 +114,5 @@ os.system("rm .zcompdump-*")
 install_fastfetch_if_needed()
 
 # .zshrc neu laden
+print("Reloading .zshrc...")
 os.system("source ~/.zshrc")
