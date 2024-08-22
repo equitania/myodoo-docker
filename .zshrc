@@ -1,6 +1,6 @@
 #ZSH powered by ownerp.com
-# Version 3.2.2
-# Date 12.07.2024
+# Version 3.2.3
+# Date 2.08.2024
 
 # If you come from bash you might have to change your $PATH.
 export PATH=$HOME/bin:/usr/local/bin:$HOME/.local/bin:/root/.local/bin:$PATH
@@ -142,6 +142,7 @@ alias dobk='$HOME/container2backup.py'
 alias doup='$HOME/update_docker_myodoo.py'
 alias edbk='mcedit $HOME/container2backup.csv'
 alias edup='mcedit $HOME/docker2update.csv'
+alias llbk='ll /opt/backups/docker'
 
 
 # Docker alias
