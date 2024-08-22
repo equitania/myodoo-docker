@@ -1,8 +1,8 @@
 #!/usr/bin/python3
 # -*- coding: utf-8 -*-
 # Dieses Skript hilft beim Organisieren von Docker-Servern
-# Version 5.5.2
-# Date 12.07.2024
+# Version 5.5.3
+# Date 22.08.2024
 ##############################################################################
 #
 #    Shell Script for devops
@@ -48,7 +48,7 @@ def download_and_install_deb(url, filename):
     os.remove(filename)
 
 def install_fastfetch_if_needed():
-    DESIRED_VERSION = "2.18.1"
+    DESIRED_VERSION = "2.21.3"
     DEB_URL = f"https://github.com/fastfetch-cli/fastfetch/releases/download/{DESIRED_VERSION}/fastfetch-linux-amd64.deb"
     DEB_FILE = "fastfetch-linux-amd64.deb"
 
