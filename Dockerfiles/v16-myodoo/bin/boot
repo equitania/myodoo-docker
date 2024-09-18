@@ -1,8 +1,8 @@
 #!/bin/bash
 #
 # This script is designed to be run inside the container
-# Version 2.0.2
-# Date 02.02.2022
+# Version 2.0.3
+# Date 18.09.2022
 ##############################################################################
 #
 #    Shell Script for Odoo Docker Container
@@ -23,7 +23,7 @@
 #
 ##############################################################################
 
-currentdate=`date +"%d.%m.%Y %T"`
+currentdate='date +"%d.%m.%Y %T"'
 echo "Odoo Container starting now: $currentdate"
 
 # config path
@@ -56,6 +56,24 @@ function update {
     sudo -i -u odoo python3 \
                     /opt/odoo/odoo-server/odoo-bin \
                     --update=all \
+                    --workers=0 \
+                    --no-xmlrpc \
+                    --stop-after-init \
+                    $*
+
+    SERVICE_PID=$!
+    set -e
+}
+
+function neutralize {
+    echo "neutralize odoo..."
+    set +e
+    if [ ! -e $1 ]; then
+        echo "...with additional args: $*"
+    fi
+    sudo -i -u odoo python3 \
+                    /opt/odoo/odoo-server/odoo-bin \
+                    neutralize \
                     --workers=0 \
                     --no-xmlrpc \
                     --stop-after-init \

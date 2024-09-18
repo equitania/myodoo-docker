@@ -2,8 +2,8 @@
 # -*- coding: utf-8 -*-
 # Mit diesem Skript wird ein Update einer Odoo Datenbank unter Docker durchgeführt
 # With this script you can update odoo db on postgresql under Docker
-# Version 4.0.4
-# Date 26.04.2023
+# Version 4.0.5
+# Date 18.09.2024
 ##############################################################################
 #
 #    Shell Script for Odoo, Open Source Management Solution
@@ -110,6 +110,8 @@ with io.open(_fname, "r", encoding="utf8") as csvfile:
             print("Full update")
         elif _mytype == "M":
             print("Only module copy in container")
+        elif _mytype == "N":
+            print("Only mdule copy in container and neutralize")
         else:
             print("Missing update mode")
             continue
@@ -150,6 +152,11 @@ with io.open(_fname, "r", encoding="utf8") as csvfile:
             _update_command = "docker run -it --rm -p " + _myport + ":8069 -p " + _mypollport + ":8072 --name=" + _mycontainer + " " + _myvolumen + " " + _myimage + " update --database=" + _mydb + " --db_user=" + _mydbuser + " --db_password=" + _mydbpassword + " --db_host=" + _mydbhost + _load_translation
             print(_update_command)
             os.system(_update_command)
+        if _mytype == "N":
+            print(_mycontainer + " neutralize...")
+            _neutralize_command = "docker run -it --rm -p " + _myport + ":8069 -p " + _mypollport + ":8072 --name=" + _mycontainer + " " + _myvolumen + " " + _myimage + " neutralize --database=" + _mydb + " --db_user=" + _mydbuser + " --db_password=" + _mydbpassword + " --db_host=" + _mydbhost
+            print(_neutralize_command)
+            os.system(_neutralize_command)
         # restart
         _restart_command = "docker run -d --restart=always -p " + _myport + ":8069 -p " + _mypollport + ":8072 --name=" + _mycontainer + " " + _myvolumen + " " + _myimage + " start"
         print(_restart_command)
