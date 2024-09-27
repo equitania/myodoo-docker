@@ -1,4 +1,4 @@
-FROM myodoo/prepare-v16:24.06.02
+FROM myodoo/prepare-v16:24.09.01
 LABEL maintainer=info@ownerp.com
 # Mit diesem Skript überprüft das passende Dockerimage gemäß des Releasefiles
 # Date 08.07.2024
