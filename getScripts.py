@@ -1,8 +1,8 @@
 #!/usr/bin/python3
 # -*- coding: utf-8 -*-
 # Dieses Skript hilft beim Organisieren von Docker-Servern
-# Version 5.5.3
-# Date 22.08.2024
+# Version 6.0.0
+# Date 04.12.2024
 ##############################################################################
 #
 #    Shell Script for devops
@@ -26,29 +26,39 @@ import os
 import subprocess
 import requests
 from pathlib import Path
+import sys
 
 # Funktion zur Überprüfung und Installation von fastfetch
 def is_fastfetch_installed():
     try:
-        result = subprocess.run(["fastfetch", "--version"], capture_output=True, text=True)
+        result = subprocess.run(["fastfetch", "--version"], stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
         if result.returncode == 0:
-            return True, result.stdout.strip().split()[-1]
+            # Extrahiere die Versionsnummer aus der Ausgabe
+            output = result.stdout.strip() or result.stderr.strip()
+            version = output.split()[-1]
+            return True, version
         else:
-            print("Fastfetch repead:", result.stderr)
+            print("Fastfetch Fehler:", result.stderr.strip())
             return False, None
     except FileNotFoundError:
-        print("Fastfetch not found.")
+        print("Fastfetch wurde nicht gefunden.")
         return False, None
 
 def download_and_install_deb(url, filename):
-    response = requests.get(url)
-    with open(filename, 'wb') as file:
-        file.write(response.content)
-    subprocess.run(["sudo", "dpkg", "-i", filename])
-    os.remove(filename)
+    try:
+        response = requests.get(url)
+        response.raise_for_status()
+        with open(filename, 'wb') as file:
+            file.write(response.content)
+        subprocess.run(["sudo", "dpkg", "-i", filename], check=True)
+        os.remove(filename)
+    except Exception as e:
+        print(f"Fehler beim Installieren von {filename}: {e}")
+        sys.exit(1)
 
 def install_fastfetch_if_needed():
-    DESIRED_VERSION = "2.21.3"
+    # https://github.com/fastfetch-cli/fastfetch/releases
+    DESIRED_VERSION = "2.31.0"
     DEB_URL = f"https://github.com/fastfetch-cli/fastfetch/releases/download/{DESIRED_VERSION}/fastfetch-linux-amd64.deb"
     DEB_FILE = "fastfetch-linux-amd64.deb"
 
@@ -56,64 +66,88 @@ def install_fastfetch_if_needed():
     
     if installed:
         if version == DESIRED_VERSION:
-            print(f"Fastfetch Version {DESIRED_VERSION} are already installed.")
+            print(f"Fastfetch Version {DESIRED_VERSION} ist bereits installiert.")
             return
         else:
-            print(f"Fastfetch Version {version} is installed but version {DESIRED_VERSION} is required.")
+            print(f"Fastfetch Version {version} ist installiert, aber Version {DESIRED_VERSION} wird benötigt.")
     else:
-        print("Fastfetch is not installed.")
+        print("Fastfetch ist nicht installiert.")
     
-    print(f"Loading Fastfetch Version {DESIRED_VERSION} ...")
+    print(f"Lade Fastfetch Version {DESIRED_VERSION} herunter...")
     download_and_install_deb(DEB_URL, DEB_FILE)
-    print(f"Fastfetch Version {DESIRED_VERSION} was successfully installed.")
+    print(f"Fastfetch Version {DESIRED_VERSION} wurde erfolgreich installiert.")
 
 def ensure_directory_exists(directory):
-    if not os.path.exists(directory):
-        os.makedirs(directory)
-        print(f"Directory '{directory}' was created.")
-    else:
-        print(f"Directory '{directory}' already exists.")
+    os.makedirs(directory, exist_ok=True)
+    print(f"Verzeichnis '{directory}' wurde erstellt oder existiert bereits.")
 
-# main
-global_server_version = '2024'
-_myhome = os.path.expanduser('~')
-config_directory = os.path.join(_myhome, ".config", "fastfetch")
-ensure_directory_exists(config_directory)
-os.system("sudo timedatectl set-timezone Europe/Berlin")
-os.chdir(_myhome + "/" + "myodoo-docker")
-os.system("git checkout " + global_server_version)
-os.system("git config pull.ff only")
-os.system("git pull")
-os.system("find . -name '*.pyc' -type f -print0 | xargs -0 /bin/rm -f")
-os.system("cp $HOME/myodoo-docker/.zshrc $HOME/.zshrc")
-os.system("cp $HOME/myodoo-docker/scripts/fastfetch/config.jsonc $HOME/.config/fastfetch/")
-os.system("cp $HOME/myodoo-docker/scripts/update_docker_myodoo.py $HOME")
-os.system("cp $HOME/myodoo-docker/scripts/docker-clean-logs.sh $HOME")
-os.system("cp $HOME/myodoo-docker/scripts/cleanup-weblogs.py $HOME")
-os.system("cp $HOME/myodoo-docker/scripts/container2backup.py $HOME")
-os.system("cp $HOME/myodoo-docker/scripts/container2backup_zstd.py $HOME")
-os.system("cp $HOME/myodoo-docker/scripts/restore-zip.sh $HOME")
-os.system("cp $HOME/myodoo-docker/scripts/ssl-renew.sh $HOME")
-os.system("cp $HOME/myodoo-docker/getScripts.py $HOME")
-os.chdir(_myhome)
+def run_command(command, check=False):
+    try:
+        subprocess.run(command, shell=True, check=check)
+    except subprocess.CalledProcessError as e:
+        print(f"Fehler beim Ausführen von '{command}': {e}")
+        if check:
+            sys.exit(1)
 
-os.system("pip3 install pip --upgrade --quiet --no-warn-script-location --break-system-packages --root-user-action=ignore")
-os.system("pip3 install wheel --upgrade --quiet --no-warn-script-location --break-system-packages --root-user-action=ignore")
-os.system("pip3 install setuptools --upgrade --quiet --no-warn-script-location --break-system-packages --root-user-action=ignore")
-os.system("pip3 install distro-info --upgrade --quiet --no-warn-script-location --break-system-packages --root-user-action=ignore")
-os.system("pip3 install odoorpc-toolbox --upgrade --quiet --no-warn-script-location --break-system-packages --root-user-action=ignore")
-os.system("pip3 install nginx-set-conf-equitania --upgrade --quiet --no-warn-script-location --break-system-packages --root-user-action=ignore")
-os.system("pip3 install thefuck --upgrade --quiet --no-warn-script-location --break-system-packages --root-user-action=ignore")
-os.system("pip3 install odoo-fast-report-mapper-equitania --upgrade --quiet --no-warn-script-location --break-system-packages --root-user-action=ignore")
-os.system("pip3 install nginx-set-conf-equitania --upgrade --quiet --no-warn-script-location --break-system-packages --root-user-action=ignore")
-os.system("pip3 install thefuck --upgrade --quiet --no-warn-script-location --break-system-packages --root-user-action=ignore")
-os.system("pip3 install odoo-fast-report-mapper-equitania --upgrade --quiet --no-warn-script-location --break-system-packages --root-user-action=ignore")
-os.system("curl -sS https://raw.githubusercontent.com/ajeetdsouza/zoxide/main/install.sh | bash")
-os.system("rm .zcompdump-*")
+def upgrade_pip_package(package_name):
+    run_command(f"pip3 install {package_name} --upgrade --quiet --no-warn-script-location --break-system-packages --root-user-action=ignore")
 
-# Überprüfen und Installieren von fastfetch
-install_fastfetch_if_needed()
+# Hauptfunktion
+def main():
+    global_server_version = '2024'
+    _myhome = os.path.expanduser('~')
+    config_directory = os.path.join(_myhome, ".config", "fastfetch")
+    ensure_directory_exists(config_directory)
 
-# .zshrc neu laden
-print("Reloading .zshrc...")
-os.system("/bin/zsh -c 'source ~/.zshrc'")
+    run_command("sudo timedatectl set-timezone Europe/Berlin", check=True)
+
+    os.chdir(os.path.join(_myhome, "myodoo-docker"))
+    run_command(f"git checkout {global_server_version}")
+    run_command("git config pull.ff only")
+    run_command("git pull")
+    run_command("find . -name '*.pyc' -type f -print0 | xargs -0 /bin/rm -f")
+    run_command("cp $HOME/myodoo-docker/.zshrc $HOME/.zshrc")
+    run_command("cp $HOME/myodoo-docker/scripts/fastfetch/config.jsonc $HOME/.config/fastfetch/")
+    
+    scripts = [
+        "update_docker_myodoo.py",
+        "docker-clean-logs.sh",
+        "cleanup-weblogs.py",
+        "container2backup.py",
+        "container2backup_zstd.py",
+        "restore-zip.sh",
+        "ssl-renew.sh",
+        "getScripts.py"
+    ]
+    
+    for script in scripts:
+        run_command(f"cp $HOME/myodoo-docker/scripts/{script} $HOME")
+    
+    os.chdir(_myhome)
+
+    packages = [
+        "pip",
+        "wheel",
+        "setuptools",
+        "distro-info",
+        "odoorpc-toolbox",
+        "nginx-set-conf-equitania",
+        "thefuck",
+        "odoo-fast-report-mapper-equitania"
+    ]
+
+    for package in packages:
+        upgrade_pip_package(package)
+
+    run_command("curl -sS https://raw.githubusercontent.com/ajeetdsouza/zoxide/main/install.sh | bash")
+    run_command("rm .zcompdump-*")
+    
+    # Überprüfen und Installieren von fastfetch
+    install_fastfetch_if_needed()
+    
+    # .zshrc neu laden
+    print("Lade .zshrc neu...")
+    run_command("/bin/zsh -c 'source ~/.zshrc'")
+
+if __name__ == "__main__":
+    main()
