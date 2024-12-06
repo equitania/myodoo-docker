@@ -31,12 +31,22 @@ import sys
 # Funktion zur Überprüfung und Installation von fastfetch
 def is_fastfetch_installed():
     try:
-        result = subprocess.run(["fastfetch", "--version"], stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
+        result = subprocess.run(
+            ["fastfetch", "--version"], 
+            stdout=subprocess.PIPE, 
+            stderr=subprocess.PIPE, 
+            text=True
+        )
         if result.returncode == 0:
-            # Extrahiere die Versionsnummer aus der Ausgabe
+            # Beispielausgabe: "fastfetch 2.31.0 (x86_64)"
             output = result.stdout.strip() or result.stderr.strip()
-            version = output.split()[-1]
-            return True, version
+            parts = output.split()  # ["fastfetch", "2.31.0", "(x86_64)"]
+            if len(parts) >= 2:
+                version = parts[1]  # "2.31.0"
+                return True, version
+            else:
+                print("Konnte Fastfetch-Version nicht auslesen.")
+                return False, None
         else:
             print("Fastfetch Fehler:", result.stderr.strip())
             return False, None
@@ -121,7 +131,7 @@ def main():
     ]
     
     for script in scripts:
-        run_command(f"cp $HOME/myodoo-docker/scripts/{script} $HOME")
+        run_command("cp $HOME/myodoo-docker/getScripts.py $HOME")
     
     os.chdir(_myhome)
 
