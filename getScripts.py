@@ -1,12 +1,12 @@
 #!/usr/bin/python3
 # -*- coding: utf-8 -*-
 # Dieses Skript hilft beim Organisieren von Docker-Servern
-# Version 6.0.0
-# Date 04.12.2024
+# Version 6.1.1
+# Date 06.12.2024
 ##############################################################################
 #
 #    Shell Script for devops
-#    Copyright © 2014-now Equitania Software GmbH(<http://www.equitania.de>).
+#    Copyright © 2014-now Equitania Software GmbH.
 #
 #    This program is free software: you can redistribute it and/or modify
 #    it under the terms of the GNU Affero General Public License as
@@ -19,7 +19,7 @@
 #    GNU Affero General Public License for more details.
 #
 #    You should have received a copy of the GNU Affero General Public License
-#    along with this program.  If not, see <http://www.gnu.org/licenses/>.
+#    along with this program. If not, see <http://www.gnu.org/licenses/>.
 #
 ##############################################################################
 import os
@@ -28,7 +28,6 @@ import requests
 from pathlib import Path
 import sys
 
-# Funktion zur Überprüfung und Installation von fastfetch
 def is_fastfetch_installed():
     try:
         result = subprocess.run(
@@ -54,6 +53,31 @@ def is_fastfetch_installed():
         print("Fastfetch wurde nicht gefunden.")
         return False, None
 
+def is_zoxide_installed():
+    try:
+        result = subprocess.run(
+            ["zoxide", "--version"], 
+            stdout=subprocess.PIPE, 
+            stderr=subprocess.PIPE, 
+            text=True
+        )
+        if result.returncode == 0:
+            # Beispielausgabe: "zoxide 0.9.6"
+            output = result.stdout.strip() or result.stderr.strip()
+            parts = output.split() # ["zoxide", "0.9.6"]
+            if len(parts) >= 2:
+                version = parts[1] # "0.9.6"
+                return True, version
+            else:
+                print("Konnte zoxide-Version nicht auslesen.")
+                return False, None
+        else:
+            print("zoxide Fehler:", result.stderr.strip())
+            return False, None
+    except FileNotFoundError:
+        print("zoxide wurde nicht gefunden.")
+        return False, None
+
 def download_and_install_deb(url, filename):
     try:
         response = requests.get(url)
@@ -67,7 +91,6 @@ def download_and_install_deb(url, filename):
         sys.exit(1)
 
 def install_fastfetch_if_needed():
-    # https://github.com/fastfetch-cli/fastfetch/releases
     DESIRED_VERSION = "2.31.0"
     DEB_URL = f"https://github.com/fastfetch-cli/fastfetch/releases/download/{DESIRED_VERSION}/fastfetch-linux-amd64.deb"
     DEB_FILE = "fastfetch-linux-amd64.deb"
@@ -87,6 +110,24 @@ def install_fastfetch_if_needed():
     download_and_install_deb(DEB_URL, DEB_FILE)
     print(f"Fastfetch Version {DESIRED_VERSION} wurde erfolgreich installiert.")
 
+def install_zoxide_if_needed():
+    DESIRED_ZOXIDE_VERSION = "0.9.6"
+    installed, version = is_zoxide_installed()
+
+    if installed:
+        if version == DESIRED_ZOXIDE_VERSION:
+            print(f"zoxide Version {DESIRED_ZOXIDE_VERSION} ist bereits installiert.")
+            return
+        else:
+            print(f"zoxide Version {version} ist installiert, aber Version {DESIRED_ZOXIDE_VERSION} wird benötigt.")
+    else:
+        print("zoxide ist nicht installiert.")
+
+    print(f"Lade zoxide Version {DESIRED_ZOXIDE_VERSION} herunter und installiere...")
+    # Installation mittels offiziellem Skript
+    run_command("curl -sS https://raw.githubusercontent.com/ajeetdsouza/zoxide/main/install.sh | bash", check=True)
+    print(f"zoxide Version {DESIRED_ZOXIDE_VERSION} wurde erfolgreich installiert.")
+
 def ensure_directory_exists(directory):
     os.makedirs(directory, exist_ok=True)
     print(f"Verzeichnis '{directory}' wurde erstellt oder existiert bereits.")
@@ -102,7 +143,6 @@ def run_command(command, check=False):
 def upgrade_pip_package(package_name):
     run_command(f"pip3 install {package_name} --upgrade --quiet --no-warn-script-location --break-system-packages --root-user-action=ignore")
 
-# Hauptfunktion
 def main():
     global_server_version = '2024'
     _myhome = os.path.expanduser('~')
@@ -130,9 +170,10 @@ def main():
         "getScripts.py"
     ]
     
+    # Kopieren der Skripte ins Home-Verzeichnis
     for script in scripts:
-        run_command("cp $HOME/myodoo-docker/getScripts.py $HOME")
-    
+        run_command(f"cp $HOME/myodoo-docker/{script if script == 'getScripts.py' else f'scripts/{script}'} $HOME")
+
     os.chdir(_myhome)
 
     packages = [
@@ -149,9 +190,9 @@ def main():
     for package in packages:
         upgrade_pip_package(package)
 
-    run_command("curl -sS https://raw.githubusercontent.com/ajeetdsouza/zoxide/main/install.sh | bash")
-    run_command("rm .zcompdump-*")
-    
+    # Zoxide Installation nur bei Bedarf
+    install_zoxide_if_needed()
+
     # Überprüfen und Installieren von fastfetch
     install_fastfetch_if_needed()
     
