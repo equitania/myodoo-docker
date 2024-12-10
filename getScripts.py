@@ -319,7 +319,7 @@ def main() -> None:
     # Check for nginx-set-conf-equitania and replace with nginx-set-conf if needed
     if is_pip_package_installed("nginx-set-conf-equitania"):
         print("Removing nginx-set-conf-equitania...")
-        run_command(f"{sys.executable} -m pip uninstall -y nginx-set-conf-equitania --break-system-packages")
+        run_command(f"{sys.executable} -m pip uninstall -y nginx-set-conf-equitania --break-system-packages --root-user-action=ignore")
 
     packages = [
         "pip",
