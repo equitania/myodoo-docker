@@ -1,7 +1,7 @@
 #!/usr/bin/python3
 # -*- coding: utf-8 -*-
 # Script for organizing Docker servers
-# Version 6.1.2
+# Version 6.1.3
 # Date 10.12.2024
 ##############################################################################
 #
@@ -319,7 +319,7 @@ def main() -> None:
     # Check for nginx-set-conf-equitania and replace with nginx-set-conf if needed
     if is_pip_package_installed("nginx-set-conf-equitania"):
         print("Removing nginx-set-conf-equitania...")
-        run_command(f"{sys.executable} -m pip uninstall -y nginx-set-conf-equitania")
+        run_command(f"{sys.executable} -m pip uninstall -y nginx-set-conf-equitania --break-system-packages")
 
     packages = [
         "pip",
