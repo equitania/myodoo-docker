@@ -1,7 +1,7 @@
 #!/usr/bin/python3
 # -*- coding: utf-8 -*-
 # Script for organizing Docker servers
-# Version 6.1.1
+# Version 6.1.2
 # Date 10.12.2024
 ##############################################################################
 #
@@ -267,6 +267,22 @@ def upgrade_pip_package(package_name: str) -> None:
     """Upgrade a pip package to the latest version."""
     run_command(f"pip3 install {package_name} --upgrade --quiet --no-warn-script-location --break-system-packages --root-user-action=ignore")
 
+def is_pip_package_installed(package_name: str) -> bool:
+    """Check if a pip package is installed.
+    
+    Args:
+        package_name (str): Name of the package to check
+        
+    Returns:
+        bool: True if package is installed, False otherwise
+    """
+    try:
+        subprocess.run([sys.executable, "-m", "pip", "show", package_name], 
+                      check=True, capture_output=True)
+        return True
+    except subprocess.CalledProcessError:
+        return False
+
 def main() -> None:
     global_server_version = '2024'
     _myhome = os.path.expanduser('~')
@@ -300,13 +316,18 @@ def main() -> None:
 
     os.chdir(_myhome)
 
+    # Check for nginx-set-conf-equitania and replace with nginx-set-conf if needed
+    if is_pip_package_installed("nginx-set-conf-equitania"):
+        print("Removing nginx-set-conf-equitania...")
+        run_command(f"{sys.executable} -m pip uninstall -y nginx-set-conf-equitania")
+
     packages = [
         "pip",
         "wheel",
         "setuptools",
         "distro-info",
         "odoorpc-toolbox",
-        "nginx-set-conf-equitania",
+        "nginx-set-conf",
         "thefuck",
         "odoo-fast-report-mapper-equitania"
     ]
