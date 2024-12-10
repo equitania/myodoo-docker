@@ -320,9 +320,10 @@ def main() -> None:
     # Install fastfetch if necessary
     install_fastfetch_if_needed()
     
-    # Reload .zshrc
-    logger.info("Reloading .zshrc...")
-    run_command("/bin/zsh -c 'source ~/.zshrc'")
+    # Instead of sourcing .zshrc which would trigger fastfetch again,
+    # we'll just reload zoxide initialization
+    logger.info("Reloading shell configuration...")
+    run_command("/bin/zsh -c 'eval \"$(zoxide init zsh)\"'")
 
 if __name__ == "__main__":
     main()
