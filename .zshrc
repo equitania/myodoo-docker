@@ -151,11 +151,6 @@ alias dps="docker ps -a"
 alias dpi="docker images"
 alias dkpsf='docker inspect  -f "{{.Name}} {{.Config.Cmd}}" $(docker ps -a -q)'
 
-if [ -f /usr/bin/neofetch ]
-then
-    neofetch
-fi
-
 if [ -f /usr/bin/fastfetch ]
 then
     fastfetch
