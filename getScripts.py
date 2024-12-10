@@ -1,7 +1,7 @@
 #!/usr/bin/python3
 # -*- coding: utf-8 -*-
 # Script for organizing Docker servers
-# Version 6.1.3
+# Version 6.1.4
 # Date 10.12.2024
 ##############################################################################
 #
@@ -283,6 +283,32 @@ def is_pip_package_installed(package_name: str) -> bool:
     except subprocess.CalledProcessError:
         return False
 
+def is_pipx_installed() -> bool:
+    """Check if pipx is installed.
+    
+    Returns:
+        bool: True if pipx is installed, False otherwise
+    """
+    try:
+        result = subprocess.run(['which', 'pipx'], capture_output=True, text=True)
+        return result.returncode == 0
+    except Exception as e:
+        logger.error(f"Error checking pipx installation: {e}")
+        return False
+
+def install_with_pipx(package_name: str) -> None:
+    """Install a package using pipx.
+    
+    Args:
+        package_name (str): Name of the package to install
+    """
+    try:
+        subprocess.run(['pipx', 'install', '--force', package_name], check=True)
+        logger.info(f"Successfully installed {package_name} with pipx")
+    except subprocess.CalledProcessError as e:
+        logger.error(f"Failed to install {package_name} with pipx: {e}")
+        raise
+
 def main() -> None:
     global_server_version = '2024'
     _myhome = os.path.expanduser('~')
@@ -321,15 +347,34 @@ def main() -> None:
         print("Removing nginx-set-conf-equitania...")
         run_command(f"{sys.executable} -m pip uninstall -y nginx-set-conf-equitania --break-system-packages --root-user-action=ignore")
 
+    # Check if pipx is installed
+    if not is_pipx_installed():
+        logger.info("Installing pipx...")
+        if sys.platform == "darwin":
+            run_command("brew install pipx")
+        else:
+            run_command("sudo apt install pipx")
+        run_command("pipx ensurepath")
+
+    # Install packages with pipx
+    pipx_packages = [
+        "nginx-set-conf",
+        "odoo-fast-report-mapper-equitania"
+    ]
+    
+    for package in pipx_packages:
+        try:
+            install_with_pipx(package)
+        except Exception as e:
+            logger.error(f"Failed to install {package} with pipx: {e}")
+
     packages = [
         "pip",
         "wheel",
         "setuptools",
         "distro-info",
         "odoorpc-toolbox",
-        "nginx-set-conf",
-        "thefuck",
-        "odoo-fast-report-mapper-equitania"
+        "thefuck"
     ]
 
     for package in packages:
