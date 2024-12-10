@@ -1,6 +1,6 @@
 #ZSH powered by ownerp.com
-# Version 3.2.4
-# Date 06.12.2024
+# Version 3.2.5
+# Date 10.12.2024
 
 # If you come from bash you might have to change your $PATH.
 export PATH="$HOME/bin:$HOME/.local/bin:/usr/local/bin:$PATH"
@@ -126,6 +126,8 @@ alias ngx#='sudo systemctl restart nginx'
 alias ngxr='sudo systemctl reload nginx'
 alias ngxs='sudo systemctl status nginx'
 alias ngx!='sudo nginx -t'
+alias ngxl='sudo nginx -t -c /etc/nginx/nginx.conf'
+alias ngxset='nginx-set-conf --config_path=$HOME/docker-builds/ngx-conf/'
 alias showcerts='certbot certificates'
 
 # system alias
