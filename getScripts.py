@@ -1,7 +1,7 @@
 #!/usr/bin/python3
 # -*- coding: utf-8 -*-
 # Script for organizing Docker servers
-# Version 6.1.4
+# Version 6.1.5
 # Date 10.12.2024
 ##############################################################################
 #
@@ -346,6 +346,11 @@ def main() -> None:
     if is_pip_package_installed("nginx-set-conf-equitania"):
         print("Removing nginx-set-conf-equitania...")
         run_command(f"{sys.executable} -m pip uninstall -y nginx-set-conf-equitania --break-system-packages --root-user-action=ignore")
+
+    # Check for odoo-fast-report-mapper-equitania 
+    if is_pip_package_installed("odoo-fast-report-mapper-equitania"):
+        print("Removing odoo-fast-report-mapper-equitania...")
+        run_command(f"{sys.executable} -m pip uninstall -y odoo-fast-report-mapper-equitania --break-system-packages --root-user-action=ignore")
 
     # Check if pipx is installed
     if not is_pipx_installed():
