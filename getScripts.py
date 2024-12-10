@@ -101,6 +101,7 @@ def is_zoxide_installed() -> Tuple[bool, Optional[str]]:
     Returns:
         Tuple[bool, Optional[str]]: Installation status and version if installed
     """
+    # First try the normal PATH
     try:
         result = subprocess.run(
             ["zoxide", "--version"],
@@ -116,13 +117,30 @@ def is_zoxide_installed() -> Tuple[bool, Optional[str]]:
                 version = parts[1]
                 logger.info(f"zoxide version {version} found")
                 return True, version
-            logger.warning("Could not parse zoxide version")
-            return False, None
-        logger.error(f"zoxide error: {result.stderr.strip()}")
-        return False, None
     except FileNotFoundError:
-        logger.info("zoxide not found")
-        return False, None
+        # Try checking in /root/.local/bin directly
+        local_zoxide = "/root/.local/bin/zoxide"
+        if os.path.exists(local_zoxide):
+            try:
+                result = subprocess.run(
+                    [local_zoxide, "--version"],
+                    stdout=subprocess.PIPE,
+                    stderr=subprocess.PIPE,
+                    text=True,
+                    check=False
+                )
+                if result.returncode == 0:
+                    output = result.stdout.strip() or result.stderr.strip()
+                    parts = output.split()
+                    if len(parts) >= 2:
+                        version = parts[1]
+                        logger.info(f"zoxide version {version} found in /root/.local/bin")
+                        return True, version
+            except Exception:
+                pass
+    
+    logger.info("zoxide not found")
+    return False, None
 
 @retry_on_exception(retries=3)
 def download_and_install_deb(url: str, filename: str) -> None:
@@ -182,6 +200,7 @@ def download_and_install_deb(url: str, filename: str) -> None:
 
 def install_fastfetch_if_needed() -> None:
     """Install fastfetch if it's not already installed or if the version is outdated."""
+    """ https://github.com/fastfetch-cli/fastfetch/releases/ """
     DESIRED_VERSION = "2.31.0"
     DEB_URL = f"https://github.com/fastfetch-cli/fastfetch/releases/download/{DESIRED_VERSION}/fastfetch-linux-amd64.deb"
     DEB_FILE = "fastfetch-linux-amd64.deb"
@@ -209,6 +228,16 @@ def install_zoxide_if_needed() -> None:
     if installed:
         if version == DESIRED_ZOXIDE_VERSION:
             logger.info(f"zoxide version {DESIRED_ZOXIDE_VERSION} is already installed.")
+            # Ensure PATH is set correctly
+            local_bin = "/root/.local/bin"
+            if local_bin not in os.environ.get("PATH", ""):
+                logger.info(f"Adding {local_bin} to PATH...")
+                os.environ["PATH"] = f"{local_bin}:{os.environ.get('PATH', '')}"
+                # Add to .zshrc if it exists
+                zshrc = "/root/.zshrc"
+                if os.path.exists(zshrc):
+                    with open(zshrc, "a") as f:
+                        f.write(f'\nexport PATH="{local_bin}:$PATH"\n')
             return
         else:
             logger.info(f"zoxide version {version} is installed, but version {DESIRED_ZOXIDE_VERSION} is required.")
