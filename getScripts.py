@@ -335,24 +335,14 @@ def install_specific_pipx_package(package_name: str, version: str) -> None:
     """
     try:
         # Check if package is installed
-        result = subprocess.run(['pipx', 'list', '--json'], capture_output=True, text=True)
-        if result.returncode == 0:
-            import json
-            installed_packages = json.loads(result.stdout)
-            
-            if package_name in installed_packages['venvs']:
-                installed_version = installed_packages['venvs'][package_name]['metadata']['main_package']['package_version']
-                if installed_version == version:
-                    logger.info(f"{package_name} version {version} is already installed")
-                    return
-                
-        # Install specific version if not installed or version mismatch
-        logger.info(f"Installing {package_name} version {version}")
-        subprocess.run(['pipx', 'install', f"{package_name}=={version}"], check=True)
-        logger.info(f"Successfully installed {package_name} version {version}")
-        
-    except subprocess.CalledProcessError as e:
-        logger.error(f"Error installing {package_name}: {str(e)}")
+        result = subprocess.run(['pipx', 'list'], capture_output=True, text=True)
+        if package_name in result.stdout:
+            logger.info(f"Installing {package_name} version {version}")
+            # Force reinstall if package exists
+            run_command(f"pipx install {package_name}=={version} --force")
+        else:
+            logger.info(f"Installing {package_name} version {version}")
+            run_command(f"pipx install {package_name}=={version}")
     except Exception as e:
         logger.error(f"Unexpected error installing {package_name}: {str(e)}")
 
