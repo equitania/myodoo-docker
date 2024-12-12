@@ -1,7 +1,7 @@
 #!/usr/bin/python3
 # -*- coding: utf-8 -*-
 # Script for organizing Docker servers
-# Version 6.1.6
+# Version 6.1.7
 # Date 12.12.2024
 ##############################################################################
 #
@@ -327,92 +327,124 @@ def install_with_pipx(package_name: str) -> None:
         logger.error(f"Failed to install {package_name} with pipx: {e}")
         raise
 
+def install_specific_pipx_package(package_name: str, version: str) -> None:
+    """
+    Install a specific version of a package using pipx if it's not already installed.
+    
+    Args:
+        package_name (str): Name of the package to install
+        version (str): Specific version to install
+    """
+    try:
+        # Check if package is installed
+        result = subprocess.run(['pipx', 'list', '--json'], capture_output=True, text=True)
+        if result.returncode == 0:
+            import json
+            installed_packages = json.loads(result.stdout)
+            
+            if package_name in installed_packages['venvs']:
+                installed_version = installed_packages['venvs'][package_name]['metadata']['main_package']['package_version']
+                if installed_version == version:
+                    logger.info(f"{package_name} version {version} is already installed")
+                    return
+                
+        # Install specific version if not installed or version mismatch
+        logger.info(f"Installing {package_name} version {version}")
+        subprocess.run(['pipx', 'install', f"{package_name}=={version}"], check=True)
+        logger.info(f"Successfully installed {package_name} version {version}")
+        
+    except subprocess.CalledProcessError as e:
+        logger.error(f"Error installing {package_name}: {str(e)}")
+    except Exception as e:
+        logger.error(f"Unexpected error installing {package_name}: {str(e)}")
+
 def main() -> None:
-    global_server_version = '2024'
-    _myhome = os.path.expanduser('~')
-    config_directory = os.path.join(_myhome, ".config", "fastfetch")
-    ensure_directory_exists(config_directory)
+    """Main function to execute the script"""
+    try:
+        global_server_version = '2024'
+        _myhome = os.path.expanduser('~')
+        config_directory = os.path.join(_myhome, ".config", "fastfetch")
+        ensure_directory_exists(config_directory)
 
-    run_command("sudo timedatectl set-timezone Europe/Berlin", check=True)
+        run_command("sudo timedatectl set-timezone Europe/Berlin", check=True)
 
-    os.chdir(os.path.join(_myhome, "myodoo-docker"))
-    run_command(f"git checkout {global_server_version}")
-    run_command("git config pull.ff only")
-    run_command("git pull")
-    run_command("find . -name '*.pyc' -type f -print0 | xargs -0 /bin/rm -f")
-    run_command("cp $HOME/myodoo-docker/.zshrc $HOME/.zshrc")
-    run_command("cp $HOME/myodoo-docker/scripts/fastfetch/config.jsonc $HOME/.config/fastfetch/")
-    
-    scripts = [
-        "update_docker_myodoo.py",
-        "docker-clean-logs.sh",
-        "cleanup-weblogs.py",
-        "container2backup.py",
-        "container2backup_zstd.py",
-        "restore-zip.sh",
-        "ssl-renew.sh",
-        "getScripts.py"
-    ]
-    
-    # Copy scripts to home directory
-    for script in scripts:
-        run_command(f"cp $HOME/myodoo-docker/{script if script == 'getScripts.py' else f'scripts/{script}'} $HOME")
+        os.chdir(os.path.join(_myhome, "myodoo-docker"))
+        run_command(f"git checkout {global_server_version}")
+        run_command("git config pull.ff only")
+        run_command("git pull")
+        run_command("find . -name '*.pyc' -type f -print0 | xargs -0 /bin/rm -f")
+        run_command("cp $HOME/myodoo-docker/.zshrc $HOME/.zshrc")
+        run_command("cp $HOME/myodoo-docker/scripts/fastfetch/config.jsonc $HOME/.config/fastfetch/")
+        
+        scripts = [
+            "update_docker_myodoo.py",
+            "docker-clean-logs.sh",
+            "cleanup-weblogs.py",
+            "container2backup.py",
+            "container2backup_zstd.py",
+            "restore-zip.sh",
+            "ssl-renew.sh",
+            "getScripts.py"
+        ]
+        
+        # Copy scripts to home directory
+        for script in scripts:
+            run_command(f"cp $HOME/myodoo-docker/{script if script == 'getScripts.py' else f'scripts/{script}'} $HOME")
 
-    os.chdir(_myhome)
+        os.chdir(_myhome)
 
-    # Check for nginx-set-conf-equitania and replace with nginx-set-conf if needed
-    if is_pip_package_installed("nginx-set-conf-equitania"):
-        print("Removing nginx-set-conf-equitania...")
-        run_command(f"{sys.executable} -m pip uninstall -y nginx-set-conf-equitania --break-system-packages --root-user-action=ignore")
+        # Check for nginx-set-conf-equitania and replace with nginx-set-conf if needed
+        if is_pip_package_installed("nginx-set-conf-equitania"):
+            print("Removing nginx-set-conf-equitania...")
+            run_command(f"{sys.executable} -m pip uninstall -y nginx-set-conf-equitania --break-system-packages --root-user-action=ignore")
 
-    # Check for odoo-fast-report-mapper-equitania 
-    if is_pip_package_installed("odoo-fast-report-mapper-equitania"):
-        print("Removing odoo-fast-report-mapper-equitania...")
-        run_command(f"{sys.executable} -m pip uninstall -y odoo-fast-report-mapper-equitania --break-system-packages --root-user-action=ignore")
+        # Check for odoo-fast-report-mapper-equitania 
+        if is_pip_package_installed("odoo-fast-report-mapper-equitania"):
+            print("Removing odoo-fast-report-mapper-equitania...")
+            run_command(f"{sys.executable} -m pip uninstall -y odoo-fast-report-mapper-equitania --break-system-packages --root-user-action=ignore")
 
-    # Check if pipx is installed
-    if not is_pipx_installed():
-        logger.info("Installing pipx...")
-        if sys.platform == "darwin":
-            run_command("brew install pipx")
+        # Check if pipx is installed
+        if not is_pipx_installed():
+            logger.info("Installing pipx...")
+            if sys.platform == "darwin":
+                run_command("brew install pipx")
+            else:
+                run_command("sudo apt install pipx")
+            run_command("pipx ensurepath")
+
+        # Install specific versions of packages with pipx
+        if is_pipx_installed():
+            install_specific_pipx_package('nginx-set-conf', '1.1.1')
+            install_specific_pipx_package('odoo-fast-report-mapper-equitania', '0.1.24')
         else:
-            run_command("sudo apt install pipx")
-        run_command("pipx ensurepath")
+            logger.error("pipx is not installed. Please install pipx first.")
+            
+        packages = [
+            "pip",
+            "wheel",
+            "setuptools",
+            "distro-info",
+            "odoorpc-toolbox",
+            "thefuck"
+        ]
 
-    # Install packages with pipx
-    pipx_packages = [
-        "nginx-set-conf",
-        "odoo-fast-report-mapper-equitania"
-    ]
-    
-    for package in pipx_packages:
-        try:
-            install_with_pipx(package)
-        except Exception as e:
-            logger.error(f"Failed to install {package} with pipx: {e}")
+        for package in packages:
+            upgrade_pip_package(package)
 
-    packages = [
-        "pip",
-        "wheel",
-        "setuptools",
-        "distro-info",
-        "odoorpc-toolbox",
-        "thefuck"
-    ]
+        # Install zoxide if necessary
+        install_zoxide_if_needed()
 
-    for package in packages:
-        upgrade_pip_package(package)
+        # Install fastfetch if necessary
+        install_fastfetch_if_needed()
+        
+        # Instead of sourcing .zshrc which would trigger fastfetch again,
+        # we'll just reload zoxide initialization
+        logger.info("Reloading shell configuration...")
+        run_command("/bin/zsh -c 'eval \"$(zoxide init zsh)\"'")
 
-    # Install zoxide if necessary
-    install_zoxide_if_needed()
-
-    # Install fastfetch if necessary
-    install_fastfetch_if_needed()
-    
-    # Instead of sourcing .zshrc which would trigger fastfetch again,
-    # we'll just reload zoxide initialization
-    logger.info("Reloading shell configuration...")
-    run_command("/bin/zsh -c 'eval \"$(zoxide init zsh)\"'")
+    except Exception as e:
+        logger.error(f"An error occurred in main: {str(e)}")
+        sys.exit(1)
 
 if __name__ == "__main__":
     main()
