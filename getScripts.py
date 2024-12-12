@@ -460,13 +460,19 @@ def main() -> None:
         # Read package versions from packages.txt
         package_info = read_package_versions(os.path.join(_myhome, "myodoo-docker", "packages.txt"))
 
+        # Install required system packages for Python virtual environments
+        if sys.platform != "darwin":
+            logger.info("Installing python3-venv...")
+            run_command("sudo apt update")
+            run_command("sudo apt install -y python3-venv")
+
         # Check if pipx is installed
         if not is_pipx_installed():
             logger.info("Installing pipx...")
             if sys.platform == "darwin":
                 run_command("brew install pipx")
             else:
-                run_command("sudo apt install pipx")
+                run_command("sudo apt install -y pipx")
             run_command("pipx ensurepath")
             
             # Add pipx to PATH and reload environment
@@ -499,13 +505,13 @@ def main() -> None:
                     if sys.platform == "darwin":
                         run_command(f"brew install {name}")
                     else:
-                        run_command(f"sudo apt install {name}")
+                        run_command(f"sudo apt install -y {name}")
             else:
                 logger.info(f"Installing system package: {package}")
                 if sys.platform == "darwin":
                     run_command(f"brew install {package}")
                 else:
-                    run_command(f"sudo apt install {package}")
+                    run_command(f"sudo apt install -y {package}")
         
         # Instead of sourcing .zshrc which would trigger fastfetch again,
         # we'll just reload zoxide initialization
