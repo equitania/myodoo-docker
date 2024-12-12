@@ -1,7 +1,7 @@
 #!/usr/bin/python3
 # -*- coding: utf-8 -*-
 # Script for organizing Docker servers
-# Version 6.1.8
+# Version 6.1.9
 # Date 12.12.2024
 ##############################################################################
 #
@@ -334,15 +334,23 @@ def install_specific_pipx_package(package_name: str, version: str) -> None:
         version (str): Specific version to install
     """
     try:
-        # Check if package is installed
-        result = subprocess.run(['pipx', 'list'], capture_output=True, text=True)
-        if package_name in result.stdout:
-            logger.info(f"Installing {package_name} version {version}")
-            # Force reinstall if package exists
-            run_command(f"pipx install {package_name}=={version} --force")
-        else:
-            logger.info(f"Installing {package_name} version {version}")
-            run_command(f"pipx install {package_name}=={version}")
+        # Check if package is installed and get its version
+        result = subprocess.run(['pipx', 'list', '--json'], capture_output=True, text=True)
+        if result.returncode == 0:
+            import json
+            installed_packages = json.loads(result.stdout)
+            
+            if package_name in installed_packages['venvs']:
+                installed_version = installed_packages['venvs'][package_name]['metadata']['main_package']['package_version']
+                if installed_version == version:
+                    logger.info(f"{package_name} version {version} is already installed")
+                    return
+                else:
+                    logger.info(f"Updating {package_name} from version {installed_version} to {version}")
+                    run_command(f"pipx install {package_name}=={version} --force")
+            else:
+                logger.info(f"Installing {package_name} version {version}")
+                run_command(f"pipx install {package_name}=={version}")
     except Exception as e:
         logger.error(f"Unexpected error installing {package_name}: {str(e)}")
 
