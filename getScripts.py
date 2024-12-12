@@ -1,7 +1,7 @@
 #!/usr/bin/python3
 # -*- coding: utf-8 -*-
 # Script for organizing Docker servers
-# Version 6.2.0
+# Version 6.2.1
 # Date 12.12.2024
 ##############################################################################
 #
@@ -407,13 +407,23 @@ def main() -> None:
 
         run_command("sudo timedatectl set-timezone Europe/Berlin", check=True)
 
-        os.chdir(os.path.join(_myhome, "myodoo-docker"))
+        myodoo_docker = os.path.join(_myhome, "myodoo-docker")
+        os.chdir(myodoo_docker)
         run_command(f"git checkout {global_server_version}")
         run_command("git config pull.ff only")
         run_command("git pull")
-        run_command("find . -name '*.pyc' -type f -print0 | xargs -0 /bin/rm -f")
-        run_command("cp $HOME/myodoo-docker/.zshrc $HOME/.zshrc")
-        run_command("cp $HOME/myodoo-docker/scripts/fastfetch/config.jsonc $HOME/.config/fastfetch/")
+        run_command("find . -name '*.pyc' -type f -delete")
+
+        # Copy configuration files
+        source_zshrc = os.path.join(myodoo_docker, ".zshrc")
+        target_zshrc = os.path.join(_myhome, ".zshrc")
+        if os.path.exists(source_zshrc):
+            run_command(f"cp {source_zshrc} {target_zshrc}")
+
+        source_fastfetch = os.path.join(myodoo_docker, "scripts", "fastfetch", "config.jsonc")
+        target_fastfetch = os.path.join(_myhome, ".config", "fastfetch", "config.jsonc")
+        if os.path.exists(source_fastfetch):
+            run_command(f"cp {source_fastfetch} {target_fastfetch}")
         
         scripts = [
             "update_docker_myodoo.py",
@@ -428,7 +438,12 @@ def main() -> None:
         
         # Copy scripts to home directory
         for script in scripts:
-            run_command(f"cp $HOME/myodoo-docker/{script if script == 'getScripts.py' else f'scripts/{script}'} $HOME")
+            source = os.path.join(myodoo_docker, 
+                                "scripts" if script != "getScripts.py" else "", 
+                                script)
+            target = os.path.join(_myhome, script)
+            if os.path.exists(source):
+                run_command(f"cp {source} {target}")
 
         os.chdir(_myhome)
 
