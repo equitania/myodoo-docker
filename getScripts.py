@@ -1,7 +1,7 @@
 #!/usr/bin/python3
 # -*- coding: utf-8 -*-
 # Script for organizing Docker servers
-# Version 6.2.1
+# Version 6.2.2
 # Date 12.12.2024
 ##############################################################################
 #
@@ -397,6 +397,16 @@ def read_package_versions(filename: str = "packages.txt") -> dict:
         logger.error(f"Package file {filename} not found")
         return packages
 
+def is_package_installed(package_name: str) -> bool:
+    """Check if a system package is installed using dpkg."""
+    try:
+        result = subprocess.run(['dpkg', '-l', package_name], 
+                              capture_output=True, 
+                              text=True)
+        return f"ii  {package_name}" in result.stdout
+    except Exception:
+        return False
+
 def main() -> None:
     """Main function to execute the script"""
     try:
@@ -461,10 +471,12 @@ def main() -> None:
         package_info = read_package_versions(os.path.join(_myhome, "myodoo-docker", "packages.txt"))
 
         # Install required system packages for Python virtual environments
-        if sys.platform != "darwin":
+        if sys.platform != "darwin" and not is_package_installed("python3-venv"):
             logger.info("Installing python3-venv...")
             run_command("sudo apt update")
             run_command("sudo apt install -y python3-venv")
+        else:
+            logger.info("python3-venv is already installed")
 
         # Check if pipx is installed
         if not is_pipx_installed():
