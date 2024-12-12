@@ -1,5 +1,5 @@
 # PIPX packages
-nginx-set-conf==1.1.4
+nginx-set-conf==1.1.5
 odoo-fast-report-mapper-equitania==0.1.24
 
 # PIP packages
