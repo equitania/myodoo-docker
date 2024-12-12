@@ -1,8 +1,8 @@
 #!/usr/bin/python3
 # -*- coding: utf-8 -*-
 # Script for organizing Docker servers
-# Version 6.1.5
-# Date 10.12.2024
+# Version 6.1.6
+# Date 12.12.2024
 ##############################################################################
 #
 #    Shell Script for devops
@@ -32,6 +32,7 @@ from typing import Tuple, Optional
 from functools import wraps
 import hashlib
 import time
+import platform
 
 # Configure logging
 logging.basicConfig(
@@ -302,6 +303,23 @@ def install_with_pipx(package_name: str) -> None:
     Args:
         package_name (str): Name of the package to install
     """
+    # Check if we're on Linux
+    if platform.system() == 'Linux':
+        try:
+            # Run apt update first on Linux systems
+            subprocess.run(['sudo', 'apt', 'update'], check=True)
+            logger.info("Successfully ran apt update")
+        except subprocess.CalledProcessError as e:
+            logger.error(f"Failed to run apt update: {e}")
+            raise
+
+    # Check if pipx is installed
+    try:
+        subprocess.run(['pipx', '--version'], check=True, capture_output=True)
+    except (subprocess.CalledProcessError, FileNotFoundError):
+        logger.error("pipx is not installed")
+        raise RuntimeError("pipx is not installed. Please install pipx first.")
+
     try:
         subprocess.run(['pipx', 'install', '--force', package_name], check=True)
         logger.info(f"Successfully installed {package_name} with pipx")
