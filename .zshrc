@@ -152,6 +152,14 @@ alias dps="docker ps -a"
 alias dpi="docker images"
 alias dkpsf='docker inspect  -f "{{.Name}} {{.Config.Cmd}}" $(docker ps -a -q)'
 alias dkvol='~/myodoo-docker/scripts/check_docker_volumes.sh'
+alias dkstop='docker stop $(docker ps -a -q)'
+alias dkrm='docker rm $(docker ps -a -q)'
+alias dkrmi='docker rmi $(docker images -q)'
+alias dkrmv='docker volume rm $(docker volume ls -q)'
+alias dkprs='docker system prune'
+alias dkprv='docker volume prune'
+alias dkprf='docker system prune -a'
+alias dkprfa='docker system prune -a --volumes'
 
 if [ -f /usr/bin/fastfetch ]
 then
