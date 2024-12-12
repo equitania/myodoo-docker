@@ -1,7 +1,7 @@
 #!/usr/bin/python3
 # -*- coding: utf-8 -*-
 # Script for organizing Docker servers
-# Version 6.1.9
+# Version 6.2.0
 # Date 12.12.2024
 ##############################################################################
 #
@@ -253,14 +253,17 @@ def ensure_directory_exists(directory: str) -> None:
     os.makedirs(directory, exist_ok=True)
     logger.info(f"Directory '{directory}' was created or already exists.")
 
-def run_command(command: str, check: bool = False) -> None:
+def run_command(command: str, check: bool = False, shell: bool = False) -> None:
     """Run a shell command with optional error checking."""
     try:
-        subprocess.run(command, shell=True, check=check)
+        if shell:
+            subprocess.run(command, shell=True, check=check)
+        else:
+            subprocess.run(command.split(), check=check)
     except subprocess.CalledProcessError as e:
-        logger.error(f"Error running command '{command}': {str(e)}")
+        logger.error(f"Command failed: {e}")
         if check:
-            sys.exit(1)
+            raise
 
 def upgrade_pip_package(package_name: str) -> None:
     """Upgrade a pip package to the latest version."""
@@ -450,6 +453,12 @@ def main() -> None:
             else:
                 run_command("sudo apt install pipx")
             run_command("pipx ensurepath")
+            
+            # Add pipx to PATH and reload environment
+            pipx_bin = "/root/.local/bin"
+            os.environ["PATH"] = f"{pipx_bin}:{os.environ.get('PATH', '')}"
+            # Source the updated environment
+            run_command("source ~/.bashrc", shell=True)
 
         # Install specific versions of packages with pipx
         if is_pipx_installed():
