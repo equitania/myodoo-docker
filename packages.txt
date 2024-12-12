@@ -1,0 +1,16 @@
+# PIPX packages
+nginx-set-conf==1.1.4
+odoo-fast-report-mapper-equitania==0.1.24
+
+# PIP packages
+pip
+wheel
+setuptools
+distro-info
+odoorpc-toolbox
+thefuck
+
+# System packages
+pipx
+zoxide==0.9.6
+fastfetch==2.31.0

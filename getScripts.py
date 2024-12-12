@@ -1,7 +1,7 @@
 #!/usr/bin/python3
 # -*- coding: utf-8 -*-
 # Script for organizing Docker servers
-# Version 6.1.7
+# Version 6.1.8
 # Date 12.12.2024
 ##############################################################################
 #
@@ -199,36 +199,34 @@ def download_and_install_deb(url: str, filename: str) -> None:
             os.remove(filename)
         raise
 
-def install_fastfetch_if_needed() -> None:
+def install_fastfetch_if_needed(desired_version: str = "2.31.0") -> None:
     """Install fastfetch if it's not already installed or if the version is outdated."""
     """ https://github.com/fastfetch-cli/fastfetch/releases/ """
-    DESIRED_VERSION = "2.31.0"
-    DEB_URL = f"https://github.com/fastfetch-cli/fastfetch/releases/download/{DESIRED_VERSION}/fastfetch-linux-amd64.deb"
+    DEB_URL = f"https://github.com/fastfetch-cli/fastfetch/releases/download/{desired_version}/fastfetch-linux-amd64.deb"
     DEB_FILE = "fastfetch-linux-amd64.deb"
 
     installed, version = is_fastfetch_installed()
     
     if installed:
-        if version == DESIRED_VERSION:
-            logger.info(f"Fastfetch version {DESIRED_VERSION} is already installed.")
+        if version == desired_version:
+            logger.info(f"Fastfetch version {desired_version} is already installed.")
             return
         else:
-            logger.info(f"Fastfetch version {version} is installed, but version {DESIRED_VERSION} is required.")
+            logger.info(f"Fastfetch version {version} is installed, but version {desired_version} is required.")
     else:
         logger.info("Fastfetch is not installed.")
     
-    logger.info(f"Downloading Fastfetch version {DESIRED_VERSION}...")
+    logger.info(f"Downloading Fastfetch version {desired_version}...")
     download_and_install_deb(DEB_URL, DEB_FILE)
-    logger.info(f"Fastfetch version {DESIRED_VERSION} was successfully installed.")
+    logger.info(f"Fastfetch version {desired_version} was successfully installed.")
 
-def install_zoxide_if_needed() -> None:
+def install_zoxide_if_needed(desired_version: str = "0.9.6") -> None:
     """Install zoxide if it's not already installed or if the version is outdated."""
-    DESIRED_ZOXIDE_VERSION = "0.9.6"
     installed, version = is_zoxide_installed()
 
     if installed:
-        if version == DESIRED_ZOXIDE_VERSION:
-            logger.info(f"zoxide version {DESIRED_ZOXIDE_VERSION} is already installed.")
+        if version == desired_version:
+            logger.info(f"zoxide version {desired_version} is already installed.")
             # Ensure PATH is set correctly
             local_bin = "/root/.local/bin"
             if local_bin not in os.environ.get("PATH", ""):
@@ -241,14 +239,14 @@ def install_zoxide_if_needed() -> None:
                         f.write(f'\nexport PATH="{local_bin}:$PATH"\n')
             return
         else:
-            logger.info(f"zoxide version {version} is installed, but version {DESIRED_ZOXIDE_VERSION} is required.")
+            logger.info(f"zoxide version {version} is installed, but version {desired_version} is required.")
     else:
         logger.info("zoxide is not installed.")
 
-    logger.info(f"Downloading zoxide version {DESIRED_ZOXIDE_VERSION}...")
+    logger.info(f"Downloading zoxide version {desired_version}...")
     # Installation using official script
     run_command("curl -sS https://raw.githubusercontent.com/ajeetdsouza/zoxide/main/install.sh | bash", check=True)
-    logger.info(f"zoxide version {DESIRED_ZOXIDE_VERSION} was successfully installed.")
+    logger.info(f"zoxide version {desired_version} was successfully installed.")
 
 def ensure_directory_exists(directory: str) -> None:
     """Ensure a directory exists, creating it if necessary."""
@@ -358,6 +356,46 @@ def install_specific_pipx_package(package_name: str, version: str) -> None:
     except Exception as e:
         logger.error(f"Unexpected error installing {package_name}: {str(e)}")
 
+def read_package_versions(filename: str = "packages.txt") -> dict:
+    """Read package versions from packages.txt file.
+    
+    Returns:
+        dict: Dictionary containing package types and their versions
+    """
+    packages = {
+        "pipx": {},
+        "pip": [],
+        "system": []
+    }
+    
+    try:
+        with open(filename, 'r') as f:
+            current_section = None
+            for line in f:
+                line = line.strip()
+                if not line or line.startswith('#'):
+                    if "PIPX packages" in line:
+                        current_section = "pipx"
+                    elif "PIP packages" in line:
+                        current_section = "pip"
+                    elif "System packages" in line:
+                        current_section = "system"
+                    continue
+                
+                if current_section == "pipx":
+                    if "==" in line:
+                        name, version = line.split("==")
+                        packages["pipx"][name.strip()] = version.strip()
+                elif current_section == "pip":
+                    packages["pip"].append(line.strip())
+                elif current_section == "system":
+                    packages["system"].append(line.strip())
+                    
+        return packages
+    except FileNotFoundError:
+        logger.error(f"Package file {filename} not found")
+        return packages
+
 def main() -> None:
     """Main function to execute the script"""
     try:
@@ -403,6 +441,9 @@ def main() -> None:
             print("Removing odoo-fast-report-mapper-equitania...")
             run_command(f"{sys.executable} -m pip uninstall -y odoo-fast-report-mapper-equitania --break-system-packages --root-user-action=ignore")
 
+        # Read package versions from packages.txt
+        package_info = read_package_versions(os.path.join(_myhome, "myodoo-docker", "packages.txt"))
+
         # Check if pipx is installed
         if not is_pipx_installed():
             logger.info("Installing pipx...")
@@ -414,28 +455,35 @@ def main() -> None:
 
         # Install specific versions of packages with pipx
         if is_pipx_installed():
-            install_specific_pipx_package('nginx-set-conf', '1.1.1')
-            install_specific_pipx_package('odoo-fast-report-mapper-equitania', '0.1.24')
+            for package, version in package_info["pipx"].items():
+                install_specific_pipx_package(package, version)
         else:
             logger.error("pipx is not installed. Please install pipx first.")
             
-        packages = [
-            "pip",
-            "wheel",
-            "setuptools",
-            "distro-info",
-            "odoorpc-toolbox",
-            "thefuck"
-        ]
-
-        for package in packages:
+        # Upgrade pip packages
+        for package in package_info["pip"]:
             upgrade_pip_package(package)
 
-        # Install zoxide if necessary
-        install_zoxide_if_needed()
-
-        # Install fastfetch if necessary
-        install_fastfetch_if_needed()
+        # Install system packages if they're not already installed
+        for package in package_info["system"]:
+            if "==" in package:
+                name, version = package.split("==")
+                if name == "zoxide":
+                    install_zoxide_if_needed(version)
+                elif name == "fastfetch":
+                    install_fastfetch_if_needed(version)
+                else:
+                    logger.info(f"Installing system package: {package}")
+                    if sys.platform == "darwin":
+                        run_command(f"brew install {name}")
+                    else:
+                        run_command(f"sudo apt install {name}")
+            else:
+                logger.info(f"Installing system package: {package}")
+                if sys.platform == "darwin":
+                    run_command(f"brew install {package}")
+                else:
+                    run_command(f"sudo apt install {package}")
         
         # Instead of sourcing .zshrc which would trigger fastfetch again,
         # we'll just reload zoxide initialization
