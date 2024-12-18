@@ -148,8 +148,8 @@ alias llbk='ll /opt/backups/docker'
 
 # Docker alias
 alias dk="docker "
-alias dps='docker ps -a --format "table {{.Names}}\t{{.ID}}\t{{.Image}}\t{{.Status}}\t{{.Ports}}"'
-alias dpsall='docker ps -a --format "table {{.Names}}\t{{.ID}}\t{{.Image}}\t{{.Command}}\t{{.CreatedAt}}\t{{.Status}}\t{{.Ports}}"'
+alias dps='docker ps -a --format "table {{.Names}}\t{{.ID}}\t{{.Image}}\t{{.Status}}\t{{.Ports}}" | sort'
+alias dpsall='docker ps -a --format "table {{.Names}}\t{{.ID}}\t{{.Image}}\t{{.Command}}\t{{.CreatedAt}}\t{{.Status}}\t{{.Ports}}" | sort'
 alias dpi="docker images"
 alias dkpsf='docker inspect  -f "{{.Name}} {{.Config.Cmd}}" $(docker ps -a -q)'
 alias dkvol='~/myodoo-docker/scripts/check_docker_volumes.sh'
