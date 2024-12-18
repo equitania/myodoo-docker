@@ -1,6 +1,6 @@
 #ZSH powered by ownerp.com
-# Version 3.2.6
-# Date 12.12.2024
+# Version 3.2.7
+# Date 18.12.2024
 
 # If you come from bash you might have to change your $PATH.
 export PATH="$HOME/bin:$HOME/.local/bin:/usr/local/bin:$PATH"
@@ -148,7 +148,8 @@ alias llbk='ll /opt/backups/docker'
 
 # Docker alias
 alias dk="docker "
-alias dps="docker ps -a"
+alias dps='docker ps -a --format "table {{.Names}}\t{{.ID}}\t{{.Image}}\t{{.Status}}\t{{.Ports}}"'
+alias dpsall='docker ps -a --format "table {{.Names}}\t{{.ID}}\t{{.Image}}\t{{.Command}}\t{{.CreatedAt}}\t{{.Status}}\t{{.Ports}}"'
 alias dpi="docker images"
 alias dkpsf='docker inspect  -f "{{.Name}} {{.Config.Cmd}}" $(docker ps -a -q)'
 alias dkvol='~/myodoo-docker/scripts/check_docker_volumes.sh'
