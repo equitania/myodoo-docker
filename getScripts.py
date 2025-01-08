@@ -34,6 +34,8 @@ import hashlib
 import time
 import platform
 
+latest_fastfetch_assets = None
+
 # Configure logging
 logging.basicConfig(
     level=logging.INFO,
@@ -204,7 +206,13 @@ def get_latest_fastfetch_version() -> Optional[str]:
     try:
         response = requests.get("https://api.github.com/repos/fastfetch-cli/fastfetch/releases/latest")
         if response.status_code == 200:
-            return response.json()["tag_name"].lstrip('v')
+            data = response.json()
+            version = data["tag_name"].lstrip('v')
+            logger.info(f"Found latest FastFetch version: {version}")
+            # Also store the assets for later use
+            global latest_fastfetch_assets
+            latest_fastfetch_assets = data["assets"]
+            return version
         logger.error(f"Failed to get latest fastfetch version. Status code: {response.status_code}")
     except Exception as e:
         logger.error(f"Error fetching latest fastfetch version: {str(e)}")
@@ -213,34 +221,34 @@ def get_latest_fastfetch_version() -> Optional[str]:
 def get_fastfetch_download_url(version: str, os_id: str) -> Optional[str]:
     """Get the appropriate download URL for fastfetch based on OS."""
     try:
-        response = requests.get(f"https://api.github.com/repos/fastfetch-cli/fastfetch/releases/tags/v{version}")
-        if response.status_code != 200:
-            logger.error(f"Failed to get release info. Status code: {response.status_code}")
+        global latest_fastfetch_assets
+        if not latest_fastfetch_assets:
+            logger.error("No release assets found")
             return None
 
-        assets = response.json()["assets"]
         if os_id == "ubuntu" or os_id == "debian":
-            # Look for the appropriate .deb package
             arch = "amd64" if platform.machine() == "x86_64" else "arm64"
+            
+            # Log available assets for debugging
+            logger.info("Available FastFetch packages:")
+            for asset in latest_fastfetch_assets:
+                logger.info(f"- {asset['name']}")
             
             # Try different possible package naming patterns
             patterns = [
-                f"fastfetch_{version}_linux_{arch}.deb",
-                f"fastfetch-{version}-linux-{arch}.deb",
-                f"fastfetch-linux-{arch}.deb"
+                f"fastfetch_{version}",  # Base pattern to match
+                "fastfetch-linux",       # Fallback pattern
+                ".deb"                   # Must be a .deb file
             ]
             
-            logger.debug(f"Looking for package patterns: {patterns}")
-            for asset in assets:
-                logger.debug(f"Checking asset: {asset['name']}")
-                if any(pattern in asset["name"] for pattern in patterns):
+            # Find best matching asset
+            for asset in latest_fastfetch_assets:
+                name = asset["name"].lower()
+                if all(pattern.lower() in name for pattern in patterns) and arch in name:
                     logger.info(f"Found matching package: {asset['name']}")
                     return asset["browser_download_url"]
             
-            # If no exact match found, log available assets
-            logger.error("Available packages:")
-            for asset in assets:
-                logger.error(f"- {asset['name']}")
+            logger.error(f"No matching package found for version {version} and arch {arch}")
     except Exception as e:
         logger.error(f"Error getting fastfetch download URL: {str(e)}")
     return None
@@ -257,15 +265,13 @@ def install_fastfetch_if_needed() -> None:
 
         # Get current version if installed
         installed, current_version = is_fastfetch_installed()
+        logger.info(f"Current FastFetch version: {current_version if installed else 'not installed'}")
         
         # Get latest version from GitHub
         latest_version = get_latest_fastfetch_version()
         if not latest_version:
             logger.error("Could not determine latest fastfetch version")
             return
-
-        logger.info(f"Latest FastFetch version: {latest_version}")
-        logger.info(f"Current FastFetch version: {current_version if installed else 'not installed'}")
 
         # Check if update is needed
         if installed and current_version == latest_version:
@@ -276,11 +282,7 @@ def install_fastfetch_if_needed() -> None:
         download_url = get_fastfetch_download_url(latest_version, os_id)
         if not download_url:
             logger.error("Could not find appropriate fastfetch package")
-            # Fall back to a direct URL if API fails
-            arch = "amd64" if platform.machine() == "x86_64" else "arm64"
-            direct_url = f"https://github.com/fastfetch-cli/fastfetch/releases/download/v{latest_version}/fastfetch-linux-{arch}.deb"
-            logger.info(f"Trying direct URL: {direct_url}")
-            download_url = direct_url
+            return
 
         # Download and install
         filename = f"fastfetch_{latest_version}.deb"
