@@ -1,7 +1,7 @@
 #!/usr/bin/python3
 # -*- coding: utf-8 -*-
 # Script for organizing Docker servers
-# Version 6.3.0 
+# Version 6.3.1 
 # Date 08.01.2025
 ##############################################################################
 #
@@ -351,24 +351,63 @@ def get_pip_version():
     except:
         return (0, 0)
 
-def upgrade_pip_package(package_name: str) -> None:
-    """Upgrade a pip package to the latest version."""
+def get_pip_install_command(package_name: str, upgrade: bool = True) -> str:
+    """Generate appropriate pip install command based on system version."""
     os_id, os_version = get_os_info()
     pip_version = get_pip_version()
     
     # Base command
-    cmd = f"{sys.executable} -m pip install {package_name} --upgrade --quiet --no-warn-script-location"
+    cmd = [sys.executable, "-m", "pip", "install"]
+    
+    if upgrade:
+        cmd.append("--upgrade")
+    
+    cmd.extend(["--quiet", "--no-warn-script-location"])
     
     # Add flags based on OS and pip version
     if pip_version >= (23, 1):
         # Newer versions of pip support --break-system-packages
-        cmd += " --break-system-packages"
+        cmd.append("--break-system-packages")
     elif os_id == "ubuntu" and os_version == "22.04":
         # For Ubuntu 22.04 with older pip, use --user
-        cmd += " --user"
+        cmd.append("--user")
     
-    cmd += " --root-user-action=ignore"
+    # Only add root-user-action for newer pip versions
+    if pip_version >= (21, 3):
+        cmd.append("--root-user-action=ignore")
+    
+    # Add the package name last
+    cmd.append(package_name)
+    
+    return " ".join(cmd)
+
+def upgrade_pip_package(package_name: str) -> None:
+    """Upgrade a pip package to the latest version."""
+    cmd = get_pip_install_command(package_name, upgrade=True)
     run_command(cmd)
+
+def uninstall_pip_package(package_name: str) -> None:
+    """Uninstall a pip package."""
+    os_id, os_version = get_os_info()
+    pip_version = get_pip_version()
+    
+    # Base command
+    cmd = [sys.executable, "-m", "pip", "uninstall", "-y"]
+    
+    # Add flags based on OS and pip version
+    if pip_version >= (23, 1):
+        cmd.append("--break-system-packages")
+    elif os_id == "ubuntu" and os_version == "22.04":
+        cmd.append("--user")
+    
+    # Only add root-user-action for newer pip versions
+    if pip_version >= (21, 3):
+        cmd.append("--root-user-action=ignore")
+    
+    # Add the package name last
+    cmd.append(package_name)
+    
+    run_command(" ".join(cmd))
 
 def is_pip_package_installed(package_name: str) -> bool:
     """Check if a pip package is installed.
@@ -457,23 +496,6 @@ def install_specific_pipx_package(package_name: str, version: str) -> None:
                 run_command(f"pipx install {package_name}=={version}")
     except Exception as e:
         logger.error(f"Unexpected error installing {package_name}: {str(e)}")
-
-def uninstall_pip_package(package_name: str) -> None:
-    """Uninstall a pip package."""
-    os_id, os_version = get_os_info()
-    pip_version = get_pip_version()
-    
-    # Base command
-    cmd = f"{sys.executable} -m pip uninstall -y {package_name}"
-    
-    # Add flags based on OS and pip version
-    if pip_version >= (23, 1):
-        cmd += " --break-system-packages"
-    elif os_id == "ubuntu" and os_version == "22.04":
-        cmd += " --user"
-    
-    cmd += " --root-user-action=ignore"
-    run_command(cmd)
 
 def read_package_versions(filename: str = "packages.txt") -> dict:
     """Read package versions from packages.txt file.
