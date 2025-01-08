@@ -1,7 +1,7 @@
 #!/usr/bin/python3
 # -*- coding: utf-8 -*-
 # Script for organizing Docker servers
-# Version 6.3.3 
+# Version 6.3.4 
 # Date 08.01.2025
 ##############################################################################
 #
@@ -33,6 +33,7 @@ from functools import wraps
 import hashlib
 import time
 import platform
+import re
 
 latest_fastfetch_assets = None
 
@@ -622,9 +623,12 @@ def get_zstd_version() -> Optional[tuple]:
     try:
         result = subprocess.run(['zstd', '--version'], capture_output=True, text=True)
         if result.returncode == 0:
-            # zstd output format: "zstd 1.5.5"
-            version_str = result.stdout.strip().split()[1]
-            return tuple(map(int, version_str.split('.')))
+            # zstd output format: "*** Zstandard CLI (64-bit) v1.5.5, by Yann Collet ***"
+            version_str = result.stdout.strip()
+            # Find the version number after 'v' and before the comma
+            version_match = re.search(r'v(\d+\.\d+\.\d+)', version_str)
+            if version_match:
+                return tuple(map(int, version_match.group(1).split('.')))
     except Exception as e:
         logger.error(f"Error getting zstd version: {str(e)}")
     return None
@@ -788,7 +792,8 @@ def main() -> None:
             "container2backup_zstd.py",
             "restore-zip.sh",
             "ssl-renew.sh",
-            "getScripts.py"
+            "getScripts.py",
+            "backup_manager.py"
         ]
         
         # Copy scripts to home directory
