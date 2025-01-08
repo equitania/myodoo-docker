@@ -1,6 +1,6 @@
 #ZSH powered by ownerp.com
-# Version 3.2.7
-# Date 18.12.2024
+# Version 3.2.8
+# Date 08.01.2025
 
 # If you come from bash you might have to change your $PATH.
 export PATH="$HOME/bin:$HOME/.local/bin:/usr/local/bin:$PATH"
@@ -117,6 +117,7 @@ alias rm='rm -I'
 alias chmod=' chmod -c'
 alias chown=' chown -c'
 alias shred=' shred -u -z'
+alias bat=batcat
 
 # nginx alias
 alias cdngx='cd /etc/nginx/conf.d/'

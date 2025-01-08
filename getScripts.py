@@ -1,7 +1,7 @@
 #!/usr/bin/python3
 # -*- coding: utf-8 -*-
 # Script for organizing Docker servers
-# Version 6.3.2 
+# Version 6.3.3 
 # Date 08.01.2025
 ##############################################################################
 #
@@ -617,6 +617,120 @@ def install_system_package(package: str, version: Optional[str] = None) -> None:
         else:
             run_command(f"sudo apt install -y {package}")
 
+def get_zstd_version() -> Optional[tuple]:
+    """Get installed zstd version as tuple (major, minor, patch)"""
+    try:
+        result = subprocess.run(['zstd', '--version'], capture_output=True, text=True)
+        if result.returncode == 0:
+            # zstd output format: "zstd 1.5.5"
+            version_str = result.stdout.strip().split()[1]
+            return tuple(map(int, version_str.split('.')))
+    except Exception as e:
+        logger.error(f"Error getting zstd version: {str(e)}")
+    return None
+
+def check_zstd_version() -> bool:
+    """Check if zstd is installed and up to date"""
+    min_version = (1, 5, 0)  # Minimum required version
+    current_version = get_zstd_version()
+    
+    if not current_version:
+        logger.error("zstd is not installed")
+        return False
+    
+    logger.info(f"Current zstd version: {'.'.join(map(str, current_version))}")
+    
+    if current_version < min_version:
+        logger.warning(
+            f"zstd version {'.'.join(map(str, current_version))} is outdated. "
+            f"Minimum required version is {'.'.join(map(str, min_version))}"
+        )
+        return False
+    
+    return True
+
+def install_or_update_zstd():
+    """Install or update zstd package"""
+    os_id, os_version = get_os_info()
+    
+    try:
+        if not check_zstd_version():
+            logger.info("Installing/updating zstd...")
+            if os_id in ["ubuntu", "debian"]:
+                run_command("sudo apt update")
+                run_command("sudo apt install -y zstd")
+            elif sys.platform == "darwin":
+                run_command("brew install zstd")
+            
+            # Verify installation
+            if not check_zstd_version():
+                raise RuntimeError("Failed to install/update zstd")
+            
+            logger.info("zstd installation/update completed")
+    except Exception as e:
+        logger.error(f"Error installing/updating zstd: {str(e)}")
+        raise
+
+def get_bat_version() -> Optional[tuple]:
+    """Get installed bat version as tuple (major, minor, patch)"""
+    try:
+        result = subprocess.run(['bat', '--version'], capture_output=True, text=True)
+        if result.returncode == 0:
+            # bat output format: "bat 0.25.0"
+            version_str = result.stdout.strip().split()[1]
+            return tuple(map(int, version_str.split('.')))
+    except Exception as e:
+        logger.error(f"Error getting bat version: {str(e)}")
+    return None
+
+def check_bat_version() -> bool:
+    """Check if bat is installed and up to date"""
+    min_version = (0, 25, 0)  # Minimum required version
+    current_version = get_bat_version()
+    
+    if not current_version:
+        logger.error("bat is not installed")
+        return False
+    
+    logger.info(f"Current bat version: {'.'.join(map(str, current_version))}")
+    
+    if current_version < min_version:
+        logger.warning(
+            f"bat version {'.'.join(map(str, current_version))} is outdated. "
+            f"Minimum required version is {'.'.join(map(str, min_version))}"
+        )
+        return False
+    
+    return True
+
+def install_or_update_bat():
+    """Install or update bat package"""
+    os_id, os_version = get_os_info()
+    
+    try:
+        if not check_bat_version():
+            logger.info("Installing/updating bat...")
+            if os_id in ["ubuntu", "debian"]:
+                # For Ubuntu/Debian, we need to use the cargo package manager
+                # First, ensure rust/cargo is installed
+                run_command("sudo apt update")
+                run_command("sudo apt install -y cargo")
+                # Install bat using cargo
+                run_command("cargo install --locked bat")
+                # Create symlink if needed
+                run_command("sudo ln -sf ~/.cargo/bin/bat /usr/local/bin/bat")
+            elif sys.platform == "darwin":
+                run_command("brew install bat")
+            
+            # Verify installation
+            if not check_bat_version():
+                raise RuntimeError("Failed to install/update bat")
+            
+            logger.info("bat installation/update completed")
+    except Exception as e:
+        logger.error(f"Error installing/updating bat: {str(e)}")
+        raise
+
 def upgrade_pip() -> None:
     """Upgrade pip to the latest version."""
     try:
@@ -735,6 +849,9 @@ def main() -> None:
         for package in package_info["pip"]:
             upgrade_pip_package(package)
 
+        install_or_update_zstd()  # Add zstd check/install before other packages
+        install_or_update_bat()  # Add bat check/install
+        
         # Install system packages if they're not already installed
         for package in package_info["system"]:
             if "==" in package:
