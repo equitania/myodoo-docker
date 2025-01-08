@@ -298,7 +298,7 @@ class BackupManager:
             self.logger.error(f"Backup verification failed: {str(e)}")
             return False
 
-    def compress_and_encrypt(self, source_path: Path, output_path: Path, password: str = '', compression_config: Optional[Dict] = None) -> bool:
+    def compress_and_encrypt(self, source_path: Path, output_path: Path, password: str = '', compression_config: Optional[Dict] = None):
         """Compress directory with zstd and optionally encrypt"""
         try:
             if not source_path.exists():
@@ -310,17 +310,27 @@ class BackupManager:
             if not compression_config:
                 compression_config = self.config_manager.config.get('compression', {'level': 3})
             
-            # Prepare compression command
-            compress_cmd = [
-                'tar', '--use-compress-program',
-                f'zstd -{compression_config.get("level", 3)}',
-                '-cf', str(output_path), '-C', str(source_path.parent), source_path.name
-            ]
+            # First create tar file
+            tar_path = output_path.with_suffix('.tar')
+            self.logger.info(f"Creating tar archive: {tar_path}")
+            subprocess.run(
+                ['tar', '-cf', str(tar_path), '-C', str(source_path.parent), source_path.name],
+                check=True,
+                capture_output=True,
+                text=True
+            )
             
-            # Execute compression
-            result = subprocess.run(compress_cmd, capture_output=True, text=True)
-            if result.returncode != 0:
-                raise RuntimeError(f"Compression failed: {result.stderr}")
+            # Then compress with zstd
+            self.logger.info(f"Compressing with zstd to: {output_path}")
+            subprocess.run(
+                ['zstd', f"-{compression_config.get('level', 3)}", '-f', str(tar_path), '-o', str(output_path)],
+                check=True,
+                capture_output=True,
+                text=True
+            )
+            
+            # Remove the temporary tar file
+            tar_path.unlink()
             
             # Verify the compressed file exists and has size
             if not output_path.exists() or output_path.stat().st_size == 0:
