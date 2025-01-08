@@ -26,6 +26,7 @@ import os
 import shutil
 import subprocess
 import sys
+import tempfile
 import time
 import yaml
 from dataclasses import dataclass
@@ -322,6 +323,9 @@ class BackupManager:
             
             # Then compress with zstd
             self.logger.info(f"Compressing with zstd to: {output_path}")
+            # Ensure output path has .zst extension
+            if not output_path.suffix:
+                output_path = output_path.with_suffix('.zst')
             subprocess.run(
                 ['zstd', f"-{compression_config.get('level', 3)}", '-f', str(tar_path), '-o', str(output_path)],
                 check=True,
@@ -335,10 +339,6 @@ class BackupManager:
             # Verify the compressed file exists and has size
             if not output_path.exists() or output_path.stat().st_size == 0:
                 raise RuntimeError("Compressed file is empty or does not exist")
-            
-            # Delete the source directory after successful compression
-            shutil.rmtree(source_path)
-            self.logger.info(f"Successfully deleted source directory: {source_path}")
             
             self.logger.info("Compression completed successfully")
             
@@ -364,39 +364,32 @@ class BackupManager:
 
     def backup_database(self, db_config: Dict[str, Any]) -> bool:
         """Perform database backup with progress tracking and error handling"""
+        start_time = time.time()
+        db_name = db_config['name']
+        backup_dir = None
+        
         try:
-            start_time = time.time()
-            db_name = db_config['name']
-            backup_dir = self.backup_root / 'docker' / db_name
-            backup_dir.mkdir(parents=True, exist_ok=True)
-
-            if not self.check_disk_space(backup_dir):
-                raise Exception("Insufficient disk space")
-
             # Get encryption key if encryption is enabled
             encryption_key = None
             if db_config.get('encryption', {}).get('enabled', False):
                 encryption_key = self.credentials.get_encryption_key('database', db_name)
                 if not encryption_key:
                     self.logger.warning(f"Encryption enabled for {db_name} but no key found")
-
-            # Backup PostgreSQL database
-            dump_file = backup_dir / 'dump.sql'
-            self.logger.info(f"Backing up database {db_name}")
             
-            for attempt in range(self.config_manager.config['max_retry_attempts']):
-                try:
-                    subprocess.run(
-                        f"docker exec -i {db_config['containers']['database']} pg_dump -U {db_config['user']} {db_name} > {dump_file}",
-                        shell=True, check=True
-                    )
-                    break
-                except subprocess.CalledProcessError as e:
-                    if attempt == self.config_manager.config['max_retry_attempts'] - 1:
-                        raise
-                    self.logger.warning(f"Backup attempt {attempt + 1} failed, retrying...")
-                    time.sleep(self.config_manager.config['retry_delay_seconds'])
-
+            # Create backup directory
+            backup_dir = Path(tempfile.mkdtemp(prefix=f"backup_{db_name}_"))
+            self.logger.info(f"Created temporary backup directory: {backup_dir}")
+            
+            # Check disk space
+            self.check_disk_space(backup_dir)
+            
+            # Dump database
+            self.logger.info("Dumping database")
+            subprocess.run(
+                f"docker exec {db_config['containers']['database']} pg_dump -U {db_config['user']} {db_name} > {backup_dir}/dump.sql",
+                shell=True, check=True
+            )
+            
             # Backup FileStore
             self.logger.info("Backing up FileStore")
             subprocess.run(
@@ -408,14 +401,21 @@ class BackupManager:
             timestamp = datetime.datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
             final_backup_path = self.backup_root / 'docker' / f"{db_name}_{db_config['containers']['odoo']}_{timestamp}"
             
-            if self.compress_and_encrypt(backup_dir, final_backup_path, encryption_key):
+            try:
+                self.compress_and_encrypt(backup_dir, final_backup_path, encryption_key)
+                
+                # Delete temporary backup directory after successful compression
+                if backup_dir and backup_dir.exists():
+                    shutil.rmtree(backup_dir)
+                    self.logger.info(f"Deleted temporary backup directory: {backup_dir}")
+                
                 # Verify backup
-                if not self.verify_backup(final_backup_path.with_suffix('.gpg' if encryption_key else '.zst')):
+                if not self.verify_backup(final_backup_path):
                     raise Exception("Backup verification failed")
 
                 # Record metadata
                 duration = time.time() - start_time
-                size = os.path.getsize(str(final_backup_path.with_suffix('.gpg' if encryption_key else '.zst')))
+                size = os.path.getsize(str(final_backup_path))
                 
                 metadata = BackupMetadata(
                     database_name=db_name,
@@ -434,9 +434,11 @@ class BackupManager:
                 
                 self.logger.info(f"Backup completed successfully: {final_backup_path}")
                 return True
+                
+            except Exception as e:
+                self.logger.error(f"Compression failed: {str(e)}")
+                return False
             
-            return False
-
         except Exception as e:
             self.logger.error(f"Backup failed for {db_name}: {str(e)}")
             self.metadata['backups'].append(
@@ -451,6 +453,14 @@ class BackupManager:
                 )
             )
             return False
+        finally:
+            # Ensure temporary directory is always cleaned up, even if backup fails
+            if backup_dir and backup_dir.exists():
+                try:
+                    shutil.rmtree(backup_dir)
+                    self.logger.info(f"Cleaned up temporary backup directory: {backup_dir}")
+                except Exception as e:
+                    self.logger.error(f"Failed to clean up temporary directory {backup_dir}: {str(e)}")
 
     def backup_additional_paths(self):
         """Backup additional configured paths"""
