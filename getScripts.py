@@ -547,9 +547,30 @@ def is_package_installed(package_name: str) -> bool:
     except Exception:
         return False
 
+def upgrade_pip() -> None:
+    """Upgrade pip to the latest version."""
+    try:
+        logger.info("Checking pip version...")
+        current_version = get_pip_version()
+        logger.info(f"Current pip version: {'.'.join(map(str, current_version))}")
+        
+        if current_version < (23, 0):
+            logger.info("Upgrading pip to latest version...")
+            # Use a basic command for old pip versions
+            run_command(f"{sys.executable} -m pip install --upgrade pip --user")
+            
+            # Verify upgrade
+            new_version = get_pip_version()
+            logger.info(f"Upgraded pip to version {'.'.join(map(str, new_version))}")
+    except Exception as e:
+        logger.error(f"Error upgrading pip: {str(e)}")
+
 def main() -> None:
     """Main function to execute the script"""
     try:
+        # First, upgrade pip if needed
+        upgrade_pip()
+
         global_server_version = '2024'
         _myhome = os.path.expanduser('~')
         config_directory = os.path.join(_myhome, ".config", "fastfetch")
