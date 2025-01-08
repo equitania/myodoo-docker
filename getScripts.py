@@ -715,14 +715,8 @@ def install_or_update_bat():
         if not check_bat_version():
             logger.info("Installing/updating bat...")
             if os_id in ["ubuntu", "debian"]:
-                # For Ubuntu/Debian, we need to use the cargo package manager
-                # First, ensure rust/cargo is installed
                 run_command("sudo apt update")
-                run_command("sudo apt install -y cargo")
-                # Install bat using cargo
-                run_command("cargo install --locked bat")
-                # Create symlink if needed
-                run_command("sudo ln -sf ~/.cargo/bin/bat /usr/local/bin/bat")
+                run_command("sudo apt install -y bat")
             elif sys.platform == "darwin":
                 run_command("brew install bat")
             
@@ -733,7 +727,7 @@ def install_or_update_bat():
             logger.info("bat installation/update completed")
     except Exception as e:
         logger.error(f"Error installing/updating bat: {str(e)}")
-        raise
+        raise RuntimeError("Failed to install/update bat")
 
 def upgrade_pip() -> None:
     """Upgrade pip to the latest version."""
