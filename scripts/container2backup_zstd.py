@@ -2,7 +2,7 @@
 # -*- coding: utf-8 -*-
 """
 Odoo Database Backup Script with Docker Support
-Version 5.0.2
+Version 5.0.3
 Date 2025-01-08
 
 This script performs backup of Odoo databases including FileStore under Docker with the following features:
@@ -33,6 +33,7 @@ from logging.handlers import RotatingFileHandler
 from os.path import expanduser
 from pathlib import Path
 from typing import Optional, Dict, List, Any
+import argparse
 
 # Configure logging at module level
 logging.basicConfig(
@@ -222,17 +223,20 @@ class CredentialsManager:
         return None
 
 class BackupManager:
-    def __init__(self, config: ConfigurationManager):
-        self.config = config
+    def __init__(self, config_manager: ConfigurationManager):
+        self.config_manager = config_manager
+        self.logger = logging.getLogger(__name__)
+        self.metadata = {
+            'timestamp': datetime.datetime.now().isoformat(),
+            'backups': []
+        }
+        self.backup_root = Path(config_manager.config['backup_root'])
         self._setup_logging()
-        self.logger = logging.getLogger('backup_manager')
-        self.backup_root = Path(config.config['backup_root'])
-        self.metadata_list: List[BackupMetadata] = []
-        self.credentials = CredentialsManager(config.config)
+        self.credentials = CredentialsManager(config_manager.config)
 
     def _setup_logging(self):
         """Configure logging with rotation"""
-        log_dir = Path(self.config.config['backup_root']) / 'logs'
+        log_dir = Path(self.config_manager.config['backup_root']) / 'logs'
         log_dir.mkdir(parents=True, exist_ok=True)
         
         log_file = log_dir / 'backup.log'
@@ -242,8 +246,8 @@ class BackupManager:
         
         file_handler = RotatingFileHandler(
             log_file,
-            maxBytes=self.config.config['logging']['max_size_mb'] * 1024 * 1024,
-            backupCount=self.config.config['logging']['backup_count']
+            maxBytes=self.config_manager.config['logging']['max_size_mb'] * 1024 * 1024,
+            backupCount=self.config_manager.config['logging']['backup_count']
         )
         file_handler.setFormatter(formatter)
         
@@ -251,7 +255,7 @@ class BackupManager:
         console_handler.setFormatter(formatter)
         
         root_logger = logging.getLogger()
-        root_logger.setLevel(self.config.config['log_level'])
+        root_logger.setLevel(self.config_manager.config['log_level'])
         root_logger.addHandler(file_handler)
         root_logger.addHandler(console_handler)
 
@@ -261,9 +265,9 @@ class BackupManager:
             total, used, free = shutil.disk_usage(path)
             free_gb = free / (1024**3)
             self.logger.info(f"Free disk space: {free_gb:.2f} GB")
-            if free_gb < self.config.config['min_disk_space_gb']:
+            if free_gb < self.config_manager.config['min_disk_space_gb']:
                 self.logger.error(
-                    f"Insufficient disk space. Required: {self.config.config['min_disk_space_gb']} GB, "
+                    f"Insufficient disk space. Required: {self.config_manager.config['min_disk_space_gb']} GB, "
                     f"Available: {free_gb:.2f} GB"
                 )
                 return False
@@ -301,7 +305,7 @@ class BackupManager:
             
             # Use provided compression config or fall back to global config
             if compression_config is None:
-                compression_config = self.config.config['compression']
+                compression_config = self.config_manager.config['compression']
             
             # Create temporary tar file
             tar_path = output_path.with_suffix('.tar')
@@ -383,7 +387,7 @@ class BackupManager:
             dump_file = backup_dir / 'dump.sql'
             self.logger.info(f"Backing up database {db_name}")
             
-            for attempt in range(self.config.config['max_retry_attempts']):
+            for attempt in range(self.config_manager.config['max_retry_attempts']):
                 try:
                     subprocess.run(
                         f"docker exec -i {db_config['containers']['database']} pg_dump -U {db_config['user']} {db_name} > {dump_file}",
@@ -391,10 +395,10 @@ class BackupManager:
                     )
                     break
                 except subprocess.CalledProcessError as e:
-                    if attempt == self.config.config['max_retry_attempts'] - 1:
+                    if attempt == self.config_manager.config['max_retry_attempts'] - 1:
                         raise
                     self.logger.warning(f"Backup attempt {attempt + 1} failed, retrying...")
-                    time.sleep(self.config.config['retry_delay_seconds'])
+                    time.sleep(self.config_manager.config['retry_delay_seconds'])
 
             # Backup FileStore
             self.logger.info("Backing up FileStore")
@@ -424,11 +428,11 @@ class BackupManager:
                     duration_seconds=duration,
                     success=True
                 )
-                self.metadata_list.append(metadata)
+                self.metadata['backups'].append(metadata)
                 
                 # Cleanup
                 retention_days = db_config.get('retention_days', 
-                                            self.config.config['default_retention_days'])
+                                            self.config_manager.config['default_retention_days'])
                 self.cleanup_old_backups(self.backup_root / 'docker', retention_days)
                 
                 self.logger.info(f"Backup completed successfully: {final_backup_path}")
@@ -438,7 +442,7 @@ class BackupManager:
 
         except Exception as e:
             self.logger.error(f"Backup failed for {db_name}: {str(e)}")
-            self.metadata_list.append(
+            self.metadata['backups'].append(
                 BackupMetadata(
                     database_name=db_name,
                     container_name=db_config['containers']['odoo'],
@@ -453,7 +457,7 @@ class BackupManager:
 
     def backup_additional_paths(self):
         """Backup additional configured paths"""
-        for name, config in self.config.additional_backups.items():
+        for name, config in self.config_manager.additional_backups.items():
             if not config.get('enabled', True):
                 continue
 
@@ -475,10 +479,10 @@ class BackupManager:
                 backup_path.parent.mkdir(parents=True, exist_ok=True)
 
                 self.logger.info(f"Backing up {name} from {source_path}")
-                compression_config = config.get('compression', self.config.config['compression'])
+                compression_config = config.get('compression', self.config_manager.config['compression'])
                 self.compress_and_encrypt(source_path, backup_path, encryption_key, compression_config)
                 
-                retention_days = config.get('retention_days', self.config.config['default_retention_days'])
+                retention_days = config.get('retention_days', self.config_manager.config['default_retention_days'])
                 self.cleanup_old_backups(backup_path.parent, retention_days)
 
             except Exception as e:
@@ -490,7 +494,7 @@ class BackupManager:
             metadata_file = self.backup_root / 'backup_metadata.csv'
             with open(metadata_file, 'a', newline='') as f:
                 writer = csv.writer(f)
-                for metadata in self.metadata_list:
+                for metadata in self.metadata['backups']:
                     writer.writerow([
                         metadata.database_name,
                         metadata.container_name,
@@ -503,13 +507,156 @@ class BackupManager:
         except Exception as e:
             self.logger.error(f"Failed to save metadata: {str(e)}")
 
+def print_readme():
+    """Print detailed readme information"""
+    readme = """
+Odoo Docker Backup Script
+========================
+Version 5.0.3
+Date: 2025-01-08
+
+A comprehensive backup solution for Odoo databases running in Docker containers.
+
+Features
+--------
+1. Database backup with pg_dump
+2. FileStore backup
+3. Compression using zstd
+4. Optional encryption
+5. Configurable retention periods
+6. Additional paths backup
+7. Metadata tracking
+8. Docker container support
+
+Usage
+-----
+General syntax:
+    container2backup_zstd.py [--config CONFIG_FILE] [--help-full]
+
+Arguments:
+    --config FILE       Path to configuration file (default: searches in standard locations)
+    --help-full        Show this detailed help information
+
+Configuration File Locations (in order of precedence):
+1. Current directory: backup_config.yaml
+2. Config subdirectory: config/backup_config.yaml
+3. User's config: ~/.config/backup_config.yaml
+4. System-wide: /etc/odoo/backup_config.yaml
+
+Configuration File Format (YAML)
+------------------------------
+backup_root: "/opt/backups"              # Root directory for backups
+min_disk_space_gb: 5                     # Minimum required disk space
+max_retry_attempts: 3                    # Number of retry attempts
+retry_delay_seconds: 5                   # Delay between retries
+default_retention_days: 7                # Default backup retention period
+
+# Compression settings
+compression:
+    level: 3                            # zstd compression level (1-19)
+    threads: 0                          # Number of compression threads (0 = auto)
+
+# Logging configuration
+logging:
+    max_size_mb: 10                     # Max log file size
+    backup_count: 5                     # Number of log backups to keep
+log_level: "INFO"                       # Logging level
+
+# Container configuration
+containers:
+    database: "live-db"                 # PostgreSQL container name
+    odoo: "live-odoo"                   # Odoo container name
+
+# Database configurations
+databases:
+    - name: "prod_db"                   # Database name
+      containers:
+        database: "live-db"             # Database container
+        odoo: "live-odoo"               # Odoo container
+      user: "odoo"                      # Database user
+      retention_days: 30                # Retention period for this database
+      compression:                      # Optional: override global compression
+        level: 5
+        threads: 4
+
+# Additional backup paths
+additional_backups:
+    nginx_config:
+        enabled: true
+        source: "/etc/nginx"
+        retention_days: 30
+        compression:
+            level: 3
+            threads: 0
+
+Environment Variables
+-------------------
+BACKUP_ENCRYPT_KEY    Encryption key for encrypted backups (if encryption is enabled)
+
+Backup Process
+-------------
+1. Checks disk space and configuration
+2. Creates backup directory structure
+3. Performs database dump using pg_dump
+4. Backs up Odoo FileStore
+5. Compresses backup using zstd
+6. Encrypts backup if encryption is enabled
+7. Cleans up old backups based on retention policy
+8. Records backup metadata
+
+Output Structure
+--------------
+/opt/backups/
+├── docker/
+│   └── [database_name]/
+│       └── [date]/
+│           ├── dump.sql
+│           └── filestore/
+├── additional/
+│   └── [backup_name]/
+└── logs/
+    └── backup.log
+
+Metadata
+--------
+Backup metadata is stored in backup_metadata.csv with the following information:
+- Database name
+- Container name
+- Timestamp
+- Backup path
+- Size
+- Duration
+- Success status
+
+For more information or bug reports, please contact:
+Equitania Software GmbH
+License: GNU Affero General Public License v3
+"""
+    print(readme)
+
 def main():
     """Main execution function"""
     try:
+        # Add argument parsing
+        parser = argparse.ArgumentParser(
+            description='Odoo Docker Backup Script - A comprehensive backup solution for Odoo databases',
+            formatter_class=argparse.RawDescriptionHelpFormatter
+        )
+        
+        # Add --help-full option
+        parser.add_argument('--help-full', action='store_true',
+                          help='Show detailed help information')
+        parser.add_argument('--config', help='Path to configuration file')
+        
+        args = parser.parse_args()
+        
+        # Show full help if requested
+        if args.help_full:
+            print_readme()
+            sys.exit(0)
+        
         # Initialize configuration
         config_manager = ConfigurationManager()
-        
-        # Load and validate configuration
         config_manager.validate_config()
         
         # Initialize backup manager
@@ -517,7 +664,6 @@ def main():
         
         # Process database backups
         for db_config in config_manager.databases:
-            logger.info(f"Processing backup for database: {db_config['name']}")
             try:
                 backup_manager.backup_database(db_config)
             except Exception as db_error:
