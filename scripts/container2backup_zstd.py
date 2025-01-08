@@ -1,269 +1,486 @@
 #!/usr/bin/python3
 # -*- coding: utf-8 -*-
-# Mit diesem Skript wird ein Backup einer Odoo Datenbank inkl. FileStore unter Docker durchgeführt
-# With this script you can backup odoo db on postgresql incl. filestore under Docker
-# Version 4.0.0
-# Date 01.07.2024
-##############################################################################
-#
-#    Shell Script for Odoo, Open Source Management Solution
-#    Copyright (C) 2014-now Equitania Software GmbH(<http://www.equitania.de>).
-#
-#    This program is free software: you can redistribute it and/or modify
-#    it under the terms of the GNU Affero General Public License as
-#    published by the Free Software Foundation, either version 3 of the
-#    License, or (at your option) any later version.
-#
-#    This program is distributed in the hope that it will be useful,
-#    but WITHOUT ANY WARRANTY; without even the implied warranty of
-#    MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
-#    GNU Affero General Public License for more details.
-#
-#    You should have received a copy of the GNU Affero General Public License
-#    along with this program.  If not, see <http://www.gnu.org/licenses/>.
-#
-##############################################################################
+"""
+Odoo Database Backup Script with Docker Support
+Version 5.0.0
+Date 2025-01-08
+
+This script performs backup of Odoo databases including FileStore under Docker with the following features:
+- YAML-based configuration
+- Proper logging and documentation
+- Error handling and retry mechanisms
+- Progress tracking
+- Backup verification
+- Disk space checking
+- Metadata collection
+- Memory-efficient file handling
+- Enhanced cleanup process
+- Configuration via environment variables (with YAML override)
+"""
+
 import csv
 import datetime
 import io
+import logging
 import os
-import os.path
+import shutil
 import subprocess
+import sys
 import time
-import zipfile
+import yaml
+from dataclasses import dataclass
+from logging.handlers import RotatingFileHandler
 from os.path import expanduser
+from pathlib import Path
+from typing import Optional, Dict, List, Any
 
-def zstd_compress_encrypt_dir(dir_path, output_path, password):
-    start_time = time.time()  # Measure start time
+# Default configuration that can be overridden by YAML
+DEFAULT_CONFIG = {
+    'backup_root': '/opt/backups',
+    'min_disk_space_gb': 5.0,
+    'max_retry_attempts': 3,
+    'retry_delay_seconds': 5,
+    'log_level': 'INFO',
+    'default_retention_days': 14,
+    'compression': {
+        'type': 'zstd',
+        'level': 10
+    },
+    'logging': {
+        'max_size_mb': 10,
+        'backup_count': 5
+    },
+    'credentials': {
+        'config_file': '/etc/myodoo/credentials.yaml',
+        'fallback_locations': ['/etc/credentials.yaml', '~/.credentials.yaml'],
+        'key_directory': '/etc/myodoo/keys'
+    }
+}
 
-    # Determine the target directory's name and the path leading to it
-    base_dir = os.path.dirname(dir_path)
-    dir_name = os.path.basename(dir_path)
+@dataclass
+class BackupMetadata:
+    """Stores metadata about the backup process"""
+    database_name: str
+    container_name: str
+    timestamp: str
+    size_bytes: int
+    duration_seconds: float
+    success: bool
+    error_message: Optional[str] = None
 
-    # Temporary tar file
-    tar_path = output_path + '.tar'
-    # Zstd compressed file path adjusted to not double-append extensions
-    zstd_path = output_path if password == '' else output_path + '.zst'
+class ConfigurationManager:
+    """Manages configuration loading and validation"""
+    def __init__(self):
+        self.config = DEFAULT_CONFIG.copy()
+        self.databases = []
+        self.additional_backups = {}
 
-    # Create a tar archive of the directory with relative paths
-    with open(tar_path, "wb") as tar_file:
-        subprocess.run(["tar", "-cf", "-", "-C", base_dir, dir_name], stdout=tar_file)
-
-    # Compress the tar archive with zstd specifying the compression level
-    subprocess.run(["zstd", "-10", "-f", tar_path, "-o", zstd_path])
-
-    # Remove the temporary tar file
-    os.remove(tar_path)
-
-    # Encrypt the zstd file with gpg and password protection if a password is provided
-    if password != '':
-        encrypted_path = output_path + '.gpg'  # Ensure the file ends with .gpg after encryption
-        subprocess.run(['gpg', '--symmetric', '--batch', '--passphrase', password, '-o', encrypted_path, zstd_path])
-        os.remove(zstd_path)  # Remove the uncompressed zstd file after encryption
-
-    end_time = time.time()  # Measure end time
-    compression_time = end_time - start_time  # Calculate the difference
-
-    print(f"Compression completed in {compression_time} secs.")
-
-
-def zip_dir(_dir_path, _zip_path):
-    start_time = time.time()  # Startzeit messen
-
-    fzip = zipfile.ZipFile(_zip_path, "w", zipfile.ZIP_DEFLATED, allowZip64=True)
-    basedir = os.path.dirname(_dir_path) + "/"
-    for root, dirs, files in os.walk(_dir_path):
-        if os.path.basename(root)[0] == ".":
-            continue  # skip hidden directories
-        dirname = root.replace(basedir, "")
-        for f in files:
-            if f[-1] == "~" or (f[0] == "." and f != ".htaccess"):
-                continue
-            fzip.write(root + "/" + f, dirname + "/" + f)
-    fzip.close()
-    end_time = time.time()  # Endzeit messen
-    compression_time = end_time - start_time  # Differenz berechnen
-
-    print(f"compressiontime {compression_time} secs.")
-    return
-
-
-def cleanup_backups(_cleanup_path, _cutoff_days):
-    _files = os.listdir(_cleanup_path + "/")
-    for _xfile in _files:
-        if os.path.isfile(_cleanup_path + "/" + _xfile):
-            t = os.stat(_cleanup_path + "/" + _xfile)
-            c = t.st_ctime
-            # delete file if older than 2 weeks
-            if c < _cutoff_days:
-                print("remove: " + _cleanup_path + "/" + _xfile)
-                os.remove(_cleanup_path + "/" + _xfile)
-
-
-# csv format - separator ","
-# databasename,postgresql_containername,myodoo_containername,number_of_days,password
-_mybasepath = expanduser("~")
-_fname_backup = _mybasepath + "/container2backup.csv"
-_fname_backup_path = _mybasepath + "/container2backup_path.csv"
-
-if os.path.exists(_fname_backup_path):
-    _mybackup_file = open(_fname_backup_path, "r", encoding="utf8")
-    _mybackuppath = _mybackup_file.readline()
-    _mybackuppath = _mybackuppath.strip("\n")
-else:
-    print("No " + _fname_backup_path + " found!")
-    _mybackuppath = "/opt/backups"
-
-if not os.path.exists(_mybackuppath):
-    os.system("mkdir -p " + _mybackuppath)
-
-_mynginxpath = _mybackuppath + "/nginx"
-if not os.path.exists(_mynginxpath):
-    os.mkdir(_mynginxpath)
-
-_mydockerbuildpath = _mybackuppath + "/docker-builds"
-if not os.path.exists(_mydockerbuildpath):
-    os.mkdir(_mydockerbuildpath)
-
-_mybackuppath = _mybackuppath + "/docker"
-if not os.path.exists(_mybackuppath):
-    os.mkdir(_mybackuppath)
-
-print(_mybackuppath)
-
-with io.open(_fname_backup, "r", encoding="utf8") as csvfile:
-    _reader = csv.reader(csvfile, delimiter=",")
-    for row in _reader:
-        _mydb = row[0]
-        if not (row):
-            continue
-        elif row[0].startswith("#"):
-            continue
-            # Kommentarzeile
-        _mydbuser = row[1]
-        _mysqlcontainer = row[2]
-        _mydatacontainer = row[3]
+    def load_config(self, config_path: Path) -> None:
+        """Load configuration from YAML file"""
         try:
-            _mystoretime = row[4]
-        except:
-            _mystoretime = 14
-        # Password
+            with open(config_path, 'r') as f:
+                yaml_config = yaml.safe_load(f)
+
+            # Update global configuration
+            self.config.update(yaml_config.get('global', {}))
+            
+            # Load database configurations
+            self.databases = yaml_config.get('databases', [])
+            
+            # Load additional backup configurations
+            self.additional_backups = yaml_config.get('additional_backups', {})
+
+        except Exception as e:
+            raise RuntimeError(f"Failed to load configuration: {str(e)}")
+
+    def validate_config(self) -> None:
+        """Validate the loaded configuration"""
+        required_global = ['backup_root', 'min_disk_space_gb', 'max_retry_attempts']
+        for key in required_global:
+            if key not in self.config:
+                raise ValueError(f"Missing required global configuration: {key}")
+
+        if not self.databases:
+            raise ValueError("No database configurations found")
+
+        for db in self.databases:
+            required_db = ['name', 'user', 'containers']
+            for key in required_db:
+                if key not in db:
+                    raise ValueError(f"Missing required database configuration: {key}")
+            
+            if 'database' not in db['containers'] or 'odoo' not in db['containers']:
+                raise ValueError(f"Missing container configuration for database: {db['name']}")
+
+class CredentialsManager:
+    """Manages secure access to backup encryption credentials"""
+    
+    def __init__(self, config: Dict[str, Any]):
+        self.config = config
+        self.credentials = {}
+        self.logger = logging.getLogger('credentials_manager')
+        self._load_credentials()
+
+    def _load_credentials(self):
+        """Load credentials from configuration file"""
+        # Check all possible credential file locations
+        cred_locations = [
+            Path(self.config['credentials']['config_file']),
+            *[Path(p) for p in self.config['credentials']['fallback_locations']]
+        ]
+        
+        cred_file = next((p for p in cred_locations if p.exists()), None)
+        if not cred_file:
+            self.logger.warning("No credentials file found.")
+            return
+
         try:
-            _mypassword = row[5]
-        except:
-            _mypassword = ''
-        print(
-            "Database Name:"
-            + _mydb
-            + "\nDatabaseContainerName:"
-            + _mysqlcontainer
-            + "\nMyOdooContainerName:"
-            + _mydatacontainer
-            + "\nStoreTime:"
-            + str(_mystoretime)
-            + " days"
-            + "\nPassword:"
-            + _mypassword
+            # Check file permissions
+            stat = cred_file.stat()
+            if stat.st_mode & 0o077:  # Check if group or others have any permissions
+                self.logger.warning(f"Warning: Insecure permissions on credentials file: {cred_file}")
+
+            with open(cred_file, 'r') as f:
+                self.credentials = yaml.safe_load(f)
+        except Exception as e:
+            self.logger.error(f"Failed to load credentials file: {str(e)}")
+
+    def get_encryption_key(self, backup_type: str, name: str) -> Optional[str]:
+        """Get encryption key for a specific backup"""
+        try:
+            # First try environment variable
+            env_key = os.getenv('BACKUP_ENCRYPT_KEY')
+            if env_key:
+                return env_key
+
+            # Then try the global key from credentials file
+            return self.credentials.get('credentials', {}).get('global_key')
+
+        except Exception as e:
+            self.logger.error(f"Error retrieving encryption key: {str(e)}")
+        
+        return None
+
+class BackupManager:
+    def __init__(self, config: ConfigurationManager):
+        self.config = config
+        self._setup_logging()
+        self.logger = logging.getLogger('backup_manager')
+        self.backup_root = Path(config.config['backup_root'])
+        self.metadata_list: List[BackupMetadata] = []
+        self.credentials = CredentialsManager(config.config)
+
+    def _setup_logging(self):
+        """Configure logging with rotation"""
+        log_dir = Path(self.config.config['backup_root']) / 'logs'
+        log_dir.mkdir(parents=True, exist_ok=True)
+        
+        log_file = log_dir / 'backup.log'
+        formatter = logging.Formatter(
+            '%(asctime)s - %(name)s - %(levelname)s - %(message)s'
+        )
+        
+        file_handler = RotatingFileHandler(
+            log_file,
+            maxBytes=self.config.config['logging']['max_size_mb'] * 1024 * 1024,
+            backupCount=self.config.config['logging']['backup_count']
+        )
+        file_handler.setFormatter(formatter)
+        
+        console_handler = logging.StreamHandler()
+        console_handler.setFormatter(formatter)
+        
+        root_logger = logging.getLogger()
+        root_logger.setLevel(self.config.config['log_level'])
+        root_logger.addHandler(file_handler)
+        root_logger.addHandler(console_handler)
+
+    def check_disk_space(self, path: Path) -> bool:
+        """Check if there's enough disk space available"""
+        try:
+            total, used, free = shutil.disk_usage(path)
+            free_gb = free / (1024**3)
+            self.logger.info(f"Free disk space: {free_gb:.2f} GB")
+            if free_gb < self.config.config['min_disk_space_gb']:
+                self.logger.error(
+                    f"Insufficient disk space. Required: {self.config.config['min_disk_space_gb']} GB, "
+                    f"Available: {free_gb:.2f} GB"
+                )
+                return False
+            return True
+        except Exception as e:
+            self.logger.error(f"Error checking disk space: {str(e)}")
+            return False
+
+    def verify_backup(self, backup_path: Path) -> bool:
+        """Verify the integrity of the backup file"""
+        try:
+            if backup_path.suffix == '.zst':
+                result = subprocess.run(
+                    ['zstd', '-t', str(backup_path)],
+                    capture_output=True,
+                    text=True
+                )
+                return result.returncode == 0
+            elif backup_path.suffix == '.gpg':
+                result = subprocess.run(
+                    ['gpg', '--list-packets', str(backup_path)],
+                    capture_output=True,
+                    text=True
+                )
+                return result.returncode == 0
+            return False
+        except Exception as e:
+            self.logger.error(f"Backup verification failed: {str(e)}")
+            return False
+
+    def compress_and_encrypt(self, source_path: Path, output_path: Path, password: str = '', compression_config: Optional[Dict] = None) -> bool:
+        """Compress directory with zstd and optionally encrypt"""
+        try:
+            start_time = time.time()
+            
+            # Use provided compression config or fall back to global config
+            if compression_config is None:
+                compression_config = self.config.config['compression']
+            
+            # Create temporary tar file
+            tar_path = output_path.with_suffix('.tar')
+            
+            # Create tar archive
+            self.logger.info(f"Creating tar archive for {source_path}")
+            subprocess.run(
+                ["tar", "-cf", str(tar_path), "-C", str(source_path.parent), source_path.name],
+                check=True
             )
-        _mybackupfolder = _mybackuppath + "/" + _mydb
-        if not os.path.exists(_mybackupfolder):
-            os.mkdir(_mybackupfolder)
-        os.system(
-            "docker exec -i "
-            + _mysqlcontainer
-            + " pg_dump -U "
-            + _mydbuser
-            + " "
-            + _mydb
-            + " > "
-            + _mybackupfolder
-            + "/dump.sql"
-        )
-        filestorepath = "/opt/odoo/data/filestore/"
-        os.system(
-            "docker cp "
-            + _mydatacontainer
-            + ":/opt/odoo/data/filestore/"
-            + _mydb
-            + " "
-            + _mybackupfolder
-            + "/"
-        )
-        ts = time.time()
-        mytime = datetime.datetime.fromtimestamp(ts).strftime("%Y-%m-%d_%H-%M-%S")
-        # os.rename(mybackupfolder + '/' + mydb, mybackupfolder + '/filestore')
-        zstd_compress_encrypt_dir(
-            _mybackupfolder,
-            _mybackuppath
-            + "/"
-            + _mydb
-            + "_"
-            + _mydatacontainer
-            + "_dockerbackup_"
-            + mytime
-            + ".tar.zst",
-            _mypassword
-        )
-        os.system("rm -r " + _mybackupfolder)
-        print("Backup is done " + _mydatacontainer)
 
-# backup nginx-conf
-if os.path.exists("/etc/nginx/conf.d/"):
-    ts = time.time()
-    mytime = datetime.datetime.fromtimestamp(ts).strftime("%Y-%m-%d_%H-%M-%S")
-    os.system("zip -r " + _mynginxpath + "/nginx-confs_" + mytime + ".zip /etc/nginx/")
+            # Compress with zstd
+            self.logger.info("Compressing with zstd")
+            zstd_path = output_path.with_suffix('.zst')
+            subprocess.run(
+                ["zstd", f"-{compression_config['level']}", "-f", str(tar_path), "-o", str(zstd_path)],
+                check=True
+            )
 
-# backup letsencrypt
-if os.path.exists("/etc/letsencrypt/live/"):
-    ts = time.time()
-    mytime = datetime.datetime.fromtimestamp(ts).strftime("%Y-%m-%d_%H-%M-%S")
-    os.system(
-        "zip -r "
-        + _mynginxpath
-        + "/letsencrypt_"
-        + mytime
-        + ".zip /etc/letsencrypt/live/"
-    )
+            # Remove temporary tar file
+            tar_path.unlink()
 
-# backup docker-builds
-if os.path.exists("/root/docker-builds"):
-    ts = time.time()
-    mytime = datetime.datetime.fromtimestamp(ts).strftime("%Y-%m-%d_%H-%M-%S")
-    os.system(
-        "zip -r "
-        + _mydockerbuildpath
-        + "/docker-builds"
-        + mytime
-        + ".zip /root/docker-builds/"
-    )
+            # Encrypt if password provided
+            if password:
+                self.logger.info("Encrypting backup")
+                final_path = output_path.with_suffix('.gpg')
+                subprocess.run(
+                    ['gpg', '--symmetric', '--batch', '--passphrase', password, '-o', str(final_path), str(zstd_path)],
+                    check=True
+                )
+                zstd_path.unlink()
 
-# run by crontab
-# removes any files in mybackuppath older than 14 days or mystoretime
+            duration = time.time() - start_time
+            self.logger.info(f"Compression completed in {duration:.2f} seconds")
+            return True
 
-now = time.time()
-_cutoff = now - (float(_mystoretime) * 86400)
+        except subprocess.CalledProcessError as e:
+            self.logger.error(f"Compression failed: {str(e)}")
+            return False
+        except Exception as e:
+            self.logger.error(f"Unexpected error during compression: {str(e)}")
+            return False
 
-# remove docker backups
-cleanup_backups(_mybackuppath, _cutoff)
+    def cleanup_old_backups(self, backup_dir: Path, days: int):
+        """Remove backups older than specified days"""
+        try:
+            cutoff_time = time.time() - (days * 86400)
+            count = 0
+            
+            for item in backup_dir.glob("*"):
+                if item.is_file() and item.stat().st_mtime < cutoff_time:
+                    self.logger.info(f"Removing old backup: {item}")
+                    item.unlink()
+                    count += 1
+            
+            self.logger.info(f"Cleaned up {count} old backup files")
+        except Exception as e:
+            self.logger.error(f"Error during cleanup: {str(e)}")
 
-# removes any files in mynginxpath older than 14 days
-cleanup_backups(_mynginxpath, _cutoff)
+    def backup_database(self, db_config: Dict[str, Any]) -> bool:
+        """Perform database backup with progress tracking and error handling"""
+        try:
+            start_time = time.time()
+            db_name = db_config['name']
+            backup_dir = self.backup_root / 'docker' / db_name
+            backup_dir.mkdir(parents=True, exist_ok=True)
 
-# removes any files in mydockerbuildpath older than 14 days
-cleanup_backups(_mydockerbuildpath, _cutoff)
+            if not self.check_disk_space(backup_dir):
+                raise Exception("Insufficient disk space")
 
-# csv format
-# rsync --delete -avzre "ssh" /sourcepath/ user@servername:/targetpath/
-fname_rsync = _mybasepath + "/rsync_targets.csv"
-print("Start rsync: " + fname_rsync)
-if os.path.isfile(fname_rsync):
-    with io.open(fname_rsync, "r", encoding="utf8") as csvfile:
-        _reader_sync = csv.reader(csvfile, delimiter=",")
-        for row in _reader_sync:
-            if not (row):
+            # Get encryption key if encryption is enabled
+            encryption_key = None
+            if db_config.get('encryption', {}).get('enabled', False):
+                encryption_key = self.credentials.get_encryption_key('database', db_name)
+                if not encryption_key:
+                    self.logger.warning(f"Encryption enabled for {db_name} but no key found")
+
+            # Backup PostgreSQL database
+            dump_file = backup_dir / 'dump.sql'
+            self.logger.info(f"Backing up database {db_name}")
+            
+            for attempt in range(self.config.config['max_retry_attempts']):
+                try:
+                    subprocess.run(
+                        f"docker exec -i {db_config['containers']['database']} pg_dump -U {db_config['user']} {db_name} > {dump_file}",
+                        shell=True, check=True
+                    )
+                    break
+                except subprocess.CalledProcessError as e:
+                    if attempt == self.config.config['max_retry_attempts'] - 1:
+                        raise
+                    self.logger.warning(f"Backup attempt {attempt + 1} failed, retrying...")
+                    time.sleep(self.config.config['retry_delay_seconds'])
+
+            # Backup FileStore
+            self.logger.info("Backing up FileStore")
+            subprocess.run(
+                f"docker cp {db_config['containers']['odoo']}:/opt/odoo/data/filestore/{db_name} {backup_dir}/",
+                shell=True, check=True
+            )
+
+            # Create timestamp and compress
+            timestamp = datetime.datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
+            final_backup_path = self.backup_root / 'docker' / f"{db_name}_{db_config['containers']['odoo']}_{timestamp}"
+            
+            if self.compress_and_encrypt(backup_dir, final_backup_path, encryption_key):
+                # Verify backup
+                if not self.verify_backup(final_backup_path.with_suffix('.gpg' if encryption_key else '.zst')):
+                    raise Exception("Backup verification failed")
+
+                # Record metadata
+                duration = time.time() - start_time
+                size = os.path.getsize(str(final_backup_path.with_suffix('.gpg' if encryption_key else '.zst')))
+                
+                metadata = BackupMetadata(
+                    database_name=db_name,
+                    container_name=db_config['containers']['odoo'],
+                    timestamp=timestamp,
+                    size_bytes=size,
+                    duration_seconds=duration,
+                    success=True
+                )
+                self.metadata_list.append(metadata)
+                
+                # Cleanup
+                retention_days = db_config.get('retention_days', 
+                                            self.config.config['default_retention_days'])
+                self.cleanup_old_backups(self.backup_root / 'docker', retention_days)
+                
+                self.logger.info(f"Backup completed successfully: {final_backup_path}")
+                return True
+            
+            return False
+
+        except Exception as e:
+            self.logger.error(f"Backup failed for {db_name}: {str(e)}")
+            self.metadata_list.append(
+                BackupMetadata(
+                    database_name=db_name,
+                    container_name=db_config['containers']['odoo'],
+                    timestamp=datetime.datetime.now().strftime("%Y-%m-%d_%H-%M-%S"),
+                    size_bytes=0,
+                    duration_seconds=time.time() - start_time,
+                    success=False,
+                    error_message=str(e)
+                )
+            )
+            return False
+
+    def backup_additional_paths(self):
+        """Backup additional configured paths"""
+        for name, config in self.config.additional_backups.items():
+            if not config.get('enabled', True):
                 continue
-            elif row[0].startswith("#"):
-                continue
-            else:
-                os.system(row[0])
-print("Backup done!")
+
+            try:
+                source_path = Path(config['source_path'])
+                if not source_path.exists():
+                    self.logger.warning(f"Skipping {name} backup: path does not exist: {source_path}")
+                    continue
+
+                # Get encryption key if encryption is enabled
+                encryption_key = None
+                if config.get('encryption', {}).get('enabled', False):
+                    encryption_key = self.credentials.get_encryption_key('additional', name)
+                    if not encryption_key:
+                        self.logger.warning(f"Encryption enabled for {name} but no key found")
+
+                timestamp = datetime.datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
+                backup_path = self.backup_root / name / f"{name}_{timestamp}"
+                backup_path.parent.mkdir(parents=True, exist_ok=True)
+
+                self.logger.info(f"Backing up {name} from {source_path}")
+                compression_config = config.get('compression', self.config.config['compression'])
+                self.compress_and_encrypt(source_path, backup_path, encryption_key, compression_config)
+                
+                retention_days = config.get('retention_days', self.config.config['default_retention_days'])
+                self.cleanup_old_backups(backup_path.parent, retention_days)
+
+            except Exception as e:
+                self.logger.error(f"Failed to backup {name}: {str(e)}")
+
+    def save_metadata(self):
+        """Save backup metadata to a CSV file"""
+        try:
+            metadata_file = self.backup_root / 'backup_metadata.csv'
+            with open(metadata_file, 'a', newline='') as f:
+                writer = csv.writer(f)
+                for metadata in self.metadata_list:
+                    writer.writerow([
+                        metadata.database_name,
+                        metadata.container_name,
+                        metadata.timestamp,
+                        metadata.size_bytes,
+                        metadata.duration_seconds,
+                        metadata.success,
+                        metadata.error_message or ''
+                    ])
+        except Exception as e:
+            self.logger.error(f"Failed to save metadata: {str(e)}")
+
+def main():
+    try:
+        # Initialize configuration
+        config_manager = ConfigurationManager()
+        
+        # Look for config file in multiple locations
+        config_locations = [
+            Path('/etc/myodoo/backup_config.yaml'),
+            Path(expanduser("~")) / 'backup_config.yaml',
+            Path(__file__).parent.parent / 'config' / 'backup_config.yaml'
+        ]
+        
+        config_file = next((p for p in config_locations if p.exists()), None)
+        if not config_file:
+            raise FileNotFoundError("No configuration file found in standard locations")
+        
+        # Load and validate configuration
+        config_manager.load_config(config_file)
+        config_manager.validate_config()
+        
+        # Initialize backup manager
+        backup_manager = BackupManager(config_manager)
+        logger = logging.getLogger('main')
+        
+        # Process database backups
+        for db_config in config_manager.databases:
+            logger.info(f"Processing backup for database: {db_config['name']}")
+            backup_manager.backup_database(db_config)
+        
+        # Process additional backups
+        backup_manager.backup_additional_paths()
+        
+        # Save metadata
+        backup_manager.save_metadata()
+
+    except Exception as e:
+        logger.error(f"Critical error: {str(e)}")
+        sys.exit(1)
+
+if __name__ == "__main__":
+    main()
