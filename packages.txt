@@ -9,6 +9,7 @@ setuptools
 distro-info
 odoorpc-toolbox
 thefuck
+zstd
 
 # System packages
 pipx
