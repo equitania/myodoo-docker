@@ -686,7 +686,7 @@ def get_bat_version() -> Optional[tuple]:
             
         if result.returncode == 0:
             # bat output format: "bat 0.22.1"
-            version_str = result.stdout.strip().split()[1]
+            version_str = result.stdout.split()[1]
             return tuple(map(int, version_str.split('.')))
     except Exception as e:
         logger.error(f"Error getting bat version: {str(e)}")
@@ -694,22 +694,24 @@ def get_bat_version() -> Optional[tuple]:
 
 def check_bat_version() -> bool:
     """Check if bat is installed and up to date"""
-    min_version = (0, 25, 0)  # Minimum required version
     current_version = get_bat_version()
-    
     if not current_version:
         logger.error("bat is not installed")
         return False
-    
-    logger.info(f"Current bat version: {'.'.join(map(str, current_version))}")
-    
+
+    # If we're on Linux and using system packages, accept the system version
+    if sys.platform != "darwin":
+        logger.info(f"Current bat version: {'.'.join(map(str, current_version))}")
+        return True
+        
+    # For macOS, we can update to latest version
+    min_version = (0, 25, 0)
     if current_version < min_version:
-        logger.warning(
-            f"bat version {'.'.join(map(str, current_version))} is outdated. "
-            f"Minimum required version is {'.'.join(map(str, min_version))}"
-        )
+        logger.warning(f"bat version {'.'.join(map(str, current_version))} is outdated. "
+                      f"Minimum required version is {'.'.join(map(str, min_version))}")
         return False
     
+    logger.info(f"Current bat version: {'.'.join(map(str, current_version))}")
     return True
 
 def install_or_update_bat():
