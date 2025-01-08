@@ -324,10 +324,9 @@ class BackupManager:
             # Then compress with zstd
             self.logger.info(f"Compressing with zstd to: {output_path}")
             # Ensure output path has .zst extension
-            if not output_path.suffix:
-                output_path = output_path.with_suffix('.zst')
+            final_output_path = output_path.with_suffix('.zst')
             subprocess.run(
-                ['zstd', f"-{compression_config.get('level', 3)}", '-f', str(tar_path), '-o', str(output_path)],
+                ['zstd', f"-{compression_config.get('level', 3)}", '-f', str(tar_path), '-o', str(final_output_path)],
                 check=True,
                 capture_output=True,
                 text=True
@@ -337,10 +336,11 @@ class BackupManager:
             tar_path.unlink()
             
             # Verify the compressed file exists and has size
-            if not output_path.exists() or output_path.stat().st_size == 0:
+            if not final_output_path.exists() or final_output_path.stat().st_size == 0:
                 raise RuntimeError("Compressed file is empty or does not exist")
             
             self.logger.info("Compression completed successfully")
+            return final_output_path
             
         except Exception as e:
             self.logger.error(f"Error during compression: {str(e)}")
@@ -402,7 +402,7 @@ class BackupManager:
             final_backup_path = self.backup_root / 'docker' / f"{db_name}_{db_config['containers']['odoo']}_{timestamp}"
             
             try:
-                self.compress_and_encrypt(backup_dir, final_backup_path, encryption_key)
+                compressed_path = self.compress_and_encrypt(backup_dir, final_backup_path)
                 
                 # Delete temporary backup directory after successful compression
                 if backup_dir and backup_dir.exists():
@@ -410,12 +410,12 @@ class BackupManager:
                     self.logger.info(f"Deleted temporary backup directory: {backup_dir}")
                 
                 # Verify backup
-                if not self.verify_backup(final_backup_path):
+                if not self.verify_backup(compressed_path):
                     raise Exception("Backup verification failed")
 
                 # Record metadata
                 duration = time.time() - start_time
-                size = os.path.getsize(str(final_backup_path))
+                size = os.path.getsize(str(compressed_path))
                 
                 metadata = BackupMetadata(
                     database_name=db_name,
@@ -487,7 +487,7 @@ class BackupManager:
 
                 self.logger.info(f"Backing up {name} from {source_path}")
                 compression_config = config.get('compression', self.config_manager.config['compression'])
-                self.compress_and_encrypt(source_path, backup_path, encryption_key, compression_config)
+                compressed_path = self.compress_and_encrypt(source_path, backup_path, encryption_key, compression_config)
                 
                 retention_days = config.get('retention_days', self.config_manager.config['default_retention_days'])
                 self.cleanup_old_backups(backup_path.parent, retention_days)
