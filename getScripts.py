@@ -228,27 +228,17 @@ def get_fastfetch_download_url(version: str, os_id: str) -> Optional[str]:
 
         if os_id == "ubuntu" or os_id == "debian":
             arch = "amd64" if platform.machine() == "x86_64" else "arm64"
+            target_package = f"fastfetch-linux-{arch}.deb"
             
             # Log available assets for debugging
             logger.info("Available FastFetch packages:")
             for asset in latest_fastfetch_assets:
                 logger.info(f"- {asset['name']}")
-            
-            # Try different possible package naming patterns
-            patterns = [
-                f"fastfetch_{version}",  # Base pattern to match
-                "fastfetch-linux",       # Fallback pattern
-                ".deb"                   # Must be a .deb file
-            ]
-            
-            # Find best matching asset
-            for asset in latest_fastfetch_assets:
-                name = asset["name"].lower()
-                if all(pattern.lower() in name for pattern in patterns) and arch in name:
+                if asset["name"] == target_package:
                     logger.info(f"Found matching package: {asset['name']}")
                     return asset["browser_download_url"]
             
-            logger.error(f"No matching package found for version {version} and arch {arch}")
+            logger.error(f"Package {target_package} not found in release assets")
     except Exception as e:
         logger.error(f"Error getting fastfetch download URL: {str(e)}")
     return None
