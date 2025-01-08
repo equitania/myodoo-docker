@@ -1,7 +1,7 @@
 #!/usr/bin/python3
 # -*- coding: utf-8 -*-
 # Script for organizing Docker servers
-# Version 6.3.4 
+# Version 6.3.5 
 # Date 08.01.2025
 ##############################################################################
 #
@@ -633,25 +633,40 @@ def get_zstd_version() -> Optional[tuple]:
         logger.error(f"Error getting zstd version: {str(e)}")
     return None
 
+def is_ubuntu():
+    """Check if the system is Ubuntu"""
+    try:
+        with open('/etc/os-release', 'r') as f:
+            content = f.read()
+            return 'Ubuntu' in content
+    except:
+        return False
+
 def check_zstd_version() -> bool:
-    """Check if zstd is installed and up to date"""
-    min_version = (1, 5, 0)  # Minimum required version
-    current_version = get_zstd_version()
-    
-    if not current_version:
-        logger.error("zstd is not installed")
+    """Check if zstd is installed and meets minimum version requirements"""
+    try:
+        version = get_zstd_version()
+        if not version:
+            logger.error("zstd is not installed")
+            return False
+            
+        version_str = '.'.join(map(str, version))
+        logger.info(f"Current zstd version: {version_str}")
+        
+        # For Ubuntu, accept version 1.4.8
+        if is_ubuntu():
+            min_version = "1.4.8"
+        else:
+            min_version = "1.5.0"
+            
+        min_version_tuple = tuple(map(int, min_version.split('.')))
+        if version < min_version_tuple:
+            logger.warning(f"zstd version {version_str} is outdated. Minimum required version is {min_version}")
+            return False
+        return True
+    except Exception as e:
+        logger.error(f"Error checking zstd version: {str(e)}")
         return False
-    
-    logger.info(f"Current zstd version: {'.'.join(map(str, current_version))}")
-    
-    if current_version < min_version:
-        logger.warning(
-            f"zstd version {'.'.join(map(str, current_version))} is outdated. "
-            f"Minimum required version is {'.'.join(map(str, min_version))}"
-        )
-        return False
-    
-    return True
 
 def install_or_update_zstd():
     """Install or update zstd package"""
