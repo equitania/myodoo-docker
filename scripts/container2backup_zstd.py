@@ -301,53 +301,40 @@ class BackupManager:
     def compress_and_encrypt(self, source_path: Path, output_path: Path, password: str = '', compression_config: Optional[Dict] = None) -> bool:
         """Compress directory with zstd and optionally encrypt"""
         try:
-            start_time = time.time()
+            if not source_path.exists():
+                raise FileNotFoundError(f"Source path does not exist: {source_path}")
+
+            self.logger.info(f"Compressing {source_path} to {output_path}")
             
-            # Use provided compression config or fall back to global config
-            if compression_config is None:
-                compression_config = self.config_manager.config['compression']
+            # Use default compression settings if none provided
+            if not compression_config:
+                compression_config = self.config_manager.config.get('compression', {'level': 3})
             
-            # Create temporary tar file
-            tar_path = output_path.with_suffix('.tar')
+            # Prepare compression command
+            compress_cmd = [
+                'tar', '--use-compress-program',
+                f'zstd -{compression_config.get("level", 3)}',
+                '-cf', str(output_path), '-C', str(source_path.parent), source_path.name
+            ]
             
-            # Create tar archive
-            self.logger.info(f"Creating tar archive for {source_path}")
-            subprocess.run(
-                ["tar", "-cf", str(tar_path), "-C", str(source_path.parent), source_path.name],
-                check=True
-            )
-
-            # Compress with zstd
-            self.logger.info("Compressing with zstd")
-            zstd_path = output_path.with_suffix('.zst')
-            subprocess.run(
-                ["zstd", f"-{compression_config['level']}", "-f", str(tar_path), "-o", str(zstd_path)],
-                check=True
-            )
-
-            # Remove temporary tar file
-            tar_path.unlink()
-
-            # Encrypt if password provided
-            if password:
-                self.logger.info("Encrypting backup")
-                final_path = output_path.with_suffix('.gpg')
-                subprocess.run(
-                    ['gpg', '--symmetric', '--batch', '--passphrase', password, '-o', str(final_path), str(zstd_path)],
-                    check=True
-                )
-                zstd_path.unlink()
-
-            duration = time.time() - start_time
-            self.logger.info(f"Compression completed in {duration:.2f} seconds")
-            return True
-
-        except subprocess.CalledProcessError as e:
-            self.logger.error(f"Compression failed: {str(e)}")
-            return False
+            # Execute compression
+            result = subprocess.run(compress_cmd, capture_output=True, text=True)
+            if result.returncode != 0:
+                raise RuntimeError(f"Compression failed: {result.stderr}")
+            
+            # Verify the compressed file exists and has size
+            if not output_path.exists() or output_path.stat().st_size == 0:
+                raise RuntimeError("Compressed file is empty or does not exist")
+            
+            # Delete the source directory after successful compression
+            shutil.rmtree(source_path)
+            self.logger.info(f"Successfully deleted source directory: {source_path}")
+            
+            self.logger.info("Compression completed successfully")
+            
         except Exception as e:
-            self.logger.error(f"Unexpected error during compression: {str(e)}")
-            return False
+            self.logger.error(f"Error during compression: {str(e)}")
+            raise
 
     def cleanup_old_backups(self, backup_dir: Path, days: int):
         """Remove backups older than specified days"""
