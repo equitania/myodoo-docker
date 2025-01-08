@@ -678,9 +678,14 @@ def install_or_update_zstd():
 def get_bat_version() -> Optional[tuple]:
     """Get installed bat version as tuple (major, minor, patch)"""
     try:
-        result = subprocess.run(['bat', '--version'], capture_output=True, text=True)
+        # On Debian/Ubuntu systems, bat is installed as batcat
+        if sys.platform != "darwin":
+            result = subprocess.run(['batcat', '--version'], capture_output=True, text=True)
+        else:
+            result = subprocess.run(['bat', '--version'], capture_output=True, text=True)
+            
         if result.returncode == 0:
-            # bat output format: "bat 0.25.0"
+            # bat output format: "bat 0.22.1"
             version_str = result.stdout.strip().split()[1]
             return tuple(map(int, version_str.split('.')))
     except Exception as e:
