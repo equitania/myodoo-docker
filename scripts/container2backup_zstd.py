@@ -2,7 +2,7 @@
 # -*- coding: utf-8 -*-
 """
 Odoo Database Backup Script with Docker Support
-Version 5.0.1
+Version 5.0.2
 Date 2025-01-08
 
 This script performs backup of Odoo databases including FileStore under Docker with the following features:
@@ -78,12 +78,56 @@ class BackupMetadata:
 
 class ConfigurationManager:
     """Manages configuration loading and validation"""
+    
+    CONFIG_FILE_PATHS = [
+        'backup_config.yaml',  # Current directory
+        'config/backup_config.yaml',  # Config subdirectory
+        os.path.expanduser('~/.config/backup_config.yaml'),  # User's config
+        '/etc/odoo/backup_config.yaml',  # System-wide config
+    ]
+    
+    CREDENTIALS_FILE_PATHS = [
+        'backup_credentials.yaml',  # Current directory
+        'config/backup_credentials.yaml',  # Config subdirectory
+        os.path.expanduser('~/.config/backup_credentials.yaml'),  # User's config
+        '/etc/odoo/backup_credentials.yaml',  # System-wide config
+    ]
+
     def __init__(self):
-        self.config = DEFAULT_CONFIG.copy()
+        self.logger = logging.getLogger(__name__)
+        self.config = {}
+        self.credentials = {}
         self.databases = []
         self.additional_backups = {}
+        
+        # Load configuration
+        config_file = self._find_config_file(self.CONFIG_FILE_PATHS)
+        if not config_file:
+            available_paths = '\n  - '.join([''] + self.CONFIG_FILE_PATHS)
+            raise FileNotFoundError(
+                f"No backup_config.yaml found in any of these locations:{available_paths}\n"
+                f"Please create a configuration file in one of these locations."
+            )
+        
+        self.logger.info(f"Using configuration file: {config_file}")
+        self._load_config(config_file)
+        
+        # Load credentials if they exist
+        creds_file = self._find_config_file(self.CREDENTIALS_FILE_PATHS)
+        if creds_file:
+            self.logger.info(f"Using credentials file: {creds_file}")
+            self._load_credentials(creds_file)
+        else:
+            self.logger.warning("No credentials file found. Using default settings.")
 
-    def load_config(self, config_path: Path) -> None:
+    def _find_config_file(self, paths: List[str]) -> Optional[str]:
+        """Find the first existing configuration file from the given paths."""
+        for path in paths:
+            if os.path.isfile(path):
+                return path
+        return None
+
+    def _load_config(self, config_path: Path) -> None:
         """Load configuration from YAML file"""
         try:
             with open(config_path, 'r') as f:
@@ -100,6 +144,14 @@ class ConfigurationManager:
 
         except Exception as e:
             raise RuntimeError(f"Failed to load configuration: {str(e)}")
+
+    def _load_credentials(self, creds_path: Path) -> None:
+        """Load credentials from YAML file"""
+        try:
+            with open(creds_path, 'r') as f:
+                self.credentials = yaml.safe_load(f)
+        except Exception as e:
+            raise RuntimeError(f"Failed to load credentials: {str(e)}")
 
     def validate_config(self) -> None:
         """Validate the loaded configuration"""
@@ -457,19 +509,7 @@ def main():
         # Initialize configuration
         config_manager = ConfigurationManager()
         
-        # Look for config file in multiple locations
-        config_locations = [
-            Path('/etc/myodoo/backup_config.yaml'),
-            Path(expanduser("~")) / 'backup_config.yaml',
-            Path(__file__).parent.parent / 'config' / 'backup_config.yaml'
-        ]
-        
-        config_file = next((p for p in config_locations if p.exists()), None)
-        if not config_file:
-            raise FileNotFoundError("No configuration file found in standard locations")
-        
         # Load and validate configuration
-        config_manager.load_config(config_file)
         config_manager.validate_config()
         
         # Initialize backup manager
