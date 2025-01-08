@@ -199,26 +199,74 @@ def download_and_install_deb(url: str, filename: str) -> None:
             os.remove(filename)
         raise
 
-def install_fastfetch_if_needed(desired_version: str = "2.31.0") -> None:
-    """Install fastfetch if it's not already installed or if the version is outdated."""
-    """ https://github.com/fastfetch-cli/fastfetch/releases/ """
-    DEB_URL = f"https://github.com/fastfetch-cli/fastfetch/releases/download/{desired_version}/fastfetch-linux-amd64.deb"
-    DEB_FILE = "fastfetch-linux-amd64.deb"
+def get_latest_fastfetch_version() -> Optional[str]:
+    """Get the latest version of fastfetch from GitHub releases."""
+    try:
+        response = requests.get("https://api.github.com/repos/fastfetch-cli/fastfetch/releases/latest")
+        if response.status_code == 200:
+            return response.json()["tag_name"].lstrip('v')
+        logger.error(f"Failed to get latest fastfetch version. Status code: {response.status_code}")
+    except Exception as e:
+        logger.error(f"Error fetching latest fastfetch version: {str(e)}")
+    return None
 
-    installed, version = is_fastfetch_installed()
-    
-    if installed:
-        if version == desired_version:
-            logger.info(f"Fastfetch version {desired_version} is already installed.")
+def get_fastfetch_download_url(version: str, os_id: str) -> Optional[str]:
+    """Get the appropriate download URL for fastfetch based on OS."""
+    try:
+        response = requests.get(f"https://api.github.com/repos/fastfetch-cli/fastfetch/releases/tags/v{version}")
+        if response.status_code != 200:
+            return None
+
+        assets = response.json()["assets"]
+        if os_id == "ubuntu" or os_id == "debian":
+            # Look for the appropriate .deb package
+            arch = "amd64" if platform.machine() == "x86_64" else "arm64"
+            deb_pattern = f"fastfetch_{version}_linux_{arch}.deb"
+            for asset in assets:
+                if asset["name"] == deb_pattern:
+                    return asset["browser_download_url"]
+    except Exception as e:
+        logger.error(f"Error getting fastfetch download URL: {str(e)}")
+    return None
+
+def install_fastfetch_if_needed() -> None:
+    """Install or update fastfetch to the latest version."""
+    try:
+        os_id, _ = get_os_info()
+        
+        # Skip if not on Linux
+        if os_id not in ["ubuntu", "debian"]:
+            logger.info("Fastfetch auto-update only supported on Ubuntu/Debian")
             return
-        else:
-            logger.info(f"Fastfetch version {version} is installed, but version {desired_version} is required.")
-    else:
-        logger.info("Fastfetch is not installed.")
-    
-    logger.info(f"Downloading Fastfetch version {desired_version}...")
-    download_and_install_deb(DEB_URL, DEB_FILE)
-    logger.info(f"Fastfetch version {desired_version} was successfully installed.")
+
+        # Get current version if installed
+        installed, current_version = is_fastfetch_installed()
+        
+        # Get latest version from GitHub
+        latest_version = get_latest_fastfetch_version()
+        if not latest_version:
+            logger.error("Could not determine latest fastfetch version")
+            return
+
+        # Check if update is needed
+        if installed and current_version == latest_version:
+            logger.info(f"Fastfetch is already at the latest version ({latest_version})")
+            return
+
+        # Get download URL
+        download_url = get_fastfetch_download_url(latest_version, os_id)
+        if not download_url:
+            logger.error("Could not find appropriate fastfetch package")
+            return
+
+        # Download and install
+        filename = f"fastfetch_{latest_version}.deb"
+        logger.info(f"Installing fastfetch version {latest_version}...")
+        download_and_install_deb(download_url, filename)
+        logger.info("Fastfetch installation completed")
+
+    except Exception as e:
+        logger.error(f"Error installing fastfetch: {str(e)}")
 
 def install_zoxide_if_needed(desired_version: str = "0.9.6") -> None:
     """Install zoxide if it's not already installed or if the version is outdated."""
@@ -265,9 +313,47 @@ def run_command(command: str, check: bool = False, shell: bool = False) -> None:
         if check:
             raise
 
+def get_os_info():
+    """Get operating system information."""
+    if sys.platform == "darwin":
+        return "macos", ""
+    
+    try:
+        with open("/etc/os-release") as f:
+            lines = f.readlines()
+            info = dict(line.strip().split('=', 1) for line in lines if '=' in line)
+            return info.get('ID', '').strip('"'), info.get('VERSION_ID', '').strip('"')
+    except:
+        return "unknown", ""
+
+def get_pip_version():
+    """Get pip version as a tuple of integers."""
+    try:
+        result = subprocess.run([sys.executable, "-m", "pip", "--version"], 
+                              capture_output=True, text=True)
+        version_str = result.stdout.split()[1]
+        return tuple(map(int, version_str.split('.')))
+    except:
+        return (0, 0)
+
 def upgrade_pip_package(package_name: str) -> None:
     """Upgrade a pip package to the latest version."""
-    run_command(f"pip3 install {package_name} --upgrade --quiet --no-warn-script-location --break-system-packages --root-user-action=ignore")
+    os_id, os_version = get_os_info()
+    pip_version = get_pip_version()
+    
+    # Base command
+    cmd = f"{sys.executable} -m pip install {package_name} --upgrade --quiet --no-warn-script-location"
+    
+    # Add flags based on OS and pip version
+    if pip_version >= (23, 1):
+        # Newer versions of pip support --break-system-packages
+        cmd += " --break-system-packages"
+    elif os_id == "ubuntu" and os_version == "22.04":
+        # For Ubuntu 22.04 with older pip, use --user
+        cmd += " --user"
+    
+    cmd += " --root-user-action=ignore"
+    run_command(cmd)
 
 def is_pip_package_installed(package_name: str) -> bool:
     """Check if a pip package is installed.
@@ -356,6 +442,23 @@ def install_specific_pipx_package(package_name: str, version: str) -> None:
                 run_command(f"pipx install {package_name}=={version}")
     except Exception as e:
         logger.error(f"Unexpected error installing {package_name}: {str(e)}")
+
+def uninstall_pip_package(package_name: str) -> None:
+    """Uninstall a pip package."""
+    os_id, os_version = get_os_info()
+    pip_version = get_pip_version()
+    
+    # Base command
+    cmd = f"{sys.executable} -m pip uninstall -y {package_name}"
+    
+    # Add flags based on OS and pip version
+    if pip_version >= (23, 1):
+        cmd += " --break-system-packages"
+    elif os_id == "ubuntu" and os_version == "22.04":
+        cmd += " --user"
+    
+    cmd += " --root-user-action=ignore"
+    run_command(cmd)
 
 def read_package_versions(filename: str = "packages.txt") -> dict:
     """Read package versions from packages.txt file.
@@ -460,12 +563,12 @@ def main() -> None:
         # Check for nginx-set-conf-equitania and replace with nginx-set-conf if needed
         if is_pip_package_installed("nginx-set-conf-equitania"):
             print("Removing nginx-set-conf-equitania...")
-            run_command(f"{sys.executable} -m pip uninstall -y nginx-set-conf-equitania --break-system-packages --root-user-action=ignore")
+            uninstall_pip_package("nginx-set-conf-equitania")
 
         # Check for odoo-fast-report-mapper-equitania 
         if is_pip_package_installed("odoo-fast-report-mapper-equitania"):
             print("Removing odoo-fast-report-mapper-equitania...")
-            run_command(f"{sys.executable} -m pip uninstall -y odoo-fast-report-mapper-equitania --break-system-packages --root-user-action=ignore")
+            uninstall_pip_package("odoo-fast-report-mapper-equitania")
 
         # Read package versions from packages.txt
         package_info = read_package_versions(os.path.join(_myhome, "myodoo-docker", "packages.txt"))
@@ -511,7 +614,7 @@ def main() -> None:
                 if name == "zoxide":
                     install_zoxide_if_needed(version)
                 elif name == "fastfetch":
-                    install_fastfetch_if_needed(version)
+                    install_fastfetch_if_needed()
                 else:
                     logger.info(f"Installing system package: {package}")
                     if sys.platform == "darwin":

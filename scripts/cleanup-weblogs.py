@@ -1,67 +1,153 @@
 #!/usr/bin/python3
 # -*- coding: utf-8 -*-
-# Mit diesem Skript wird ein Backup einer Odoo Datenbank inkl. FileStore unter Docker durchgeführt
-# With this script you can backup odoo db on postgresql incl. filestore under Docker
-# Version 1.0.2
-# Date 01.05.2022
-##############################################################################
-#
-#    Shell Script for Odoo, Open Source Management Solution
-#    Copyright (C) 2014-now Equitania Software GmbH(<http://www.equitania.de>).
-#
-#    This program is free software: you can redistribute it and/or modify
-#    it under the terms of the GNU Affero General Public License as
-#    published by the Free Software Foundation, either version 3 of the
-#    License, or (at your option) any later version.
-#
-#    This program is distributed in the hope that it will be useful,
-#    but WITHOUT ANY WARRANTY; without even the implied warranty of
-#    MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
-#    GNU Affero General Public License for more details.
-#
-#    You should have received a copy of the GNU Affero General Public License
-#    along with this program.  If not, see <http://www.gnu.org/licenses/>.
-#
-##############################################################################
+"""
+Nginx Log and Cache Cleanup Script for Odoo Docker Environment
+
+This script performs cleanup of:
+1. Nginx log files
+2. Nginx proxy cache
+3. FastCGI cache
+4. Removes old backup files based on retention period
+
+Configuration:
+    LOGS_PATH: Directory containing Nginx log files (default: '/var/log/nginx/')
+    RETENTION_DAYS: Number of days to keep backup files (default: 7)
+    CACHE_PATHS: Dictionary of cache paths to clean
+
+Author: Equitania Software GmbH
+License: GNU Affero General Public License v3
+Version: 1.1.0
+Date: 2025-01-08
+"""
+
 import os
 import time
 import shutil
 import glob
 from datetime import datetime, timedelta
+import logging
+import subprocess
 
+# Configure logging
+logging.basicConfig(
+    level=logging.INFO,
+    format='%(asctime)s - %(levelname)s - %(message)s'
+)
+logger = logging.getLogger(__name__)
 
-def cleanup_backups(_cleanup_path, _cutoff_days):
-    _files = os.listdir(_cleanup_path + "/")
-    for _xfile in _files:
-        if os.path.isfile(_cleanup_path + "/" + _xfile):
-            t = os.stat(_cleanup_path + "/" + _xfile)
-            c = t.st_ctime
-            # delete file if older than 2 weeks
-            if c < _cutoff_days:
-                print("remove: " + _cleanup_path + "/" + _xfile)
-                os.remove(_cleanup_path + "/" + _xfile)
+# Configuration constants
+LOGS_PATH = '/var/log/nginx/'
+RETENTION_DAYS = 7
+SECONDS_PER_DAY = 86400
 
+# Cache paths configuration
+CACHE_PATHS = {
+    'proxy_cache': '/var/cache/nginx',
+    'fastcgi_cache': '/var/cache/nginx/fastcgi'
+}
 
-_LOGS_PATH = '/var/log/nginx/'
-_yesterday_datetime = datetime.now() - timedelta(days=1)
-_yesterday_date = _yesterday_datetime.strftime('%Y-%m-%d')
-_mystoretime = 7
+def cleanup_backups(cleanup_path, cutoff_timestamp):
+    """
+    Remove files older than the cutoff timestamp from the specified directory.
+    
+    Args:
+        cleanup_path (str): Directory path containing files to clean
+        cutoff_timestamp (float): Unix timestamp; files older than this will be removed
+    """
+    try:
+        files = os.listdir(cleanup_path)
+        for file in files:
+            file_path = os.path.join(cleanup_path, file)
+            if os.path.isfile(file_path):
+                creation_time = os.stat(file_path).st_ctime
+                if creation_time < cutoff_timestamp:
+                    logger.info(f"Removing old file: {file_path}")
+                    os.remove(file_path)
+    except Exception as e:
+        logger.error(f"Error during cleanup: {str(e)}")
 
-_files = glob.glob(_LOGS_PATH + '*.log')
-for i in range(len(_files)):
-   shutil.move(_files[i], _files[i] + _yesterday_date +'.bak')
+def clear_cache_directory(cache_path):
+    """
+    Clear all contents of a cache directory while preserving the directory structure.
+    
+    Args:
+        cache_path (str): Path to the cache directory
+    """
+    try:
+        if os.path.exists(cache_path):
+            logger.info(f"Clearing cache directory: {cache_path}")
+            for root, dirs, files in os.walk(cache_path):
+                for file in files:
+                    file_path = os.path.join(root, file)
+                    try:
+                        os.remove(file_path)
+                        logger.debug(f"Removed cache file: {file_path}")
+                    except Exception as e:
+                        logger.error(f"Error removing cache file {file_path}: {str(e)}")
+        else:
+            logger.warning(f"Cache directory does not exist: {cache_path}")
+    except Exception as e:
+        logger.error(f"Error clearing cache directory {cache_path}: {str(e)}")
 
-# run by crontab
-# removes any files in mybackuppath older than 7 days or mystoretime
+def restart_nginx():
+    """
+    Restart Nginx service.
+    Returns True if successful, False otherwise.
+    """
+    try:
+        logger.info("Stopping Nginx service...")
+        subprocess.run(['systemctl', 'stop', 'nginx'], check=True)
+        
+        # Clear all cache directories
+        for cache_name, cache_path in CACHE_PATHS.items():
+            clear_cache_directory(cache_path)
+        
+        logger.info("Starting Nginx service...")
+        subprocess.run(['systemctl', 'start', 'nginx'], check=True)
+        
+        # Verify Nginx status
+        result = subprocess.run(['systemctl', 'status', 'nginx'], 
+                              capture_output=True, 
+                              text=True, 
+                              check=True)
+        if "active (running)" in result.stdout:
+            logger.info("Nginx restarted successfully")
+            return True
+        else:
+            logger.error("Nginx is not running after restart")
+            return False
+    except subprocess.CalledProcessError as e:
+        logger.error(f"Error during Nginx restart: {str(e)}")
+        return False
+    except Exception as e:
+        logger.error(f"Unexpected error during Nginx restart: {str(e)}")
+        return False
 
-now = time.time()
-_cutoff = now - (float(_mystoretime) * 86400)
+def main():
+    """Main execution function"""
+    try:
+        # Calculate yesterday's date for backup file suffix
+        yesterday = (datetime.now() - timedelta(days=1)).strftime('%Y-%m-%d')
+        
+        # Move current log files to backup files
+        log_files = glob.glob(os.path.join(LOGS_PATH, '*.log'))
+        for log_file in log_files:
+            backup_file = f"{log_file}{yesterday}.bak"
+            logger.info(f"Moving {log_file} to {backup_file}")
+            shutil.move(log_file, backup_file)
 
-# remove docker backups
-os.system('systemctl stop nginx')
-cleanup_backups(_LOGS_PATH, _cutoff)
-os.system('sudo touch /var/cache/ngx_pagespeed/cache.flush')
-os.system('echo "nginx start"')
-os.system('systemctl start nginx')
-os.system('systemctl status nginx')
-print('Cleanup done!')
+        # Calculate cutoff time for old backups
+        cutoff_timestamp = time.time() - (float(RETENTION_DAYS) * SECONDS_PER_DAY)
+        
+        # Perform cleanup and restart Nginx
+        cleanup_backups(LOGS_PATH, cutoff_timestamp)
+        if restart_nginx():
+            logger.info("Cleanup and cache optimization completed successfully!")
+        else:
+            logger.error("Cleanup completed but Nginx restart failed!")
+            
+    except Exception as e:
+        logger.error(f"Script execution failed: {str(e)}")
+
+if __name__ == "__main__":
+    main()
