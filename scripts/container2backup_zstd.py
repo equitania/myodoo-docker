@@ -2,7 +2,7 @@
 # -*- coding: utf-8 -*-
 """
 Odoo Database Backup Script with Docker Support
-Version 5.0.0
+Version 5.0.1
 Date 2025-01-08
 
 This script performs backup of Odoo databases including FileStore under Docker with the following features:
@@ -33,6 +33,14 @@ from logging.handlers import RotatingFileHandler
 from os.path import expanduser
 from pathlib import Path
 from typing import Optional, Dict, List, Any
+
+# Configure logging at module level
+logging.basicConfig(
+    level=logging.INFO,
+    format='%(asctime)s - %(levelname)s - %(message)s',
+    datefmt='%Y-%m-%d %H:%M:%S'
+)
+logger = logging.getLogger(__name__)
 
 # Default configuration that can be overridden by YAML
 DEFAULT_CONFIG = {
@@ -444,6 +452,7 @@ class BackupManager:
             self.logger.error(f"Failed to save metadata: {str(e)}")
 
 def main():
+    """Main execution function"""
     try:
         # Initialize configuration
         config_manager = ConfigurationManager()
@@ -465,12 +474,15 @@ def main():
         
         # Initialize backup manager
         backup_manager = BackupManager(config_manager)
-        logger = logging.getLogger('main')
         
         # Process database backups
         for db_config in config_manager.databases:
             logger.info(f"Processing backup for database: {db_config['name']}")
-            backup_manager.backup_database(db_config)
+            try:
+                backup_manager.backup_database(db_config)
+            except Exception as db_error:
+                logger.error(f"Error processing database {db_config['name']}: {str(db_error)}")
+                continue
         
         # Process additional backups
         backup_manager.backup_additional_paths()
@@ -478,6 +490,9 @@ def main():
         # Save metadata
         backup_manager.save_metadata()
 
+    except FileNotFoundError as e:
+        logger.error(f"Configuration error: {str(e)}")
+        sys.exit(1)
     except Exception as e:
         logger.error(f"Critical error: {str(e)}")
         sys.exit(1)
