@@ -1,7 +1,7 @@
 #!/usr/bin/python3
 # -*- coding: utf-8 -*-
 # Script for organizing Docker servers
-# Version 6.3.1 
+# Version 6.3.2 
 # Date 08.01.2025
 ##############################################################################
 #
@@ -547,6 +547,76 @@ def is_package_installed(package_name: str) -> bool:
     except Exception:
         return False
 
+def get_system_package_version(package_name: str) -> Optional[str]:
+    """Get the installed version of a system package."""
+    try:
+        if sys.platform == "darwin":
+            result = subprocess.run(["brew", "list", "--versions", package_name], 
+                                 capture_output=True, text=True)
+            if result.returncode == 0 and result.stdout:
+                return result.stdout.split()[-1]  # Last word is version
+        else:
+            result = subprocess.run(["dpkg-query", "-W", "-f=${Version}", package_name], 
+                                 capture_output=True, text=True)
+            if result.returncode == 0 and result.stdout:
+                # Remove Ubuntu/Debian specific version info (e.g., -1ubuntu1)
+                version = result.stdout.split('-')[0]
+                return version
+    except Exception as e:
+        logger.error(f"Error getting version for {package_name}: {str(e)}")
+    return None
+
+def compare_versions(version1: str, version2: str) -> int:
+    """Compare two version strings.
+    Returns:
+        -1 if version1 < version2
+         0 if version1 == version2
+         1 if version1 > version2
+    """
+    def normalize(v):
+        return [int(x) for x in v.split('.')]
+
+    try:
+        v1 = normalize(version1)
+        v2 = normalize(version2)
+        
+        for i in range(max(len(v1), len(v2))):
+            n1 = v1[i] if i < len(v1) else 0
+            n2 = v2[i] if i < len(v2) else 0
+            if n1 < n2:
+                return -1
+            elif n1 > n2:
+                return 1
+        return 0
+    except Exception:
+        # If version comparison fails, assume versions are different
+        return -1
+
+def install_system_package(package: str, version: Optional[str] = None) -> None:
+    """Install a system package with version checking."""
+    current_version = get_system_package_version(package)
+    
+    if current_version:
+        if version:
+            # If specific version is requested, compare versions
+            if compare_versions(current_version, version) >= 0:
+                logger.info(f"{package} version {current_version} is already installed (requested: {version})")
+                return
+        else:
+            # If no specific version requested, just log current version
+            logger.info(f"{package} is already installed (version {current_version})")
+            return
+
+    # Install package
+    logger.info(f"Installing {package}{f' version {version}' if version else ''}")
+    if sys.platform == "darwin":
+        run_command(f"brew install {package}")
+    else:
+        if version:
+            run_command(f"sudo apt install -y {package}={version}")
+        else:
+            run_command(f"sudo apt install -y {package}")
+
 def upgrade_pip() -> None:
     """Upgrade pip to the latest version."""
     try:
@@ -674,17 +744,9 @@ def main() -> None:
                 elif name == "fastfetch":
                     install_fastfetch_if_needed()
                 else:
-                    logger.info(f"Installing system package: {package}")
-                    if sys.platform == "darwin":
-                        run_command(f"brew install {name}")
-                    else:
-                        run_command(f"sudo apt install -y {name}")
+                    install_system_package(name, version)
             else:
-                logger.info(f"Installing system package: {package}")
-                if sys.platform == "darwin":
-                    run_command(f"brew install {package}")
-                else:
-                    run_command(f"sudo apt install -y {package}")
+                install_system_package(package)
         
         # Instead of sourcing .zshrc which would trigger fastfetch again,
         # we'll just reload zoxide initialization
