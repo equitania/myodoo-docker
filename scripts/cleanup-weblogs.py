@@ -16,7 +16,7 @@ Configuration:
 
 Author: Equitania Software GmbH
 License: GNU Affero General Public License v3
-Version: 1.1.0
+Version: 1.1.1
 Date: 2025-01-08
 """
 
@@ -69,23 +69,25 @@ def cleanup_backups(cleanup_path, cutoff_timestamp):
 def clear_cache_directory(cache_path):
     """
     Clear all contents of a cache directory while preserving the directory structure.
+    Only attempts to clear if the directory exists.
     
     Args:
         cache_path (str): Path to the cache directory
     """
+    if not os.path.exists(cache_path):
+        logger.warning(f"Cache directory does not exist: {cache_path}")
+        return
+
     try:
-        if os.path.exists(cache_path):
-            logger.info(f"Clearing cache directory: {cache_path}")
-            for root, dirs, files in os.walk(cache_path):
-                for file in files:
-                    file_path = os.path.join(root, file)
-                    try:
-                        os.remove(file_path)
-                        logger.debug(f"Removed cache file: {file_path}")
-                    except Exception as e:
-                        logger.error(f"Error removing cache file {file_path}: {str(e)}")
-        else:
-            logger.warning(f"Cache directory does not exist: {cache_path}")
+        logger.info(f"Clearing cache directory: {cache_path}")
+        for root, dirs, files in os.walk(cache_path):
+            for file in files:
+                file_path = os.path.join(root, file)
+                try:
+                    os.remove(file_path)
+                    logger.debug(f"Removed cache file: {file_path}")
+                except Exception as e:
+                    logger.error(f"Error removing cache file {file_path}: {str(e)}")
     except Exception as e:
         logger.error(f"Error clearing cache directory {cache_path}: {str(e)}")
 
@@ -98,9 +100,10 @@ def restart_nginx():
         logger.info("Stopping Nginx service...")
         subprocess.run(['systemctl', 'stop', 'nginx'], check=True)
         
-        # Clear all cache directories
+        # Clear only existing cache directories
         for cache_name, cache_path in CACHE_PATHS.items():
-            clear_cache_directory(cache_path)
+            if os.path.exists(cache_path):
+                clear_cache_directory(cache_path)
         
         logger.info("Starting Nginx service...")
         subprocess.run(['systemctl', 'start', 'nginx'], check=True)
