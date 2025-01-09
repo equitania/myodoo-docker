@@ -1,8 +1,8 @@
 #!/usr/bin/python3
 # -*- coding: utf-8 -*-
 # Script for organizing Docker servers
-# Version 6.3.5 
-# Date 08.01.2025
+# Version 6.3.6 
+# Date 09.01.2025
 ##############################################################################
 #
 #    Shell Script for devops
@@ -331,15 +331,9 @@ def run_command(command: str, check: bool = False, shell: bool = False) -> None:
 
 def get_os_info():
     """Get operating system information."""
-    if sys.platform == "darwin":
-        return "macos", ""
-    
-    try:
-        with open("/etc/os-release") as f:
-            lines = f.readlines()
-            info = dict(line.strip().split('=', 1) for line in lines if '=' in line)
-            return info.get('ID', '').strip('"'), info.get('VERSION_ID', '').strip('"')
-    except:
+    if is_ubuntu():
+        return "ubuntu", ""
+    else:
         return "unknown", ""
 
 def get_pip_version():
@@ -445,16 +439,6 @@ def install_with_pipx(package_name: str) -> None:
     Args:
         package_name (str): Name of the package to install
     """
-    # Check if we're on Linux
-    if platform.system() == 'Linux':
-        try:
-            # Run apt update first on Linux systems
-            subprocess.run(['sudo', 'apt', 'update'], check=True)
-            logger.info("Successfully ran apt update")
-        except subprocess.CalledProcessError as e:
-            logger.error(f"Failed to run apt update: {e}")
-            raise
-
     # Check if pipx is installed
     try:
         subprocess.run(['pipx', '--version'], check=True, capture_output=True)
@@ -551,18 +535,12 @@ def is_package_installed(package_name: str) -> bool:
 def get_system_package_version(package_name: str) -> Optional[str]:
     """Get the installed version of a system package."""
     try:
-        if sys.platform == "darwin":
-            result = subprocess.run(["brew", "list", "--versions", package_name], 
-                                 capture_output=True, text=True)
-            if result.returncode == 0 and result.stdout:
-                return result.stdout.split()[-1]  # Last word is version
-        else:
-            result = subprocess.run(["dpkg-query", "-W", "-f=${Version}", package_name], 
-                                 capture_output=True, text=True)
-            if result.returncode == 0 and result.stdout:
-                # Remove Ubuntu/Debian specific version info (e.g., -1ubuntu1)
-                version = result.stdout.split('-')[0]
-                return version
+        result = subprocess.run(["dpkg-query", "-W", "-f=${Version}", package_name], 
+                             capture_output=True, text=True)
+        if result.returncode == 0 and result.stdout:
+            # Remove Ubuntu/Debian specific version info (e.g., -1ubuntu1)
+            version = result.stdout.split('-')[0]
+            return version
     except Exception as e:
         logger.error(f"Error getting version for {package_name}: {str(e)}")
     return None
@@ -610,13 +588,51 @@ def install_system_package(package: str, version: Optional[str] = None) -> None:
 
     # Install package
     logger.info(f"Installing {package}{f' version {version}' if version else ''}")
-    if sys.platform == "darwin":
-        run_command(f"brew install {package}")
+    if version:
+        run_command(f"sudo apt install -y {package}={version}")
     else:
-        if version:
-            run_command(f"sudo apt install -y {package}={version}")
-        else:
-            run_command(f"sudo apt install -y {package}")
+        run_command(f"sudo apt install -y {package}")
+
+def get_bat_version() -> Optional[tuple]:
+    """Get installed bat version as tuple (major, minor, patch)"""
+    try:
+        # On Debian/Ubuntu systems, bat is installed as batcat
+        result = subprocess.run(['batcat', '--version'], capture_output=True, text=True)
+            
+        if result.returncode == 0:
+            # bat output format: "bat 0.22.1"
+            version_str = result.stdout.split()[1]
+            return tuple(map(int, version_str.split('.')))
+    except Exception as e:
+        logger.error(f"Error getting bat version: {str(e)}")
+    return None
+
+def check_bat_version() -> bool:
+    """Check if bat is installed and up to date"""
+    current_version = get_bat_version()
+    if not current_version:
+        logger.error("bat is not installed")
+        return False
+
+    logger.info(f"Current bat version: {'.'.join(map(str, current_version))}")
+    return True
+
+def install_or_update_bat():
+    """Install or update bat package"""
+    try:
+        if not check_bat_version():
+            logger.info("Installing/updating bat...")
+            run_command("sudo apt update")
+            run_command("sudo apt install -y bat")
+            
+            # Verify installation
+            if not check_bat_version():
+                raise RuntimeError("Failed to install/update bat")
+            
+            logger.info("bat installation/update completed")
+    except Exception as e:
+        logger.error(f"Error installing/updating bat: {str(e)}")
+        raise RuntimeError("Failed to install/update bat")
 
 def get_zstd_version() -> Optional[tuple]:
     """Get installed zstd version as tuple (major, minor, patch)"""
@@ -678,9 +694,6 @@ def install_or_update_zstd():
             if os_id in ["ubuntu", "debian"]:
                 run_command("sudo apt update")
                 run_command("sudo apt install -y zstd")
-            elif sys.platform == "darwin":
-                run_command("brew install zstd")
-            
             # Verify installation
             if not check_zstd_version():
                 raise RuntimeError("Failed to install/update zstd")
@@ -690,88 +703,14 @@ def install_or_update_zstd():
         logger.error(f"Error installing/updating zstd: {str(e)}")
         raise
 
-def get_bat_version() -> Optional[tuple]:
-    """Get installed bat version as tuple (major, minor, patch)"""
-    try:
-        # On Debian/Ubuntu systems, bat is installed as batcat
-        if sys.platform != "darwin":
-            result = subprocess.run(['batcat', '--version'], capture_output=True, text=True)
-        else:
-            result = subprocess.run(['bat', '--version'], capture_output=True, text=True)
-            
-        if result.returncode == 0:
-            # bat output format: "bat 0.22.1"
-            version_str = result.stdout.split()[1]
-            return tuple(map(int, version_str.split('.')))
-    except Exception as e:
-        logger.error(f"Error getting bat version: {str(e)}")
-    return None
-
-def check_bat_version() -> bool:
-    """Check if bat is installed and up to date"""
-    current_version = get_bat_version()
-    if not current_version:
-        logger.error("bat is not installed")
-        return False
-
-    # If we're on Linux and using system packages, accept the system version
-    if sys.platform != "darwin":
-        logger.info(f"Current bat version: {'.'.join(map(str, current_version))}")
-        return True
-        
-    # For macOS, we can update to latest version
-    min_version = (0, 25, 0)
-    if current_version < min_version:
-        logger.warning(f"bat version {'.'.join(map(str, current_version))} is outdated. "
-                      f"Minimum required version is {'.'.join(map(str, min_version))}")
-        return False
-    
-    logger.info(f"Current bat version: {'.'.join(map(str, current_version))}")
-    return True
-
-def install_or_update_bat():
-    """Install or update bat package"""
-    os_id, os_version = get_os_info()
-    
-    try:
-        if not check_bat_version():
-            logger.info("Installing/updating bat...")
-            if os_id in ["ubuntu", "debian"]:
-                run_command("sudo apt update")
-                run_command("sudo apt install -y bat")
-            elif sys.platform == "darwin":
-                run_command("brew install bat")
-            
-            # Verify installation
-            if not check_bat_version():
-                raise RuntimeError("Failed to install/update bat")
-            
-            logger.info("bat installation/update completed")
-    except Exception as e:
-        logger.error(f"Error installing/updating bat: {str(e)}")
-        raise RuntimeError("Failed to install/update bat")
-
-def upgrade_pip() -> None:
-    """Upgrade pip to the latest version."""
-    try:
-        logger.info("Checking pip version...")
-        current_version = get_pip_version()
-        logger.info(f"Current pip version: {'.'.join(map(str, current_version))}")
-        
-        if current_version < (23, 0):
-            logger.info("Upgrading pip to latest version...")
-            # Use a basic command for old pip versions
-            run_command(f"{sys.executable} -m pip install --upgrade pip --user")
-            
-            # Verify upgrade
-            new_version = get_pip_version()
-            logger.info(f"Upgraded pip to version {'.'.join(map(str, new_version))}")
-    except Exception as e:
-        logger.error(f"Error upgrading pip: {str(e)}")
-
 def main() -> None:
     """Main function to execute the script"""
     try:
+        # Check if running on Debian/Ubuntu
+        if not is_ubuntu():
+            logger.error("This script is only supported on Debian/Ubuntu systems")
+            sys.exit(1)
+
         # First, upgrade pip if needed
         upgrade_pip()
 
@@ -837,7 +776,7 @@ def main() -> None:
         package_info = read_package_versions(os.path.join(_myhome, "myodoo-docker", "packages.txt"))
 
         # Install required system packages for Python virtual environments
-        if sys.platform != "darwin" and not is_package_installed("python3-venv"):
+        if not is_package_installed("python3-venv"):
             logger.info("Installing python3-venv...")
             run_command("sudo apt update")
             run_command("sudo apt install -y python3-venv")
@@ -847,10 +786,7 @@ def main() -> None:
         # Check if pipx is installed
         if not is_pipx_installed():
             logger.info("Installing pipx...")
-            if sys.platform == "darwin":
-                run_command("brew install pipx")
-            else:
-                run_command("sudo apt install -y pipx")
+            run_command("sudo apt install -y pipx")
             run_command("pipx ensurepath")
             
             # Add pipx to PATH and reload environment
@@ -889,7 +825,7 @@ def main() -> None:
         # Instead of sourcing .zshrc which would trigger fastfetch again,
         # we'll just reload zoxide initialization
         logger.info("Reloading shell configuration...")
-        run_command("/bin/zsh -c 'eval \"$(zoxide init zsh)\"'")
+        run_command(["/bin/zsh", "-c", "eval \"$(zoxide init zsh)\""])
 
     except Exception as e:
         logger.error(f"An error occurred in main: {str(e)}")
