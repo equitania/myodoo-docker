@@ -1,7 +1,7 @@
 #!/usr/bin/python3
 # -*- coding: utf-8 -*-
 # Script for organizing Docker servers
-# Version 6.4.0
+# Version 6.4.1
 # Date 09.01.2025
 ##############################################################################
 #
@@ -317,13 +317,13 @@ def ensure_directory_exists(directory: str) -> None:
     os.makedirs(directory, exist_ok=True)
     logger.info(f"Directory '{directory}' was created or already exists.")
 
-def run_command(command: str, check: bool = False, shell: bool = False) -> None:
+def run_command(command: str, check: bool = False, shell: bool = False, capture_output: bool = False) -> None:
     """Run a shell command with optional error checking."""
     try:
         if shell:
-            subprocess.run(command, shell=True, check=check)
+            subprocess.run(command, shell=True, check=check, capture_output=capture_output)
         else:
-            subprocess.run(command.split(), check=check)
+            subprocess.run(command.split(), check=check, capture_output=capture_output)
     except subprocess.CalledProcessError as e:
         logger.error(f"Command failed: {e}")
         if check:
@@ -745,9 +745,26 @@ def main() -> None:
 
         myodoo_docker = os.path.join(_myhome, "myodoo-docker")
         os.chdir(myodoo_docker)
-        run_command(f"git checkout {global_server_version}")
-        run_command("git config pull.ff only")
-        run_command("git pull")
+
+        # Check current branch and switch if needed
+        current_branch = subprocess.check_output(["git", "rev-parse", "--abbrev-ref", "HEAD"], text=True).strip()
+        if current_branch != global_server_version:
+            logger.info(f"Switching to branch {global_server_version}")
+            run_command(f"git checkout {global_server_version}")
+
+        # Configure git pull
+        run_command("git config pull.ff only", capture_output=True)
+
+        # Check for updates
+        before_pull = subprocess.check_output(["git", "rev-parse", "HEAD"], text=True).strip()
+        run_command("git pull", capture_output=True)
+        after_pull = subprocess.check_output(["git", "rev-parse", "HEAD"], text=True).strip()
+        
+        if before_pull != after_pull:
+            logger.info("Repository updated, new changes downloaded")
+            # Show what changed
+            run_command("git --no-pager log --oneline --no-decorate HEAD@{1}..HEAD")
+
         run_command("find . -name '*.pyc' -type f -delete")
 
         # Copy configuration files
