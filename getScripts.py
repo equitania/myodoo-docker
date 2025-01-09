@@ -1,7 +1,7 @@
 #!/usr/bin/python3
 # -*- coding: utf-8 -*-
 # Script for organizing Docker servers
-# Version 6.3.7 
+# Version 6.3.8 
 # Date 09.01.2025
 ##############################################################################
 #
@@ -706,6 +706,24 @@ def install_or_update_zstd():
     except Exception as e:
         logger.error(f"Error installing/updating zstd: {str(e)}")
         raise
+
+def upgrade_pip() -> None:
+    """Upgrade pip to the latest version."""
+    try:
+        logger.info("Checking pip version...")
+        current_version = get_pip_version()
+        logger.info(f"Current pip version: {'.'.join(map(str, current_version))}")
+        
+        if current_version < (23, 0):
+            logger.info("Upgrading pip to latest version...")
+            # Use a basic command for old pip versions
+            run_command(f"{sys.executable} -m pip install --upgrade pip --user")
+            
+            # Verify upgrade
+            new_version = get_pip_version()
+            logger.info(f"Upgraded pip to version {'.'.join(map(str, new_version))}")
+    except Exception as e:
+        logger.error(f"Error upgrading pip: {str(e)}")
 
 def main() -> None:
     """Main function to execute the script"""
