@@ -1,7 +1,7 @@
 #!/usr/bin/python3
 # -*- coding: utf-8 -*-
 # Script for organizing Docker servers
-# Version 6.3.8 
+# Version 6.3.9 
 # Date 09.01.2025
 ##############################################################################
 #
@@ -847,7 +847,7 @@ def main() -> None:
         # Instead of sourcing .zshrc which would trigger fastfetch again,
         # we'll just reload zoxide initialization
         logger.info("Reloading shell configuration...")
-        run_command(["/bin/zsh", "-c", "eval \"$(zoxide init zsh)\""])
+        run_command("eval \"$(zoxide init zsh)\"", shell=True)
 
     except Exception as e:
         logger.error(f"An error occurred in main: {str(e)}")
