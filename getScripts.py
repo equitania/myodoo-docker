@@ -1,7 +1,7 @@
 #!/usr/bin/python3
 # -*- coding: utf-8 -*-
 # Script for organizing Docker servers
-# Version 6.3.6 
+# Version 6.3.7 
 # Date 09.01.2025
 ##############################################################################
 #
@@ -329,11 +329,24 @@ def run_command(command: str, check: bool = False, shell: bool = False) -> None:
         if check:
             raise
 
+def is_debian_or_ubuntu() -> bool:
+    """Check if the system is Debian or Ubuntu"""
+    try:
+        with open("/etc/os-release") as f:
+            content = f.read().lower()
+            return any(os_name in content for os_name in ["debian", "ubuntu"])
+    except Exception as e:
+        logger.error(f"Error checking OS: {str(e)}")
+        return False
+
 def get_os_info():
     """Get operating system information."""
-    if is_ubuntu():
-        return "ubuntu", ""
-    else:
+    try:
+        with open("/etc/os-release") as f:
+            lines = f.readlines()
+            info = dict(line.strip().split('=', 1) for line in lines if '=' in line)
+            return info.get('ID', '').strip('"'), info.get('VERSION_ID', '').strip('"')
+    except:
         return "unknown", ""
 
 def get_pip_version():
@@ -649,15 +662,6 @@ def get_zstd_version() -> Optional[tuple]:
         logger.error(f"Error getting zstd version: {str(e)}")
     return None
 
-def is_ubuntu():
-    """Check if the system is Ubuntu"""
-    try:
-        with open('/etc/os-release', 'r') as f:
-            content = f.read()
-            return 'Ubuntu' in content
-    except:
-        return False
-
 def check_zstd_version() -> bool:
     """Check if zstd is installed and meets minimum version requirements"""
     try:
@@ -670,7 +674,7 @@ def check_zstd_version() -> bool:
         logger.info(f"Current zstd version: {version_str}")
         
         # For Ubuntu, accept version 1.4.8
-        if is_ubuntu():
+        if is_debian_or_ubuntu():
             min_version = "1.4.8"
         else:
             min_version = "1.5.0"
@@ -707,8 +711,8 @@ def main() -> None:
     """Main function to execute the script"""
     try:
         # Check if running on Debian/Ubuntu
-        if not is_ubuntu():
-            logger.error("This script is only supported on Debian/Ubuntu systems")
+        if not is_debian_or_ubuntu():
+            logger.error("This script is only supported on Debian and Ubuntu systems")
             sys.exit(1)
 
         # First, upgrade pip if needed
