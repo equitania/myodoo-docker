@@ -847,7 +847,7 @@ def main() -> None:
         # Instead of sourcing .zshrc which would trigger fastfetch again,
         # we'll just reload zoxide initialization
         logger.info("Reloading shell configuration...")
-        run_command("eval \"$(zoxide init zsh)\"", shell=True)
+        run_command("/usr/bin/zsh -c 'source ~/.zshrc'", shell=True)
 
     except Exception as e:
         logger.error(f"An error occurred in main: {str(e)}")
