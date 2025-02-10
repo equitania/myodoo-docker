@@ -1,8 +1,8 @@
-
+#!/usr/bin/python3
 # -*- coding: utf-8 -*-
 # Script for organizing Docker servers
-# Version 6.4.2
-# Date 05.02.2025
+# Version 6.4.3
+# Date 10.02.2025
 ##############################################################################
 #
 #    Shell Script for devops
