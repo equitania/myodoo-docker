@@ -1,7 +1,7 @@
-FROM myodoo/prepare-v16:24.09.01
+FROM myodoo/prepare-v16:25.02.24-3.11.11
 LABEL maintainer=info@ownerp.com
 # Mit diesem Skript überprüft das passende Dockerimage gemäß des Releasefiles
-# Date 08.07.2024
+# Date 28.02.2025
 
 # create the odoo user
 RUN adduser --home=/opt/odoo --disabled-password --gecos "" --shell=/bin/bash odoo
@@ -13,13 +13,13 @@ USER odoo
 
 RUN /bin/bash -c "mkdir -p /opt/odoo/{odoo-server/odoo,etc,data,data/filestore} && mkdir -p /opt/odoo/var/log"
 
-COPY build_myodoo.py /opt/odoo/
+COPY build_odoo.py /opt/odoo/
 COPY release.file /opt/odoo/
 COPY odoo.conf /opt/odoo/etc/
 #COPY custom_modules.* /opt/odoo/
 
 RUN cd /opt/odoo/ && \
-    python3 build_myodoo.py
+    python3 build_odoo.py
 
 # Execution environment
 USER 0
