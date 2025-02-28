@@ -1,0 +1,56 @@
+# Docker Container Update Configuration
+# Date: 27.02.2025
+
+# Parameters:
+#   type: [M]odules, [F]ull update or [N]eutralize DB
+#   delay_time: timeout in seconds before restart
+#   container_name: name of the container
+#   database_name: name of the database
+#   port: external port (maps to 8069 internally)
+#   longpolling_port: external longpolling port (maps to 8072 internally)
+#   dockerfile_path: path to Dockerfile
+#   docker_image_name: name of the Docker image
+#   db_user: PostgreSQL username
+#   db_password: PostgreSQL user password
+#   db_host: database server hostname/IP
+#   volume: Docker volume configuration
+#   odoo_version: Odoo version number
+#   translate: Whether to load translations (Y/N)
+#
+# Notes:
+#   - [M]odule update: Only copies new modules to container without updating all (2-3 minutes)
+#   - [F]ull update: Updates all modules (10-20 minutes)
+#   - [N]eutralize: First neutralizes the DB, then updates all (10-20 minutes)
+
+containers:
+  - active: true
+    type: "F"
+    delay_time: 10
+    container_name: "live-odoo"
+    database_name: "live_odoo"
+    port: "11000"
+    longpolling_port: "12000"
+    dockerfile_path: "$HOME/gitbase/odoo-build/live-odoo/"
+    docker_image_name: "odoo/live"
+    db_user: "ownerp"
+    db_password: "ownerp2025"
+    db_host: "live-db"
+    volume: "--network live-db-net -v $HOME/gitbase/odoo-build/data/odoo/live:/opt/odoo/data"
+    odoo_version: "16"
+    translate: "Y"
+    
+  - active: false
+    type: "F"
+    delay_time: 30
+    container_name: "test-odoo"
+    database_name: "test_db"
+    port: "127.0.0.1:13000"
+    longpolling_port: "127.0.0.1:14000"
+    dockerfile_path: "/root/docker-builds/test-odoo/"
+    docker_image_name: "odoo/test"
+    db_user: "ownerp"
+    db_password: "ownerp2023"
+    db_host: "test-db"
+    volume: "--network test-db-net -v /opt/odoo/test:/opt/odoo/data"
+    odoo_version: "16"
+    translate: "Y" 

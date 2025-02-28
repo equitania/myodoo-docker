@@ -1,8 +1,8 @@
 #!/usr/bin/python3
 # -*- coding: utf-8 -*-
 # Mit diesem Skript überprüft das passende Dockerimage gemäß des Releasefiles
-# Version 3.1.0
-# Date 02.02.2023
+# Version 3.2.0
+# Date 27.02.2025
 ##############################################################################
 #
 #    Shell Script for Odoo, Open Source Management Solution
@@ -23,9 +23,9 @@
 #
 ##############################################################################
 
-import os, io, csv, time, datetime
+import os, io, csv, time, datetime, platform
 
-_access_file = 'access_myodoo.txt' # type: str
+_access_file = 'release.txt' # type: str
 _release_file = 'release.file'  # type: str
 
 if os.path.isfile(_access_file):
@@ -52,9 +52,21 @@ if os.path.isfile(_access_file):
                     elif _count == 2:
                         if _column != '':
                             print('dockerimage: ' + _column)
-                            _command = "sed -i '1s|.*|FROM " + _column + "|' Dockerfile"
+                            # Angepasst für macOS sed
+                            if platform.system() == 'Darwin':  # macOS
+                                _command = "sed -i '' '1s|.*|FROM " + _column + "|' Dockerfile"
+                                # Aktuelles Datum für Zeile 4
+                                current_date = datetime.datetime.now().strftime('%d.%m.%Y')
+                                _date_command = "sed -i '' '4s|# Date.*|# Date " + current_date + "|' Dockerfile"
+                            else:  # Linux und andere
+                                _command = "sed -i '1s|.*|FROM " + _column + "|' Dockerfile"
+                                # Aktuelles Datum für Zeile 4
+                                current_date = datetime.datetime.now().strftime('%d.%m.%Y')
+                                _date_command = "sed -i '4s|# Date.*|# Date " + current_date + "|' Dockerfile"
                             print(_command)
                             os.system(_command)
+                            print(_date_command)
+                            os.system(_date_command)
                         else:
                             print('No Dockerimages defined!')
                     else:
