@@ -1,4 +1,3 @@
-
 # -*- coding: utf-8 -*-
 # Script for organizing Docker servers
 # Version 6.5.0
@@ -736,7 +735,7 @@ def main() -> None:
         # First, upgrade pip if needed
         upgrade_pip()
 
-        global_server_version = '2024'
+        global_server_version = '2025'
         _myhome = os.path.expanduser('~')
         config_directory = os.path.join(_myhome, ".config", "fastfetch")
         ensure_directory_exists(config_directory)
