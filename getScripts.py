@@ -779,7 +779,7 @@ def main() -> None:
             run_command(f"cp {source_fastfetch} {target_fastfetch}")
         
         scripts = [
-            "update_docker_myodoo.py",
+            "update_docker_odoo.py",
             "docker-clean-logs.sh",
             "cleanup-weblogs.py",
             "container2backup.py",

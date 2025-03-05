@@ -142,9 +142,9 @@ alias ups='sudo $HOME/getScripts.py && sudo cp $HOME/myodoo-docker/getScripts.py
 
 # ownERP alias
 alias dobk='$HOME/container2backup.py'
-alias doup='$HOME/update_docker_myodoo.py'
+alias doup='$HOME/update_docker_odoo.py'
 alias edbk='mcedit $HOME/container2backup.csv'
-alias edup='mcedit $HOME/docker2update.csv'
+alias edup='mcedit $HOME/docker2update.yaml'
 alias llbk='ll /opt/backups/docker'
 
 # Docker alias
