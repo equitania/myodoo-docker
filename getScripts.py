@@ -1,3 +1,4 @@
+#!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 # Script for organizing Docker servers
 # Version 6.5.0
