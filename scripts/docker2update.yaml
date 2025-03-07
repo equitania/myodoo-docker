@@ -1,5 +1,5 @@
 # Docker Container Update Configuration
-# Date: 27.02.2025
+# Date: 07.03.2025
 
 # Parameters:
 #   type: [M]odules, [F]ull update or [N]eutralize DB
@@ -30,12 +30,12 @@ containers:
     database_name: "live_odoo"
     port: "11000"
     longpolling_port: "12000"
-    dockerfile_path: "$HOME/gitbase/odoo-build/live-odoo/"
+    dockerfile_path: "$HOME/docker-builds/live-odoo/"
     docker_image_name: "odoo/live"
     db_user: "ownerp"
-    db_password: "ownerp2025"
+    db_password: "ownerp2023"
     db_host: "live-db"
-    volume: "--network live-db-net -v $HOME/gitbase/odoo-build/data/odoo/live:/opt/odoo/data"
+    volume: "--network live-db-net -v /opt/odoo/live:/opt/odoo/data"
     odoo_version: "16"
     translate: "Y"
     
@@ -46,7 +46,7 @@ containers:
     database_name: "test_db"
     port: "127.0.0.1:13000"
     longpolling_port: "127.0.0.1:14000"
-    dockerfile_path: "/root/docker-builds/test-odoo/"
+    dockerfile_path: "$HOME/docker-builds/test-odoo/"
     docker_image_name: "odoo/test"
     db_user: "ownerp"
     db_password: "ownerp2023"
