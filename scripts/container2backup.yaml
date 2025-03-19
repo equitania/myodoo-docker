@@ -1,0 +1,48 @@
+# Backup configuration for Odoo databases
+# Date: 19.03.2025
+
+# Default settings
+defaults:
+  retention_days: 14  # Aufbewahrungsfrist in Tagen
+  db_user: ownerp
+  backup_path: /opt/backups
+  compression:
+    level: 5  # 7-Zip Kompressionsgrad (0-9, Standard: 5)
+
+# System-wide service backups (independent from databases)
+services:
+  nginx:
+    enabled: true
+    source_path: /etc/nginx
+    backup_path: nginx
+    retention_days: 14
+
+  letsencrypt:
+    enabled: true
+    source_path: /etc/letsencrypt/live
+    backup_path: nginx
+    retention_days: 14
+
+  docker_builds:
+    enabled: true
+    source_path: $HOME/docker-builds
+    backup_path: docker-builds
+    retention_days: 14
+
+# Database specific configurations
+databases:
+  - name: live_db
+    sql_container: live-db
+    data_container: live-myodoo
+    retention_days: 5
+    fast_report:  # Optional fast-report configuration per database
+      enabled: true
+      path: /opt/fast-report/live
+
+  - name: test_db
+    sql_container: test-db
+    data_container: test-myodoo
+    retention_days: 5
+    fast_report:
+      enabled: true
+      path: /opt/fast-report/test 
