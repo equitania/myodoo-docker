@@ -8,92 +8,93 @@
 
 ## Über dieses Skript
 
-Dieses Skript erstellt automatisierte Backups von Odoo-Datenbanken, die in Docker-Containern laufen. Es sichert sowohl die PostgreSQL-Datenbank als auch den FileStore und unterstützt mehrere Odoo-Instanzen.
+Dieses Skript erstellt automatisierte Backups von Odoo-Datenbanken, die in Docker-Containern laufen. Es sichert sowohl die PostgreSQL-Datenbank als auch den FileStore, zusätzliche Systempfade und unterstützt mehrere Odoo-Instanzen.
 
 ### Hauptfunktionen
 
-- Backup von mehreren Odoo-Instanzen und Datenbanken
-- Unterstützung für verschiedene Kompressionsformate (ZSTD, 7-Zip, ZIP)
+- Backup von mehreren Odoo-Datenbanken
+- Komprimierung mit 7-Zip
+- Optionale AES-256 Verschlüsselung
 - Automatische Verwaltung von alten Backups
-- Überwachung des verfügbaren Speicherplatzes
-- Fortschrittsanzeige während des Backup-Prozesses
-- Backup zusätzlicher Pfade (Nginx, Let's Encrypt, FastReport, usw.)
+- Backup zusätzlicher Pfade (Nginx, Let's Encrypt, Fast-Report, usw.)
 
 ### Voraussetzungen
 
 1. Python 3.6 oder höher
 2. Docker
-3. Je nach gewähltem Kompressionsformat:
-   - Für ZSTD: `zstd` Paket
-   - Für 7-Zip: `p7zip-full` Paket
-   - Für ZIP: `zip` und `unzip` Pakete
+3. 7-Zip (`p7zip-full` Paket)
+4. python-dotenv (für Verschlüsselung)
 
 ### Installation
 
-1. Kopieren Sie das Skript `container2backup_enhanced.py` in ein Verzeichnis Ihrer Wahl (z.B. `/opt/scripts/`).
-2. Machen Sie das Skript ausführbar:
+1. Installieren Sie die benötigten Pakete:
    ```bash
-   chmod +x container2backup_enhanced.py
+   sudo apt-get install p7zip-full
+   pip3 install python-dotenv pyyaml
    ```
+
+2. Kopieren Sie das Skript in ein Verzeichnis Ihrer Wahl (z.B. `/opt/scripts/`).
 
 ### Konfiguration
 
-Das Skript verwendet eine YAML-Konfigurationsdatei. Sie können eine Beispiel-Konfigurationsdatei erstellen mit:
-
-```bash
-python3 container2backup_enhanced.py --create-config /pfad/zur/backup_config.yaml
-```
-
-#### Konfigurationsbeispiel:
+Das Skript verwendet eine YAML-Konfigurationsdatei:
 
 ```yaml
-backup_root: '/opt/backups'  # Stammverzeichnis für Backups
-min_disk_space_gb: 5.0  # Minimaler freier Speicherplatz in GB
-compression:
-  type: 'zstd'  # Optionen: 'zstd', '7zip', 'zip'
-  level: 3  # Kompressionsgrad
-default_retention_days: 14  # Aufbewahrungsfrist in Tagen
+# Default settings
+defaults:
+  retention_days: 14  # Aufbewahrungsfrist in Tagen
+  db_user: ownerp
+  backup_path: /opt/backups
+  compression:
+    level: 5  # 7-Zip Kompressionsgrad (0-9)
 
-# Odoo-Instanzen
-odoo_instances:
-  - name: 'production'
-    enabled: true
-    databases:
-      - name: 'odoo_prod'
-        user: 'odoo'
-        containers:
-          database: 'prod-postgres'  # Name des PostgreSQL-Containers
-          odoo: 'prod-odoo'  # Name des Odoo-Containers
-        retention_days: 30  # Individuelle Aufbewahrungsfrist
-
-# Zusätzliche Backup-Pfade
-additional_backups:
+# System-wide service backups
+services:
   nginx:
     enabled: true
-    source_path: '/etc/nginx'
+    source_path: /etc/nginx
+    backup_path: nginx
     retention_days: 14
-  fastreport:
+
+  letsencrypt:
     enabled: true
-    source_path: '/opt/fastreport'
+    source_path: /etc/letsencrypt/live
+    backup_path: nginx
     retention_days: 14
+
+  docker_builds:
+    enabled: true
+    source_path: /root/docker-builds
+    backup_path: docker-builds
+    retention_days: 14
+
+# Database specific configurations
+databases:
+  - name: live_db
+    sql_container: live-db
+    data_container: live-myodoo
+    retention_days: 5
+    fast_report:  # Optional fast-report configuration
+      enabled: true
+      path: /opt/fast-report/live
+
+  - name: test_db
+    sql_container: test-db
+    data_container: test-myodoo
+    retention_days: 5
+    fast_report:
+      enabled: true
+      path: /opt/fast-report/test
 ```
 
-#### Verfügbare Kompressionsformate:
+#### Kompressionskonfiguration
 
-1. **ZSTD** (Standard):
-   - Werte: 1-19 (Standard: 3)
-   - Schnelle Kompression mit gutem Verhältnis
-   - Erfordert installiertes zstd
-
-2. **7-Zip**:
-   - Werte: 0-9 (Standard: 5)
-   - Beste Kompressionsrate, aber langsamer
-   - Erfordert installiertes 7z
-
-3. **ZIP**:
-   - Werte: 1-9 (Standard: 6)
-   - Höchste Kompatibilität mit anderen Systemen
-   - Erfordert installiertes zip/unzip
+Der 7-Zip Kompressionsgrad kann im `defaults`-Bereich konfiguriert werden:
+- Wertebereich: 0-9
+  - 0: Keine Kompression (nur Archivierung)
+  - 1: Schnellste Kompression
+  - 5: Standard-Kompression (gute Balance)
+  - 9: Beste Kompression (langsamer)
 
 ### Verwendung
 
@@ -153,92 +154,93 @@ Folgen Sie dann den angezeigten Anweisungen.
 
 ## About this Script
 
-This script creates automated backups of Odoo databases running in Docker containers. It backs up both the PostgreSQL database and the FileStore, and supports multiple Odoo instances.
+This script creates automated backups of Odoo databases running in Docker containers. It backs up both the PostgreSQL database and the FileStore, additional system paths, and supports multiple Odoo instances.
 
 ### Key Features
 
-- Backup of multiple Odoo instances and databases
-- Support for different compression formats (ZSTD, 7-Zip, ZIP)
+- Backup of multiple Odoo databases
+- Compression using 7-Zip
+- Optional AES-256 encryption
 - Automatic management of old backups
-- Disk space monitoring
-- Progress display during the backup process
-- Backup of additional paths (Nginx, Let's Encrypt, FastReport, etc.)
+- Backup of additional paths (Nginx, Let's Encrypt, Fast-Report, etc.)
 
 ### Requirements
 
 1. Python 3.6 or higher
 2. Docker
-3. Depending on chosen compression format:
-   - For ZSTD: `zstd` package
-   - For 7-Zip: `p7zip-full` package
-   - For ZIP: `zip` and `unzip` packages
+3. 7-Zip (`p7zip-full` package)
+4. python-dotenv (for encryption)
 
 ### Installation
 
-1. Copy the script `container2backup_enhanced.py` to a directory of your choice (e.g., `/opt/scripts/`).
-2. Make the script executable:
+1. Install required packages:
    ```bash
-   chmod +x container2backup_enhanced.py
+   sudo apt-get install p7zip-full
+   pip3 install python-dotenv pyyaml
    ```
+
+2. Copy the script to a directory of your choice (e.g., `/opt/scripts/`).
 
 ### Configuration
 
-The script uses a YAML configuration file. You can create a sample configuration file with:
-
-```bash
-python3 container2backup_enhanced.py --create-config /path/to/backup_config.yaml
-```
-
-#### Configuration Example:
+The script uses a YAML configuration file:
 
 ```yaml
-backup_root: '/opt/backups'  # Root directory for backups
-min_disk_space_gb: 5.0  # Minimum free disk space in GB
-compression:
-  type: 'zstd'  # Options: 'zstd', '7zip', 'zip'
-  level: 3  # Compression level
-default_retention_days: 14  # Retention period in days
+# Default settings
+defaults:
+  retention_days: 14  # Retention period in days
+  db_user: ownerp
+  backup_path: /opt/backups
+  compression:
+    level: 5  # 7-Zip compression level (0-9)
 
-# Odoo instances
-odoo_instances:
-  - name: 'production'
-    enabled: true
-    databases:
-      - name: 'odoo_prod'
-        user: 'odoo'
-        containers:
-          database: 'prod-postgres'  # PostgreSQL container name
-          odoo: 'prod-odoo'  # Odoo container name
-        retention_days: 30  # Individual retention period
-
-# Additional backup paths
-additional_backups:
+# System-wide service backups
+services:
   nginx:
     enabled: true
-    source_path: '/etc/nginx'
+    source_path: /etc/nginx
+    backup_path: nginx
     retention_days: 14
-  fastreport:
+
+  letsencrypt:
     enabled: true
-    source_path: '/opt/fastreport'
+    source_path: /etc/letsencrypt/live
+    backup_path: nginx
     retention_days: 14
+
+  docker_builds:
+    enabled: true
+    source_path: /root/docker-builds
+    backup_path: docker-builds
+    retention_days: 14
+
+# Database specific configurations
+databases:
+  - name: live_db
+    sql_container: live-db
+    data_container: live-myodoo
+    retention_days: 5
+    fast_report:  # Optional fast-report configuration
+      enabled: true
+      path: /opt/fast-report/live
+
+  - name: test_db
+    sql_container: test-db
+    data_container: test-myodoo
+    retention_days: 5
+    fast_report:
+      enabled: true
+      path: /opt/fast-report/test
 ```
 
-#### Available Compression Formats:
+#### Compression Configuration
 
-1. **ZSTD** (default):
-   - Values: 1-19 (default: 3)
-   - Fast compression with good ratio
-   - Requires zstd to be installed
-
-2. **7-Zip**:
-   - Values: 0-9 (default: 5)
-   - Best compression ratio, but slower
-   - Requires 7z to be installed
-
-3. **ZIP**:
-   - Values: 1-9 (default: 6)
-   - Most compatible format
-   - Requires zip/unzip to be installed
+The 7-Zip compression level can be configured in the `defaults` section:
+- Value range: 0-9
+  - 0: No compression (store only)
+  - 1: Fastest compression
+  - 5: Default compression (good balance)
+  - 9: Best compression (slower)
 
 ### Usage
 
