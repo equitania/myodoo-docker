@@ -503,7 +503,10 @@ def read_package_versions(filename: str = "packages.txt") -> dict:
     """
     packages = {
         "pipx": {},
-        "pip": [],
+        "pip": [
+            "python-dotenv",
+            # ... other pip packages ...
+        ],
         "system": []
     }
     
