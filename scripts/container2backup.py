@@ -165,30 +165,27 @@ def create_backup(db_name, db_user, sql_container, data_container, backup_path, 
             filestore_dir = os.path.join(temp_dir, db_name)
             os.makedirs(filestore_dir)
             
-            filestore_proc = subprocess.run(
-                ['docker', 'exec', data_container, 'tar', 'c', '-C', '/opt/odoo/data/filestore', db_name],
+            # GEÄNDERT: Verwenden eines direkten Pipes, um Speicher zu sparen
+            print(f"Extracting filestore for {db_name} using streaming")
+            extract_cmd = f"docker exec {data_container} tar c -C /opt/odoo/data/filestore {db_name} | tar x -C {temp_dir}"
+            
+            extract_result = subprocess.run(
+                extract_cmd,
+                shell=True,
                 stdout=subprocess.PIPE,
                 stderr=subprocess.PIPE,
                 check=False
             )
             
-            if filestore_proc.returncode != 0:
-                print(f"Error accessing filestore for {db_name}")
-                if filestore_proc.stderr:
-                    print(f"Filestore error: {filestore_proc.stderr.decode()}")
-            else:
-                # Extract tar to root of temp directory (not to filestore subdirectory)
-                extract_proc = subprocess.run(
-                    ['tar', 'x', '-C', temp_dir],
-                    input=filestore_proc.stdout,
-                    stderr=subprocess.PIPE,
-                    check=False
-                )
-                
-                if extract_proc.returncode != 0:
-                    print(f"Error extracting filestore for {db_name}")
-                    if extract_proc.stderr:
-                        print(f"Extract error: {extract_proc.stderr.decode()}")
+            if extract_result.returncode != 0:
+                print(f"Error extracting filestore for {db_name}")
+                if extract_result.stderr:
+                    extract_error = extract_result.stderr.decode()
+                    print(f"Extract error: {extract_error}")
+                    # Prüfen, ob es sich um ein Speicherproblem handelt
+                    if "Killed" in extract_error or "Cannot allocate memory" in extract_error:
+                        print("The process was killed due to memory constraints.")
+                        print("Consider running the backup with nohup or in a screen/tmux session with lower priority.")
         
         # 3. Create 7z archive from temp directory
         print(f"Creating final archive {output_file}")
