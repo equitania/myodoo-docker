@@ -46,3 +46,11 @@ databases:
     fast_report:
       enabled: true
       path: /opt/fast-report/test 
+
+# Rsync configuration
+rsync:
+  enabled: true
+  commands:
+    - "rsync -avz /opt/backups/docker/ user@remote-server:/backup/docker/"
+    - "rsync -avz /opt/backups/nginx/ user@remote-server:/backup/nginx/"
+    - "rsync -avz --delete /opt/backups/docker-builds/ user@remote-server:/backup/docker-builds/" 
