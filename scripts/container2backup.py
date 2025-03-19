@@ -86,10 +86,10 @@ def create_backup(db_name, db_user, sql_container, data_container, backup_path, 
     """
     Creates a backup directly to 7zip archive without temporary storage
     """
-    # Use docker subdirectory for database backups
     docker_backup_path = os.path.join(backup_path, 'docker')
     output_file = f'{docker_backup_path}/{db_name}_{data_container}_dockerbackup_{timestamp}.7z'
     encryption_enabled, password = get_encryption_settings()
+    compression_level = config.get('defaults', {}).get('compression', {}).get('level', 5)
     
     try:
         # Check if containers exist and are running
@@ -105,22 +105,13 @@ def create_backup(db_name, db_user, sql_container, data_container, backup_path, 
         return False
 
     try:
-        # Test database connection first
-        test_connection = subprocess.run(
-            ['docker', 'exec', '-i', sql_container, 'psql', '-U', db_user, '-d', db_name, '-c', 'SELECT 1'],
-            stdout=subprocess.PIPE,
-            stderr=subprocess.PIPE,
-            check=True
-        )
-        
-        # Base 7zip command with compression level
-        compression_level = config.get('defaults', {}).get('compression', {}).get('level', 5)
+        # Create initial 7z archive with database dump
+        print(f"Creating database dump for {db_name}")
         zip_args = ['7z', 'a', '-si', f'-mx={compression_level}', '-t7z']
         if encryption_enabled:
             zip_args.extend(['-p' + password, '-mhe=on'])
-        zip_args.extend([output_file, f'dump.sql'])
+        zip_args.extend([output_file, 'dump.sql'])
         
-        # Create new 7zip archive with database dump from SQL container
         with subprocess.Popen(zip_args, stdin=subprocess.PIPE) as zip_proc:
             dump_proc = subprocess.Popen(
                 ['docker', 'exec', '-i', sql_container, 'pg_dump', '-U', db_user, db_name],
@@ -134,7 +125,7 @@ def create_backup(db_name, db_user, sql_container, data_container, backup_path, 
                     print(f"pg_dump error: {stderr.decode()}")
                 return False
         
-        # Add filestore from Odoo container
+        # Add filestore directory structure
         print(f"Backing up filestore for database {db_name}")
         filestore_proc = subprocess.Popen(
             ['docker', 'exec', data_container, 'tar', 'c', '-C', '/opt/odoo/data/filestore', db_name],
@@ -145,7 +136,7 @@ def create_backup(db_name, db_user, sql_container, data_container, backup_path, 
         zip_args = ['7z', 'a', '-si', '-t7z', f'-mx={compression_level}']
         if encryption_enabled:
             zip_args.extend(['-p' + password, '-mhe=on'])
-        zip_args.extend([output_file, f'filestore/{db_name}'])
+        zip_args.extend([output_file, 'filestore'])  # Store in filestore directory
         
         zip_proc = subprocess.Popen(zip_args, stdin=filestore_proc.stdout, stderr=subprocess.PIPE)
         filestore_stdout, filestore_stderr = filestore_proc.communicate()
@@ -154,27 +145,24 @@ def create_backup(db_name, db_user, sql_container, data_container, backup_path, 
             print(f"Error accessing filestore for {db_name}")
             if filestore_stderr:
                 print(f"Filestore error: {filestore_stderr.decode()}")
-            # Check if filestore directory exists in Odoo container
-            check_proc = subprocess.run(
-                ['docker', 'exec', data_container, 'ls', '-la', '/opt/odoo/data/filestore'],
-                capture_output=True,
-                text=True
-            )
-            if check_proc.returncode == 0:
-                print("Filestore directory contents:")
-                print(check_proc.stdout)
-            else:
-                print("Could not access filestore directory")
             return False
             
-        zip_stdout, zip_stderr = zip_proc.communicate()
-        if zip_proc.returncode != 0:
-            print(f"Error compressing filestore for {db_name}")
-            if zip_stderr:
-                print(f"7-Zip error: {zip_stderr.decode()}")
-            return False
-            
-        print(f"Filestore backup completed for {db_name}")
+        # Add FastReport if configured
+        fast_report = db.get('fast_report', {})
+        if fast_report.get('enabled', False):
+            report_path = fast_report['path']
+            if os.path.exists(report_path):
+                print(f"Adding FastReport from {report_path}")
+                result = subprocess.run(
+                    ['7z', 'a', f'-mx={compression_level}', '-t7z', output_file, report_path],
+                    stdout=subprocess.PIPE,
+                    stderr=subprocess.PIPE,
+                    check=False
+                )
+                if result.returncode != 0:
+                    print(f"Error adding FastReport from {report_path}")
+                    if result.stderr:
+                        print(f"7-Zip error: {result.stderr.decode()}")
         
         # Add additional paths if configured
         if additional_paths:
@@ -182,32 +170,25 @@ def create_backup(db_name, db_user, sql_container, data_container, backup_path, 
                 if not path_config.get('enabled', True):
                     continue
                     
-                source_path = path_config['source_path']
+                source_path = os.path.expandvars(os.path.expanduser(path_config['source_path']))
                 if not os.path.exists(source_path):
                     print(f"Additional path {source_path} for {db_name} does not exist, skipping.")
                     continue
                 
+                print(f"Adding additional path {path_name}")
                 backup_subdir = path_config.get('backup_subdir', path_name)
                 result = subprocess.run(
-                    ['7z', 'a', '-tzip', output_file, source_path, f'-w{backup_subdir}'],
+                    ['7z', 'a', f'-mx={compression_level}', '-t7z', output_file, source_path, f'-w{backup_subdir}'],
                     check=False
                 )
                 if result.returncode == 0:
-                    print(f"Added {path_name} to backup for {db_name}")
+                    print(f"Added {path_name} to backup")
                 else:
-                    print(f"Error adding {path_name} to backup for {db_name}")
+                    print(f"Error adding {path_name}")
         
-        if zip_proc.returncode == 0:
-            print(f'Backup completed for {data_container}')
-            return True
-        else:
-            print(f'Error creating backup for {data_container}')
-            return False
+        print(f'Backup completed for {data_container}')
+        return True
             
-    except subprocess.CalledProcessError as e:
-        print(f"Error during backup process for {db_name}:")
-        print(f"Command '{e.cmd}' failed with error: {e.stderr.decode()}")
-        return False
     except Exception as e:
         print(f"Unexpected error during backup of {db_name}: {str(e)}")
         return False
@@ -219,7 +200,6 @@ def backup_additional_service(service_config, base_backup_path, timestamp):
     if not service_config.get('enabled', True):
         return
 
-    # Expand environment variables in source path
     source_path = os.path.expandvars(os.path.expanduser(service_config['source_path']))
     if not os.path.exists(source_path):
         print(f"Source path {source_path} does not exist, skipping backup.")
@@ -232,21 +212,24 @@ def backup_additional_service(service_config, base_backup_path, timestamp):
     if not os.path.exists(backup_path):
         os.makedirs(backup_path, exist_ok=True)
 
-    output_zip = f'{backup_path}/{backup_subdir}_{timestamp}.zip'
+    output_file = f'{backup_path}/{backup_subdir}_{timestamp}.7z'
     
     # Build 7zip command with compression level
     compression_level = config.get('defaults', {}).get('compression', {}).get('level', 5)
-    zip_args = ['7z', 'a', f'-mx={compression_level}', '-tzip']
+    zip_args = ['7z', 'a', f'-mx={compression_level}', '-t7z']
     if encryption_enabled:
         zip_args.extend(['-p' + password, '-mhe=on'])
-    zip_args.extend([output_zip, source_path])
+    zip_args.extend([output_file, source_path])
     
-    result = subprocess.run(zip_args, check=False)
+    print(f"Creating backup for {backup_subdir}")
+    result = subprocess.run(zip_args, capture_output=True, text=True)
     
     if result.returncode == 0:
         print(f"Backup created for {backup_subdir}" + (" (encrypted)" if encryption_enabled else ""))
     else:
         print(f"Error creating backup for {backup_subdir}")
+        if result.stderr:
+            print(f"Error details: {result.stderr}")
 
 def check_paths(config):
     """
