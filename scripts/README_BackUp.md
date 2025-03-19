@@ -35,7 +35,7 @@ services:
   letsencrypt:
     enabled: true
     source_path: /etc/letsencrypt
-    backup_path: nginx
+    backup_path: letsencrypt
     retention_days: 14
 
   docker_builds:
