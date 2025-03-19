@@ -7,71 +7,135 @@
 <a name="deutsch"></a>
 ## Deutsch
 
-### Vorbereitung
-
-#### Beim ersten Start
-
-`git clone https://github.com/equitania/myodoo-docker.git`
-
-#### Danach
-
-`cp myodoo-docker/getScripts.py /root/`
-
-`./getScripts.py`
-
 ### Über dieses Repository
 
-Dieses Repository bietet Hilfsskripte und Dockerfiles für den MyOdoo Fork https://www.myodoo.de.
-Wir benutzen es bei unseren täglichen Administrationstätigkeiten mit den Kunden Systemen.
+Dieses Repository enthält eine Sammlung von Docker-Konfigurationen und Verwaltungsskripten für Odoo-Installationen. Es wird täglich in der professionellen Administration von Kundensystemen eingesetzt.
 
-### Bereiche:
+### Schnellstart
 
-1. Dockerfiles
-2. Hilfsskripte für Installation, Updates & Backups
+```bash
+# Erstmalige Installation
+git clone https://github.com/equitania/myodoo-docker.git
+cp myodoo-docker/getScripts.py /root/
+./getScripts.py
+```
 
-Weiterführende Informationen finden Sie in unserem WIKI https://equitania.atlassian.net/wiki/spaces/MW/overview
+### Hauptkomponenten
 
-#### Branch wechseln
+#### 1. Verwaltungsskripte
 
-```shell
+- **getScripts.py**
+  - Hauptinstallationsskript
+  - Installiert alle benötigten Werkzeuge und Abhängigkeiten
+  - Aktualisiert bestehende Installationen
+
+- **container2backup.py**
+  - Automatisches Backup-System für Odoo-Datenbanken
+  - Sichert Datenbank, Filestore und zusätzliche Pfade
+  - Konfiguration über YAML-Datei
+  - Optionale AES-256 Verschlüsselung
+  - Automatische Bereinigung alter Backups
+  ```yaml
+  # Beispiel container2backup.yaml
+  defaults:
+    retention_days: 14
+    db_user: ownerp
+    compression:
+      level: 5  # 7-Zip Kompressionsgrad (0-9)
+  ```
+
+- **update_docker_odoo.py**
+  - Automatisierte Aktualisierung von Docker-Containern
+  - Sicherheitsrelevante Updates
+  - Neustart von Diensten
+
+#### 2. Systemkonfigurationen
+
+- Nginx-Konfigurationen für Reverse Proxy
+- Let's Encrypt SSL-Integration
+- Docker-Build-Konfigurationen
+
+#### 3. Sicherheitsfeatures
+
+- Verschlüsselte Backups (AES-256)
+- Automatische SSL-Zertifikatserneuerung
+- Sichere Standardkonfigurationen
+
+### Branch-Verwaltung
+
+```bash
+# Wechsel zu einer spezifischen Version (z.B. 2024)
 cd $HOME && rm -rf myodoo-docker && rm -rf nginx-conf && \
-  git clone -b 2024 https://github.com/equitania/myodoo-docker.git && \
+  git clone -b 2025 https://github.com/equitania/myodoo-docker.git && \
   cp myodoo-docker/getScripts.py $HOME && \
   $HOME/getScripts.py && source ~/.zshrc
 ```
 
+---
+
 <a name="english"></a>
 ## English
 
-### Preparation
-
-#### First Time Setup
-
-`git clone https://github.com/equitania/myodoo-docker.git`
-
-#### Next Steps
-
-`cp myodoo-docker/getScripts.py /root/`
-
-`./getScripts.py`
-
 ### About this Repository
 
-This repository provides helper scripts and Dockerfiles for the MyOdoo Fork https://www.myodoo.de.
-We use it in our daily administration activities with customer systems.
+This repository contains a collection of Docker configurations and management scripts for Odoo installations. It is used daily in professional customer system administration.
 
-### Areas:
+### Quick Start
 
-1. Dockerfiles
-2. Helper scripts for installation, updates & backups
+```bash
+# Initial Installation
+git clone https://github.com/equitania/myodoo-docker.git
+cp myodoo-docker/getScripts.py /root/
+./getScripts.py
+```
 
-For more detailed information, please visit our WIKI https://equitania.atlassian.net/wiki/spaces/MW/overview
+### Main Components
 
-#### Exchange Branch
+#### 1. Management Scripts
 
-```shell
+- **getScripts.py**
+  - Main installation script
+  - Installs all required tools and dependencies
+  - Updates existing installations
+
+- **container2backup.py**
+  - Automatic backup system for Odoo databases
+  - Backs up database, filestore, and additional paths
+  - Configuration via YAML file
+  - Optional AES-256 encryption
+  - Automatic cleanup of old backups
+  ```yaml
+  # Example container2backup.yaml
+  defaults:
+    retention_days: 14
+    db_user: ownerp
+    compression:
+      level: 5  # 7-Zip compression level (0-9)
+  ```
+
+- **update_docker_odoo.py**
+  - Automated Docker container updates
+  - Security-relevant updates
+  - Service restart management
+
+#### 2. System Configurations
+
+- Nginx configurations for reverse proxy
+- Let's Encrypt SSL integration
+- Docker build configurations
+
+#### 3. Security Features
+
+- Encrypted backups (AES-256)
+- Automatic SSL certificate renewal
+- Secure default configurations
+
+### Branch Management
+
+```bash
+# Switch to a specific version (e.g., 2024)
 cd $HOME && rm -rf myodoo-docker && rm -rf nginx-conf && \
-  git clone -b 2024 https://github.com/equitania/myodoo-docker.git && \
+  git clone -b 2025 https://github.com/equitania/myodoo-docker.git && \
   cp myodoo-docker/getScripts.py $HOME && \
   $HOME/getScripts.py && source ~/.zshrc
 ```
@@ -80,4 +144,4 @@ cd $HOME && rm -rf myodoo-docker && rm -rf nginx-conf && \
 
 For more information:
 - [ownERP.com](https://www.ownerp.com)
-- [Technical source](https://github.com/equitania/myodoo-docker)
+
