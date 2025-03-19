@@ -6,6 +6,7 @@ defaults:
   retention_days: 14  # Retention period in days
   db_user: ownerp
   backup_path: /opt/backups
+  temp_path: /tmp/odoo_backup  # Temporary path for backup operations
   compression:
     level: 5  # 7-Zip compression level (0-9, default: 5)
 
