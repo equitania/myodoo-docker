@@ -114,9 +114,8 @@ def create_backup(db_name, db_user, sql_container, data_container, backup_path, 
                 print(f"pg_dump error: {dump_proc.stderr.decode()}")
             return False
             
-        # 2. Export filestore to directory with proper structure
-        filestore_dir = os.path.join(temp_dir, "filestore", db_name)
-        os.makedirs(filestore_dir)
+        # 2. Export filestore directly with database name as root
+        # No "filestore" parent directory
         print(f"Backing up filestore for {db_name}")
         
         # First check if filestore exists in container
@@ -131,7 +130,10 @@ def create_backup(db_name, db_user, sql_container, data_container, backup_path, 
             print(f"Warning: Filestore for {db_name} not found in container")
             print(check_proc.stderr.decode())
         else:
-            # Extract filestore to temp directory
+            # Extract filestore to temp directory - directly using db_name without filestore prefix
+            filestore_dir = os.path.join(temp_dir, db_name)
+            os.makedirs(filestore_dir)
+            
             filestore_proc = subprocess.run(
                 ['docker', 'exec', data_container, 'tar', 'c', '-C', '/opt/odoo/data/filestore', db_name],
                 stdout=subprocess.PIPE,
@@ -144,9 +146,9 @@ def create_backup(db_name, db_user, sql_container, data_container, backup_path, 
                 if filestore_proc.stderr:
                     print(f"Filestore error: {filestore_proc.stderr.decode()}")
             else:
-                # Extract tar to filestore directory
+                # Extract tar to root of temp directory (not to filestore subdirectory)
                 extract_proc = subprocess.run(
-                    ['tar', 'x', '-C', os.path.join(temp_dir, "filestore")],
+                    ['tar', 'x', '-C', temp_dir],
                     input=filestore_proc.stdout,
                     stderr=subprocess.PIPE,
                     check=False
