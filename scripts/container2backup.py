@@ -98,7 +98,7 @@ def create_backup(db_name, db_user, sql_container, data_container, backup_path, 
         print(f"Error: Container {sql_container} does not exist or is not running")
         return False
 
-    output_zip = f'{backup_path}/{db_name}_{data_container}_dockerbackup_{timestamp}.zip'
+    output_file = f'{backup_path}/{db_name}_{data_container}_dockerbackup_{timestamp}.7z'
     encryption_enabled, password = get_encryption_settings()
     
     try:
@@ -112,10 +112,10 @@ def create_backup(db_name, db_user, sql_container, data_container, backup_path, 
         
         # Base 7zip command with compression level
         compression_level = config.get('defaults', {}).get('compression', {}).get('level', 5)
-        zip_args = ['7z', 'a', '-si', f'-mx={compression_level}', '-tzip']
+        zip_args = ['7z', 'a', '-si', f'-mx={compression_level}', '-t7z']
         if encryption_enabled:
             zip_args.extend(['-p' + password, '-mhe=on'])
-        zip_args.extend([output_zip, f'dump.sql'])
+        zip_args.extend([output_file, f'dump.sql'])
         
         # Create new 7zip archive with database dump
         with subprocess.Popen(zip_args, stdin=subprocess.PIPE) as zip_proc:
@@ -137,10 +137,10 @@ def create_backup(db_name, db_user, sql_container, data_container, backup_path, 
             stdout=subprocess.PIPE
         )
         
-        zip_args = ['7z', 'a', '-si', '-tzip']
+        zip_args = ['7z', 'a', '-si', '-t7z']
         if encryption_enabled:
             zip_args.extend(['-p' + password, '-mhe=on'])
-        zip_args.extend([output_zip, f'filestore/{db_name}'])
+        zip_args.extend([output_file, f'filestore/{db_name}'])
         
         zip_proc = subprocess.Popen(zip_args, stdin=filestore_proc.stdout)
         zip_proc.communicate()
@@ -158,7 +158,7 @@ def create_backup(db_name, db_user, sql_container, data_container, backup_path, 
                 
                 backup_subdir = path_config.get('backup_subdir', path_name)
                 result = subprocess.run(
-                    ['7z', 'a', '-tzip', output_zip, source_path, f'-w{backup_subdir}'],
+                    ['7z', 'a', '-tzip', output_file, source_path, f'-w{backup_subdir}'],
                     check=False
                 )
                 if result.returncode == 0:
