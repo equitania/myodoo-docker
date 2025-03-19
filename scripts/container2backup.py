@@ -107,8 +107,25 @@ def create_backup(db_name, db_user, sql_container, data_container, backup_path, 
     encryption_enabled, password = get_encryption_settings()
     compression_level = config.get('defaults', {}).get('compression', {}).get('level', 5)
     
+    # Use configured temp path or fall back to system default
+    temp_base = os.path.expandvars(os.path.expanduser(
+        config.get('defaults', {}).get('temp_path', '')
+    ))
+    
     # Create temp directory for backup preparation
-    temp_dir = tempfile.mkdtemp()
+    if temp_base and os.path.exists(temp_base):
+        # Create a unique subdirectory in the configured base temp path
+        timestamp_dir = datetime.datetime.now().strftime('%Y%m%d_%H%M%S')
+        temp_dir = os.path.join(temp_base, f"{db_name}_{timestamp_dir}")
+        os.makedirs(temp_dir, exist_ok=True)
+        print(f"Using configured temporary directory: {temp_dir}")
+        custom_temp = True
+    else:
+        # Use system default temp directory
+        temp_dir = tempfile.mkdtemp()
+        custom_temp = False
+        print(f"Using system temporary directory: {temp_dir}")
+    
     try:
         print(f"Creating backup for {db_name} in {data_container}")
         
@@ -196,7 +213,9 @@ def create_backup(db_name, db_user, sql_container, data_container, backup_path, 
         return False
     finally:
         # Clean up temp directory
-        shutil.rmtree(temp_dir)
+        if os.path.exists(temp_dir):
+            shutil.rmtree(temp_dir)
+            print(f"Cleaned up temporary directory: {temp_dir}")
 
 def backup_additional_service(service_config, base_backup_path, timestamp):
     """
@@ -369,6 +388,18 @@ try:
     backup_path = os.path.expandvars(os.path.expanduser(
         config.get('defaults', {}).get('backup_path', '/opt/backups')
     ))
+    
+    # Check and create temp path if needed
+    temp_path = os.path.expandvars(os.path.expanduser(
+        config.get('defaults', {}).get('temp_path', '')
+    ))
+    if temp_path and not os.path.exists(temp_path):
+        try:
+            os.makedirs(temp_path, exist_ok=True)
+            print(f"Created temporary directory: {temp_path}")
+        except PermissionError:
+            print(f"Warning: No permission to create temporary directory {temp_path}")
+            print("Will use system default temporary directory instead.")
     
     # Create directories if they don't exist
     if not os.path.exists(backup_path):
