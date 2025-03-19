@@ -86,21 +86,24 @@ def create_backup(db_name, db_user, sql_container, data_container, backup_path, 
     """
     Creates a backup directly to 7zip archive without temporary storage
     """
-    # Check if container exists and is running
-    try:
-        container_check = subprocess.run(
-            ['docker', 'container', 'inspect', sql_container],
-            stdout=subprocess.PIPE,
-            stderr=subprocess.PIPE,
-            check=True
-        )
-    except subprocess.CalledProcessError:
-        print(f"Error: Container {sql_container} does not exist or is not running")
-        return False
-
-    output_file = f'{backup_path}/{db_name}_{data_container}_dockerbackup_{timestamp}.7z'
+    # Use docker subdirectory for database backups
+    docker_backup_path = os.path.join(backup_path, 'docker')
+    output_file = f'{docker_backup_path}/{db_name}_{data_container}_dockerbackup_{timestamp}.7z'
     encryption_enabled, password = get_encryption_settings()
     
+    try:
+        # Check if containers exist and are running
+        for container in [sql_container, data_container]:
+            container_check = subprocess.run(
+                ['docker', 'container', 'inspect', container],
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+                check=True
+            )
+    except subprocess.CalledProcessError as e:
+        print(f"Error: Container {e.cmd[-1]} does not exist or is not running")
+        return False
+
     try:
         # Test database connection first
         test_connection = subprocess.run(
@@ -117,7 +120,7 @@ def create_backup(db_name, db_user, sql_container, data_container, backup_path, 
             zip_args.extend(['-p' + password, '-mhe=on'])
         zip_args.extend([output_file, f'dump.sql'])
         
-        # Create new 7zip archive with database dump
+        # Create new 7zip archive with database dump from SQL container
         with subprocess.Popen(zip_args, stdin=subprocess.PIPE) as zip_proc:
             dump_proc = subprocess.Popen(
                 ['docker', 'exec', '-i', sql_container, 'pg_dump', '-U', db_user, db_name],
@@ -131,19 +134,47 @@ def create_backup(db_name, db_user, sql_container, data_container, backup_path, 
                     print(f"pg_dump error: {stderr.decode()}")
                 return False
         
-        # Add filestore with encryption if enabled
+        # Add filestore from Odoo container
+        print(f"Backing up filestore for database {db_name}")
         filestore_proc = subprocess.Popen(
-            ['docker', 'exec', sql_container, 'tar', 'c', '-C', f'/opt/odoo/data/filestore', db_name],
-            stdout=subprocess.PIPE
+            ['docker', 'exec', data_container, 'tar', 'c', '-C', '/opt/odoo/data/filestore', db_name],
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE
         )
         
-        zip_args = ['7z', 'a', '-si', '-t7z']
+        zip_args = ['7z', 'a', '-si', '-t7z', f'-mx={compression_level}']
         if encryption_enabled:
             zip_args.extend(['-p' + password, '-mhe=on'])
         zip_args.extend([output_file, f'filestore/{db_name}'])
         
-        zip_proc = subprocess.Popen(zip_args, stdin=filestore_proc.stdout)
-        zip_proc.communicate()
+        zip_proc = subprocess.Popen(zip_args, stdin=filestore_proc.stdout, stderr=subprocess.PIPE)
+        filestore_stdout, filestore_stderr = filestore_proc.communicate()
+        
+        if filestore_proc.returncode != 0:
+            print(f"Error accessing filestore for {db_name}")
+            if filestore_stderr:
+                print(f"Filestore error: {filestore_stderr.decode()}")
+            # Check if filestore directory exists in Odoo container
+            check_proc = subprocess.run(
+                ['docker', 'exec', data_container, 'ls', '-la', '/opt/odoo/data/filestore'],
+                capture_output=True,
+                text=True
+            )
+            if check_proc.returncode == 0:
+                print("Filestore directory contents:")
+                print(check_proc.stdout)
+            else:
+                print("Could not access filestore directory")
+            return False
+            
+        zip_stdout, zip_stderr = zip_proc.communicate()
+        if zip_proc.returncode != 0:
+            print(f"Error compressing filestore for {db_name}")
+            if zip_stderr:
+                print(f"7-Zip error: {zip_stderr.decode()}")
+            return False
+            
+        print(f"Filestore backup completed for {db_name}")
         
         # Add additional paths if configured
         if additional_paths:
