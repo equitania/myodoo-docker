@@ -51,24 +51,38 @@ def compress_with_7zip(source_dir, output_file):
         print("Please install 7-Zip with: sudo apt-get install p7zip-full")
         return False
 
-def cleanup_backups(cleanup_path, cutoff_days):
+def cleanup_backups(cleanup_path, cutoff_timestamp):
     """
-    Deletes files older than cutoff_days
+    Deletes files older than cutoff_timestamp
     """
     if not os.path.exists(cleanup_path):
         print(f"Directory {cleanup_path} does not exist.")
         return
-        
+    
+    deleted_count = 0
+    checked_count = 0
+    
+    print(f"Checking backups in {cleanup_path} with cutoff date: {datetime.datetime.fromtimestamp(cutoff_timestamp).strftime('%Y-%m-%d %H:%M:%S')}")
+    
     files = os.listdir(cleanup_path)
     for file in files:
         file_path = os.path.join(cleanup_path, file)
         if os.path.isfile(file_path):
-            t = os.stat(file_path)
-            c = t.st_ctime
-            # Delete file if older than cutoff_days
-            if c < cutoff_days:
-                print("Deleting: " + file_path)
-                os.remove(file_path)
+            checked_count += 1
+            file_mtime = os.path.getmtime(file_path)  # Use modification time instead of creation time
+            file_date = datetime.datetime.fromtimestamp(file_mtime).strftime('%Y-%m-%d %H:%M:%S')
+            
+            if file_mtime < cutoff_timestamp:
+                print(f"Deleting: {file_path} (date: {file_date})")
+                try:
+                    os.remove(file_path)
+                    deleted_count += 1
+                except Exception as e:
+                    print(f"Error deleting {file_path}: {str(e)}")
+            else:
+                print(f"Keeping:  {file_path} (date: {file_date})")
+    
+    print(f"Cleanup completed: {deleted_count} files deleted out of {checked_count} checked")
 
 def get_encryption_settings():
     """
@@ -304,6 +318,40 @@ def backup_fast_report(db_name, fast_report_config, backup_path, timestamp):
     print(f"FastReport backup for {db_name} completed successfully")
     return True
 
+def cleanup_backups_by_pattern(cleanup_path, cutoff_timestamp, pattern):
+    """
+    Deletes files matching the pattern and older than cutoff_timestamp
+    """
+    if not os.path.exists(cleanup_path):
+        print(f"Directory {cleanup_path} does not exist.")
+        return
+    
+    deleted_count = 0
+    checked_count = 0
+    
+    print(f"Checking backups matching '{pattern}' in {cleanup_path}")
+    print(f"Cutoff date: {datetime.datetime.fromtimestamp(cutoff_timestamp).strftime('%Y-%m-%d %H:%M:%S')}")
+    
+    files = [f for f in os.listdir(cleanup_path) if f.startswith(pattern)]
+    for file in files:
+        file_path = os.path.join(cleanup_path, file)
+        if os.path.isfile(file_path):
+            checked_count += 1
+            file_mtime = os.path.getmtime(file_path)
+            file_date = datetime.datetime.fromtimestamp(file_mtime).strftime('%Y-%m-%d %H:%M:%S')
+            
+            if file_mtime < cutoff_timestamp:
+                print(f"Deleting: {file} (date: {file_date})")
+                try:
+                    os.remove(file_path)
+                    deleted_count += 1
+                except Exception as e:
+                    print(f"Error deleting {file_path}: {str(e)}")
+            else:
+                print(f"Keeping:  {file} (date: {file_date})")
+    
+    print(f"Cleanup completed: {deleted_count} files deleted out of {checked_count} checked\n")
+
 # Main script
 base_path = expanduser("~")
 backup_config = base_path + '/container2backup.yaml'
@@ -402,6 +450,21 @@ try:
         if fast_report:
             backup_fast_report(db_name, fast_report, backup_path, timestamp)
         
+        # Clean up old backups for this database
+        docker_backup_path = os.path.join(backup_path, 'docker')
+        cutoff_timestamp = time.time() - (float(retention_days) * 86400)
+        
+        print(f"\nCleaning up old backups for {db_name}")
+        print(f"Retention period: {retention_days} days")
+        
+        # Clean up database backups (both .zip and .7z)
+        db_backup_pattern = f"{db_name}_{data_container}_dockerbackup_"
+        cleanup_backups_by_pattern(docker_backup_path, cutoff_timestamp, db_backup_pattern)
+        
+        # Clean up FastReport backups
+        fr_backup_pattern = f"{db_name}_FastReport_"
+        cleanup_backups_by_pattern(docker_backup_path, cutoff_timestamp, fr_backup_pattern)
+    
     # Process additional backups
     timestamp = datetime.datetime.fromtimestamp(time.time()).strftime('%Y-%m-%d_%H-%M-%S')
     additional_backups = config.get('services', {})
