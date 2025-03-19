@@ -1,3 +1,75 @@
+# Backup-System für Odoo, Docker und weitere Dienste
+
+Dieses Backup-System sichert Odoo-Datenbanken, Docker-Container und zusätzliche Dienste in 7-Zip-Archive.
+
+## Übersicht
+
+Das System unterstützt folgende Backup-Typen:
+- Odoo-Datenbanken (SQL-Dump + Filestore)
+- FastReport-Dateien pro Datenbank 
+- Zusätzliche Dienste (Nginx, Let's Encrypt, Docker-Builds)
+- Benutzerdefinierte Dateiverzeichnisse
+
+## Konfiguration
+
+Die Konfiguration erfolgt über die YAML-Datei `container2backup.yaml` im Home-Verzeichnis des Benutzers.
+
+### Beispielkonfiguration:
+
+```yaml
+# Backup-Konfiguration für Odoo-Datenbanken
+defaults:
+  retention_days: 14
+  db_user: ownerp
+  backup_path: /opt/backups
+  compression:
+    level: 5  # 7-Zip Kompressionsgrad (0-9)
+
+services:
+  nginx:
+    enabled: true
+    source_path: /etc/nginx
+    backup_path: nginx
+    retention_days: 14
+
+  letsencrypt:
+    enabled: true
+    source_path: /etc/letsencrypt
+    backup_path: nginx
+    retention_days: 14
+
+  docker_builds:
+    enabled: true
+    source_path: $HOME/docker-builds
+    backup_path: docker-builds
+    retention_days: 14
+
+databases:
+  - name: live_db
+    sql_container: live-db
+    data_container: live-odoo
+    retention_days: 5
+    fast_report:
+      enabled: true
+      path: /opt/fast-report/live
+
+  - name: test_db
+    sql_container: test-db
+    data_container: test-odoo
+    retention_days: 5
+
+rsync:
+  enabled: true
+  commands:
+    - "rsync -avz /opt/backups/docker/ user@remote-server:/backup/docker/"
+```
+
+## Dateistruktur und Speicherorte
+
+### 1. Hauptbackup-Verzeichnis
+
+Standardmäßig werden alle Backups im Verzeichnis `/opt/backups` gespeichert, sofern nicht anders konfiguriert:
+
 # Odoo Docker Backup Script
 
 [🇩🇪 Deutsche Version](#deutsche-version) | [🇬🇧 English Version](#english-version)

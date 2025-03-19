@@ -265,6 +265,45 @@ def check_paths(config):
     
     return issues
 
+def backup_fast_report(db_name, fast_report_config, backup_path, timestamp):
+    """
+    Creates a separate backup for FastReport files
+    """
+    if not fast_report_config.get('enabled', False):
+        return False
+        
+    report_path = fast_report_config.get('path')
+    if not report_path:
+        print(f"Warning: FastReport enabled for {db_name} but no path specified")
+        return False
+        
+    report_path = os.path.expandvars(os.path.expanduser(report_path))
+    if not os.path.exists(report_path):
+        print(f"Warning: FastReport path {report_path} does not exist")
+        return False
+        
+    docker_backup_path = os.path.join(backup_path, 'docker')
+    output_file = f'{docker_backup_path}/{db_name}_FastReport_{timestamp}.7z'
+    encryption_enabled, password = get_encryption_settings()
+    compression_level = config.get('defaults', {}).get('compression', {}).get('level', 5)
+    
+    print(f"Creating FastReport backup for {db_name} from {report_path}")
+    zip_args = ['7z', 'a', f'-mx={compression_level}', '-t7z']
+    if encryption_enabled:
+        zip_args.extend(['-p' + password, '-mhe=on'])
+    zip_args.extend([output_file, report_path])
+    
+    result = subprocess.run(zip_args, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+    
+    if result.returncode != 0:
+        print(f"Error creating FastReport backup for {db_name}")
+        if result.stderr:
+            print(f"7z error: {result.stderr.decode()}")
+        return False
+        
+    print(f"FastReport backup for {db_name} completed successfully")
+    return True
+
 # Main script
 base_path = expanduser("~")
 backup_config = base_path + '/container2backup.yaml'
@@ -347,7 +386,7 @@ try:
         ts = time.time()
         timestamp = datetime.datetime.fromtimestamp(ts).strftime('%Y-%m-%d_%H-%M-%S')
         
-        # Create backup
+        # Create database backup
         create_backup(
             db_name, 
             db_user, 
@@ -357,6 +396,11 @@ try:
             timestamp,
             additional_paths
         )
+        
+        # Create FastReport backup if configured
+        fast_report = db.get('fast_report', {})
+        if fast_report:
+            backup_fast_report(db_name, fast_report, backup_path, timestamp)
         
     # Process additional backups
     timestamp = datetime.datetime.fromtimestamp(time.time()).strftime('%Y-%m-%d_%H-%M-%S')
