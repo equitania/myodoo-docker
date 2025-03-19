@@ -31,6 +31,8 @@ import subprocess
 from os.path import expanduser
 import yaml  # Add this import at the top
 from dotenv import load_dotenv
+import tempfile
+import shutil
 
 def compress_with_7zip(source_dir, output_file):
     """
@@ -84,114 +86,101 @@ def get_encryption_settings():
 
 def create_backup(db_name, db_user, sql_container, data_container, backup_path, timestamp, additional_paths=None):
     """
-    Creates a backup directly to 7zip archive without temporary storage
+    Creates a backup with proper file structure
     """
     docker_backup_path = os.path.join(backup_path, 'docker')
     output_file = f'{docker_backup_path}/{db_name}_{data_container}_dockerbackup_{timestamp}.7z'
     encryption_enabled, password = get_encryption_settings()
     compression_level = config.get('defaults', {}).get('compression', {}).get('level', 5)
     
+    # Create temp directory for backup preparation
+    temp_dir = tempfile.mkdtemp()
     try:
-        # Check if containers exist and are running
-        for container in [sql_container, data_container]:
-            container_check = subprocess.run(
-                ['docker', 'container', 'inspect', container],
-                stdout=subprocess.PIPE,
-                stderr=subprocess.PIPE,
-                check=True
-            )
-    except subprocess.CalledProcessError as e:
-        print(f"Error: Container {e.cmd[-1]} does not exist or is not running")
-        return False
-
-    try:
-        # Create initial 7z archive with database dump
+        print(f"Creating backup for {db_name} in {data_container}")
+        
+        # 1. Export SQL dump to file
+        dump_file = os.path.join(temp_dir, "dump.sql")
         print(f"Creating database dump for {db_name}")
-        zip_args = ['7z', 'a', '-si', f'-mx={compression_level}', '-t7z']
-        if encryption_enabled:
-            zip_args.extend(['-p' + password, '-mhe=on'])
-        zip_args.extend([output_file, 'dump.sql'])
-        
-        with subprocess.Popen(zip_args, stdin=subprocess.PIPE) as zip_proc:
-            dump_proc = subprocess.Popen(
-                ['docker', 'exec', '-i', sql_container, 'pg_dump', '-U', db_user, db_name],
-                stdout=zip_proc.stdin,
-                stderr=subprocess.PIPE
-            )
-            _, stderr = dump_proc.communicate()
-            if dump_proc.returncode != 0:
-                print(f"Error creating database dump for {db_name}")
-                if stderr:
-                    print(f"pg_dump error: {stderr.decode()}")
-                return False
-        
-        # Add filestore directory structure
-        print(f"Backing up filestore for database {db_name}")
-        filestore_proc = subprocess.Popen(
-            ['docker', 'exec', data_container, 'tar', 'c', '-C', '/opt/odoo/data/filestore', db_name],
-            stdout=subprocess.PIPE,
-            stderr=subprocess.PIPE
+        dump_proc = subprocess.run(
+            ['docker', 'exec', sql_container, 'pg_dump', '-U', db_user, db_name],
+            stdout=open(dump_file, 'wb'),
+            stderr=subprocess.PIPE,
+            check=False
         )
         
-        zip_args = ['7z', 'a', '-si', '-t7z', f'-mx={compression_level}']
-        if encryption_enabled:
-            zip_args.extend(['-p' + password, '-mhe=on'])
-        zip_args.extend([output_file, 'filestore'])  # Store in filestore directory
-        
-        zip_proc = subprocess.Popen(zip_args, stdin=filestore_proc.stdout, stderr=subprocess.PIPE)
-        filestore_stdout, filestore_stderr = filestore_proc.communicate()
-        
-        if filestore_proc.returncode != 0:
-            print(f"Error accessing filestore for {db_name}")
-            if filestore_stderr:
-                print(f"Filestore error: {filestore_stderr.decode()}")
+        if dump_proc.returncode != 0:
+            print(f"Error creating database dump for {db_name}")
+            if dump_proc.stderr:
+                print(f"pg_dump error: {dump_proc.stderr.decode()}")
             return False
             
-        # Add FastReport if configured
-        fast_report = db.get('fast_report', {})
-        if fast_report.get('enabled', False):
-            report_path = fast_report['path']
-            if os.path.exists(report_path):
-                print(f"Adding FastReport from {report_path}")
-                result = subprocess.run(
-                    ['7z', 'a', f'-mx={compression_level}', '-t7z', output_file, report_path],
-                    stdout=subprocess.PIPE,
+        # 2. Export filestore to directory with proper structure
+        filestore_dir = os.path.join(temp_dir, "filestore", db_name)
+        os.makedirs(filestore_dir)
+        print(f"Backing up filestore for {db_name}")
+        
+        # First check if filestore exists in container
+        check_proc = subprocess.run(
+            ['docker', 'exec', data_container, 'ls', '-la', f'/opt/odoo/data/filestore/{db_name}'],
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            check=False
+        )
+        
+        if check_proc.returncode != 0:
+            print(f"Warning: Filestore for {db_name} not found in container")
+            print(check_proc.stderr.decode())
+        else:
+            # Extract filestore to temp directory
+            filestore_proc = subprocess.run(
+                ['docker', 'exec', data_container, 'tar', 'c', '-C', '/opt/odoo/data/filestore', db_name],
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+                check=False
+            )
+            
+            if filestore_proc.returncode != 0:
+                print(f"Error accessing filestore for {db_name}")
+                if filestore_proc.stderr:
+                    print(f"Filestore error: {filestore_proc.stderr.decode()}")
+            else:
+                # Extract tar to filestore directory
+                extract_proc = subprocess.run(
+                    ['tar', 'x', '-C', os.path.join(temp_dir, "filestore")],
+                    input=filestore_proc.stdout,
                     stderr=subprocess.PIPE,
                     check=False
                 )
-                if result.returncode != 0:
-                    print(f"Error adding FastReport from {report_path}")
-                    if result.stderr:
-                        print(f"7-Zip error: {result.stderr.decode()}")
-        
-        # Add additional paths if configured
-        if additional_paths:
-            for path_name, path_config in additional_paths.items():
-                if not path_config.get('enabled', True):
-                    continue
-                    
-                source_path = os.path.expandvars(os.path.expanduser(path_config['source_path']))
-                if not os.path.exists(source_path):
-                    print(f"Additional path {source_path} for {db_name} does not exist, skipping.")
-                    continue
                 
-                print(f"Adding additional path {path_name}")
-                backup_subdir = path_config.get('backup_subdir', path_name)
-                result = subprocess.run(
-                    ['7z', 'a', f'-mx={compression_level}', '-t7z', output_file, source_path, f'-w{backup_subdir}'],
-                    check=False
-                )
-                if result.returncode == 0:
-                    print(f"Added {path_name} to backup")
-                else:
-                    print(f"Error adding {path_name}")
+                if extract_proc.returncode != 0:
+                    print(f"Error extracting filestore for {db_name}")
+                    if extract_proc.stderr:
+                        print(f"Extract error: {extract_proc.stderr.decode()}")
         
-        print(f'Backup completed for {data_container}')
-        return True
+        # 3. Create 7z archive from temp directory
+        print(f"Creating final archive {output_file}")
+        zip_args = ['7z', 'a', f'-mx={compression_level}', '-t7z']
+        if encryption_enabled:
+            zip_args.extend(['-p' + password, '-mhe=on'])
+        zip_args.extend([output_file, temp_dir + "/*"])
+        
+        result = subprocess.run(zip_args, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+        
+        if result.returncode != 0:
+            print(f"Error creating archive for {db_name}")
+            if result.stderr:
+                print(f"7z error: {result.stderr.decode()}")
+            return False
             
+        print(f"Backup for {db_name} completed successfully")
+        return True
+        
     except Exception as e:
         print(f"Unexpected error during backup of {db_name}: {str(e)}")
         return False
+    finally:
+        # Clean up temp directory
+        shutil.rmtree(temp_dir)
 
 def backup_additional_service(service_config, base_backup_path, timestamp):
     """
@@ -369,7 +358,7 @@ try:
         
     # Process additional backups
     timestamp = datetime.datetime.fromtimestamp(time.time()).strftime('%Y-%m-%d_%H-%M-%S')
-    additional_backups = config.get('additional_backups', {})
+    additional_backups = config.get('services', {})
 
     for service_name, service_config in additional_backups.items():
         backup_additional_service(service_config, backup_path, timestamp)
@@ -377,26 +366,23 @@ try:
         # Clean up old backups for this service
         service_backup_path = os.path.join(backup_path, service_config['backup_path'])
         service_retention = service_config.get('retention_days', default_retention)
-        service_cutoff = now - (float(service_retention) * 86400)
+        service_cutoff = time.time() - (float(service_retention) * 86400)
         cleanup_backups(service_backup_path, service_cutoff)
-        
+    
+    # Process rsync commands from YAML config
+    rsync_config = config.get('rsync', {})
+    if rsync_config.get('enabled', False):
+        print("Executing rsync commands...")
+        rsync_commands = rsync_config.get('commands', [])
+        for cmd in rsync_commands:
+            print(f"Running: {cmd}")
+            subprocess.run(cmd, shell=True, check=False)
+            
 except yaml.YAMLError as e:
     print(f"Error reading YAML configuration: {str(e)}")
     exit(1)
 except KeyError as e:
     print(f"Missing required configuration field: {str(e)}")
     exit(1)
-
-# Process rsync targets
-fname_rsync = base_path + '/rsync_targets.csv'
-print('Starting Rsync: ' + fname_rsync)
-if os.path.isfile(fname_rsync):
-    with io.open(fname_rsync, 'r', encoding="utf8") as csvfile:
-        _reader_sync = csv.reader(csvfile, delimiter=",")
-        for row in _reader_sync:
-            if not row or row[0].startswith('#'):
-                continue
-            else:
-                os.system(row[0])
 
 print('Backup completed!')
