@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 # Script for organizing Docker servers
-# Version 6.5.0
-# Date 05.03.2025
+# Version 6.5.1
+# Date 19.03.2025
 ##############################################################################
 #
 #    Shell Script for devops
@@ -725,6 +725,62 @@ def upgrade_pip() -> None:
     except Exception as e:
         logger.error(f"Error upgrading pip: {str(e)}")
 
+def get_7zip_version() -> Optional[tuple]:
+    """Get installed 7-Zip version as tuple (major, minor, patch)"""
+    try:
+        result = subprocess.run(['7z', '--help'], capture_output=True, text=True)
+        if result.returncode == 0:
+            # 7-Zip output format: "7-Zip [64] 16.02"
+            version_line = result.stdout.split('\n')[1].strip()
+            version_match = re.search(r'\d+\.\d+', version_line)
+            if version_match:
+                version_str = version_match.group(0)
+                # Convert to tuple (major, minor, 0) as 7zip usually only has major.minor
+                major, minor = map(int, version_str.split('.'))
+                return (major, minor, 0)
+    except Exception as e:
+        logger.error(f"Error getting 7-Zip version: {str(e)}")
+    return None
+
+def check_7zip_version() -> bool:
+    """Check if 7-Zip is installed and meets minimum version requirements"""
+    try:
+        version = get_7zip_version()
+        if not version:
+            logger.error("7-Zip is not installed")
+            return False
+            
+        version_str = '.'.join(map(str, version[:2]))  # Only show major.minor
+        logger.info(f"Current 7-Zip version: {version_str}")
+        
+        # Minimum required version
+        min_version = (16, 2, 0)  # 16.02 is a stable version available in most repositories
+        
+        if version < min_version:
+            logger.warning(f"7-Zip version {version_str} is outdated. Minimum required version is {'.'.join(map(str, min_version[:2]))}")
+            return False
+        return True
+    except Exception as e:
+        logger.error(f"Error checking 7-Zip version: {str(e)}")
+        return False
+
+def install_or_update_7zip():
+    """Install or update 7-Zip package"""
+    try:
+        if not check_7zip_version():
+            logger.info("Installing/updating 7-Zip...")
+            run_command("sudo apt update")
+            run_command("sudo apt install -y p7zip-full")
+            
+            # Verify installation
+            if not check_7zip_version():
+                raise RuntimeError("Failed to install/update 7-Zip")
+            
+            logger.info("7-Zip installation/update completed")
+    except Exception as e:
+        logger.error(f"Error installing/updating 7-Zip: {str(e)}")
+        raise
+
 def main() -> None:
     """Main function to execute the script"""
     try:
@@ -780,14 +836,15 @@ def main() -> None:
         
         scripts = [
             "update_docker_odoo.py",
+            "update_docker_myodoo.py",
             "docker-clean-logs.sh",
             "cleanup-weblogs.py",
             "container2backup.py",
             "container2backup_zstd.py",
             "restore-zip.sh",
             "ssl-renew.sh",
-            "getScripts.py",
-            "backup_manager.py"
+            "getScripts.py"
+
         ]
         
         # Copy scripts to home directory
@@ -845,8 +902,9 @@ def main() -> None:
         for package in package_info["pip"]:
             upgrade_pip_package(package)
 
-        install_or_update_zstd()  # Add zstd check/install before other packages
-        install_or_update_bat()  # Add bat check/install
+        install_or_update_zstd()
+        install_or_update_bat()
+        install_or_update_7zip()
         
         # Install system packages if they're not already installed
         for package in package_info["system"]:
