@@ -1,12 +1,13 @@
-FROM python:3.8.13-slim-buster
+FROM ubuntu:focal-20230801
 LABEL maintainer=info@myodoo.de
 # For Odoo 14 powered by MyOdoo.de
-# Version 22.08.01
-# Date 22.08.2022
+# Version 23.08.01
+# Date 03.08.2023
 
 ARG DEBIAN_FRONTEND=noninteractive
 
-RUN apt-get update && apt-get -y dist-upgrade && apt-get install -y wget sudo gnupg2 locales tzdata less git && \
+RUN apt update && apt -y dist-upgrade && apt install -y apt-transport-https wget gpg gnupg2 locales \
+    tzdata ca-certificates software-properties-common lsb-release less sudo zsh git && \
     ln -sf /usr/share/zoneinfo/Europe/Berlin /etc/localtime
 
 # Set LOCALE to UTF8..
@@ -16,11 +17,16 @@ RUN echo "de_DE.UTF-8 UTF-8" > /etc/locale.gen && \
     /usr/sbin/update-locale LANG=de_DE.UTF-8
 ENV LC_ALL de_DE.UTF-8
 
-#Postgres for Debian
+#Postgres for Ubuntu
 RUN wget -q https://www.postgresql.org/media/keys/ACCC4CF8.asc -O- | sudo apt-key add - && \
-    sh -c 'echo "deb https://apt.postgresql.org/pub/repos/apt/ buster-pgdg main" | sudo tee /etc/apt/sources.list.d/postgresql.list' && \
-    apt-get update && \
-    apt-get install -y postgresql-client-14
+    sh -c 'echo "deb http://apt.postgresql.org/pub/repos/apt/ `lsb_release -cs`-pgdg main" | sudo tee /etc/apt/sources.list.d/postgresql.list' && \
+    apt update && \
+    apt install -y postgresql-client-14
+
+# Python 3.8
+RUN add-apt-repository ppa:deadsnakes/ppa -y && \
+    apt -y update && \
+    apt -y install python3.8 python3.8-dev python3-pip
 
 # Update bash..
 COPY ./.bashrc /root/
@@ -28,43 +34,48 @@ COPY ./.bashrc /root/
 # Install basics..
 RUN set -x; \
     apt-get install -y --no-install-recommends \
-    ca-certificates \
     ghostscript \
     graphviz \
     antiword  \
     poppler-utils \
-    imagemagick \
     htop \
     dnsutils \
     curl \
-    unzip \
-    sqlite3 \
-    nano \
-    mc \
-    pkg-config \
-    geoip-bin \
-    geoip-database \
-    python3-dev \
+    build-essential \
+    libfreetype6-dev \
+    libjpeg-dev \
+    libpq-dev \
     libxml2-dev \
     libxslt1-dev \
     libldap2-dev \
     libsasl2-dev \
-    libtiff5-dev \
-    libjpeg62-turbo-dev \
-    libopenjp2-7-dev \
-    zlib1g-dev \
-    libfreetype6-dev \
-    liblcms2-dev \
-    libwebp-dev \
-    libharfbuzz-dev \
-    libfribidi-dev \
-    libxcb1-dev \
-    libpq-dev \
-    build-essential \
+    libffi-dev \
+    cups \
+    libcups2-dev \
+    keychain \
+    unzip \
+    sqlite3 \
+    nano \
+    mc \
+    screen \
+    pkg-config \
+    geoip-bin \
+    geoip-database \
     nodejs \
     npm \
+    imagemagick \
     xfonts-75dpi \
-    xfonts-base
+    xfonts-base \
+    libgdiplus \
+    xvfb \
+    x11vnc \
+    x11-xkb-utils \
+    xfonts-100dpi \
+    xfonts-scalable \ 
+    xfonts-cyrillic \
+    libx11-dev \
+    fontconfig \
+    iputils-ping
 
 RUN set -x; \
     npm install -g rtlcss && \
@@ -104,7 +115,7 @@ RUN set -x; \
     && python3 -m pip install --no-cache-dir PyPDF2==1.26.0 \
     && python3 -m pip install --no-cache-dir pyserial==3.4 \
     && python3 -m pip install --no-cache-dir python-dateutil==2.7.3 \
-    && python3 -m pip install --no-cache-dir pytz==2022.1 \
+    && python3 -m pip install --no-cache-dir pytz \
     && python3 -m pip install --no-cache-dir pyusb==1.0.2 \
     && python3 -m pip install --no-cache-dir qrcode==6.1 \
     && python3 -m pip install --no-cache-dir reportlab==3.5.55 \
@@ -114,7 +125,7 @@ RUN set -x; \
     && python3 -m pip install --no-cache-dir Werkzeug==0.16.1 \
     && python3 -m pip install --no-cache-dir XlsxWriter==1.1.2 \
     && python3 -m pip install --no-cache-dir xlwt==1.3.* \
-    && python3 -m pip install --no-cache-dir xlrd==2.0.1 \
+    && python3 -m pip install --no-cache-dir xlrd==1.2.0 \
     && python3 -m pip install --no-cache-dir openpyxl \
     && python3 -m pip install --no-cache-dir pycryptodome==3.9.0 \
     && python3 -m pip install --no-cache-dir nextcloud-api-wrapper \
@@ -123,29 +134,26 @@ RUN set -x; \
     && python3 -m pip install --no-cache-dir beautifulsoup4==4.11.1 \
     && python3 -m pip install --no-cache-dir bleach==3.1.5 \
     && python3 -m pip install --no-cache-dir phonenumbers \
-    && python3 -m pip install --no-cache-dir odoorpc \
     && python3 -m pip install --no-cache-dir odoorpc-toolbox \
     && python3 -m pip install --no-cache-dir python-slugify \
     && python3 -m pip install --no-cache-dir parse-accept-language \
     && python3 -m pip install --no-cache-dir MT-940 \
     && python3 -m pip install --no-cache-dir wget \
-    && python3 -m pip install --no-cache-dir Faker \
-    && python3 -m pip install --no-cache-dir randomuser \
     && python3 -m pip install --no-cache-dir python-docx \
     && python3 -m pip install --no-cache-dir paramiko \
     && python3 -m pip install --no-cache-dir python-barcode \
     && python3 -m pip install --no-cache-dir pyotp \
-    && python3 -m pip install --no-cache-dir debugpy \
-    && python3 -m pip install --no-cache-dir cachetools
+    && python3 -m pip install --no-cache-dir Unidecode \
+    && python3 -m pip install --no-cache-dir deepl \
+    && python3 -m pip install --no-cache-dir --ignore-installed git+https://github.com/OCA/openupgradelib.git@master \
+    && python3 -m pip install --no-cache-dir pyston_lite_autoload
 
 # PDF export engine install..
 RUN set -x; \
-    curl -k -o wkhtmltox.deb -SL https://rm.myodoo.net/staff/wkhtmltox_0.12.5-1.buster_amd64.deb \
+    curl -k -o wkhtmltox.deb -SL https://rm.ownerp.io/staff/wkhtmltox_0.12.5-1.focal_amd64.deb \
     && dpkg --force-depends -i wkhtmltox.deb \
     && ln -s /usr/local/bin/wkhtmltopdf /usr/bin \
     && ln -s /usr/local/bin/wkhtmltoimage /usr/bin \
-    && apt-get -y install -f --no-install-recommends \
-    && apt-get purge -y --auto-remove -o APT::AutoRemove::RecommendsImportant=false -o APT::AutoRemove::SuggestsImportant=false  \
     && rm -rf /var/lib/apt/lists/* wkhtmltox.deb
 
 # Finished with build.
