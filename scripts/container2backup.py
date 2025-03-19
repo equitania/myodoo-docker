@@ -86,10 +86,30 @@ def create_backup(db_name, db_user, sql_container, data_container, backup_path, 
     """
     Creates a backup directly to 7zip archive without temporary storage
     """
+    # Check if container exists and is running
+    try:
+        container_check = subprocess.run(
+            ['docker', 'container', 'inspect', sql_container],
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            check=True
+        )
+    except subprocess.CalledProcessError:
+        print(f"Error: Container {sql_container} does not exist or is not running")
+        return False
+
     output_zip = f'{backup_path}/{db_name}_{data_container}_dockerbackup_{timestamp}.zip'
     encryption_enabled, password = get_encryption_settings()
     
     try:
+        # Test database connection first
+        test_connection = subprocess.run(
+            ['docker', 'exec', '-i', sql_container, 'psql', '-U', db_user, '-d', db_name, '-c', 'SELECT 1'],
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            check=True
+        )
+        
         # Base 7zip command with compression level
         compression_level = config.get('defaults', {}).get('compression', {}).get('level', 5)
         zip_args = ['7z', 'a', '-si', f'-mx={compression_level}', '-tzip']
@@ -104,9 +124,11 @@ def create_backup(db_name, db_user, sql_container, data_container, backup_path, 
                 stdout=zip_proc.stdin,
                 stderr=subprocess.PIPE
             )
-            dump_proc.communicate()
+            _, stderr = dump_proc.communicate()
             if dump_proc.returncode != 0:
                 print(f"Error creating database dump for {db_name}")
+                if stderr:
+                    print(f"pg_dump error: {stderr.decode()}")
                 return False
         
         # Add filestore with encryption if enabled
@@ -151,8 +173,12 @@ def create_backup(db_name, db_user, sql_container, data_container, backup_path, 
             print(f'Error creating backup for {data_container}')
             return False
             
-    except subprocess.SubprocessError as e:
-        print(f"Error during backup process: {str(e)}")
+    except subprocess.CalledProcessError as e:
+        print(f"Error during backup process for {db_name}:")
+        print(f"Command '{e.cmd}' failed with error: {e.stderr.decode()}")
+        return False
+    except Exception as e:
+        print(f"Unexpected error during backup of {db_name}: {str(e)}")
         return False
 
 def backup_additional_service(service_config, base_backup_path, timestamp):
@@ -296,6 +322,9 @@ try:
         sql_container = db['sql_container']
         data_container = db['data_container']
         retention_days = db.get('retention_days', default_retention)
+        
+        print(f"\nProcessing backup for database {db_name}")
+        print(f"Using container: {sql_container}")
         
         # Merge default and database-specific additional paths
         additional_paths = {}
