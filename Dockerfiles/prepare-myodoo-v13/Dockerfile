@@ -1,9 +1,9 @@
-FROM python:3.8.13-slim-buster
+FROM python:3.8.17-slim-buster
 
 LABEL maintainer=info@myodoo.de
 # For Odoo 13 powered by MyOdoo.de
-# Version 22.08.01
-# Date 22.08.2022
+# Version 23.09.01
+# Date 21.09.2023
 
 ARG DEBIAN_FRONTEND=noninteractive
 
@@ -114,7 +114,7 @@ RUN set -x; \
     && python3 -m pip install --no-cache-dir Werkzeug==0.14.1 \
     && python3 -m pip install --no-cache-dir XlsxWriter==1.1.2 \
     && python3 -m pip install --no-cache-dir xlwt==1.3.* \
-    && python3 -m pip install --no-cache-dir xlrd==1.1.0 \
+    && python3 -m pip install --no-cache-dir xlrd==1.2.0 \
     && python3 -m pip install --no-cache-dir openpyxl \
     && python3 -m pip install --no-cache-dir pycryptodome==3.9.0 \
     && python3 -m pip install --no-cache-dir nextcloud-api-wrapper \
@@ -135,14 +135,15 @@ RUN set -x; \
     && python3 -m pip install --no-cache-dir python-barcode \
     && python3 -m pip install --no-cache-dir Unidecode \
     && python3 -m pip install --no-cache-dir pyotp \
-    && python3 -m pip install --no-cache-dir debugpy \
-    && python3 -m pip install --no-cache-dir cachetools \
     && python3 -m pip install --no-cache-dir pysftp \
-    && python3 -m pip install --no-cache-dir --ignore-installed git+https://github.com/OCA/openupgradelib.git@master
+    && python3 -m pip install --no-cache-dir numpy==1.22.3 \
+    && python3 -m pip install --no-cache-dir deepl \
+    && python3 -m pip install --no-cache-dir --ignore-installed git+https://github.com/OCA/openupgradelib.git@master \
+    && python3 -m pip install --no-cache-dir pyston_lite_autoload
 
 # PDF export engine install..
 RUN set -x; \
-    curl -k -o wkhtmltox.deb -SL https://rm.myodoo.net/staff/wkhtmltox_0.12.5-1.buster_amd64.deb \
+    curl -k -o wkhtmltox.deb -SL https://rm.ownerp.io/staff/wkhtmltox_0.12.5-1.buster_amd64.deb \
     && dpkg --force-depends -i wkhtmltox.deb \
     && ln -s /usr/local/bin/wkhtmltopdf /usr/bin \
     && ln -s /usr/local/bin/wkhtmltoimage /usr/bin \

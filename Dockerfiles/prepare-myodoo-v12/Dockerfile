@@ -1,8 +1,8 @@
-FROM python:3.8.13-slim-buster
+FROM python:3.8.17-slim-buster
 LABEL maintainer=info@myodoo.de
 # For Odoo 12 powered by MyOdoo.de
-# Version 22.08.02
-# Date 22.08.2022
+# Version 24.06.01
+# Date 01.06.2024
 
 ARG DEBIAN_FRONTEND=noninteractive
 
@@ -15,8 +15,6 @@ RUN echo "de_DE.UTF-8 UTF-8" > /etc/locale.gen && \
     dpkg-reconfigure locales && \
     /usr/sbin/update-locale LANG=de_DE.UTF-8
 ENV LC_ALL de_DE.UTF-8
-
-
 
 #Postgres for Debian
 RUN wget -q https://www.postgresql.org/media/keys/ACCC4CF8.asc -O- | sudo apt-key add - && \
@@ -115,18 +113,17 @@ RUN set -x; \
     && python3 -m pip install --no-cache-dir reportlab==3.3.0 \
     && python3 -m pip install --no-cache-dir requests==2.22.0 \
     && python3 -m pip install --no-cache-dir suds-jurko \
-    && python3 -m pip install --no-cache-dir vatnumber==1.2 \
     && python3 -m pip install --no-cache-dir vobject==0.9.3 \
     && python3 -m pip install --no-cache-dir Werkzeug==0.16.0 \
     && python3 -m pip install --no-cache-dir XlsxWriter==0.9.3 \
+    && python3 -m pip install --no-cache-dir python-stdnum==1.8 \
     && python3 -m pip install --no-cache-dir xlwt==1.3.* \
-    && python3 -m pip install --no-cache-dir xlrd==1.0.0 \
+    && python3 -m pip install --no-cache-dir xlrd==1.2.0 \
     && python3 -m pip install --no-cache-dir openpyxl \
     && python3 -m pip install --no-cache-dir O365 \
     && python3 -m pip install --no-cache-dir elasticsearch==7.10.1 \
     && python3 -m pip install --no-cache-dir pycryptodome==3.9.0 \
     && python3 -m pip install --no-cache-dir pyocclient \
-    && python3 -m pip install --no-cache-dir pyston_lite_autoload \
     && python3 -m pip install --no-cache-dir xmltodict==0.12.0 \
     && python3 -m pip install --no-cache-dir holidays==0.10.1 \
     && python3 -m pip install --no-cache-dir python-gitlab \
@@ -134,33 +131,35 @@ RUN set -x; \
     && python3 -m pip install --no-cache-dir python-docx==0.8.11 \
     && python3 -m pip install --no-cache-dir PyYAML==5.4.1 \
     && python3 -m pip install --no-cache-dir bleach==3.1.5 \
-    && python3 -m pip install --no-cache-dir python-redmine==2.3.0  \
+    && python3 -m pip install --no-cache-dir python-redmine==2.4.0  \
     && python3 -m pip install --no-cache-dir paramiko==2.7.2  \
     && python3 -m pip install --no-cache-dir phonenumbers \
     && python3 -m pip install --no-cache-dir pycups \
     && python3 -m pip install --no-cache-dir zpl2 \
     && python3 -m pip install --no-cache-dir wget \
-    && python3 -m pip install --no-cache-dir odoorpc \
     && python3 -m pip install --no-cache-dir odoorpc-toolbox \
     && python3 -m pip install --no-cache-dir python-slugify \
     && python3 -m pip install --no-cache-dir parse-accept-language \
     && python3 -m pip install --no-cache-dir MT-940 \
-    && python3 -m pip install --no-cache-dir Faker \
-    && python3 -m pip install --no-cache-dir randomuser \
     && python3 -m pip install --no-cache-dir python-barcode \
     && python3 -m pip install --no-cache-dir Unidecode \
     && python3 -m pip install --no-cache-dir pandas==0.25.2 \
     && python3 -m pip install --no-cache-dir pypandoc==1.6.4 \
     && python3 -m pip install --no-cache-dir pygount \
     && python3 -m pip install --no-cache-dir cachetools \
-    && python3 -m pip install --no-cache-dir zammad-py \
-    && python3 -m pip install --no-cache-dir zenpy \
+    && python3 -m pip install --no-cache-dir numpy==1.22.3 \
     && python3 -m pip install --no-cache-dir bs4 \
+    && python3 -m pip install --no-cache-dir deepl \
+    && python3 -m pip install --no-cache-dir pyston_lite_autoload \
+    && python3 -m pip install --no-cache-dir nextcloud-api-wrapper \
+    && python3 -m pip install --no-cache-dir zammad-py \    
+    && python3 -m pip install --no-cache-dir zenpy \    
+    && python3 -m pip install --no-cache-dir bs4\       
     && python3 -m pip install --no-cache-dir --ignore-installed git+https://github.com/OCA/openupgradelib.git@master
 
 # PDF export engine install..
 RUN set -x; \
-    curl -k -o wkhtmltox.deb -SL https://rm.myodoo.net/staff/wkhtmltox_0.12.5-1.buster_amd64.deb \
+    curl -k -o wkhtmltox.deb -SL https://rm.ownerp.io/staff/wkhtmltox_0.12.5-1.buster_amd64.deb \
     && dpkg --force-depends -i wkhtmltox.deb \
     && ln -s /usr/local/bin/wkhtmltopdf /usr/bin \
     && ln -s /usr/local/bin/wkhtmltoimage /usr/bin \

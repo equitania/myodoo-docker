@@ -2,6 +2,12 @@
 # see /usr/share/doc/bash/examples/startup-files (in the package bash-doc)
 # for examples
 
+# Wenn nicht interaktiv, dann nichts tun
+case $- in
+    *i*) ;;
+      *) return;;
+esac
+
 # set a fancy prompt (non-color, unless we know we "want" color)
 case "$TERM" in
     xterm-color|*-256color) color_prompt=yes;;
@@ -52,6 +58,25 @@ if [ -x /usr/bin/dircolors ]; then
     alias egrep='egrep --color=auto'
 fi
 
+# Aktiviere Programmvervollständigung
+if ! shopt -oq posix; then
+  if [ -f /usr/share/bash-completion/bash_completion ]; then
+    . /usr/share/bash-completion/bash_completion
+  elif [ -f /etc/bash_completion ]; then
+    . /etc/bash_completion
+  fi
+fi
+
+# Aktiviere einige nützliche Bash-Optionen
+shopt -s checkwinsize  # Aktualisiere Fenstergröße nach jedem Befehl
+shopt -s histappend    # Hänge an Verlauf an, anstatt zu überschreiben
+shopt -s cmdhist       # Speichere mehrzeilige Befehle als eine Zeile
+
+# Verlaufskonfiguration
+HISTSIZE=10000
+HISTFILESIZE=20000
+HISTCONTROL=ignoreboth:erasedups  # Ignoriere Duplikate und Befehle mit führendem Leerzeichen
+
 ### aliases / functions ###
 # default settings
 alias ls='ls --color --classify'
@@ -69,11 +94,32 @@ alias shred=' shred -u -z'
 alias cp='cp -i'
 alias mv='mv -i'
 
+# Nützliche Aliase für Debian/Ubuntu
+alias update='sudo apt update'
+alias upgrade='sudo apt upgrade'
+alias install='sudo apt install'
+alias remove='sudo apt remove'
+alias autoremove='sudo apt autoremove'
 
 # Shortcuts
 alias cdo='cd /opt/odoo/'
-alias olog='less /opt/odoo/var/log/odoo-server.log'
+alias olog='cat /opt/odoo/var/log/odoo-server.log'
+alias tlog='tail -f /opt/odoo/var/log/odoo-server.log'  # Tail-Befehl zum Verfolgen des Logs
 alias rolog='rm /opt/odoo/var/log/odoo-server.log'
 alias edconf='nano /opt/odoo/etc/odoo.conf'
 
+# Odoo-spezifische Funktionen
+function odoo-start() {
+    cd /opt/odoo/odoo-server && python3 odoo-bin -c /opt/odoo/etc/odoo.conf
+}
+
+function odoo-debug() {
+    cd /opt/odoo/odoo-server && python3 odoo-bin -c /opt/odoo/etc/odoo.conf --dev=all
+}
+
 export EDITOR=nano
+
+# odoo
+alias loadtranslate='--i18n-overwrite --load-language=de_DE '
+alias cleanpo='find . -type f \( -iname "*.po" ! -iname "de.po" ! -iname "ru.po" ! -iname "fr.po" ! -iname "it.po" ! -iname "es.po" ! -iname "pt.po" ! -iname "pl.po"  \) -exec rm {} \;'
+
