@@ -10,6 +10,7 @@ distro-info
 odoorpc-toolbox
 thefuck
 zstd
+python-dotenv
 
 # System packages
 pipx
