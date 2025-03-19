@@ -1,11 +1,9 @@
 #!/usr/bin/python3
 # -*- coding: utf-8 -*-
-# Mit diesem Skript wird ein Backup einer Odoo Datenbank inkl. FileStore unter Docker durchgeführt
-# With this script you can backup odoo db on postgresql incl. filestore under Docker
-# Version 3.1.1
-# Date 04.09.2022
-##############################################################################
-#
+# Script to backup Odoo database including FileStore under Docker
+# Version 4.0.0
+# Date 19.03.2025
+################################################################################
 #    Shell Script for Odoo, Open Source Management Solution
 #    Copyright (C) 2014-now Equitania Software GmbH(<http://www.equitania.de>).
 #
@@ -22,146 +20,217 @@
 #    You should have received a copy of the GNU Affero General Public License
 #    along with this program.  If not, see <http://www.gnu.org/licenses/>.
 #
-##############################################################################
+###############################################################################
+
 import os
 import io
 import csv
-import zipfile
 import datetime, time
 import os.path
+import subprocess
 from os.path import expanduser
 
-def zip_dir(_dir_path, _zip_path):
-    fzip = zipfile.ZipFile(_zip_path, 'w', zipfile.ZIP_DEFLATED, allowZip64=True)
-    basedir = os.path.dirname(_dir_path) + '/'
-    for root, dirs, files in os.walk(_dir_path):
-        if os.path.basename(root)[0] == '.':
-            continue  # skip hidden directories
-        dirname = root.replace(basedir, '')
-        for f in files:
-            if f[-1] == '~' or (f[0] == '.' and f != '.htaccess'):
-                continue
-            fzip.write(root + '/' + f, dirname + '/' + f)
-    fzip.close()
-    return;
+def compress_with_7zip(source_dir, output_file):
+    """
+    Compresses a directory using 7-Zip
+    """
+    try:
+        # Check if 7z is installed
+        subprocess.run(['7z', '--help'], stdout=subprocess.PIPE, stderr=subprocess.PIPE, check=False)
+        
+        # Compress with 7-Zip
+        cmd = ['7z', 'a', '-tzip', output_file, source_dir]
+        subprocess.run(cmd, check=True)
+        return True
+    except (subprocess.SubprocessError, FileNotFoundError):
+        print("Error: 7-Zip is not installed or command failed.")
+        print("Please install 7-Zip with: sudo apt-get install p7zip-full")
+        return False
 
-def cleanup_backups(_cleanup_path, _cutoff_days):
-    _files = os.listdir(_cleanup_path + "/")
-    for _xfile in _files:
-        if os.path.isfile(_cleanup_path + "/" + _xfile):
-            t = os.stat(_cleanup_path + "/" + _xfile)
+def cleanup_backups(cleanup_path, cutoff_days):
+    """
+    Deletes files older than cutoff_days
+    """
+    if not os.path.exists(cleanup_path):
+        print(f"Directory {cleanup_path} does not exist.")
+        return
+        
+    files = os.listdir(cleanup_path)
+    for file in files:
+        file_path = os.path.join(cleanup_path, file)
+        if os.path.isfile(file_path):
+            t = os.stat(file_path)
             c = t.st_ctime
-            # delete file if older than 2 weeks
-            if c < _cutoff_days:
-                print("remove: " + _cleanup_path + "/" + _xfile)
-                os.remove(_cleanup_path + "/" + _xfile)
+            # Delete file if older than cutoff_days
+            if c < cutoff_days:
+                print("Deleting: " + file_path)
+                os.remove(file_path)
 
-# csv format - separator ","
-# databasename,postgresql_containername,myodoo_containername,number_of_days
-_mybasepath = expanduser("~")
-_fname_backup = _mybasepath + '/container2backup.csv'
-_fname_backup_path = _mybasepath + '/container2backup_path.csv'
+def create_backup(db_name, db_user, sql_container, data_container, backup_path, timestamp):
+    """
+    Creates a backup directly to 7zip archive without temporary storage
+    """
+    output_zip = f'{backup_path}/{db_name}_{data_container}_dockerbackup_{timestamp}.zip'
+    
+    try:
+        # Create new 7zip archive
+        with subprocess.Popen(['7z', 'a', '-si', '-tzip', output_zip, f'dump.sql'], 
+                            stdin=subprocess.PIPE) as zip_proc:
+            # Pipe database dump directly to 7zip
+            dump_proc = subprocess.Popen(
+                ['docker', 'exec', '-i', sql_container, 'pg_dump', '-U', db_user, db_name],
+                stdout=zip_proc.stdin,
+                stderr=subprocess.PIPE
+            )
+            dump_proc.communicate()
+            if dump_proc.returncode != 0:
+                print(f"Error creating database dump for {db_name}")
+                return False
+        
+        # Add filestore directly from docker to zip
+        filestore_proc = subprocess.Popen(
+            ['docker', 'exec', sql_container, 'tar', 'c', '-C', f'/opt/odoo/data/filestore', db_name],
+            stdout=subprocess.PIPE
+        )
+        zip_proc = subprocess.Popen(
+            ['7z', 'a', '-si', '-tzip', output_zip, f'filestore/{db_name}'],
+            stdin=filestore_proc.stdout
+        )
+        zip_proc.communicate()
+        
+        if zip_proc.returncode == 0:
+            print(f'Backup completed for {data_container}')
+            return True
+        else:
+            print(f'Error creating backup for {data_container}')
+            return False
+            
+    except subprocess.SubprocessError as e:
+        print(f"Error during backup process: {str(e)}")
+        return False
 
-if os.path.exists(_fname_backup_path):
-    _mybackup_file  = open(_fname_backup_path, 'r', encoding="utf8")
-    _mybackuppath = _mybackup_file.readline()
-    _mybackuppath = _mybackuppath.strip('\n')
+# Main script
+base_path = expanduser("~")
+backup_config = base_path + '/container2backup.csv'
+backup_path_config = base_path + '/container2backup_path.csv'
+
+# Determine backup path
+if os.path.exists(backup_path_config):
+    with open(backup_path_config, 'r', encoding="utf8") as backup_file:
+        backup_path = backup_file.readline().strip('\n')
 else:
-    print("No "+ _fname_backup_path + " found!")
-    _mybackuppath = "/opt/backups"
+    print("No " + backup_path_config + " found!")
+    backup_path = "/opt/backups"
 
-if not os.path.exists(_mybackuppath):
-    os.system("mkdir -p " + _mybackuppath)
+# Create directories if they don't exist
+if not os.path.exists(backup_path):
+    try:
+        os.makedirs(backup_path, exist_ok=True)
+    except PermissionError:
+        print(f"Error: No permission to create {backup_path}")
+        exit(1)
 
-_mynginxpath = _mybackuppath + "/nginx"
-if not os.path.exists(_mynginxpath):
-    os.mkdir(_mynginxpath)
+nginx_path = os.path.join(backup_path, "nginx")
+if not os.path.exists(nginx_path):
+    os.makedirs(nginx_path, exist_ok=True)
 
-_mydockerbuildpath = _mybackuppath + "/docker-builds"
-if not os.path.exists(_mydockerbuildpath):
-    os.mkdir(_mydockerbuildpath)
+docker_build_path = os.path.join(backup_path, "docker-builds")
+if not os.path.exists(docker_build_path):
+    os.makedirs(docker_build_path, exist_ok=True)
 
-_mybackuppath = _mybackuppath + "/docker"
-if not os.path.exists(_mybackuppath):
-    os.mkdir(_mybackuppath)
+backup_path = os.path.join(backup_path, "docker")
+if not os.path.exists(backup_path):
+    os.makedirs(backup_path, exist_ok=True)
 
-print(_mybackuppath)
+print("Backup path: " + backup_path)
 
-with io.open(_fname_backup, 'r', encoding="utf8") as csvfile:
-    _reader = csv.reader(csvfile, delimiter=",")
-    for row in _reader:
-        _mydb = row[0]
-        if (not(row)):
-            continue
-        elif (row[0].startswith('#')):
-            continue
-            # Kommentarzeile
-        _mydbuser = row[1]
-        _mysqlcontainer = row[2]
-        _mydatacontainer = row[3]
-        try:
-            _mystoretime = row[4]
-        except:
-            _mystoretime = 14
-        print('Database Name:' + _mydb + '\nDatabaseContainerName:' + _mysqlcontainer + '\nMyOdooContainerName:' + _mydatacontainer + '\nStoreTime:' + str(_mystoretime) + ' days')
-        _mybackupfolder = _mybackuppath + '/' + _mydb
-        if not os.path.exists(_mybackupfolder):
-            os.mkdir(_mybackupfolder)
-        os.system('docker exec -i ' + _mysqlcontainer + ' pg_dump -U ' + _mydbuser + ' ' + _mydb + ' > ' + _mybackupfolder + '/dump.sql')
-        filestorepath = '/opt/odoo/data/filestore/'
-        os.system('docker cp ' + _mydatacontainer + ':/opt/odoo/data/filestore/' + _mydb + ' ' + _mybackupfolder + '/')
-        ts = time.time()
-        mytime = datetime.datetime.fromtimestamp(ts).strftime('%Y-%m-%d_%H-%M-%S')
-        #os.rename(mybackupfolder + '/' + mydb, mybackupfolder + '/filestore')
-        zip_dir(_mybackupfolder, _mybackuppath + '/' + _mydb + '_' + _mydatacontainer + '_dockerbackup_' + mytime + '.zip')
-        os.system('rm -r ' + _mybackupfolder)
-        print('Backup is done ' + _mydatacontainer)
+# Retention time variable
+retention_days = 14  # Default value if no CSV file found
 
-# backup nginx-conf
+# Read CSV file and create backups
+if not os.path.exists(backup_config):
+    print(f"Backup configuration file {backup_config} not found!")
+else:
+    with io.open(backup_config, 'r', encoding="utf8") as csvfile:
+        reader = csv.reader(csvfile, delimiter=",")
+        for row in reader:
+            if not row or row[0].startswith('#'):
+                continue  # Skip empty line or comment
+                
+            db_name = row[0]
+            db_user = row[1]
+            sql_container = row[2]
+            data_container = row[3]
+            
+            try:
+                retention_days = int(row[4])
+            except (IndexError, ValueError):
+                retention_days = 14  # Default: 14 days
+                
+            print(f'Database: {db_name}\nDatabase Container: {sql_container}\n'
+                  f'Odoo Container: {data_container}\nRetention Period: {retention_days} days')
+                  
+            # Create backup directory
+            backup_folder = os.path.join(backup_path, db_name)
+            if not os.path.exists(backup_folder):
+                os.makedirs(backup_folder, exist_ok=True)
+                
+            # Create database dump
+            os.system(f'docker exec -i {sql_container} pg_dump -U {db_user} {db_name} > {backup_folder}/dump.sql')
+            
+            # Copy filestore
+            os.system(f'docker cp {data_container}:/opt/odoo/data/filestore/{db_name} {backup_folder}/')
+            
+            # Timestamp for filenames
+            ts = time.time()
+            timestamp = datetime.datetime.fromtimestamp(ts).strftime('%Y-%m-%d_%H-%M-%S')
+            
+            create_backup(db_name, db_user, sql_container, data_container, backup_path, timestamp)
+
+# Backup Nginx configuration
 if os.path.exists('/etc/nginx/conf.d/'):
     ts = time.time()
     mytime = datetime.datetime.fromtimestamp(ts).strftime('%Y-%m-%d_%H-%M-%S')
-    os.system('zip -r ' + _mynginxpath + '/nginx-confs_' + mytime + '.zip /etc/nginx/')
+    output_zip = f'{nginx_path}/nginx-confs_{mytime}.zip'
+    subprocess.run(['7z', 'a', '-tzip', output_zip, '/etc/nginx/'], check=False)
 
-# backup letsencrypt
+# Backup Let's Encrypt certificates
 if os.path.exists('/etc/letsencrypt/live/'):
     ts = time.time()
     mytime = datetime.datetime.fromtimestamp(ts).strftime('%Y-%m-%d_%H-%M-%S')
-    os.system('zip -r ' + _mynginxpath + '/letsencrypt_' + mytime + '.zip /etc/letsencrypt/live/')
+    output_zip = f'{nginx_path}/letsencrypt_{mytime}.zip'
+    subprocess.run(['7z', 'a', '-tzip', output_zip, '/etc/letsencrypt/live/'], check=False)
 
-# backup docker-builds
+# Backup Docker builds
 if os.path.exists('/root/docker-builds'):
     ts = time.time()
     mytime = datetime.datetime.fromtimestamp(ts).strftime('%Y-%m-%d_%H-%M-%S')
-    os.system('zip -r ' + _mydockerbuildpath + '/docker-builds' + mytime + '.zip /root/docker-builds/')
+    output_zip = f'{docker_build_path}/docker-builds_{mytime}.zip'
+    subprocess.run(['7z', 'a', '-tzip', output_zip, '/root/docker-builds/'], check=False)
 
-# run by crontab
-# removes any files in mybackuppath older than 14 days or mystoretime
-
+# Delete old backups (based on retention period)
 now = time.time()
-_cutoff = now - (float(_mystoretime) * 86400)
+_cutoff = now - (float(retention_days) * 86400)
 
-# remove docker backups
-cleanup_backups(_mybackuppath, _cutoff)
+# Clean up Docker backups
+cleanup_backups(backup_path, _cutoff)
 
-# removes any files in mynginxpath older than 14 days
-cleanup_backups(_mynginxpath, _cutoff)
+# Clean up Nginx backups
+cleanup_backups(nginx_path, _cutoff)
 
-# removes any files in mydockerbuildpath older than 14 days
-cleanup_backups(_mydockerbuildpath, _cutoff)
+# Clean up Docker build backups
+cleanup_backups(docker_build_path, _cutoff)
 
-# csv format
-# rsync --delete -avzre "ssh" /sourcepath/ user@servername:/targetpath/
-fname_rsync = _mybasepath + '/rsync_targets.csv'
-print('Start rsync: ' + fname_rsync)
+# Process rsync targets
+fname_rsync = base_path + '/rsync_targets.csv'
+print('Starting Rsync: ' + fname_rsync)
 if os.path.isfile(fname_rsync):
     with io.open(fname_rsync, 'r', encoding="utf8") as csvfile:
         _reader_sync = csv.reader(csvfile, delimiter=",")
         for row in _reader_sync:
-            if (not(row)):
-                continue
-            elif (row[0].startswith('#')):
+            if not row or row[0].startswith('#'):
                 continue
             else:
                 os.system(row[0])
-print('Backup done!')
+
+print('Backup completed!')
