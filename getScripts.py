@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 # Script for organizing Docker servers
-# Version 6.5.3
+# Version 6.5.4
 # Date 20.03.2025
 ##############################################################################
 #
@@ -813,14 +813,45 @@ def get_oxker_version() -> Optional[str]:
         logger.error(f"Error getting oxker version: {e}")
     return None
 
-def install_oxker() -> None:
-    """Install oxker from GitHub releases based on system architecture."""
+def get_latest_oxker_version() -> Optional[str]:
+    """Get the latest version of oxker from GitHub releases.
+    
+    Returns:
+        Optional[str]: Latest version string if available, None otherwise
+    """
     try:
-        if check_oxker_installed():
-            logger.info("oxker is already installed")
+        response = requests.get("https://api.github.com/repos/mrjackwills/oxker/releases/latest")
+        if response.status_code == 200:
+            data = response.json()
+            version = data["tag_name"].lstrip('v')
+            logger.info(f"Found latest oxker version: {version}")
+            return version
+        logger.error(f"Failed to get latest oxker version. Status code: {response.status_code}")
+    except Exception as e:
+        logger.error(f"Error fetching latest oxker version: {str(e)}")
+    return None
+
+def install_or_update_oxker() -> None:
+    """Install or update oxker to the latest version."""
+    try:
+        # Check current version if installed
+        installed = check_oxker_installed()
+        current_version = get_oxker_version() if installed else None
+        logger.info(f"Current oxker version: {current_version if installed else 'not installed'}")
+        
+        # Get latest version from GitHub
+        latest_version = get_latest_oxker_version()
+        if not latest_version:
+            logger.error("Could not determine latest oxker version")
             return
 
-        logger.info("Installing oxker...")
+        # Check if update is needed
+        if installed and current_version == latest_version:
+            logger.info(f"oxker is already at the latest version ({latest_version})")
+            return
+        
+        # Install or update
+        logger.info(f"{'Updating' if installed else 'Installing'} oxker to version {latest_version}...")
         
         # Determine system architecture
         arch = platform.machine()
@@ -857,11 +888,15 @@ def install_oxker() -> None:
             local_bin = os.path.expanduser("~/.local/bin")
             ensure_directory_exists(local_bin)
             run_command(f"install -Dm 755 oxker -t {local_bin}")
-            
-        logger.info("oxker installed successfully")
         
+        # Verify installation
+        new_version = get_oxker_version()
+        if new_version:
+            logger.info(f"oxker {new_version} has been successfully installed")
+        else:
+            raise RuntimeError("Failed to verify oxker installation")
     except Exception as e:
-        logger.error(f"Error installing oxker: {e}")
+        logger.error(f"Error installing/updating oxker: {str(e)}")
         raise
 
 def main() -> None:
@@ -1003,8 +1038,7 @@ def main() -> None:
                 install_system_package(package)
         
         # Install oxker if not already installed
-        if not check_oxker_installed():
-            install_oxker()
+        install_or_update_oxker()
         
         # Instead of sourcing .zshrc which would trigger fastfetch again,
         # we'll just reload zoxide initialization
