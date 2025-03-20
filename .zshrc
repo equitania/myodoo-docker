@@ -166,6 +166,8 @@ alias dkprs='docker system prune'
 alias dkprv='docker volume prune'
 alias dkprf='docker system prune -a'
 alias dkprfa='docker system prune -a --volumes'
+alias ox='oxker'
+alias dkprfs='docker system prune -f'
 
 if [ -f /usr/bin/fastfetch ]
 then

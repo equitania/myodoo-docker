@@ -1,8 +1,8 @@
 #!/usr/bin/python3
 # -*- coding: utf-8 -*-
 # This script performs an update of an Odoo database in a Docker container
-# Version 5.0.3
-# Date 28.02.2025
+# Version 5.0.4
+# Date 20.03.2025
 ##############################################################################
 #
 #    Shell Script for Odoo, Open Source Management Solution
@@ -375,6 +375,20 @@ def validate_container_config(container):
         
     return True
 
+def clean_docker_system():
+    """
+    Run docker system prune -f to clean up the Docker system.
+    Removes all stopped containers, networks not used by at least one container,
+    all dangling images, and unused build cache.
+    """
+    logger.info("Cleaning up Docker system...")
+    success, _, info, warn, err = run_command("docker system prune -f", show_output=True)
+    if success:
+        logger.info("Docker system cleaned successfully")
+    else:
+        logger.warning("Failed to clean Docker system")
+    return info, warn, err
+
 def process_container(container):
     """Process a single container update."""
     # Set default values if missing
@@ -550,7 +564,7 @@ def process_container(container):
         return False, total_info, total_warnings, total_errors
     
     # Set translation parameter
-    load_translation = " --i18n-overwrite --load-language=de_DE" if translation.upper() == "Y" else ""
+    load_translation = " --i18n-overwrite --load-language=all" if translation.upper() == "Y" else ""
     
     # Perform update based on type
     if update_type == "F":
@@ -711,6 +725,13 @@ def process_container(container):
         total_warnings += warn
         total_errors += err
     
+    # Clean up Docker system
+    logger.info("Running Docker system cleanup...")
+    info, warn, err = clean_docker_system()
+    total_info += info
+    total_warnings += warn
+    total_errors += err
+    
     # Change back to original directory at the end
     try:
         os.chdir(original_dir)
@@ -824,6 +845,13 @@ def main():
             print_summary(f"Failed updates: {failure_count}")
         # Add the message counts to the summary
         print_summary(f"Log statistics: {total_info_count} INFO, {total_warning_count} WARNING, {total_error_count} ERROR messages")
+        
+        # Final Docker system cleanup after all containers are processed
+        if not args.validate:
+            print_summary("Performing final Docker system cleanup...")
+            info, warn, err = clean_docker_system()
+            print_summary(f"Final cleanup completed with {warn} warnings and {err} errors")
+    
     print_summary(f"{'='*80}")
     
     # Ensure all output is flushed
