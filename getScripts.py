@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 # Script for organizing Docker servers
-# Version 6.5.1
-# Date 19.03.2025
+# Version 6.5.3
+# Date 20.03.2025
 ##############################################################################
 #
 #    Shell Script for devops
@@ -34,6 +34,7 @@ import hashlib
 import time
 import platform
 import re
+import tempfile
 
 latest_fastfetch_assets = None
 
@@ -784,6 +785,85 @@ def install_or_update_7zip():
         logger.error(f"Error installing/updating 7-Zip: {str(e)}")
         raise
 
+def check_oxker_installed() -> bool:
+    """Check if oxker is installed.
+    
+    Returns:
+        bool: True if oxker is installed, False otherwise
+    """
+    try:
+        result = subprocess.run(['which', 'oxker'], capture_output=True, text=True)
+        return result.returncode == 0
+    except Exception as e:
+        logger.error(f"Error checking oxker installation: {e}")
+        return False
+
+def get_oxker_version() -> Optional[str]:
+    """Get installed oxker version.
+    
+    Returns:
+        Optional[str]: Version string if installed, None otherwise
+    """
+    try:
+        result = subprocess.run(['oxker', '--version'], capture_output=True, text=True)
+        if result.returncode == 0:
+            # Version output format might be like: "oxker v0.4.5" or similar
+            return result.stdout.strip().split(' ')[1].lstrip('v')
+    except Exception as e:
+        logger.error(f"Error getting oxker version: {e}")
+    return None
+
+def install_oxker() -> None:
+    """Install oxker from GitHub releases based on system architecture."""
+    try:
+        if check_oxker_installed():
+            logger.info("oxker is already installed")
+            return
+
+        logger.info("Installing oxker...")
+        
+        # Determine system architecture
+        arch = platform.machine()
+        if arch == "x86_64":
+            suffix = "x86_64"
+        elif arch == "aarch64":
+            suffix = "aarch64"
+        elif arch == "armv6l":
+            suffix = "armv6"
+        else:
+            logger.error(f"Unsupported architecture for oxker: {arch}")
+            return
+        
+        # Create temporary directory for download
+        with tempfile.TemporaryDirectory() as temp_dir:
+            os.chdir(temp_dir)
+            
+            # Download the latest release
+            oxker_gz = f"oxker_linux_{suffix}.tar.gz"
+            download_url = f"https://github.com/mrjackwills/oxker/releases/latest/download/{oxker_gz}"
+            
+            logger.info(f"Downloading oxker from {download_url}")
+            response = requests.get(download_url, stream=True)
+            response.raise_for_status()
+            
+            with open(oxker_gz, 'wb') as f:
+                for chunk in response.iter_content(chunk_size=8192):
+                    f.write(chunk)
+            
+            # Extract the binary
+            run_command(f"tar xzvf {oxker_gz} oxker")
+            
+            # Install to ~/.local/bin
+            local_bin = os.path.expanduser("~/.local/bin")
+            ensure_directory_exists(local_bin)
+            run_command(f"install -Dm 755 oxker -t {local_bin}")
+            
+        logger.info("oxker installed successfully")
+        
+    except Exception as e:
+        logger.error(f"Error installing oxker: {e}")
+        raise
+
 def main() -> None:
     """Main function to execute the script"""
     try:
@@ -921,6 +1001,10 @@ def main() -> None:
                     install_system_package(name, version)
             else:
                 install_system_package(package)
+        
+        # Install oxker if not already installed
+        if not check_oxker_installed():
+            install_oxker()
         
         # Instead of sourcing .zshrc which would trigger fastfetch again,
         # we'll just reload zoxide initialization
