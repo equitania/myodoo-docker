@@ -1,6 +1,6 @@
 #ZSH powered by ownerp.com
-# Version 3.2.8
-# Date 08.01.2025
+# Version 3.2.9
+# Date 20.03.2025
 
 # If you come from bash you might have to change your $PATH.
 export PATH="$HOME/bin:$HOME/.local/bin:/usr/local/bin:$PATH"
@@ -143,10 +143,10 @@ alias ups='sudo $HOME/getScripts.py && sudo cp $HOME/myodoo-docker/getScripts.py
 alias dobk='$HOME/container2backup.py'
 alias doup='$HOME/update_docker_odoo.py'
 alias doup2='$HOME/update_docker_myodoo.py'
-alias edbk='mcedit $HOME/container2backup.yaml'
-alias edbk2='mcedit $HOME/container2backup.csv'
-alias edup='mcedit $HOME/docker2update.yaml'
-alias edup2='mcedit $HOME/docker2update.csv'
+alias edbk='tilde $HOME/container2backup.yaml'
+alias edbk2='tilde $HOME/container2backup.csv'
+alias edup='tilde $HOME/docker2update.yaml'
+alias edup2='tilde $HOME/docker2update.csv'
 alias llbk='ll /opt/backups/docker'
 alias cpbk='cp /opt/backups/docker/'
 

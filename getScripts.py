@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 # Script for organizing Docker servers
-# Version 6.5.4
+# Version 6.5.5
 # Date 20.03.2025
 ##############################################################################
 #
@@ -899,6 +899,72 @@ def install_or_update_oxker() -> None:
         logger.error(f"Error installing/updating oxker: {str(e)}")
         raise
 
+def check_tilde_installed() -> bool:
+    """Check if tilde is installed.
+    
+    Returns:
+        bool: True if tilde is installed, False otherwise
+    """
+    try:
+        result = subprocess.run(['which', 'tilde'], capture_output=True, text=True)
+        return result.returncode == 0
+    except Exception as e:
+        logger.error(f"Error checking tilde installation: {e}")
+        return False
+
+def get_tilde_version() -> Optional[str]:
+    """Get installed tilde version.
+    
+    Returns:
+        Optional[str]: Version string if installed, None otherwise
+    """
+    try:
+        result = subprocess.run(['tilde', '--version'], capture_output=True, text=True)
+        if result.returncode == 0:
+            # The output might be like: "tilde version X.Y.Z"
+            version_line = result.stdout.strip()
+            match = re.search(r'(\d+\.\d+\.\d+)', version_line)
+            if match:
+                return match.group(1)
+    except Exception as e:
+        logger.error(f"Error getting tilde version: {e}")
+    return None
+
+def install_or_update_tilde() -> None:
+    """Install or update tilde using apt."""
+    try:
+        # Check current version if installed
+        installed = check_tilde_installed()
+        current_version = get_tilde_version() if installed else None
+        logger.info(f"Current tilde version: {current_version if installed else 'not installed'}")
+        
+        # Install or update
+        if not installed:
+            logger.info("Installing tilde...")
+            run_command("sudo apt update")
+            run_command("sudo apt install -y tilde")
+            
+            # Verify installation
+            new_version = get_tilde_version()
+            if new_version:
+                logger.info(f"tilde {new_version} has been successfully installed")
+            else:
+                raise RuntimeError("Failed to verify tilde installation")
+        else:
+            logger.info("Checking for tilde updates...")
+            run_command("sudo apt update")
+            run_command("sudo apt install --only-upgrade -y tilde")
+            
+            # Verify update
+            new_version = get_tilde_version()
+            if new_version != current_version:
+                logger.info(f"tilde updated from {current_version} to {new_version}")
+            else:
+                logger.info(f"tilde is already at the latest version ({current_version})")
+    except Exception as e:
+        logger.error(f"Error installing/updating tilde: {str(e)}")
+        raise
+
 def main() -> None:
     """Main function to execute the script"""
     try:
@@ -1040,6 +1106,9 @@ def main() -> None:
         # Install oxker if not already installed
         install_or_update_oxker()
         
+        # Install tilde if not already installed
+        install_or_update_tilde()
+
         # Instead of sourcing .zshrc which would trigger fastfetch again,
         # we'll just reload zoxide initialization
         logger.info("Reloading shell configuration...")
