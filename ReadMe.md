@@ -97,7 +97,6 @@ Die ZSH-Konfiguration enthält nützliche Aliasse für die tägliche Arbeit:
 - `prepatch` - Systemupdate in einer Screen-Session vorbereiten
 - `cleandlog` - Docker-Logs bereinigen
 - `syspatch` - Umfassende Systemaktualisierung und Bereinigung (apt-basiert)
-- `syspatcha` - Alternative Systemaktualisierung (dnf-basiert)
 - `dusort` - Verzeichnisgrößen sortiert anzeigen
 - `f2b` - Fail2ban-Client-Status anzeigen
 - `ups` - Update der ownERP-Skripte
@@ -236,7 +235,6 @@ The ZSH configuration includes useful aliases for daily work:
 - `prepatch` - prepare system update in a screen session
 - `cleandlog` - clean docker logs
 - `syspatch` - comprehensive system update and cleanup (apt-based)
-- `syspatcha` - alternative system update (dnf-based)
 - `dusort` - show directory sizes sorted
 - `f2b` - show fail2ban client status
 - `ups` - update ownERP scripts
