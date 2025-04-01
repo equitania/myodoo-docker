@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 # Script for organizing Docker servers
-# Version 6.5.5
-# Date 20.03.2025
+# Version 6.5.6
+# Date 01.04.2025
 ##############################################################################
 #
 #    Shell Script for devops
@@ -309,8 +309,11 @@ def install_zoxide_if_needed(desired_version: str = "0.9.6") -> None:
         logger.info("zoxide is not installed.")
 
     logger.info(f"Downloading zoxide version {desired_version}...")
-    # Installation using official script
-    run_command("curl -sS https://raw.githubusercontent.com/ajeetdsouza/zoxide/main/install.sh | bash", check=True)
+    
+    # Installation using curl and bash with proper shell execution
+    install_cmd = "curl -sS https://raw.githubusercontent.com/ajeetdsouza/zoxide/main/install.sh | bash"
+    run_command(install_cmd, shell=True, check=True)
+    
     logger.info(f"zoxide version {desired_version} was successfully installed.")
 
 def ensure_directory_exists(directory: str) -> None:
@@ -321,6 +324,10 @@ def ensure_directory_exists(directory: str) -> None:
 def run_command(command: str, check: bool = False, shell: bool = False, capture_output: bool = False) -> None:
     """Run a shell command with optional error checking."""
     try:
+        # If the command contains shell operators like |, &&, ||, >, <, etc., force shell=True
+        if any(op in command for op in ['|', '&&', '||', '>', '<', '>>', '<<']):
+            shell = True
+        
         if shell:
             subprocess.run(command, shell=True, check=check, capture_output=capture_output)
         else:
