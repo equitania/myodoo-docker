@@ -1,8 +1,8 @@
 #!/bin/bash
-#
+##############################################################################
 # This script is designed to be run inside the container
-# Version 2.0.3
-# Date 18.09.2022
+# Version 2.1.0
+# Date 02.04.2025
 ##############################################################################
 #
 #    Shell Script for Odoo Docker Container
@@ -23,67 +23,83 @@
 #
 ##############################################################################
 
-currentdate='date +"%d.%m.%Y %T"'
+currentdate=$(date +"%d.%m.%Y %T")
 echo "Odoo Container starting now: $currentdate"
 
-# config path
+# Configuration file path
 file="/opt/odoo/etc/odoo.conf"
 
-# fail hard and fast even on pipelines
+# Fail hard and fast even on pipelines
 set -eo pipefail
 
+# Function: start
+# Description: Starts the Odoo server with the specified configuration
+# Parameters: Additional command line arguments for Odoo
 function start {
     echo "Running odoo..."
     set +e
     if [ ! -e $1 ]; then
         echo "...with additional args: $*"
     fi
-    sudo -i -u odoo python3 \
-                    /opt/odoo/odoo-server/odoo-bin \
-                    -c $file \
-                    $*
+    
+    # Check if current user is already odoo
+    if [ "$(whoami)" = "odoo" ]; then
+        python3 /opt/odoo/odoo-server/odoo-bin -c $file $*
+    else
+        # Use su instead of sudo for user switching
+        su - odoo -c "python3 /opt/odoo/odoo-server/odoo-bin -c $file $*"
+    fi
 
     SERVICE_PID=$!
     set -e
 }
 
+# Function: update
+# Description: Updates all Odoo modules
+# Parameters: Additional command line arguments for Odoo
 function update {
     echo "update odoo..."
     set +e
     if [ ! -e $1 ]; then
         echo "...with additional args: $*"
     fi
-    sudo -i -u odoo python3 \
-                    /opt/odoo/odoo-server/odoo-bin \
-                    --update=all \
-                    --workers=0 \
-                    --no-xmlrpc \
-                    --stop-after-init \
-                    $*
+    
+    # Check if current user is already odoo
+    if [ "$(whoami)" = "odoo" ]; then
+        python3 /opt/odoo/odoo-server/odoo-bin --update=all --workers=0 --no-xmlrpc --stop-after-init $*
+    else
+        # Use su instead of sudo for user switching
+        su - odoo -c "python3 /opt/odoo/odoo-server/odoo-bin --update=all --workers=0 --no-xmlrpc --stop-after-init $*"
+    fi
 
     SERVICE_PID=$!
     set -e
 }
 
+# Function: neutralize
+# Description: Neutralizes the Odoo instance
+# Parameters: Additional command line arguments for Odoo
 function neutralize {
     echo "neutralize odoo..."
     set +e
     if [ ! -e $1 ]; then
         echo "...with additional args: $*"
     fi
-    sudo -i -u odoo python3 \
-                    /opt/odoo/odoo-server/odoo-bin \
-                    neutralize \
-                    --workers=0 \
-                    --no-xmlrpc \
-                    --stop-after-init \
-                    $*
+    
+    # Check if current user is already odoo
+    if [ "$(whoami)" = "odoo" ]; then
+        python3 /opt/odoo/odoo-server/odoo-bin neutralize --workers=0 --no-xmlrpc --stop-after-init $*
+    else
+        # Use su instead of sudo for user switching
+        su - odoo -c "python3 /opt/odoo/odoo-server/odoo-bin neutralize --workers=0 --no-xmlrpc --stop-after-init $*"
+    fi
 
     SERVICE_PID=$!
     set -e
 }
 
-# smart shutdown on SIGINT and SIGTERM
+# Function: on_exit
+# Description: Handles graceful shutdown on SIGINT and SIGTERM signals
 function on_exit() {
     kill -TERM $SERVICE_PID
     wait $SERVICE_PID 2>/dev/null
@@ -91,18 +107,28 @@ function on_exit() {
 }
 trap on_exit INT TERM
 
+# Check and setup data directory
 datadir="/opt/odoo/data"
 if [ "$(ls -A $datadir)" ]; then
     echo "$datadir is already exists"
 else
-    echo "Set rights data to odoo..."
-    chown -R odoo $datadir
+    echo "Setting data directory permissions for odoo..."
+    # If current user is root, use chown directly
+    if [ "$(whoami)" = "root" ]; then
+        chown -R odoo $datadir
+    else
+        # If not root and no sudo, this might be problematic
+        # One solution would be to set file permissions beforehand
+        echo "Warning: Cannot set ownership without root privileges. Make sure $datadir has correct permissions."
+    fi
 fi
 
+# Execute all provided parameters
 echo "Running parameters..."
 for arg in "$*"
 do
     $arg
 done
 
+# Wait for all background processes to complete
 wait
