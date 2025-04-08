@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 # Script for organizing Docker servers
-# Version 6.5.7
+# Version 6.5.8
 # Date 08.04.2025
 ##############################################################################
 #
@@ -40,7 +40,7 @@ latest_fastfetch_assets = None
 
 # Configure logging
 logging.basicConfig(
-    level=logging.INFO,
+    level=logging.INFO,  # Default to INFO level
     format='%(asctime)s - %(levelname)s - %(message)s',
     handlers=[
         logging.StreamHandler(),
@@ -48,6 +48,11 @@ logging.basicConfig(
     ]
 )
 logger = logging.getLogger(__name__)
+
+# Enable debug logging if environment variable is set
+if os.environ.get('GETSCRIPTS_DEBUG', '').lower() in ('1', 'true', 'yes'):
+    logger.setLevel(logging.DEBUG)
+    logger.debug("Debug logging enabled")
 
 def retry_on_exception(retries: int = 3, delay: int = 1):
     """Decorator to retry functions on exception.
@@ -328,12 +333,35 @@ def run_command(command: str, check: bool = False, shell: bool = False, capture_
         if any(op in command for op in ['|', '&&', '||', '>', '<', '>>', '<<']):
             shell = True
         
+        # Check if we're in a valid directory before running command
+        try:
+            os.getcwd()
+        except FileNotFoundError:
+            # If current directory doesn't exist, move to home directory
+            logger.warning("Current directory doesn't exist, moving to home directory")
+            os.chdir(os.path.expanduser("~"))
+        
         if shell:
-            subprocess.run(command, shell=True, check=check, capture_output=capture_output)
+            logger.debug(f"Running shell command: {command}")
+            result = subprocess.run(command, shell=True, check=check, capture_output=capture_output)
         else:
-            subprocess.run(command.split(), check=check, capture_output=capture_output)
+            logger.debug(f"Running command: {command}")
+            result = subprocess.run(command.split(), check=check, capture_output=capture_output)
+        
+        if result.returncode != 0:
+            logger.warning(f"Command returned non-zero exit code: {result.returncode}")
+            if capture_output and result.stderr:
+                logger.warning(f"Error output: {result.stderr.decode('utf-8', errors='replace')}")
+        
+        return result
     except subprocess.CalledProcessError as e:
-        logger.error(f"Command failed: {e}")
+        logger.error(f"Command failed with code {e.returncode}: {e}")
+        if e.stderr:
+            logger.error(f"Error output: {e.stderr.decode('utf-8', errors='replace')}")
+        if check:
+            raise
+    except Exception as e:
+        logger.error(f"Error running command {command}: {e}")
         if check:
             raise
 
@@ -857,6 +885,9 @@ def get_latest_oxker_version() -> Optional[str]:
 def install_or_update_oxker() -> None:
     """Install or update oxker to the latest version."""
     try:
+        # Save current working directory
+        original_dir = os.getcwd()
+        
         # Check current version if installed
         installed = check_oxker_installed()
         current_version = get_oxker_version() if installed else None
@@ -892,51 +923,72 @@ def install_or_update_oxker() -> None:
         with tempfile.TemporaryDirectory() as temp_dir:
             os.chdir(temp_dir)
             
-            # Download the latest release
-            oxker_gz = f"oxker_linux_{suffix}.tar.gz"
-            download_url = f"https://github.com/mrjackwills/oxker/releases/latest/download/{oxker_gz}"
-            
-            logger.info(f"Downloading oxker from {download_url}")
-            response = requests.get(download_url, stream=True)
-            response.raise_for_status()
-            
-            with open(oxker_gz, 'wb') as f:
-                for chunk in response.iter_content(chunk_size=8192):
-                    f.write(chunk)
-            
-            # Extract the binary
-            run_command(f"tar xzvf {oxker_gz} oxker")
-            
-            # Install to ~/.local/bin
-            local_bin = os.path.expanduser("~/.local/bin")
-            ensure_directory_exists(local_bin)
-            run_command(f"install -Dm 755 oxker -t {local_bin}")
-            
-            # Full path to oxker executable
-            oxker_path = os.path.join(local_bin, "oxker")
-            
-            # Verify installation using full path
-            if os.path.exists(oxker_path):
-                # Update PATH for current process
-                if local_bin not in os.environ.get("PATH", ""):
-                    os.environ["PATH"] = f"{local_bin}:{os.environ.get('PATH', '')}"
+            try:
+                # Download the latest release
+                oxker_gz = f"oxker_linux_{suffix}.tar.gz"
+                download_url = f"https://github.com/mrjackwills/oxker/releases/latest/download/{oxker_gz}"
                 
-                # Try running oxker with full path
-                try:
-                    result = subprocess.run([oxker_path, '--version'], 
-                                          capture_output=True, text=True)
-                    if result.returncode == 0:
-                        new_version = result.stdout.strip().split(' ')[1].lstrip('v')
-                        logger.info(f"oxker {new_version} has been successfully installed to {oxker_path}")
-                        return
-                except Exception as e:
-                    logger.error(f"Error running {oxker_path}: {str(e)}")
+                logger.info(f"Downloading oxker from {download_url}")
+                response = requests.get(download_url, stream=True)
+                response.raise_for_status()
+                
+                with open(oxker_gz, 'wb') as f:
+                    for chunk in response.iter_content(chunk_size=8192):
+                        f.write(chunk)
+                
+                # Extract the binary
+                run_command(f"tar xzvf {oxker_gz} oxker")
+                
+                # Install to ~/.local/bin
+                local_bin = os.path.expanduser("~/.local/bin")
+                ensure_directory_exists(local_bin)
+                run_command(f"install -Dm 755 oxker -t {local_bin}")
+                
+                # Full path to oxker executable
+                oxker_path = os.path.join(local_bin, "oxker")
+                
+                # Verify installation using full path
+                if os.path.exists(oxker_path):
+                    # Update PATH for current process
+                    if local_bin not in os.environ.get("PATH", ""):
+                        os.environ["PATH"] = f"{local_bin}:{os.environ.get('PATH', '')}"
+                    
+                    # Try running oxker with full path
+                    try:
+                        result = subprocess.run([oxker_path, '--version'], 
+                                            capture_output=True, text=True)
+                        if result.returncode == 0:
+                            new_version = result.stdout.strip().split(' ')[1].lstrip('v')
+                            logger.info(f"oxker {new_version} has been successfully installed to {oxker_path}")
+                            
+                            # Make sure to return to original directory before returning
+                            try:
+                                os.chdir(original_dir)
+                            except FileNotFoundError:
+                                # If original directory is gone, go to home directory
+                                os.chdir(os.path.expanduser("~"))
+                            return
+                    except Exception as e:
+                        logger.error(f"Error running {oxker_path}: {str(e)}")
+                
+                logger.error(f"Failed to verify oxker installation at {oxker_path}")
+                raise RuntimeError(f"Failed to verify oxker installation at {oxker_path}")
             
-            logger.error(f"Failed to verify oxker installation at {oxker_path}")
-            raise RuntimeError(f"Failed to verify oxker installation at {oxker_path}")
+            finally:
+                # Always try to return to original directory
+                try:
+                    os.chdir(original_dir)
+                except FileNotFoundError:
+                    # If original directory is gone, go to home directory
+                    os.chdir(os.path.expanduser("~"))
         
     except Exception as e:
         logger.error(f"Error installing/updating oxker: {str(e)}")
+        # Make sure we're in a valid directory before raising
+        try:
+            os.getcwd()
+        except FileNotFoundError:
+            os.chdir(os.path.expanduser("~"))
         raise
 
 def check_tilde_installed() -> bool:
@@ -1007,6 +1059,8 @@ def install_or_update_tilde() -> None:
 
 def main() -> None:
     """Main function to execute the script"""
+    original_dir = os.getcwd()
+    
     try:
         # Check if running on Debian/Ubuntu
         if not is_debian_or_ubuntu():
@@ -1018,13 +1072,31 @@ def main() -> None:
 
         global_server_version = '2025'
         _myhome = os.path.expanduser('~')
-        config_directory = os.path.join(_myhome, ".config", "fastfetch")
-        ensure_directory_exists(config_directory)
+        
+        # Make sure we have a valid directory before continuing
+        try:
+            config_directory = os.path.join(_myhome, ".config", "fastfetch")
+            ensure_directory_exists(config_directory)
+        except Exception as e:
+            logger.error(f"Error creating config directory: {e}")
+            # Go to home directory as a safe fallback
+            os.chdir(_myhome)
 
         run_command("sudo timedatectl set-timezone Europe/Berlin", check=True)
 
+        # Use absolute paths to avoid directory issues
         myodoo_docker = os.path.join(_myhome, "myodoo-docker")
-        os.chdir(myodoo_docker)
+        
+        # Make sure we can access the target directory
+        if not os.path.exists(myodoo_docker):
+            logger.error(f"Directory {myodoo_docker} does not exist")
+            sys.exit(1)
+            
+        try:
+            os.chdir(myodoo_docker)
+        except Exception as e:
+            logger.error(f"Cannot change to directory {myodoo_docker}: {e}")
+            sys.exit(1)
 
         # Check current branch and switch if needed
         current_branch = subprocess.check_output(["git", "rev-parse", "--abbrev-ref", "HEAD"], text=True).strip()
@@ -1149,13 +1221,35 @@ def main() -> None:
         # Install tilde if not already installed
         install_or_update_tilde()
 
-        # Instead of sourcing .zshrc which would trigger fastfetch again,
-        # we'll just reload zoxide initialization
+        # At the end, before reloading zsh configuration
         logger.info("Reloading shell configuration...")
-        run_command("/usr/bin/zsh -c 'source <(/root/.local/bin/zoxide init zsh)'", shell=True)
-
+        try:
+            # Use absolute paths in the command
+            zoxide_path = os.path.join(_myhome, ".local", "bin", "zoxide")
+            
+            # First check if the file exists
+            if os.path.exists(zoxide_path):
+                run_command(f"/usr/bin/zsh -c 'source <({zoxide_path} init zsh)'", shell=True)
+            else:
+                # Try using PATH
+                run_command("/usr/bin/zsh -c 'source <(zoxide init zsh)'", shell=True)
+        except Exception as e:
+            logger.error(f"Error reloading shell configuration: {e}")
+        
+        # Return to original directory
+        try:
+            os.chdir(original_dir)
+        except FileNotFoundError:
+            # If original directory doesn't exist anymore, go to home
+            os.chdir(_myhome)
+            
     except Exception as e:
         logger.error(f"An error occurred in main: {str(e)}")
+        # Make sure we're in a valid directory
+        try:
+            os.getcwd()
+        except FileNotFoundError:
+            os.chdir(os.path.expanduser("~"))
         sys.exit(1)
 
 if __name__ == "__main__":
