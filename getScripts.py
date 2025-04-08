@@ -1,7 +1,7 @@
 #!/usr/bin/python3
 # -*- coding: utf-8 -*-
 # Script for organizing Docker servers
-# Version 6.6.0
+# Version 6.6.1
 # Date 08.04.2025
 ##############################################################################
 #
@@ -767,16 +767,33 @@ def upgrade_pip() -> None:
 def get_7zip_version() -> Optional[tuple]:
     """Get installed 7-Zip version as tuple (major, minor, patch)"""
     try:
-        result = subprocess.run(['7z', '--help'], capture_output=True, text=True)
+        # First try 7zz (new version)
+        result = subprocess.run(['7zz', '--help'], capture_output=True, text=True)
         if result.returncode == 0:
-            # 7-Zip output format: "7-Zip [64] 16.02"
-            version_line = result.stdout.split('\n')[1].strip()
+            # 7zz output format: "7-Zip (z) [64] 21.07 : Copyright (c) 1999-2021 Igor Pavlov"
+            version_line = result.stdout.split('\n')[0].strip()
             version_match = re.search(r'\d+\.\d+', version_line)
             if version_match:
                 version_str = version_match.group(0)
                 # Convert to tuple (major, minor, 0) as 7zip usually only has major.minor
                 major, minor = map(int, version_str.split('.'))
                 return (major, minor, 0)
+    except FileNotFoundError:
+        # Fall back to checking old 7z command, but we'll eventually remove/replace it
+        try:
+            result = subprocess.run(['7z', '--help'], capture_output=True, text=True)
+            if result.returncode == 0:
+                # 7-Zip output format: "7-Zip [64] 16.02"
+                version_line = result.stdout.split('\n')[1].strip()
+                version_match = re.search(r'\d+\.\d+', version_line)
+                if version_match:
+                    version_str = version_match.group(0)
+                    # Convert to tuple (major, minor, 0) as 7zip usually only has major.minor
+                    major, minor = map(int, version_str.split('.'))
+                    return (major, minor, 0)
+        except Exception:
+            # Ignore errors from the old version
+            pass
     except Exception as e:
         logger.error(f"Error getting 7-Zip version: {str(e)}")
     return None
@@ -792,8 +809,17 @@ def check_7zip_version() -> bool:
         version_str = '.'.join(map(str, version[:2]))  # Only show major.minor
         logger.info(f"Current 7-Zip version: {version_str}")
         
-        # Minimum required version
-        min_version = (16, 2, 0)  # 16.02 is a stable version available in most repositories
+        # Check if old p7zip-full is installed (which provides 7z command)
+        try:
+            old_result = subprocess.run(['which', '7z'], capture_output=True, text=True)
+            if old_result.returncode == 0 and not subprocess.run(['which', '7zz'], capture_output=True).returncode == 0:
+                logger.warning("Old p7zip-full package detected (7z command), but new 7zip (7zz) not found")
+                return False
+        except:
+            pass
+            
+        # Minimum required version for newer 7zip
+        min_version = (21, 0, 0)  # 21.x is newer and preferred
         
         if version < min_version:
             logger.warning(f"7-Zip version {version_str} is outdated. Minimum required version is {'.'.join(map(str, min_version[:2]))}")
@@ -806,10 +832,16 @@ def check_7zip_version() -> bool:
 def install_or_update_7zip():
     """Install or update 7-Zip package"""
     try:
+        # First check if p7zip-full is installed and remove it if needed
+        if is_package_installed("p7zip-full"):
+            logger.info("Removing old p7zip-full package...")
+            run_command("sudo apt remove -y p7zip-full")
+            
+        # Now check if the new 7zip needs to be installed or updated
         if not check_7zip_version():
             logger.info("Installing/updating 7-Zip...")
             run_command("sudo apt update")
-            run_command("sudo apt install -y p7zip-full")
+            run_command("sudo apt install -y 7zip")
             
             # Verify installation
             if not check_7zip_version():
