@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 # Script for organizing Docker servers
-# Version 6.5.8
+# Version 6.5.9
 # Date 08.04.2025
 ##############################################################################
 #
@@ -944,15 +944,26 @@ def install_or_update_oxker() -> None:
                 ensure_directory_exists(local_bin)
                 run_command(f"install -Dm 755 oxker -t {local_bin}")
                 
+                # Ensure PATH is set in .zshrc
+                ensure_path_in_zshrc()
+                
+                # Try to set PATH for current process
+                if local_bin not in os.environ.get("PATH", ""):
+                    os.environ["PATH"] = f"{local_bin}:{os.environ.get('PATH', '')}"
+                    logger.info(f"Added {local_bin} to PATH for current process")
+                
+                # Test if oxker is now accessible
+                run_command("hash -r", shell=True)  # Clear path cache
+                
                 # Full path to oxker executable
                 oxker_path = os.path.join(local_bin, "oxker")
                 
+                # Show file permissions
+                logger.info(f"Checking permissions for {oxker_path}")
+                run_command(f"ls -la {oxker_path}", shell=True)
+                
                 # Verify installation using full path
                 if os.path.exists(oxker_path):
-                    # Update PATH for current process
-                    if local_bin not in os.environ.get("PATH", ""):
-                        os.environ["PATH"] = f"{local_bin}:{os.environ.get('PATH', '')}"
-                    
                     # Try running oxker with full path
                     try:
                         result = subprocess.run([oxker_path, '--version'], 
@@ -1057,6 +1068,38 @@ def install_or_update_tilde() -> None:
         logger.error(f"Error installing/updating tilde: {str(e)}")
         raise
 
+def ensure_path_in_zshrc() -> None:
+    """Ensure ~/.local/bin is in PATH in .zshrc file."""
+    try:
+        home = os.path.expanduser("~")
+        zshrc_path = os.path.join(home, ".zshrc")
+        local_bin = os.path.join(home, ".local", "bin")
+        
+        # Check if .zshrc exists
+        if not os.path.exists(zshrc_path):
+            logger.info(".zshrc not found, creating it")
+            with open(zshrc_path, "w") as f:
+                f.write(f'# Created by getScripts.py\nexport PATH="{local_bin}:$PATH"\n')
+            return
+            
+        # Read current .zshrc
+        with open(zshrc_path, "r") as f:
+            content = f.read()
+            
+        # Check if PATH is already set correctly
+        if f'export PATH="{local_bin}:$PATH"' in content or f"export PATH={local_bin}:$PATH" in content:
+            logger.info(f"{local_bin} is already in PATH in .zshrc")
+            return
+            
+        # Add PATH to .zshrc
+        logger.info(f"Adding {local_bin} to PATH in .zshrc")
+        with open(zshrc_path, "a") as f:
+            f.write(f'\n# Added by getScripts.py\nexport PATH="{local_bin}:$PATH"\n')
+            
+        logger.info(".zshrc updated, PATH will be available in new shells")
+    except Exception as e:
+        logger.error(f"Error updating .zshrc: {e}")
+
 def main() -> None:
     """Main function to execute the script"""
     original_dir = os.getcwd()
@@ -1072,6 +1115,11 @@ def main() -> None:
 
         global_server_version = '2025'
         _myhome = os.path.expanduser('~')
+        
+        # Ensure .local/bin is in PATH
+        local_bin = os.path.join(_myhome, ".local", "bin")
+        ensure_directory_exists(local_bin)
+        ensure_path_in_zshrc()
         
         # Make sure we have a valid directory before continuing
         try:
@@ -1123,7 +1171,17 @@ def main() -> None:
         source_zshrc = os.path.join(myodoo_docker, ".zshrc")
         target_zshrc = os.path.join(_myhome, ".zshrc")
         if os.path.exists(source_zshrc):
+            # Backup existing .zshrc if it exists
+            if os.path.exists(target_zshrc):
+                backup_path = f"{target_zshrc}.bak"
+                logger.info(f"Backing up existing .zshrc to {backup_path}")
+                run_command(f"cp {target_zshrc} {backup_path}")
+            
+            logger.info(f"Copying .zshrc from {source_zshrc} to {target_zshrc}")
             run_command(f"cp {source_zshrc} {target_zshrc}")
+            
+            # Make sure ~/.local/bin is in PATH in the new .zshrc
+            ensure_path_in_zshrc()
 
         source_fastfetch = os.path.join(myodoo_docker, "scripts", "fastfetch", "config.jsonc")
         target_fastfetch = os.path.join(_myhome, ".config", "fastfetch", "config.jsonc")
@@ -1184,8 +1242,8 @@ def main() -> None:
             # Add pipx to PATH and reload environment
             pipx_bin = "/root/.local/bin"
             os.environ["PATH"] = f"{pipx_bin}:{os.environ.get('PATH', '')}"
-            # Source the updated environment
-            run_command("source ~/.bashrc", shell=True)
+            # Ensure PATH is set in .zshrc
+            ensure_path_in_zshrc()
 
         # Install specific versions of packages with pipx
         if is_pipx_installed():
@@ -1224,6 +1282,10 @@ def main() -> None:
         # At the end, before reloading zsh configuration
         logger.info("Reloading shell configuration...")
         try:
+            # Make sure PATH is updated in current process
+            if local_bin not in os.environ.get("PATH", ""):
+                os.environ["PATH"] = f"{local_bin}:{os.environ.get('PATH', '')}"
+                
             # Use absolute paths in the command
             zoxide_path = os.path.join(_myhome, ".local", "bin", "zoxide")
             
@@ -1232,7 +1294,11 @@ def main() -> None:
                 run_command(f"/usr/bin/zsh -c 'source <({zoxide_path} init zsh)'", shell=True)
             else:
                 # Try using PATH
-                run_command("/usr/bin/zsh -c 'source <(zoxide init zsh)'", shell=True)
+                run_command("/usr/bin/zsh -c 'hash -r && source <(zoxide init zsh)'", shell=True)
+                
+            # Add a note about new sessions
+            logger.info("For the PATH changes to take effect in new shells, you may need to restart your terminal or run 'source ~/.zshrc'")
+            
         except Exception as e:
             logger.error(f"Error reloading shell configuration: {e}")
         
