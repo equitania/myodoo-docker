@@ -1,5 +1,5 @@
 # Docker Container Update Configuration
-# Date: 07.03.2025
+# Date: 08.04.2025
 
 # Parameters:
 #   type: [M]odules, [F]ull update or [N]eutralize DB
@@ -28,8 +28,8 @@ containers:
     delay_time: 10
     container_name: "live-odoo"
     database_name: "live_odoo"
-    port: "11000"
-    longpolling_port: "12000"
+    port: "127.0.0.1:11000"
+    longpolling_port: "127.0.0.1:12000"
     dockerfile_path: "$HOME/docker-builds/live-odoo/"
     docker_image_name: "odoo/live"
     db_user: "ownerp"
