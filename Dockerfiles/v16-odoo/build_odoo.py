@@ -1,8 +1,8 @@
 #!/usr/bin/python3
 # -*- coding: utf-8 -*-
 # This script builds a new server using the Release Manager
-# Version 2.1.0
-# Date 27.02.2025
+# Version 2.1.1
+# Date 08.04.2025
 ##############################################################################
 #
 #    Shell Script for Odoo, Open Source Management Solution
@@ -79,10 +79,10 @@ def extract_zip(zipfile, destination=".", current_progress=None):
     """Extract a zip file to the specified destination."""
     if is_macos:
         # macOS unzip command
-        command = f"unzip -q {zipfile} -d {destination}"
+        command = f"unzip -q -o {zipfile} -d {destination}"
     else:
         # Linux unzip command
-        command = f"unzip -q {zipfile} -d {destination}"
+        command = f"unzip -q -o {zipfile} -d {destination}"
     
     if run_command(command):
         if current_progress:
