@@ -1,7 +1,7 @@
-#!/usr/bin/env python3
+#!/usr/bin/python3
 # -*- coding: utf-8 -*-
 # Script for organizing Docker servers
-# Version 6.5.9
+# Version 6.6.0
 # Date 08.04.2025
 ##############################################################################
 #
@@ -826,19 +826,24 @@ def check_oxker_installed() -> bool:
     Returns:
         bool: True if oxker is installed, False otherwise
     """
+    # First check if it exists in ~/.local/bin
     try:
-        # First check if it's in the PATH
+        local_bin = os.path.expanduser("~/.local/bin")
+        oxker_path = os.path.join(local_bin, "oxker")
+        if os.path.exists(oxker_path) and os.access(oxker_path, os.X_OK):
+            return True
+    except Exception as e:
+        logger.debug(f"Error checking oxker in local bin: {e}")
+    
+    # Then check if it's in the PATH
+    try:
         result = subprocess.run(['which', 'oxker'], capture_output=True, text=True)
         if result.returncode == 0:
             return True
-            
-        # If not in PATH, check if it exists in ~/.local/bin
-        local_bin = os.path.expanduser("~/.local/bin")
-        oxker_path = os.path.join(local_bin, "oxker")
-        return os.path.exists(oxker_path)
     except Exception as e:
-        logger.error(f"Error checking oxker installation: {e}")
-        return False
+        logger.debug(f"Error checking oxker in PATH: {e}")
+        
+    return False
 
 def get_oxker_version() -> Optional[str]:
     """Get installed oxker version.
@@ -847,22 +852,36 @@ def get_oxker_version() -> Optional[str]:
         Optional[str]: Version string if installed, None otherwise
     """
     try:
-        # First try regular PATH
-        result = subprocess.run(['oxker', '--version'], capture_output=True, text=True)
-        if result.returncode == 0:
-            # Version output format might be like: "oxker v0.4.5" or similar
-            return result.stdout.strip().split(' ')[1].lstrip('v')
-            
-        # If not found in PATH, try with full path
+        # First try with full path
         local_bin = os.path.expanduser("~/.local/bin")
         oxker_path = os.path.join(local_bin, "oxker")
+        
         if os.path.exists(oxker_path):
-            result = subprocess.run([oxker_path, '--version'], capture_output=True, text=True)
+            try:
+                result = subprocess.run([oxker_path, '--version'], 
+                                     capture_output=True, text=True)
+                if result.returncode == 0:
+                    return result.stdout.strip().split(' ')[1].lstrip('v')
+            except Exception as e:
+                logger.debug(f"Error running oxker with full path: {e}")
+        
+        # Then try regular PATH
+        try:
+            result = subprocess.run(['oxker', '--version'], 
+                                 capture_output=True, text=True)
             if result.returncode == 0:
                 return result.stdout.strip().split(' ')[1].lstrip('v')
+        except FileNotFoundError:
+            # Not found in PATH, which is expected if not installed
+            pass
+        except Exception as e:
+            logger.debug(f"Error running oxker from PATH: {e}")
+            
+        # If we got here, oxker is not installed or not working
+        return None
     except Exception as e:
-        logger.error(f"Error getting oxker version: {e}")
-    return None
+        logger.debug(f"Error in get_oxker_version: {e}")
+        return None
 
 def get_latest_oxker_version() -> Optional[str]:
     """Get the latest version of oxker from GitHub releases.
@@ -891,7 +910,11 @@ def install_or_update_oxker() -> None:
         # Check current version if installed
         installed = check_oxker_installed()
         current_version = get_oxker_version() if installed else None
-        logger.info(f"Current oxker version: {current_version if installed else 'not installed'}")
+        
+        if installed:
+            logger.info(f"Current oxker version: {current_version}")
+        else:
+            logger.info("oxker is not installed")
         
         # Get latest version from GitHub
         latest_version = get_latest_oxker_version()
