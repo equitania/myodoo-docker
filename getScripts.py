@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 # Script for organizing Docker servers
-# Version 6.5.6
-# Date 01.04.2025
+# Version 6.5.7
+# Date 08.04.2025
 ##############################################################################
 #
 #    Shell Script for devops
@@ -799,8 +799,15 @@ def check_oxker_installed() -> bool:
         bool: True if oxker is installed, False otherwise
     """
     try:
+        # First check if it's in the PATH
         result = subprocess.run(['which', 'oxker'], capture_output=True, text=True)
-        return result.returncode == 0
+        if result.returncode == 0:
+            return True
+            
+        # If not in PATH, check if it exists in ~/.local/bin
+        local_bin = os.path.expanduser("~/.local/bin")
+        oxker_path = os.path.join(local_bin, "oxker")
+        return os.path.exists(oxker_path)
     except Exception as e:
         logger.error(f"Error checking oxker installation: {e}")
         return False
@@ -812,10 +819,19 @@ def get_oxker_version() -> Optional[str]:
         Optional[str]: Version string if installed, None otherwise
     """
     try:
+        # First try regular PATH
         result = subprocess.run(['oxker', '--version'], capture_output=True, text=True)
         if result.returncode == 0:
             # Version output format might be like: "oxker v0.4.5" or similar
             return result.stdout.strip().split(' ')[1].lstrip('v')
+            
+        # If not found in PATH, try with full path
+        local_bin = os.path.expanduser("~/.local/bin")
+        oxker_path = os.path.join(local_bin, "oxker")
+        if os.path.exists(oxker_path):
+            result = subprocess.run([oxker_path, '--version'], capture_output=True, text=True)
+            if result.returncode == 0:
+                return result.stdout.strip().split(' ')[1].lstrip('v')
     except Exception as e:
         logger.error(f"Error getting oxker version: {e}")
     return None
@@ -895,13 +911,30 @@ def install_or_update_oxker() -> None:
             local_bin = os.path.expanduser("~/.local/bin")
             ensure_directory_exists(local_bin)
             run_command(f"install -Dm 755 oxker -t {local_bin}")
+            
+            # Full path to oxker executable
+            oxker_path = os.path.join(local_bin, "oxker")
+            
+            # Verify installation using full path
+            if os.path.exists(oxker_path):
+                # Update PATH for current process
+                if local_bin not in os.environ.get("PATH", ""):
+                    os.environ["PATH"] = f"{local_bin}:{os.environ.get('PATH', '')}"
+                
+                # Try running oxker with full path
+                try:
+                    result = subprocess.run([oxker_path, '--version'], 
+                                          capture_output=True, text=True)
+                    if result.returncode == 0:
+                        new_version = result.stdout.strip().split(' ')[1].lstrip('v')
+                        logger.info(f"oxker {new_version} has been successfully installed to {oxker_path}")
+                        return
+                except Exception as e:
+                    logger.error(f"Error running {oxker_path}: {str(e)}")
+            
+            logger.error(f"Failed to verify oxker installation at {oxker_path}")
+            raise RuntimeError(f"Failed to verify oxker installation at {oxker_path}")
         
-        # Verify installation
-        new_version = get_oxker_version()
-        if new_version:
-            logger.info(f"oxker {new_version} has been successfully installed")
-        else:
-            raise RuntimeError("Failed to verify oxker installation")
     except Exception as e:
         logger.error(f"Error installing/updating oxker: {str(e)}")
         raise
