@@ -1,5 +1,5 @@
 # PIPX packages
-nginx-set-conf==1.2.0
+nginx-set-conf
 odoo-fast-report-mapper-equitania==0.1.24
 
 # PIP packages
@@ -14,5 +14,5 @@ python-dotenv
 
 # System packages
 pipx
-zoxide==0.9.6
-fastfetch==2.31.0
+zoxide
+fastfetch
