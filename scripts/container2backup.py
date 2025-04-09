@@ -444,11 +444,12 @@ def compress_directory(source_dir, output_file_base, config):
     encryption_enabled, password = get_encryption_settings()
     output_file = None
     
-    # Wenn Verschlüsselung aktiviert ist, aber nicht 7z-Format verwendet wird
+    # Wenn Verschlüsselung aktiviert ist, aber nicht 7z-Format, Warnung ausgeben
+    # Aber das Format NICHT ändern, sondern die Verschlüsselung ignorieren
     if encryption_enabled and compression_format != '7z':
         print(f"WARNING: Encryption is only supported with 7z format. Your selected format is '{compression_format}'.")
-        print("Switching to 7z format to support encryption.")
-        compression_format = '7z'
+        print("Encryption will be ignored for this backup.")
+        encryption_enabled = False
     
     try:
         if compression_format == '7z':
@@ -475,12 +476,6 @@ def compress_directory(source_dir, output_file_base, config):
                 
             output_file = f"{output_file_base}.zip"
             
-            # Wenn Verschlüsselung gefordert wurde, nochmal warnen
-            if encryption_enabled:
-                print("ERROR: Encryption is only supported with 7z format.")
-                print("Please change your compression format to 7z in the configuration.")
-                return None
-                
             # Standard zip command
             # Wir wechseln ins Quellverzeichnis selbst und zippen alles mit einem Punkt (.)
             zip_cmd = f"cd '{source_dir}' && zip -r -{compression_level} '{output_file}' ."
@@ -492,12 +487,6 @@ def compress_directory(source_dir, output_file_base, config):
             if not tools['gzip']:
                 print("Error: gzip command is not installed.")
                 print("Please install gzip with: sudo apt-get install gzip")
-                return None
-                
-            # Wenn Verschlüsselung gefordert wurde, nochmal warnen
-            if encryption_enabled:
-                print("ERROR: Encryption is only supported with 7z format.")
-                print("Please change your compression format to 7z in the configuration.")
                 return None
                 
             # gzip requires tar to archive directory first
@@ -532,12 +521,6 @@ def compress_directory(source_dir, output_file_base, config):
             if not tools['zstd']:
                 print("Error: zstd command is not installed.")
                 print("Please install zstd with: sudo apt-get install zstd")
-                return None
-                
-            # Wenn Verschlüsselung gefordert wurde, nochmal warnen
-            if encryption_enabled:
-                print("ERROR: Encryption is only supported with 7z format.")
-                print("Please change your compression format to 7z in the configuration.")
                 return None
                 
             # zstd requires tar to archive directory first

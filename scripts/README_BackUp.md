@@ -203,8 +203,9 @@ Die Verschlüsselung ist optional und kann über eine `.env`-Datei aktiviert wer
    ```
 
 2. **Wichtig**: Verschlüsselung wird nur mit dem 7z-Format unterstützt, welches das 7zz-Kommando benötigt.
-   - Wenn Verschlüsselung aktiviert ist, wird automatisch das 7z-Format verwendet, unabhängig von der Konfiguration
-   - Ohne das 7zz-Kommando kann keine Verschlüsselung verwendet werden
+   - Verschlüsselung wird nur angewendet, wenn das Format in der Konfiguration auf "7z" gesetzt ist
+   - Wenn ein anderes Format (zip, gzip, zstd) gewählt wurde, wird die Verschlüsselung ignoriert
+   - Das Format in der Konfiguration hat Priorität über die Verschlüsselungseinstellung
 
 ## Backup-Prozess
 
@@ -567,8 +568,9 @@ Encryption is optional and can be activated via a `.env` file:
    ```
 
 2. **Important**: Encryption is only supported with the 7z format, which requires the 7zz command.
-   - If encryption is enabled, the 7z format will be used automatically, regardless of the configuration
-   - Without the 7zz command, encryption cannot be used
+   - Encryption will only be applied if the format in the configuration is set to "7z"
+   - If another format (zip, gzip, zstd) is chosen, encryption will be ignored
+   - The format in the configuration takes precedence over the encryption setting
 
 ## Backup Process
 
