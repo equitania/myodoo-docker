@@ -160,13 +160,30 @@ def get_encryption_settings():
     
     return enabled, password
 
-def create_backup(db_name, db_user, sql_container, data_container, backup_path, timestamp, additional_paths=None):
+def create_backup(db_name, db_user, sql_container, data_container, backup_path, timestamp, additional_paths=None, only_sql_dump=False):
     """
     Creates a backup with proper file structure
+    
+    Args:
+        db_name: Name of the database
+        db_user: Database user
+        sql_container: SQL container name
+        data_container: Data container name
+        backup_path: Backup path
+        timestamp: Timestamp for the backup
+        additional_paths: Additional paths to include in the backup
+        only_sql_dump: If True, only back up the SQL dump, skip filestore
+        
+    Returns:
+        bool: Success status
     """
     docker_backup_path = os.path.join(backup_path, 'docker')
     # Set output_file_base without extension as the extension will be determined by the compression format
     output_file_base = f'{docker_backup_path}/{db_name}_{data_container}_dockerbackup_{timestamp}'
+    
+    # For SQL-only backups, add indicator to filename
+    if only_sql_dump:
+        output_file_base += '_sql_only'
     
     # Use configured temp path or fall back to system default
     temp_base = os.path.expandvars(os.path.expanduser(
@@ -189,6 +206,8 @@ def create_backup(db_name, db_user, sql_container, data_container, backup_path, 
     
     try:
         print(f"Creating backup for {db_name} in {data_container}")
+        if only_sql_dump:
+            print(f"SQL dump only mode: filestore will be skipped")
         
         # 1. Export SQL dump to file
         dump_file = os.path.join(temp_dir, "dump.sql")
@@ -206,47 +225,49 @@ def create_backup(db_name, db_user, sql_container, data_container, backup_path, 
                 print(f"pg_dump error: {dump_proc.stderr.decode()}")
             return False
             
-        # 2. Export filestore directly with database name as root
-        # No "filestore" parent directory
-        print(f"Backing up filestore for {db_name}")
-        
-        # First check if filestore exists in container
-        check_proc = subprocess.run(
-            ['docker', 'exec', data_container, 'ls', '-la', f'/opt/odoo/data/filestore/{db_name}'],
-            stdout=subprocess.PIPE,
-            stderr=subprocess.PIPE,
-            check=False
-        )
-        
-        if check_proc.returncode != 0:
-            print(f"Warning: Filestore for {db_name} not found in container")
-            print(check_proc.stderr.decode())
-        else:
-            # Extract filestore to temp directory - directly using db_name without filestore prefix
-            filestore_dir = os.path.join(temp_dir, db_name)
-            os.makedirs(filestore_dir)
+        # 2. Export filestore only if not in SQL-only mode
+        if not only_sql_dump:
+            # Export filestore directly with database name as root
+            # No "filestore" parent directory
+            print(f"Backing up filestore for {db_name}")
             
-            # GEÄNDERT: Verwenden eines direkten Pipes, um Speicher zu sparen
-            print(f"Extracting filestore for {db_name} using streaming")
-            extract_cmd = f"docker exec {data_container} tar c -C /opt/odoo/data/filestore {db_name} | tar x -C {temp_dir}"
-            
-            extract_result = subprocess.run(
-                extract_cmd,
-                shell=True,
+            # First check if filestore exists in container
+            check_proc = subprocess.run(
+                ['docker', 'exec', data_container, 'ls', '-la', f'/opt/odoo/data/filestore/{db_name}'],
                 stdout=subprocess.PIPE,
                 stderr=subprocess.PIPE,
                 check=False
             )
             
-            if extract_result.returncode != 0:
-                print(f"Error extracting filestore for {db_name}")
-                if extract_result.stderr:
-                    extract_error = extract_result.stderr.decode()
-                    print(f"Extract error: {extract_error}")
-                    # Prüfen, ob es sich um ein Speicherproblem handelt
-                    if "Killed" in extract_error or "Cannot allocate memory" in extract_error:
-                        print("The process was killed due to memory constraints.")
-                        print("Consider running the backup with nohup or in a screen/tmux session with lower priority.")
+            if check_proc.returncode != 0:
+                print(f"Warning: Filestore for {db_name} not found in container")
+                print(check_proc.stderr.decode())
+            else:
+                # Extract filestore to temp directory - directly using db_name without filestore prefix
+                filestore_dir = os.path.join(temp_dir, db_name)
+                os.makedirs(filestore_dir)
+                
+                # GEÄNDERT: Verwenden eines direkten Pipes, um Speicher zu sparen
+                print(f"Extracting filestore for {db_name} using streaming")
+                extract_cmd = f"docker exec {data_container} tar c -C /opt/odoo/data/filestore {db_name} | tar x -C {temp_dir}"
+                
+                extract_result = subprocess.run(
+                    extract_cmd,
+                    shell=True,
+                    stdout=subprocess.PIPE,
+                    stderr=subprocess.PIPE,
+                    check=False
+                )
+                
+                if extract_result.returncode != 0:
+                    print(f"Error extracting filestore for {db_name}")
+                    if extract_result.stderr:
+                        extract_error = extract_result.stderr.decode()
+                        print(f"Extract error: {extract_error}")
+                        # Prüfen, ob es sich um ein Speicherproblem handelt
+                        if "Killed" in extract_error or "Cannot allocate memory" in extract_error:
+                            print("The process was killed due to memory constraints.")
+                            print("Consider running the backup with nohup or in a screen/tmux session with lower priority.")
         
         # 3. Compress directory with configured format
         output_file = compress_directory(temp_dir, output_file_base, config)
@@ -626,8 +647,13 @@ try:
         data_container = db['data_container']
         retention_days = db.get('retention_days', default_retention)
         
+        # Get only_sql_dump setting for this database (default to False if not specified)
+        only_sql_dump = db.get('only_sql_dump', False)
+        
         print(f"\nProcessing backup for database {db_name}")
         print(f"Using container: {sql_container}")
+        if only_sql_dump:
+            print(f"SQL dump only mode: filestore will be skipped")
         
         # Merge default and database-specific additional paths
         additional_paths = {}
@@ -653,7 +679,8 @@ try:
             data_container, 
             backup_path, 
             timestamp,
-            additional_paths
+            additional_paths,
+            only_sql_dump
         )
         
         # Create FastReport backup if configured
