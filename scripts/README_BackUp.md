@@ -44,7 +44,9 @@ defaults:
   db_user: ownerp
   backup_path: /opt/backups
   compression:
-    level: 5  # 7-Zip Kompressionsgrad (0-9)
+    format: "7z"     # Kompressionsformat: 7z, zip, gzip, zstd (empfohlen: 7z)
+    level: 5         # Kompressionsgrad (0-9, Standard: 5)
+    use_7zz: false   # Verwenden des neueren 7zz-Befehls anstelle von 7z, wenn verfügbar
 
 services:
   nginx:
@@ -87,7 +89,40 @@ rsync:
 
 ### Kompressionskonfiguration
 
-Der 7-Zip Kompressionsgrad kann im `defaults`-Bereich konfiguriert werden:
+Die Kompression kann im `defaults`-Bereich konfiguriert werden:
+
+```yaml
+defaults:
+  compression:
+    format: "7z"     # Kompressionsformat: 7z, zip, gzip, zstd (empfohlen: 7z)
+    level: 5         # Kompressionsgrad (0-9, Standard: 5)
+    use_7zz: false   # Verwenden des neueren 7zz-Befehls anstelle von 7z, wenn verfügbar
+```
+
+#### Unterstützte Kompressionsformate
+
+- **7z**: Beste Kompression und Verschlüsselung (Standard)
+  - Bietet AES-256 Verschlüsselung
+  - Benötigt 7-Zip (p7zip-full Paket)
+  - Unterstützt auch den neueren 7zz-Befehl aus aktuelleren 7-Zip-Versionen
+
+- **zip**: Standard-ZIP-Format
+  - Bessere Kompatibilität mit anderen Systemen
+  - Schwächere Verschlüsselung (wenn ZIP-Befehl verwendet wird)
+  - Kann starke AES-256 Verschlüsselung verwenden, wenn 7-Zip verfügbar ist
+
+- **gzip**: tar.gz Format
+  - Gute Kompatibilität
+  - Keine Verschlüsselung
+
+- **zstd**: tar.zst Format
+  - Moderne, schnelle Kompression mit gutem Verhältnis
+  - Keine Verschlüsselung
+  - Benötigt zstd-Paket
+
+#### Kompressionsgrad
+
+Der Kompressionsgrad kann eingestellt werden:
 - Wertebereich: 0-9
   - 0: Keine Kompression (nur Archivierung)
   - 1-2: Schnelle Kompression
@@ -247,7 +282,9 @@ defaults:
   db_user: ownerp
   backup_path: /opt/backups
   compression:
-    level: 5  # 7-Zip compression level (0-9)
+    format: "7z"     # Compression format: 7z, zip, gzip, zstd (recommended: 7z)
+    level: 5         # Compression level (0-9, default: 5)
+    use_7zz: false   # Use newer 7zz command instead of 7z if available
 
 services:
   nginx:
@@ -290,7 +327,40 @@ rsync:
 
 ### Compression Configuration
 
-The 7-Zip compression level can be configured in the `defaults` section:
+Compression can be configured in the `defaults` section:
+
+```yaml
+defaults:
+  compression:
+    format: "7z"     # Compression format: 7z, zip, gzip, zstd (recommended: 7z)
+    level: 5         # Compression level (0-9, default: 5)
+    use_7zz: false   # Use newer 7zz command instead of 7z if available
+```
+
+#### Supported Compression Formats
+
+- **7z**: Best compression and encryption (default)
+  - Provides AES-256 encryption
+  - Requires 7-Zip (p7zip-full package)
+  - Also supports newer 7zz command from more recent 7-Zip versions
+
+- **zip**: Standard ZIP format
+  - Better compatibility with other systems
+  - Weaker encryption (when using zip command)
+  - Can use strong AES-256 encryption if 7-Zip is available
+
+- **gzip**: tar.gz format
+  - Good compatibility
+  - No encryption
+
+- **zstd**: tar.zst format
+  - Modern, fast compression with good ratio
+  - No encryption
+  - Requires zstd package
+
+#### Compression Level
+
+The compression level can be adjusted:
 - Range: 0-9
   - 0: No compression (archiving only)
   - 1-2: Fast compression
