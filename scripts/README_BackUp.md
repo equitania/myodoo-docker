@@ -9,15 +9,15 @@
 
 ## Übersicht
 
-Dieses Backup-System sichert Odoo-Datenbanken, Docker-Container und zusätzliche Dienste in 7-Zip-Archive. Es wurde entwickelt, um komplette Backups von Odoo-Installationen zu erstellen, die in Docker-Containern laufen.
+Dieses Backup-System sichert Odoo-Datenbanken, Docker-Container und zusätzliche Dienste in komprimierte Archive. Es wurde entwickelt, um komplette Backups von Odoo-Installationen zu erstellen, die in Docker-Containern laufen.
 
 ### Hauptfunktionen
 
 - Backup von mehreren Odoo-Datenbanken (SQL-Dump + Filestore)
 - Backup von FastReport-Dateien pro Datenbank
 - Backup zusätzlicher Dienste (Nginx, Let's Encrypt, Docker-Builds)
-- Komprimierung mit 7-Zip mit einstellbarem Kompressionsgrad
-- Optionale AES-256 Verschlüsselung
+- Verschiedene Kompressionsformate mit einstellbarem Kompressionsgrad
+- Optionale AES-256 Verschlüsselung (nur mit 7z-Format)
 - Automatische Verwaltung von alten Backups
 - Konfiguration über YAML-Datei
 
@@ -25,7 +25,7 @@ Dieses Backup-System sichert Odoo-Datenbanken, Docker-Container und zusätzliche
 
 1. Installieren Sie die benötigten Pakete:
    ```bash
-   sudo apt-get install p7zip-full
+   sudo apt-get install 7zip zstd
    pip3 install python-dotenv pyyaml
    ```
 
@@ -44,9 +44,8 @@ defaults:
   db_user: ownerp
   backup_path: /opt/backups
   compression:
-    format: "7z"     # Kompressionsformat: 7z, zip, gzip, zstd (empfohlen: 7z)
+    format: "7z"     # Kompressionsformat: 7z, zip, gzip, zstd
     level: 5         # Kompressionsgrad (0-9, Standard: 5)
-    use_7zz: false   # Verwenden des neueren 7zz-Befehls anstelle von 7z, wenn verfügbar
 
 services:
   nginx:
@@ -94,31 +93,28 @@ Die Kompression kann im `defaults`-Bereich konfiguriert werden:
 ```yaml
 defaults:
   compression:
-    format: "7z"     # Kompressionsformat: 7z, zip, gzip, zstd (empfohlen: 7z)
+    format: "7z"     # Kompressionsformat: 7z, zip, gzip, zstd
     level: 5         # Kompressionsgrad (0-9, Standard: 5)
-    use_7zz: false   # Verwenden des neueren 7zz-Befehls anstelle von 7z, wenn verfügbar
 ```
 
 #### Unterstützte Kompressionsformate
 
-- **7z**: Beste Kompression und Verschlüsselung (Standard)
+- **7z**: Beste Kompression und einziges Format mit Verschlüsselung
   - Bietet AES-256 Verschlüsselung
-  - Benötigt 7-Zip (p7zip-full Paket)
-  - Unterstützt auch den neueren 7zz-Befehl aus aktuelleren 7-Zip-Versionen
+  - Benötigt neuere 7-Zip-Version mit dem 7zz-Befehl
+  - **Wichtig**: Das alte 7z-Kommando wird nicht mehr unterstützt
 
 - **zip**: Standard-ZIP-Format
   - Bessere Kompatibilität mit anderen Systemen
-  - Schwächere Verschlüsselung (wenn ZIP-Befehl verwendet wird)
-  - Kann starke AES-256 Verschlüsselung verwenden, wenn 7-Zip verfügbar ist
+  - **Keine Verschlüsselung**
 
 - **gzip**: tar.gz Format
   - Gute Kompatibilität
-  - Keine Verschlüsselung
+  - **Keine Verschlüsselung**
 
 - **zstd**: tar.zst Format
   - Moderne, schnelle Kompression mit gutem Verhältnis
-  - Keine Verschlüsselung
-  - Benötigt zstd-Paket
+  - **Keine Verschlüsselung**
 
 #### Kompressionsgrad
 
@@ -148,9 +144,13 @@ Standardmäßig werden alle Backups im Verzeichnis `/opt/backups` gespeichert, s
 
 Datenbankbackups befinden sich im Unterverzeichnis `docker` und enthalten die folgenden Elemente:
 
-**Dateinamensformat:** `{db_name}_{container}_dockerbackup_{timestamp}.7z`
+**Dateinamensformat:** (abhängig vom Kompressionsformat)
+- 7z: `{db_name}_{container}_dockerbackup_{timestamp}.7z`
+- ZIP: `{db_name}_{container}_dockerbackup_{timestamp}.zip`
+- GZIP: `{db_name}_{container}_dockerbackup_{timestamp}.tar.gz`
+- ZSTD: `{db_name}_{container}_dockerbackup_{timestamp}.tar.zst`
 
-**Interne Struktur des 7z-Archivs:**
+**Interne Struktur des Archivs:**
 ```
 /
 ├── dump.sql       # SQL-Dump der Datenbank
@@ -164,9 +164,13 @@ Datenbankbackups befinden sich im Unterverzeichnis `docker` und enthalten die fo
 
 FastReport-Backups werden separat erstellt und im gleichen `docker`-Verzeichnis wie die Datenbankbackups gespeichert:
 
-**Dateinamensformat:** `{db_name}_FastReport_{timestamp}.7z`
+**Dateinamensformat:** (abhängig vom Kompressionsformat)
+- 7z: `{db_name}_FastReport_{timestamp}.7z`
+- ZIP: `{db_name}_FastReport_{timestamp}.zip`
+- GZIP: `{db_name}_FastReport_{timestamp}.tar.gz`
+- ZSTD: `{db_name}_FastReport_{timestamp}.tar.zst`
 
-**Interne Struktur des 7z-Archivs:**
+**Interne Struktur des Archivs:**
 ```
 /
 └── {Original FastReport Verzeichnisstruktur}
@@ -174,18 +178,18 @@ FastReport-Backups werden separat erstellt und im gleichen `docker`-Verzeichnis 
 
 ### 4. Service-Backups
 
-Service-Backups werden in ihren eigenen Unterverzeichnissen gespeichert:
+Service-Backups werden in ihren eigenen Unterverzeichnissen gespeichert, mit dem jeweiligen Kompressionsformat als Dateierweiterung.
 
 **Nginx:**
-- Dateipfad: `/opt/backups/nginx/nginx_{timestamp}.7z`
+- Dateipfad: `/opt/backups/nginx/nginx_{timestamp}.[7z|zip|tar.gz|tar.zst]`
 - Enthält: Komplette Nginx-Konfiguration
 
 **Let's Encrypt:**
-- Dateipfad: `/opt/backups/letsencrypt/letsencrypt_{timestamp}.7z`
+- Dateipfad: `/opt/backups/letsencrypt/letsencrypt_{timestamp}.[7z|zip|tar.gz|tar.zst]`
 - Enthält: Let's Encrypt-Zertifikate und -Konfiguration
 
 **Docker-Builds:**
-- Dateipfad: `/opt/backups/docker-builds/docker-builds_{timestamp}.7z`
+- Dateipfad: `/opt/backups/docker-builds/docker-builds_{timestamp}.[7z|zip|tar.gz|tar.zst]`
 - Enthält: Docker-Build-Konfigurationen und Dockerfiles
 
 ## Verschlüsselung
@@ -198,14 +202,16 @@ Die Verschlüsselung ist optional und kann über eine `.env`-Datei aktiviert wer
    BACKUP_PASSWORD=IhrSicheresPasswort
    ```
 
-2. Mit dieser Konfiguration werden alle Backups mit AES-256 verschlüsselt und die Header-Verschlüsselung aktiviert.
+2. **Wichtig**: Verschlüsselung wird nur mit dem 7z-Format unterstützt, welches das 7zz-Kommando benötigt.
+   - Wenn Verschlüsselung aktiviert ist, wird automatisch das 7z-Format verwendet, unabhängig von der Konfiguration
+   - Ohne das 7zz-Kommando kann keine Verschlüsselung verwendet werden
 
 ## Backup-Prozess
 
 1. Datenbankbackup:
    - SQL-Dump wird aus dem SQL-Container extrahiert
    - Filestore wird aus dem Odoo-Container extrahiert
-   - Beide werden in ein 7z-Archiv komprimiert
+   - Beide werden in ein Archiv mit dem konfigurierten Format komprimiert
 
 2. FastReport-Backup:
    - Separat vom Datenbankbackup erstellt
@@ -218,6 +224,126 @@ Die Verschlüsselung ist optional und kann über eine `.env`-Datei aktiviert wer
 4. Remote-Synchronisation:
    - Optional über rsync-Kommandos konfigurierbar
    - Nach Abschluss aller Backups ausgeführt
+
+## Extraktion von Backups
+
+Je nach verwendetem Kompressionsformat gibt es verschiedene Möglichkeiten, Backups zu extrahieren:
+
+### Vorschau der Inhalte
+
+Bevor Sie ein Backup extrahieren, können Sie den Inhalt anzeigen:
+
+#### 7z-Format (.7z)
+```bash
+# Mit relativem Pfad
+7zz l pfad/zur/backup.7z
+
+# Mit absolutem Pfad
+7zz l /opt/backups/docker/datenbank_container_dockerbackup_timestamp.7z
+
+# Mit Passwort (falls verschlüsselt)
+7zz l -p"IhrPasswort" pfad/zur/backup.7z
+```
+
+#### ZIP-Format (.zip)
+```bash
+# Mit relativem Pfad
+unzip -l pfad/zur/backup.zip
+
+# Mit absolutem Pfad
+unzip -l /opt/backups/docker/datenbank_container_dockerbackup_timestamp.zip
+```
+
+#### GZIP-Format (.tar.gz)
+```bash
+# Mit relativem Pfad
+tar -tvf pfad/zur/backup.tar.gz
+
+# Mit absolutem Pfad
+tar -tvf /opt/backups/docker/datenbank_container_dockerbackup_timestamp.tar.gz
+```
+
+#### ZSTD-Format (.tar.zst)
+```bash
+# Mit relativem Pfad
+zstd -l pfad/zur/backup.tar.zst
+tar -tvf <(zstd -dc pfad/zur/backup.tar.zst)
+
+# Mit absolutem Pfad
+zstd -l /opt/backups/docker/datenbank_container_dockerbackup_timestamp.tar.zst
+tar -tvf <(zstd -dc /opt/backups/docker/datenbank_container_dockerbackup_timestamp.tar.zst)
+```
+
+### Extraktion der Backups
+
+So extrahieren Sie die Backups in einen Zielordner:
+
+#### 7z-Format (.7z)
+```bash
+# Mit relativem Pfad
+7zz x pfad/zur/backup.7z -ozielordner
+
+# Mit absolutem Pfad
+7zz x /opt/backups/docker/datenbank_container_dockerbackup_timestamp.7z -o/pfad/zum/zielordner
+
+# Mit Passwort (falls verschlüsselt)
+7zz x pfad/zur/backup.7z -ozielordner -p"IhrPasswort"
+```
+
+#### ZIP-Format (.zip)
+```bash
+# Mit relativem Pfad
+unzip pfad/zur/backup.zip -d zielordner
+
+# Mit absolutem Pfad
+unzip /opt/backups/docker/datenbank_container_dockerbackup_timestamp.zip -d /pfad/zum/zielordner
+```
+
+#### GZIP-Format (.tar.gz)
+```bash
+# Mit relativem Pfad
+mkdir -p zielordner
+tar -xzf pfad/zur/backup.tar.gz -C zielordner
+
+# Mit absolutem Pfad
+mkdir -p /pfad/zum/zielordner
+tar -xzf /opt/backups/docker/datenbank_container_dockerbackup_timestamp.tar.gz -C /pfad/zum/zielordner
+```
+
+#### ZSTD-Format (.tar.zst)
+```bash
+# Mit relativem Pfad
+mkdir -p zielordner
+tar -I zstd -xf pfad/zur/backup.tar.zst -C zielordner
+
+# Mit absolutem Pfad
+mkdir -p /pfad/zum/zielordner
+tar -I zstd -xf /opt/backups/docker/datenbank_container_dockerbackup_timestamp.tar.zst -C /pfad/zum/zielordner
+```
+
+### Wiederherstellung von Odoo-Datenbank Backups
+
+Bei der Wiederherstellung einer Odoo-Datenbank müssen Sie beachten:
+
+1. Extraktion des Backups in einen temporären Ordner
+2. Wiederherstellung des SQL-Dumps
+3. Kopieren des Filestore zum korrekten Zielort
+
+Beispiel (für 7z-Format):
+```bash
+# 1. Backup extrahieren
+mkdir -p /tmp/odoo_restore
+7zz x /opt/backups/docker/datenbank_container_dockerbackup_timestamp.7z -o/tmp/odoo_restore
+
+# 2. SQL-Dump wiederherstellen
+docker exec -i container_name psql -U db_user -d datenbank_name < /tmp/odoo_restore/dump.sql
+
+# 3. Filestore wiederherstellen
+docker cp /tmp/odoo_restore/datenbank_name container_name:/opt/odoo/data/filestore/
+
+# 4. Aufräumen
+rm -rf /tmp/odoo_restore
+```
 
 ## Aufräumen alter Backups
 
@@ -247,15 +373,15 @@ Sie können das Backup-Skript über einen Cron-Job automatisieren:
 
 ## Overview
 
-This backup system secures Odoo databases, Docker containers, and additional services in 7-Zip archives. It was designed to create complete backups of Odoo installations running in Docker containers.
+This backup system secures Odoo databases, Docker containers, and additional services in compressed archives. It was designed to create complete backups of Odoo installations running in Docker containers.
 
 ### Main Features
 
 - Backup of multiple Odoo databases (SQL dump + filestore)
 - Backup of FastReport files per database
 - Backup of additional services (Nginx, Let's Encrypt, Docker builds)
-- Compression with 7-Zip with adjustable compression level
-- Optional AES-256 encryption
+- Various compression formats with adjustable compression level
+- Optional AES-256 encryption (only with 7z format)
 - Automatic management of old backups
 - Configuration via YAML file
 
@@ -263,7 +389,7 @@ This backup system secures Odoo databases, Docker containers, and additional ser
 
 1. Install the required packages:
    ```bash
-   sudo apt-get install p7zip-full
+   sudo apt-get install 7zip zstd
    pip3 install python-dotenv pyyaml
    ```
 
@@ -282,9 +408,8 @@ defaults:
   db_user: ownerp
   backup_path: /opt/backups
   compression:
-    format: "7z"     # Compression format: 7z, zip, gzip, zstd (recommended: 7z)
+    format: "7z"     # Compression format: 7z, zip, gzip, zstd
     level: 5         # Compression level (0-9, default: 5)
-    use_7zz: false   # Use newer 7zz command instead of 7z if available
 
 services:
   nginx:
@@ -332,31 +457,28 @@ Compression can be configured in the `defaults` section:
 ```yaml
 defaults:
   compression:
-    format: "7z"     # Compression format: 7z, zip, gzip, zstd (recommended: 7z)
+    format: "7z"     # Compression format: 7z, zip, gzip, zstd
     level: 5         # Compression level (0-9, default: 5)
-    use_7zz: false   # Use newer 7zz command instead of 7z if available
 ```
 
 #### Supported Compression Formats
 
-- **7z**: Best compression and encryption (default)
+- **7z**: Best compression and the only format with encryption
   - Provides AES-256 encryption
-  - Requires 7-Zip (p7zip-full package)
-  - Also supports newer 7zz command from more recent 7-Zip versions
+  - Requires newer 7-Zip version with the 7zz command
+  - **Important**: The old 7z command is no longer supported
 
 - **zip**: Standard ZIP format
   - Better compatibility with other systems
-  - Weaker encryption (when using zip command)
-  - Can use strong AES-256 encryption if 7-Zip is available
+  - **No encryption**
 
 - **gzip**: tar.gz format
   - Good compatibility
-  - No encryption
+  - **No encryption**
 
 - **zstd**: tar.zst format
   - Modern, fast compression with good ratio
-  - No encryption
-  - Requires zstd package
+  - **No encryption**
 
 #### Compression Level
 
@@ -386,9 +508,13 @@ By default, all backups are stored in the `/opt/backups` directory, unless confi
 
 Database backups are located in the `docker` subdirectory and contain the following elements:
 
-**Filename format:** `{db_name}_{container}_dockerbackup_{timestamp}.7z`
+**Filename format:** (depends on compression format)
+- 7z: `{db_name}_{container}_dockerbackup_{timestamp}.7z`
+- ZIP: `{db_name}_{container}_dockerbackup_{timestamp}.zip`
+- GZIP: `{db_name}_{container}_dockerbackup_{timestamp}.tar.gz`
+- ZSTD: `{db_name}_{container}_dockerbackup_{timestamp}.tar.zst`
 
-**Internal structure of the 7z archive:**
+**Internal structure of the archive:**
 ```
 /
 ├── dump.sql       # SQL dump of the database
@@ -402,9 +528,13 @@ Database backups are located in the `docker` subdirectory and contain the follow
 
 FastReport backups are created separately and stored in the same `docker` directory as the database backups:
 
-**Filename format:** `{db_name}_FastReport_{timestamp}.7z`
+**Filename format:** (depends on compression format)
+- 7z: `{db_name}_FastReport_{timestamp}.7z`
+- ZIP: `{db_name}_FastReport_{timestamp}.zip`
+- GZIP: `{db_name}_FastReport_{timestamp}.tar.gz`
+- ZSTD: `{db_name}_FastReport_{timestamp}.tar.zst`
 
-**Internal structure of the 7z archive:**
+**Internal structure of the archive:**
 ```
 /
 └── {Original FastReport directory structure}
@@ -412,18 +542,18 @@ FastReport backups are created separately and stored in the same `docker` direct
 
 ### 4. Service Backups
 
-Service backups are stored in their own subdirectories:
+Service backups are stored in their own subdirectories, with the respective compression format as file extension.
 
 **Nginx:**
-- File path: `/opt/backups/nginx/nginx_{timestamp}.7z`
+- File path: `/opt/backups/nginx/nginx_{timestamp}.[7z|zip|tar.gz|tar.zst]`
 - Contains: Complete Nginx configuration
 
 **Let's Encrypt:**
-- File path: `/opt/backups/letsencrypt/letsencrypt_{timestamp}.7z`
+- File path: `/opt/backups/letsencrypt/letsencrypt_{timestamp}.[7z|zip|tar.gz|tar.zst]`
 - Contains: Let's Encrypt certificates and configuration
 
 **Docker Builds:**
-- File path: `/opt/backups/docker-builds/docker-builds_{timestamp}.7z`
+- File path: `/opt/backups/docker-builds/docker-builds_{timestamp}.[7z|zip|tar.gz|tar.zst]`
 - Contains: Docker build configurations and Dockerfiles
 
 ## Encryption
@@ -436,14 +566,16 @@ Encryption is optional and can be activated via a `.env` file:
    BACKUP_PASSWORD=YourSecurePassword
    ```
 
-2. With this configuration, all backups will be encrypted with AES-256 and header encryption will be enabled.
+2. **Important**: Encryption is only supported with the 7z format, which requires the 7zz command.
+   - If encryption is enabled, the 7z format will be used automatically, regardless of the configuration
+   - Without the 7zz command, encryption cannot be used
 
 ## Backup Process
 
 1. Database backup:
    - SQL dump is extracted from the SQL container
    - Filestore is extracted from the Odoo container
-   - Both are compressed into a 7z archive
+   - Both are compressed into an archive with the configured format
 
 2. FastReport backup:
    - Created separately from the database backup
@@ -456,6 +588,126 @@ Encryption is optional and can be activated via a `.env` file:
 4. Remote synchronization:
    - Optionally configurable via rsync commands
    - Executed after completion of all backups
+
+## Extracting Backups
+
+Depending on the compression format used, there are different ways to extract backups:
+
+### Previewing Contents
+
+Before extracting a backup, you can preview its contents:
+
+#### 7z Format (.7z)
+```bash
+# With relative path
+7zz l path/to/backup.7z
+
+# With absolute path
+7zz l /opt/backups/docker/database_container_dockerbackup_timestamp.7z
+
+# With password (if encrypted)
+7zz l -p"YourPassword" path/to/backup.7z
+```
+
+#### ZIP Format (.zip)
+```bash
+# With relative path
+unzip -l path/to/backup.zip
+
+# With absolute path
+unzip -l /opt/backups/docker/database_container_dockerbackup_timestamp.zip
+```
+
+#### GZIP Format (.tar.gz)
+```bash
+# With relative path
+tar -tvf path/to/backup.tar.gz
+
+# With absolute path
+tar -tvf /opt/backups/docker/database_container_dockerbackup_timestamp.tar.gz
+```
+
+#### ZSTD Format (.tar.zst)
+```bash
+# With relative path
+zstd -l path/to/backup.tar.zst
+tar -tvf <(zstd -dc path/to/backup.tar.zst)
+
+# With absolute path
+zstd -l /opt/backups/docker/database_container_dockerbackup_timestamp.tar.zst
+tar -tvf <(zstd -dc /opt/backups/docker/database_container_dockerbackup_timestamp.tar.zst)
+```
+
+### Extracting Backups
+
+To extract backups to a target directory:
+
+#### 7z Format (.7z)
+```bash
+# With relative path
+7zz x path/to/backup.7z -otarget_directory
+
+# With absolute path
+7zz x /opt/backups/docker/database_container_dockerbackup_timestamp.7z -o/path/to/target_directory
+
+# With password (if encrypted)
+7zz x path/to/backup.7z -otarget_directory -p"YourPassword"
+```
+
+#### ZIP Format (.zip)
+```bash
+# With relative path
+unzip path/to/backup.zip -d target_directory
+
+# With absolute path
+unzip /opt/backups/docker/database_container_dockerbackup_timestamp.zip -d /path/to/target_directory
+```
+
+#### GZIP Format (.tar.gz)
+```bash
+# With relative path
+mkdir -p target_directory
+tar -xzf path/to/backup.tar.gz -C target_directory
+
+# With absolute path
+mkdir -p /path/to/target_directory
+tar -xzf /opt/backups/docker/database_container_dockerbackup_timestamp.tar.gz -C /path/to/target_directory
+```
+
+#### ZSTD Format (.tar.zst)
+```bash
+# With relative path
+mkdir -p target_directory
+tar -I zstd -xf path/to/backup.tar.zst -C target_directory
+
+# With absolute path
+mkdir -p /path/to/target_directory
+tar -I zstd -xf /opt/backups/docker/database_container_dockerbackup_timestamp.tar.zst -C /path/to/target_directory
+```
+
+### Restoring Odoo Database Backups
+
+When restoring an Odoo database backup, you need to:
+
+1. Extract the backup to a temporary directory
+2. Restore the SQL dump
+3. Copy the filestore to the correct location
+
+Example (for 7z format):
+```bash
+# 1. Extract backup
+mkdir -p /tmp/odoo_restore
+7zz x /opt/backups/docker/database_container_dockerbackup_timestamp.7z -o/tmp/odoo_restore
+
+# 2. Restore SQL dump
+docker exec -i container_name psql -U db_user -d database_name < /tmp/odoo_restore/dump.sql
+
+# 3. Restore filestore
+docker cp /tmp/odoo_restore/database_name container_name:/opt/odoo/data/filestore/
+
+# 4. Clean up
+rm -rf /tmp/odoo_restore
+```
 
 ## Cleaning up Old Backups
 
