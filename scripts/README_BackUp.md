@@ -71,6 +71,7 @@ databases:
     sql_container: live-db
     data_container: live-odoo
     retention_days: 5
+    only_sql_dump: false  # Optional: SQL-Dump und Filestore sichern (Standardverhalten)
     fast_report:
       enabled: true
       path: /opt/fast-report/live
@@ -79,12 +80,31 @@ databases:
     sql_container: test-db
     data_container: test-odoo
     retention_days: 5
+    only_sql_dump: true   # Nur SQL-Dump sichern, Filestore überspringen
+    fast_report:
+      enabled: true
+      path: /opt/fast-report/test
 
 rsync:
   enabled: true
   commands:
     - "rsync -avz /opt/backups/docker/ user@remote-server:/backup/docker/"
 ```
+
+### Konfiguration für SQL-Dump-Only Backups
+
+Jede Datenbank kann mit der Option `only_sql_dump` konfiguriert werden:
+
+- `only_sql_dump: false` (Standard): Sichert sowohl den SQL-Dump als auch den Filestore
+- `only_sql_dump: true`: Sichert nur den SQL-Dump, überspringt den Filestore
+
+Für SQL-Only-Backups wird der Dateiname mit `_sql_only` ergänzt, um den Inhalt zu kennzeichnen:
+- Beispiel: `database_container_dockerbackup_2025-04-09_16-34-50_sql_only.7z`
+
+Diese Option ist besonders nützlich für:
+- Datenbanken mit sehr großen Filestores, wo eine regelmäßige Sicherung nur der Datenbank ausreicht
+- Temporäre Kopien, bei denen der Filestore nicht benötigt wird
+- Situations, in denen häufigere SQL-Dumps, aber seltenere vollständige Backups gewünscht sind
 
 ### Kompressionskonfiguration
 
@@ -436,6 +456,7 @@ databases:
     sql_container: live-db
     data_container: live-odoo
     retention_days: 5
+    only_sql_dump: false  # Optional: Back up SQL dump and filestore (default behavior)
     fast_report:
       enabled: true
       path: /opt/fast-report/live
@@ -444,12 +465,31 @@ databases:
     sql_container: test-db
     data_container: test-odoo
     retention_days: 5
+    only_sql_dump: true   # Only back up SQL dump, skip filestore
+    fast_report:
+      enabled: true
+      path: /opt/fast-report/test
 
 rsync:
   enabled: true
   commands:
     - "rsync -avz /opt/backups/docker/ user@remote-server:/backup/docker/"
 ```
+
+### Configuration for SQL Dump Only Backups
+
+Each database can be configured with the `only_sql_dump` option:
+
+- `only_sql_dump: false` (default): Backs up both SQL dump and filestore
+- `only_sql_dump: true`: Backs up only the SQL dump, skips the filestore
+
+For SQL-only backups, the filename is appended with `_sql_only` to indicate the content:
+- Example: `database_container_dockerbackup_2025-04-09_16-34-50_sql_only.7z`
+
+This option is particularly useful for:
+- Databases with very large filestores where regular backup of just the database is sufficient
+- Temporary copies where the filestore is not needed
+- Situations where more frequent SQL dumps but less frequent full backups are desired
 
 ### Compression Configuration
 

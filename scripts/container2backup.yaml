@@ -37,6 +37,7 @@ databases:
     sql_container: live-db
     data_container: live-odoo
     retention_days: 14
+    only_sql_dump: false  # Optional: If true, only the SQL dump is backed up, filestore is skipped
     fast_report:  # Optional fast-report configuration per database
       enabled: true
       path: /opt/fast-report/live
@@ -45,6 +46,7 @@ databases:
     sql_container: test-db
     data_container: test-odoo
     retention_days: 14
+    only_sql_dump: true  # Example: For this database, only back up the SQL dump, skip filestore
     fast_report:
       enabled: true
       path: /opt/fast-report/test 
