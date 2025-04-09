@@ -1,8 +1,8 @@
 #!/usr/bin/python3
 # -*- coding: utf-8 -*-
 # Script for organizing Docker servers
-# Version 6.6.1
-# Date 08.04.2025
+# Version 6.6.2
+# Date 09.04.2025
 ##############################################################################
 #
 #    Shell Script for devops
@@ -784,7 +784,7 @@ def get_7zip_version() -> Optional[tuple]:
             result = subprocess.run(['7z', '--help'], capture_output=True, text=True)
             if result.returncode == 0:
                 # 7-Zip output format: "7-Zip [64] 16.02"
-                version_line = result.stdout.split('\n')[1].strip()
+                version_line = result.stdout.split('\n')[1].strip() if len(result.stdout.split('\n')) > 1 else result.stdout.strip()
                 version_match = re.search(r'\d+\.\d+', version_line)
                 if version_match:
                     version_str = version_match.group(0)
@@ -794,6 +794,18 @@ def get_7zip_version() -> Optional[tuple]:
         except Exception:
             # Ignore errors from the old version
             pass
+
+    # Check using dpkg if we're on Debian/Ubuntu
+    try:
+        if is_debian_or_ubuntu():
+            result = subprocess.run(['dpkg', '-s', '7zip'], capture_output=True, text=True)
+            if result.returncode == 0:
+                version_match = re.search(r'Version: (\d+\.\d+)', result.stdout)
+                if version_match:
+                    version_str = version_match.group(1)
+                    # Convert to tuple (major, minor, 0)
+                    major, minor = map(int, version_str.split('.'))
+                    return (major, minor, 0)
     except Exception as e:
         logger.error(f"Error getting 7-Zip version: {str(e)}")
     return None
@@ -801,6 +813,25 @@ def get_7zip_version() -> Optional[tuple]:
 def check_7zip_version() -> bool:
     """Check if 7-Zip is installed and meets minimum version requirements"""
     try:
+        # First check if the package is installed via dpkg
+        if is_package_installed("7zip"):
+            version = get_7zip_version()
+            if version:
+                version_str = '.'.join(map(str, version[:2]))  # Only show major.minor
+                logger.info(f"Current 7-Zip version: {version_str}")
+                # Minimum required version for newer 7zip
+                min_version = (21, 0, 0)  # 21.x is newer and preferred
+                
+                if version < min_version:
+                    logger.warning(f"7-Zip version {version_str} is outdated. Minimum required version is {'.'.join(map(str, min_version[:2]))}")
+                    return False
+                return True
+            else:
+                # Package is installed but version detection failed
+                logger.info("7-Zip package is installed, but version detection failed. Assuming it's valid.")
+                return True
+        
+        # If we get here, check using the normal version detection
         version = get_7zip_version()
         if not version:
             logger.error("7-Zip is not installed")
