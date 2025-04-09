@@ -43,20 +43,12 @@ def check_compression_tools():
         dict: Dictionary containing availability of compression tools
     """
     tools = {
-        '7z': False,
         '7zz': False,
         'zip': False,
         'gzip': False,
         'zstd': False
     }
     
-    # Check 7z
-    try:
-        subprocess.run(['7z', '--help'], stdout=subprocess.PIPE, stderr=subprocess.PIPE, check=False)
-        tools['7z'] = True
-    except (subprocess.SubprocessError, FileNotFoundError):
-        pass
-        
     # Check 7zz (newer 7-Zip)
     try:
         subprocess.run(['7zz', '--help'], stdout=subprocess.PIPE, stderr=subprocess.PIPE, check=False)
@@ -89,19 +81,23 @@ def check_compression_tools():
 
 def compress_with_7zip(source_dir, output_file):
     """
-    Compresses a directory using 7-Zip
+    DEPRECATED: This function is kept for backward compatibility only.
+    Please use the compress_directory function instead.
     """
+    print("WARNING: Using deprecated function compress_with_7zip.")
+    print("This function will be removed in a future version.")
+    
     try:
-        # Check if 7z is installed
-        subprocess.run(['7z', '--help'], stdout=subprocess.PIPE, stderr=subprocess.PIPE, check=False)
+        # Check if 7zz is installed
+        subprocess.run(['7zz', '--help'], stdout=subprocess.PIPE, stderr=subprocess.PIPE, check=False)
         
-        # Compress with 7-Zip
-        cmd = ['7z', 'a', '-tzip', output_file, source_dir]
+        # Compress with 7zz
+        cmd = ['7zz', 'a', '-tzip', output_file, source_dir]
         subprocess.run(cmd, check=True)
         return True
     except (subprocess.SubprocessError, FileNotFoundError):
-        print("Error: 7-Zip is not installed or command failed.")
-        print("Please install 7-Zip with: sudo apt-get install p7zip-full")
+        print("Error: 7zz is not installed or command failed.")
+        print("Please install 7-Zip with a package that provides 7zz.")
         return False
 
 def cleanup_backups(cleanup_path, cutoff_timestamp):
@@ -441,7 +437,6 @@ def compress_directory(source_dir, output_file_base, config):
     compression_config = config.get('defaults', {}).get('compression', {})
     compression_format = compression_config.get('format', '7z').lower()
     compression_level = compression_config.get('level', 5)
-    use_7zz = compression_config.get('use_7zz', False)
     
     # Check available compression tools
     tools = check_compression_tools()
@@ -449,23 +444,27 @@ def compress_directory(source_dir, output_file_base, config):
     encryption_enabled, password = get_encryption_settings()
     output_file = None
     
+    # Wenn Verschlüsselung aktiviert ist, aber nicht 7z-Format verwendet wird
+    if encryption_enabled and compression_format != '7z':
+        print(f"WARNING: Encryption is only supported with 7z format. Your selected format is '{compression_format}'.")
+        print("Switching to 7z format to support encryption.")
+        compression_format = '7z'
+    
     try:
         if compression_format == '7z':
-            # Use 7zz if configured and available, otherwise fall back to 7z
-            cmd_7z = '7zz' if use_7zz and tools['7zz'] else '7z'
-            
-            if not tools['7zz'] and not tools['7z']:
-                print("Error: Neither 7z nor 7zz is installed.")
-                print("Please install 7-Zip with: sudo apt-get install p7zip-full")
+            # Überprüfen, ob 7zz verfügbar ist
+            if not tools['7zz']:
+                print("Error: 7zz command is not installed.")
+                print("Please install a newer version of 7-Zip that provides the 7zz command.")
                 return None
                 
             output_file = f"{output_file_base}.7z"
-            zip_args = [cmd_7z, 'a', f'-mx={compression_level}', '-t7z']
+            zip_args = ['7zz', 'a', f'-mx={compression_level}', '-t7z']
             if encryption_enabled:
                 zip_args.extend(['-p' + password, '-mhe=on'])
             zip_args.extend([output_file, source_dir + "/*"])
             
-            print(f"Creating 7z archive with {cmd_7z}: {output_file}")
+            print(f"Creating 7z archive with 7zz: {output_file}")
             result = subprocess.run(zip_args, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
             
         elif compression_format == 'zip':
@@ -476,31 +475,18 @@ def compress_directory(source_dir, output_file_base, config):
                 
             output_file = f"{output_file_base}.zip"
             
-            # For ZIP with encryption, we use 7z if available because standard zip doesn't support strong encryption
-            if encryption_enabled and (tools['7z'] or tools['7zz']):
-                cmd_7z = '7zz' if use_7zz and tools['7zz'] else '7z'
-                zip_args = [cmd_7z, 'a', f'-mx={compression_level}', '-tzip']
-                if encryption_enabled:
-                    zip_args.extend(['-p' + password, '-mem=AES256'])
-                zip_args.extend([output_file, source_dir + "/*"])
+            # Wenn Verschlüsselung gefordert wurde, nochmal warnen
+            if encryption_enabled:
+                print("ERROR: Encryption is only supported with 7z format.")
+                print("Please change your compression format to 7z in the configuration.")
+                return None
                 
-                print(f"Creating encrypted ZIP archive with {cmd_7z}: {output_file}")
-                result = subprocess.run(zip_args, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
-            else:
-                # Standard zip command (no encryption or basic encryption)
-                if encryption_enabled:
-                    print("Warning: Standard ZIP encryption is weak. Consider using 7z format for strong encryption.")
-                    # Create temporary password file for zip
-                    pwd_file = tempfile.NamedTemporaryFile(delete=False)
-                    pwd_file.write(password.encode())
-                    pwd_file.close()
-                    
-                    zip_cmd = f"cd '{os.path.dirname(source_dir)}' && zip -r -{compression_level} '{output_file}' '{os.path.basename(source_dir)}/*' -P {password}"
-                else:
-                    zip_cmd = f"cd '{os.path.dirname(source_dir)}' && zip -r -{compression_level} '{output_file}' '{os.path.basename(source_dir)}/*'"
-                
-                print(f"Creating ZIP archive: {output_file}")
-                result = subprocess.run(zip_cmd, shell=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+            # Standard zip command
+            # Wir wechseln ins Quellverzeichnis selbst und zippen alles mit einem Punkt (.)
+            zip_cmd = f"cd '{source_dir}' && zip -r -{compression_level} '{output_file}' ."
+            
+            print(f"Creating ZIP archive: {output_file}")
+            result = subprocess.run(zip_cmd, shell=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
         
         elif compression_format == 'gzip':
             if not tools['gzip']:
@@ -508,29 +494,54 @@ def compress_directory(source_dir, output_file_base, config):
                 print("Please install gzip with: sudo apt-get install gzip")
                 return None
                 
+            # Wenn Verschlüsselung gefordert wurde, nochmal warnen
+            if encryption_enabled:
+                print("ERROR: Encryption is only supported with 7z format.")
+                print("Please change your compression format to 7z in the configuration.")
+                return None
+                
             # gzip requires tar to archive directory first
             output_file = f"{output_file_base}.tar.gz"
             
-            if encryption_enabled:
-                print("Warning: gzip format does not support encryption. The backup will not be encrypted.")
+            # Separate Befehle für tar und gzip mit korrekter Kompressionsstufe
+            # Für neuere tar-Versionen, die gzip-Kompression unterstützen
+            if platform.system() == 'Darwin':  # macOS hat eine ältere tar-Version
+                # Auf macOS verwenden wir einen zweistufigen Prozess
+                temp_tar = f"{output_file_base}.tar"
+                tar_cmd = f"tar -cf '{temp_tar}' -C '{os.path.dirname(source_dir)}' '{os.path.basename(source_dir)}'"
+                print(f"Creating tar archive: {temp_tar}")
+                tar_result = subprocess.run(tar_cmd, shell=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+                
+                if tar_result.returncode == 0:
+                    # Komprimieren mit gzip
+                    gzip_cmd = f"gzip -{compression_level} -f '{temp_tar}'"
+                    print(f"Compressing with gzip (level {compression_level}): {output_file}")
+                    result = subprocess.run(gzip_cmd, shell=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+                else:
+                    print(f"Error creating tar archive: {temp_tar}")
+                    if tar_result.stderr:
+                        print(f"Error details: {tar_result.stderr.decode() if hasattr(tar_result.stderr, 'decode') else tar_result.stderr}")
+                    return None
+            else:
+                # Auf Linux-Systemen können wir direkt tar mit gzip-Kompression verwenden
+                tar_cmd = f"tar -czf '{output_file}' -C '{os.path.dirname(source_dir)}' '{os.path.basename(source_dir)}'"
+                print(f"Creating tar.gz archive: {output_file}")
+                result = subprocess.run(tar_cmd, shell=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
             
-            # Create tar archive and pipe to gzip
-            tar_gzip_cmd = f"tar -C '{os.path.dirname(source_dir)}' -c{compression_level}zf '{output_file}' '{os.path.basename(source_dir)}'"
-            
-            print(f"Creating tar.gz archive: {output_file}")
-            result = subprocess.run(tar_gzip_cmd, shell=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
-        
         elif compression_format == 'zstd':
             if not tools['zstd']:
                 print("Error: zstd command is not installed.")
                 print("Please install zstd with: sudo apt-get install zstd")
                 return None
                 
+            # Wenn Verschlüsselung gefordert wurde, nochmal warnen
+            if encryption_enabled:
+                print("ERROR: Encryption is only supported with 7z format.")
+                print("Please change your compression format to 7z in the configuration.")
+                return None
+                
             # zstd requires tar to archive directory first
             output_file = f"{output_file_base}.tar.zst"
-            
-            if encryption_enabled:
-                print("Warning: zstd format does not support encryption. The backup will not be encrypted.")
             
             # Create tar archive and pipe to zstd
             tar_zstd_cmd = f"tar -C '{os.path.dirname(source_dir)}' -cf - '{os.path.basename(source_dir)}' | zstd -{compression_level} -o '{output_file}'"

@@ -8,9 +8,8 @@ defaults:
   backup_path: /opt/backups
   temp_path: /tmp/odoo_backup  # Temporary path for backup operations
   compression:
-    format: "7z"     # Compression format: 7z, zip, gzip, zstd (recommended: 7z)
+    format: "7z"     # Compression format: 7z, zip, gzip, zstd (Note: encryption requires 7z format)
     level: 5         # Compression level (0-9, default: 5)
-    use_7zz: false   # Use newer 7zz command instead of 7z if available
 
 # System-wide service backups (independent from databases)
 services:
