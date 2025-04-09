@@ -1,8 +1,8 @@
 #!/usr/bin/python3
 # -*- coding: utf-8 -*-
 # Script to backup Odoo database including FileStore under Docker
-# Version 4.0.0
-# Date 19.03.2025
+# Version 4.1.0
+# Date 19.04.2025
 ################################################################################
 #    Shell Script for Odoo, Open Source Management Solution
 #    Copyright (C) 2014-now Equitania Software GmbH(<http://www.equitania.de>).
@@ -33,6 +33,59 @@ import yaml  # Add this import at the top
 from dotenv import load_dotenv
 import tempfile
 import shutil
+import platform
+
+def check_compression_tools():
+    """
+    Checks which compression tools are available
+    
+    Returns:
+        dict: Dictionary containing availability of compression tools
+    """
+    tools = {
+        '7z': False,
+        '7zz': False,
+        'zip': False,
+        'gzip': False,
+        'zstd': False
+    }
+    
+    # Check 7z
+    try:
+        subprocess.run(['7z', '--help'], stdout=subprocess.PIPE, stderr=subprocess.PIPE, check=False)
+        tools['7z'] = True
+    except (subprocess.SubprocessError, FileNotFoundError):
+        pass
+        
+    # Check 7zz (newer 7-Zip)
+    try:
+        subprocess.run(['7zz', '--help'], stdout=subprocess.PIPE, stderr=subprocess.PIPE, check=False)
+        tools['7zz'] = True
+    except (subprocess.SubprocessError, FileNotFoundError):
+        pass
+        
+    # Check zip
+    try:
+        subprocess.run(['zip', '--help'], stdout=subprocess.PIPE, stderr=subprocess.PIPE, check=False)
+        tools['zip'] = True
+    except (subprocess.SubprocessError, FileNotFoundError):
+        pass
+        
+    # Check gzip
+    try:
+        subprocess.run(['gzip', '--help'], stdout=subprocess.PIPE, stderr=subprocess.PIPE, check=False)
+        tools['gzip'] = True
+    except (subprocess.SubprocessError, FileNotFoundError):
+        pass
+        
+    # Check zstd
+    try:
+        subprocess.run(['zstd', '--help'], stdout=subprocess.PIPE, stderr=subprocess.PIPE, check=False)
+        tools['zstd'] = True
+    except (subprocess.SubprocessError, FileNotFoundError):
+        pass
+        
+    return tools
 
 def compress_with_7zip(source_dir, output_file):
     """
@@ -64,10 +117,23 @@ def cleanup_backups(cleanup_path, cutoff_timestamp):
     
     print(f"Checking backups in {cleanup_path} with cutoff date: {datetime.datetime.fromtimestamp(cutoff_timestamp).strftime('%Y-%m-%d %H:%M:%S')}")
     
+    # Define supported extensions to check
+    extensions = ['.7z', '.zip', '.tar.gz', '.tar.zst']
+    
     files = os.listdir(cleanup_path)
     for file in files:
         file_path = os.path.join(cleanup_path, file)
         if os.path.isfile(file_path):
+            # Check if file has any of the supported extensions
+            has_supported_ext = False
+            for ext in extensions:
+                if file.endswith(ext):
+                    has_supported_ext = True
+                    break
+                    
+            if not has_supported_ext:
+                continue
+                
             checked_count += 1
             file_mtime = os.path.getmtime(file_path)  # Use modification time instead of creation time
             file_date = datetime.datetime.fromtimestamp(file_mtime).strftime('%Y-%m-%d %H:%M:%S')
@@ -103,9 +169,8 @@ def create_backup(db_name, db_user, sql_container, data_container, backup_path, 
     Creates a backup with proper file structure
     """
     docker_backup_path = os.path.join(backup_path, 'docker')
-    output_file = f'{docker_backup_path}/{db_name}_{data_container}_dockerbackup_{timestamp}.7z'
-    encryption_enabled, password = get_encryption_settings()
-    compression_level = config.get('defaults', {}).get('compression', {}).get('level', 5)
+    # Set output_file_base without extension as the extension will be determined by the compression format
+    output_file_base = f'{docker_backup_path}/{db_name}_{data_container}_dockerbackup_{timestamp}'
     
     # Use configured temp path or fall back to system default
     temp_base = os.path.expandvars(os.path.expanduser(
@@ -187,21 +252,12 @@ def create_backup(db_name, db_user, sql_container, data_container, backup_path, 
                         print("The process was killed due to memory constraints.")
                         print("Consider running the backup with nohup or in a screen/tmux session with lower priority.")
         
-        # 3. Create 7z archive from temp directory
-        print(f"Creating final archive {output_file}")
-        zip_args = ['7z', 'a', f'-mx={compression_level}', '-t7z']
-        if encryption_enabled:
-            zip_args.extend(['-p' + password, '-mhe=on'])
-        zip_args.extend([output_file, temp_dir + "/*"])
+        # 3. Compress directory with configured format
+        output_file = compress_directory(temp_dir, output_file_base, config)
         
-        result = subprocess.run(zip_args, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
-        
-        if result.returncode != 0:
-            print(f"Error creating archive for {db_name}")
-            if result.stderr:
-                print(f"7z error: {result.stderr.decode()}")
+        if not output_file:
             return False
-            
+        
         print(f"Backup for {db_name} completed successfully")
         return True
         
@@ -228,29 +284,20 @@ def backup_additional_service(service_config, base_backup_path, timestamp):
 
     backup_subdir = service_config['backup_path']
     backup_path = os.path.join(base_backup_path, backup_subdir)
-    encryption_enabled, password = get_encryption_settings()
     
     if not os.path.exists(backup_path):
         os.makedirs(backup_path, exist_ok=True)
 
-    output_file = f'{backup_path}/{backup_subdir}_{timestamp}.7z'
-    
-    # Build 7zip command with compression level
-    compression_level = config.get('defaults', {}).get('compression', {}).get('level', 5)
-    zip_args = ['7z', 'a', f'-mx={compression_level}', '-t7z']
-    if encryption_enabled:
-        zip_args.extend(['-p' + password, '-mhe=on'])
-    zip_args.extend([output_file, source_path])
+    # Create output file base (without extension)
+    output_file_base = f'{backup_path}/{backup_subdir}_{timestamp}'
     
     print(f"Creating backup for {backup_subdir}")
-    result = subprocess.run(zip_args, capture_output=True, text=True)
+    output_file = compress_directory(source_path, output_file_base, config)
     
-    if result.returncode == 0:
-        print(f"Backup created for {backup_subdir}" + (" (encrypted)" if encryption_enabled else ""))
+    if output_file:
+        print(f"Backup created for {backup_subdir}")
     else:
         print(f"Error creating backup for {backup_subdir}")
-        if result.stderr:
-            print(f"Error details: {result.stderr}")
 
 def check_paths(config):
     """
@@ -313,22 +360,14 @@ def backup_fast_report(db_name, fast_report_config, backup_path, timestamp):
         return False
         
     docker_backup_path = os.path.join(backup_path, 'docker')
-    output_file = f'{docker_backup_path}/{db_name}_FastReport_{timestamp}.7z'
-    encryption_enabled, password = get_encryption_settings()
-    compression_level = config.get('defaults', {}).get('compression', {}).get('level', 5)
+    # Create output file base (without extension)
+    output_file_base = f'{docker_backup_path}/{db_name}_FastReport_{timestamp}'
     
     print(f"Creating FastReport backup for {db_name} from {report_path}")
-    zip_args = ['7z', 'a', f'-mx={compression_level}', '-t7z']
-    if encryption_enabled:
-        zip_args.extend(['-p' + password, '-mhe=on'])
-    zip_args.extend([output_file, report_path])
     
-    result = subprocess.run(zip_args, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+    output_file = compress_directory(report_path, output_file_base, config)
     
-    if result.returncode != 0:
-        print(f"Error creating FastReport backup for {db_name}")
-        if result.stderr:
-            print(f"7z error: {result.stderr.decode()}")
+    if not output_file:
         return False
         
     print(f"FastReport backup for {db_name} completed successfully")
@@ -348,7 +387,26 @@ def cleanup_backups_by_pattern(cleanup_path, cutoff_timestamp, pattern):
     print(f"Checking backups matching '{pattern}' in {cleanup_path}")
     print(f"Cutoff date: {datetime.datetime.fromtimestamp(cutoff_timestamp).strftime('%Y-%m-%d %H:%M:%S')}")
     
-    files = [f for f in os.listdir(cleanup_path) if f.startswith(pattern)]
+    # Define supported extensions to check
+    extensions = ['.7z', '.zip', '.tar.gz', '.tar.zst']
+    
+    # Get all files in directory
+    all_files = os.listdir(cleanup_path)
+    
+    # Filter files that match the pattern and have one of the supported extensions
+    files = []
+    for file in all_files:
+        if file.startswith(pattern):
+            # Check if file has any of the supported extensions
+            has_supported_ext = False
+            for ext in extensions:
+                if file.endswith(ext):
+                    has_supported_ext = True
+                    break
+            
+            if has_supported_ext:
+                files.append(file)
+    
     for file in files:
         file_path = os.path.join(cleanup_path, file)
         if os.path.isfile(file_path):
@@ -367,6 +425,137 @@ def cleanup_backups_by_pattern(cleanup_path, cutoff_timestamp, pattern):
                 print(f"Keeping:  {file} (date: {file_date})")
     
     print(f"Cleanup completed: {deleted_count} files deleted out of {checked_count} checked\n")
+
+def compress_directory(source_dir, output_file_base, config):
+    """
+    Compresses a directory using the configured compression format
+    
+    Args:
+        source_dir: Directory to compress
+        output_file_base: Output file path without extension
+        config: Configuration dictionary
+        
+    Returns:
+        str: Path to the compressed file
+    """
+    compression_config = config.get('defaults', {}).get('compression', {})
+    compression_format = compression_config.get('format', '7z').lower()
+    compression_level = compression_config.get('level', 5)
+    use_7zz = compression_config.get('use_7zz', False)
+    
+    # Check available compression tools
+    tools = check_compression_tools()
+    
+    encryption_enabled, password = get_encryption_settings()
+    output_file = None
+    
+    try:
+        if compression_format == '7z':
+            # Use 7zz if configured and available, otherwise fall back to 7z
+            cmd_7z = '7zz' if use_7zz and tools['7zz'] else '7z'
+            
+            if not tools['7zz'] and not tools['7z']:
+                print("Error: Neither 7z nor 7zz is installed.")
+                print("Please install 7-Zip with: sudo apt-get install p7zip-full")
+                return None
+                
+            output_file = f"{output_file_base}.7z"
+            zip_args = [cmd_7z, 'a', f'-mx={compression_level}', '-t7z']
+            if encryption_enabled:
+                zip_args.extend(['-p' + password, '-mhe=on'])
+            zip_args.extend([output_file, source_dir + "/*"])
+            
+            print(f"Creating 7z archive with {cmd_7z}: {output_file}")
+            result = subprocess.run(zip_args, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+            
+        elif compression_format == 'zip':
+            if not tools['zip']:
+                print("Error: zip command is not installed.")
+                print("Please install zip with: sudo apt-get install zip")
+                return None
+                
+            output_file = f"{output_file_base}.zip"
+            
+            # For ZIP with encryption, we use 7z if available because standard zip doesn't support strong encryption
+            if encryption_enabled and (tools['7z'] or tools['7zz']):
+                cmd_7z = '7zz' if use_7zz and tools['7zz'] else '7z'
+                zip_args = [cmd_7z, 'a', f'-mx={compression_level}', '-tzip']
+                if encryption_enabled:
+                    zip_args.extend(['-p' + password, '-mem=AES256'])
+                zip_args.extend([output_file, source_dir + "/*"])
+                
+                print(f"Creating encrypted ZIP archive with {cmd_7z}: {output_file}")
+                result = subprocess.run(zip_args, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+            else:
+                # Standard zip command (no encryption or basic encryption)
+                if encryption_enabled:
+                    print("Warning: Standard ZIP encryption is weak. Consider using 7z format for strong encryption.")
+                    # Create temporary password file for zip
+                    pwd_file = tempfile.NamedTemporaryFile(delete=False)
+                    pwd_file.write(password.encode())
+                    pwd_file.close()
+                    
+                    zip_cmd = f"cd '{os.path.dirname(source_dir)}' && zip -r -{compression_level} '{output_file}' '{os.path.basename(source_dir)}/*' -P {password}"
+                else:
+                    zip_cmd = f"cd '{os.path.dirname(source_dir)}' && zip -r -{compression_level} '{output_file}' '{os.path.basename(source_dir)}/*'"
+                
+                print(f"Creating ZIP archive: {output_file}")
+                result = subprocess.run(zip_cmd, shell=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+        
+        elif compression_format == 'gzip':
+            if not tools['gzip']:
+                print("Error: gzip command is not installed.")
+                print("Please install gzip with: sudo apt-get install gzip")
+                return None
+                
+            # gzip requires tar to archive directory first
+            output_file = f"{output_file_base}.tar.gz"
+            
+            if encryption_enabled:
+                print("Warning: gzip format does not support encryption. The backup will not be encrypted.")
+            
+            # Create tar archive and pipe to gzip
+            tar_gzip_cmd = f"tar -C '{os.path.dirname(source_dir)}' -c{compression_level}zf '{output_file}' '{os.path.basename(source_dir)}'"
+            
+            print(f"Creating tar.gz archive: {output_file}")
+            result = subprocess.run(tar_gzip_cmd, shell=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+        
+        elif compression_format == 'zstd':
+            if not tools['zstd']:
+                print("Error: zstd command is not installed.")
+                print("Please install zstd with: sudo apt-get install zstd")
+                return None
+                
+            # zstd requires tar to archive directory first
+            output_file = f"{output_file_base}.tar.zst"
+            
+            if encryption_enabled:
+                print("Warning: zstd format does not support encryption. The backup will not be encrypted.")
+            
+            # Create tar archive and pipe to zstd
+            tar_zstd_cmd = f"tar -C '{os.path.dirname(source_dir)}' -cf - '{os.path.basename(source_dir)}' | zstd -{compression_level} -o '{output_file}'"
+            
+            print(f"Creating tar.zst archive: {output_file}")
+            result = subprocess.run(tar_zstd_cmd, shell=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+        
+        else:
+            print(f"Error: Unsupported compression format: {compression_format}")
+            print("Supported formats: 7z, zip, gzip, zstd")
+            return None
+        
+        if result.returncode != 0:
+            print(f"Error creating archive: {output_file}")
+            if result.stderr:
+                error_text = result.stderr.decode() if hasattr(result.stderr, 'decode') else str(result.stderr)
+                print(f"Error details: {error_text}")
+            return None
+            
+        print(f"Archive created successfully: {output_file}")
+        return output_file
+        
+    except Exception as e:
+        print(f"Unexpected error during compression: {str(e)}")
+        return None
 
 # Main script
 base_path = expanduser("~")

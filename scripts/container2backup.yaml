@@ -1,5 +1,5 @@
 # Backup configuration for Odoo databases
-# Date: 19.03.2025
+# Date: 19.04.2025
 
 # Default settings
 defaults:
@@ -8,7 +8,9 @@ defaults:
   backup_path: /opt/backups
   temp_path: /tmp/odoo_backup  # Temporary path for backup operations
   compression:
-    level: 5  # 7-Zip compression level (0-9, default: 5)
+    format: "7z"     # Compression format: 7z, zip, gzip, zstd (recommended: 7z)
+    level: 5         # Compression level (0-9, default: 5)
+    use_7zz: false   # Use newer 7zz command instead of 7z if available
 
 # System-wide service backups (independent from databases)
 services:
