@@ -1,4 +1,4 @@
-
+#!/usr/bin/python3
 # -*- coding: utf-8 -*-
 # Script for organizing Docker servers
 # Version 6.6.3
@@ -65,7 +65,7 @@ def print_header() -> None:
 ║                                             ║
 ║      getScripts.py - Docker Server Utility  ║
 ║                                             ║
-║      Version: {SCRIPT_VERSION}      Date: {SCRIPT_DATE}  ║
+║      Version: {SCRIPT_VERSION}      Date: {SCRIPT_DATE}   ║
 ║                                             ║
 ╚═════════════════════════════════════════════╝
 """
