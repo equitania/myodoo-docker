@@ -470,12 +470,18 @@ def compress_directory(source_dir, output_file_base, config, only_sql_dump=False
     Returns:
         str: Path to the compressed file
     """
+    print(f"Starting compression process for {source_dir}")
+    print(f"SQL-only mode: {only_sql_dump}")
+    
     compression_config = config.get('defaults', {}).get('compression', {})
     compression_format = compression_config.get('format', '7z').lower()
     compression_level = compression_config.get('level', 5)
     
+    print(f"Using compression format: {compression_format}, level: {compression_level}")
+    
     # Check available compression tools
     tools = check_compression_tools()
+    print(f"Available compression tools: {', '.join([tool for tool, available in tools.items() if available])}")
     
     encryption_enabled, password = get_encryption_settings()
     output_file = None
@@ -494,7 +500,16 @@ def compress_directory(source_dir, output_file_base, config, only_sql_dump=False
             sql_dump_file = os.path.join(source_dir, "dump.sql")
             if not os.path.exists(sql_dump_file):
                 print(f"Error: SQL dump file not found at {sql_dump_file}")
+                # Check directory contents
+                print(f"Directory contents of {source_dir}:")
+                try:
+                    for item in os.listdir(source_dir):
+                        print(f"  - {item}")
+                except Exception as e:
+                    print(f"  Could not list directory: {str(e)}")
                 return None
+            else:
+                print(f"Found SQL dump file: {sql_dump_file}, size: {os.path.getsize(sql_dump_file)} bytes")
                 
         if compression_format == '7z':
             # Überprüfen, ob 7zz verfügbar ist
@@ -511,8 +526,10 @@ def compress_directory(source_dir, output_file_base, config, only_sql_dump=False
             # In SQL-only mode, only include dump.sql file
             if only_sql_dump:
                 zip_args.extend([output_file, os.path.join(source_dir, "dump.sql")])
+                print(f"7z command for SQL-only mode: {' '.join(zip_args)}")
             else:
                 zip_args.extend([output_file, source_dir + "/*"])
+                print(f"7z command for full backup: {' '.join(zip_args)}")
             
             print(f"Creating 7z archive with 7zz: {output_file}")
             result = subprocess.run(zip_args, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
@@ -528,10 +545,12 @@ def compress_directory(source_dir, output_file_base, config, only_sql_dump=False
             # In SQL-only mode, only include dump.sql file
             if only_sql_dump:
                 zip_cmd = f"cd '{source_dir}' && zip -{compression_level} '{output_file}' dump.sql"
+                print(f"Zip command for SQL-only mode: {zip_cmd}")
             else:
                 # Standard zip command
                 # Wir wechseln ins Quellverzeichnis selbst und zippen alles mit einem Punkt (.)
                 zip_cmd = f"cd '{source_dir}' && zip -r -{compression_level} '{output_file}' ."
+                print(f"Zip command for full backup: {zip_cmd}")
             
             print(f"Creating ZIP archive: {output_file}")
             result = subprocess.run(zip_cmd, shell=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
@@ -546,6 +565,7 @@ def compress_directory(source_dir, output_file_base, config, only_sql_dump=False
             if only_sql_dump:
                 output_file = f"{output_file_base}.sql.gz"
                 gzip_cmd = f"gzip -{compression_level} -c '{os.path.join(source_dir, 'dump.sql')}' > '{output_file}'"
+                print(f"Gzip command for SQL-only mode: {gzip_cmd}")
                 print(f"Creating gzipped SQL file: {output_file}")
                 result = subprocess.run(gzip_cmd, shell=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
             else:
@@ -559,12 +579,14 @@ def compress_directory(source_dir, output_file_base, config, only_sql_dump=False
                     temp_tar = f"{output_file_base}.tar"
                     tar_cmd = f"tar -cf '{temp_tar}' -C '{os.path.dirname(source_dir)}' '{os.path.basename(source_dir)}'"
                     print(f"Creating tar archive: {temp_tar}")
+                    print(f"Tar command: {tar_cmd}")
                     tar_result = subprocess.run(tar_cmd, shell=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
                     
                     if tar_result.returncode == 0:
                         # Komprimieren mit gzip
                         gzip_cmd = f"gzip -{compression_level} -f '{temp_tar}'"
                         print(f"Compressing with gzip (level {compression_level}): {output_file}")
+                        print(f"Gzip command: {gzip_cmd}")
                         result = subprocess.run(gzip_cmd, shell=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
                     else:
                         print(f"Error creating tar archive: {temp_tar}")
@@ -575,6 +597,7 @@ def compress_directory(source_dir, output_file_base, config, only_sql_dump=False
                     # Auf Linux-Systemen können wir direkt tar mit gzip-Kompression verwenden
                     tar_cmd = f"tar -czf '{output_file}' -C '{os.path.dirname(source_dir)}' '{os.path.basename(source_dir)}'"
                     print(f"Creating tar.gz archive: {output_file}")
+                    print(f"Tar command: {tar_cmd}")
                     result = subprocess.run(tar_cmd, shell=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
             
         elif compression_format == 'zstd':
@@ -587,6 +610,7 @@ def compress_directory(source_dir, output_file_base, config, only_sql_dump=False
             if only_sql_dump:
                 output_file = f"{output_file_base}.sql.zst"
                 zstd_cmd = f"zstd -{compression_level} -c '{os.path.join(source_dir, 'dump.sql')}' > '{output_file}'"
+                print(f"Zstd command for SQL-only mode: {zstd_cmd}")
                 print(f"Creating zstd compressed SQL file: {output_file}")
                 result = subprocess.run(zstd_cmd, shell=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
             else:
@@ -595,7 +619,7 @@ def compress_directory(source_dir, output_file_base, config, only_sql_dump=False
                 
                 # Create tar archive and pipe to zstd
                 tar_zstd_cmd = f"tar -C '{os.path.dirname(source_dir)}' -cf - '{os.path.basename(source_dir)}' | zstd -{compression_level} -o '{output_file}'"
-                
+                print(f"Tar+zstd command: {tar_zstd_cmd}")
                 print(f"Creating tar.zst archive: {output_file}")
                 result = subprocess.run(tar_zstd_cmd, shell=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
         
@@ -611,15 +635,45 @@ def compress_directory(source_dir, output_file_base, config, only_sql_dump=False
                 print(f"Error details: {error_text}")
             return None
             
-        print(f"Archive created successfully: {output_file}")
-        return output_file
+        # Check if output file was created and get its size
+        if os.path.exists(output_file):
+            file_size = os.path.getsize(output_file)
+            print(f"Archive created successfully: {output_file} (size: {file_size} bytes)")
+            return output_file
+        else:
+            print(f"Error: Output file {output_file} was not created")
+            return None
         
     except Exception as e:
         print(f"Unexpected error during compression: {str(e)}")
+        # Print detailed traceback
+        import traceback
+        print(traceback.format_exc())
         return None
 
 # Main script
 if __name__ == "__main__":
+    # Display version information
+    print("===================================================")
+    print("Odoo Docker Backup System")
+    print("Version: 4.3.0")
+    print("Date: 19.04.2025")
+    print("===================================================")
+    
+    # Display system information
+    print(f"Operating System: {platform.system()} {platform.release()}")
+    print(f"Python Version: {platform.python_version()}")
+    try:
+        # Try to get more detailed OS information
+        if platform.system() == 'Linux':
+            with open('/etc/os-release', 'r') as f:
+                os_info = f.read()
+            print(f"OS Release: \n{os_info}")
+        print(f"Machine: {platform.machine()}")
+    except Exception as e:
+        print(f"Could not get detailed system information: {str(e)}")
+    print("===================================================")
+    
     # Parse command line arguments
     parser = argparse.ArgumentParser(description='Backup Odoo databases with Docker')
     parser.add_argument('--sql-only', action='store_true', 
