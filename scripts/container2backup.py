@@ -3,7 +3,7 @@
 # ==============================================================================
 # Title:            container2backup.py
 # Description:      Script to backup Odoo database including FileStore under Docker
-# Version:          4.2.0
+# Version:          4.3.0
 # Date:             19.04.2025
 # Author:           Equitania Software GmbH
 # ==============================================================================
@@ -281,8 +281,8 @@ def create_backup(db_name, db_user, sql_container, data_container, backup_path, 
                             print("The process was killed due to memory constraints.")
                             print("Consider running the backup with nohup or in a screen/tmux session with lower priority.")
         
-        # 3. Compress directory with configured format
-        output_file = compress_directory(temp_dir, output_file_base, config)
+        # 3. Compress directory with configured format - now pass the only_sql_dump parameter
+        output_file = compress_directory(temp_dir, output_file_base, config, only_sql_dump)
         
         if not output_file:
             return False
@@ -321,7 +321,8 @@ def backup_additional_service(service_config, base_backup_path, timestamp):
     output_file_base = f'{backup_path}/{backup_subdir}_{timestamp}'
     
     print(f"Creating backup for {backup_subdir}")
-    output_file = compress_directory(source_path, output_file_base, config)
+    # Service backups are not affected by SQL-only mode
+    output_file = compress_directory(source_path, output_file_base, config, only_sql_dump=False)
     
     if output_file:
         print(f"Backup created for {backup_subdir}")
@@ -394,7 +395,8 @@ def backup_fast_report(db_name, fast_report_config, backup_path, timestamp):
     
     print(f"Creating FastReport backup for {db_name} from {report_path}")
     
-    output_file = compress_directory(report_path, output_file_base, config)
+    # FastReport is never affected by SQL-only mode
+    output_file = compress_directory(report_path, output_file_base, config, only_sql_dump=False)
     
     if not output_file:
         return False
@@ -455,7 +457,7 @@ def cleanup_backups_by_pattern(cleanup_path, cutoff_timestamp, pattern):
     
     print(f"Cleanup completed: {deleted_count} files deleted out of {checked_count} checked\n")
 
-def compress_directory(source_dir, output_file_base, config):
+def compress_directory(source_dir, output_file_base, config, only_sql_dump=False):
     """
     Compresses a directory using the configured compression format
     
@@ -463,6 +465,7 @@ def compress_directory(source_dir, output_file_base, config):
         source_dir: Directory to compress
         output_file_base: Output file path without extension
         config: Configuration dictionary
+        only_sql_dump: If True, only include the SQL dump file, not the entire directory
         
     Returns:
         str: Path to the compressed file
@@ -485,6 +488,14 @@ def compress_directory(source_dir, output_file_base, config):
         encryption_enabled = False
     
     try:
+        # SQL-only mode: determine files to include
+        if only_sql_dump:
+            print("SQL-only mode: Compressing only the SQL dump file")
+            sql_dump_file = os.path.join(source_dir, "dump.sql")
+            if not os.path.exists(sql_dump_file):
+                print(f"Error: SQL dump file not found at {sql_dump_file}")
+                return None
+                
         if compression_format == '7z':
             # Überprüfen, ob 7zz verfügbar ist
             if not tools['7zz']:
@@ -496,7 +507,12 @@ def compress_directory(source_dir, output_file_base, config):
             zip_args = ['7zz', 'a', f'-mx={compression_level}', '-t7z']
             if encryption_enabled:
                 zip_args.extend(['-p' + password, '-mhe=on'])
-            zip_args.extend([output_file, source_dir + "/*"])
+                
+            # In SQL-only mode, only include dump.sql file
+            if only_sql_dump:
+                zip_args.extend([output_file, os.path.join(source_dir, "dump.sql")])
+            else:
+                zip_args.extend([output_file, source_dir + "/*"])
             
             print(f"Creating 7z archive with 7zz: {output_file}")
             result = subprocess.run(zip_args, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
@@ -509,9 +525,13 @@ def compress_directory(source_dir, output_file_base, config):
                 
             output_file = f"{output_file_base}.zip"
             
-            # Standard zip command
-            # Wir wechseln ins Quellverzeichnis selbst und zippen alles mit einem Punkt (.)
-            zip_cmd = f"cd '{source_dir}' && zip -r -{compression_level} '{output_file}' ."
+            # In SQL-only mode, only include dump.sql file
+            if only_sql_dump:
+                zip_cmd = f"cd '{source_dir}' && zip -{compression_level} '{output_file}' dump.sql"
+            else:
+                # Standard zip command
+                # Wir wechseln ins Quellverzeichnis selbst und zippen alles mit einem Punkt (.)
+                zip_cmd = f"cd '{source_dir}' && zip -r -{compression_level} '{output_file}' ."
             
             print(f"Creating ZIP archive: {output_file}")
             result = subprocess.run(zip_cmd, shell=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
@@ -522,33 +542,40 @@ def compress_directory(source_dir, output_file_base, config):
                 print("Please install gzip with: sudo apt-get install gzip")
                 return None
                 
-            # gzip requires tar to archive directory first
-            output_file = f"{output_file_base}.tar.gz"
-            
-            # Separate Befehle für tar und gzip mit korrekter Kompressionsstufe
-            # Für neuere tar-Versionen, die gzip-Kompression unterstützen
-            if platform.system() == 'Darwin':  # macOS hat eine ältere tar-Version
-                # Auf macOS verwenden wir einen zweistufigen Prozess
-                temp_tar = f"{output_file_base}.tar"
-                tar_cmd = f"tar -cf '{temp_tar}' -C '{os.path.dirname(source_dir)}' '{os.path.basename(source_dir)}'"
-                print(f"Creating tar archive: {temp_tar}")
-                tar_result = subprocess.run(tar_cmd, shell=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
-                
-                if tar_result.returncode == 0:
-                    # Komprimieren mit gzip
-                    gzip_cmd = f"gzip -{compression_level} -f '{temp_tar}'"
-                    print(f"Compressing with gzip (level {compression_level}): {output_file}")
-                    result = subprocess.run(gzip_cmd, shell=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
-                else:
-                    print(f"Error creating tar archive: {temp_tar}")
-                    if tar_result.stderr:
-                        print(f"Error details: {tar_result.stderr.decode() if hasattr(tar_result.stderr, 'decode') else tar_result.stderr}")
-                    return None
+            # SQL-only mode handled differently for gzip
+            if only_sql_dump:
+                output_file = f"{output_file_base}.sql.gz"
+                gzip_cmd = f"gzip -{compression_level} -c '{os.path.join(source_dir, 'dump.sql')}' > '{output_file}'"
+                print(f"Creating gzipped SQL file: {output_file}")
+                result = subprocess.run(gzip_cmd, shell=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
             else:
-                # Auf Linux-Systemen können wir direkt tar mit gzip-Kompression verwenden
-                tar_cmd = f"tar -czf '{output_file}' -C '{os.path.dirname(source_dir)}' '{os.path.basename(source_dir)}'"
-                print(f"Creating tar.gz archive: {output_file}")
-                result = subprocess.run(tar_cmd, shell=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+                # gzip requires tar to archive directory first
+                output_file = f"{output_file_base}.tar.gz"
+                
+                # Separate Befehle für tar und gzip mit korrekter Kompressionsstufe
+                # Für neuere tar-Versionen, die gzip-Kompression unterstützen
+                if platform.system() == 'Darwin':  # macOS hat eine ältere tar-Version
+                    # Auf macOS verwenden wir einen zweistufigen Prozess
+                    temp_tar = f"{output_file_base}.tar"
+                    tar_cmd = f"tar -cf '{temp_tar}' -C '{os.path.dirname(source_dir)}' '{os.path.basename(source_dir)}'"
+                    print(f"Creating tar archive: {temp_tar}")
+                    tar_result = subprocess.run(tar_cmd, shell=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+                    
+                    if tar_result.returncode == 0:
+                        # Komprimieren mit gzip
+                        gzip_cmd = f"gzip -{compression_level} -f '{temp_tar}'"
+                        print(f"Compressing with gzip (level {compression_level}): {output_file}")
+                        result = subprocess.run(gzip_cmd, shell=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+                    else:
+                        print(f"Error creating tar archive: {temp_tar}")
+                        if tar_result.stderr:
+                            print(f"Error details: {tar_result.stderr.decode() if hasattr(tar_result.stderr, 'decode') else tar_result.stderr}")
+                        return None
+                else:
+                    # Auf Linux-Systemen können wir direkt tar mit gzip-Kompression verwenden
+                    tar_cmd = f"tar -czf '{output_file}' -C '{os.path.dirname(source_dir)}' '{os.path.basename(source_dir)}'"
+                    print(f"Creating tar.gz archive: {output_file}")
+                    result = subprocess.run(tar_cmd, shell=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
             
         elif compression_format == 'zstd':
             if not tools['zstd']:
@@ -556,14 +583,21 @@ def compress_directory(source_dir, output_file_base, config):
                 print("Please install zstd with: sudo apt-get install zstd")
                 return None
                 
-            # zstd requires tar to archive directory first
-            output_file = f"{output_file_base}.tar.zst"
-            
-            # Create tar archive and pipe to zstd
-            tar_zstd_cmd = f"tar -C '{os.path.dirname(source_dir)}' -cf - '{os.path.basename(source_dir)}' | zstd -{compression_level} -o '{output_file}'"
-            
-            print(f"Creating tar.zst archive: {output_file}")
-            result = subprocess.run(tar_zstd_cmd, shell=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+            # SQL-only mode handled differently for zstd
+            if only_sql_dump:
+                output_file = f"{output_file_base}.sql.zst"
+                zstd_cmd = f"zstd -{compression_level} -c '{os.path.join(source_dir, 'dump.sql')}' > '{output_file}'"
+                print(f"Creating zstd compressed SQL file: {output_file}")
+                result = subprocess.run(zstd_cmd, shell=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+            else:
+                # zstd requires tar to archive directory first
+                output_file = f"{output_file_base}.tar.zst"
+                
+                # Create tar archive and pipe to zstd
+                tar_zstd_cmd = f"tar -C '{os.path.dirname(source_dir)}' -cf - '{os.path.basename(source_dir)}' | zstd -{compression_level} -o '{output_file}'"
+                
+                print(f"Creating tar.zst archive: {output_file}")
+                result = subprocess.run(tar_zstd_cmd, shell=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
         
         else:
             print(f"Error: Unsupported compression format: {compression_format}")
