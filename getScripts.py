@@ -54,6 +54,24 @@ if os.environ.get('GETSCRIPTS_DEBUG', '').lower() in ('1', 'true', 'yes'):
     logger.setLevel(logging.DEBUG)
     logger.debug("Debug logging enabled")
 
+# Script version and date
+SCRIPT_VERSION = "6.6.2"
+SCRIPT_DATE = "09.04.2025"
+
+def print_header() -> None:
+    """Print a nicely formatted header with script version and date."""
+    header = f"""
+╔══════════════════════════════════════════════════════════════╗
+║                                                              ║
+║             getScripts.py - Docker Server Utility            ║
+║                                                              ║
+║             Version: {SCRIPT_VERSION.ljust(10)}          Date: {SCRIPT_DATE}         ║
+║                                                              ║
+╚══════════════════════════════════════════════════════════════╝
+"""
+    print(header)
+    logger.info(f"Running getScripts.py version {SCRIPT_VERSION} ({SCRIPT_DATE})")
+
 def retry_on_exception(retries: int = 3, delay: int = 1):
     """Decorator to retry functions on exception.
     
@@ -1191,6 +1209,9 @@ def main() -> None:
     original_dir = os.getcwd()
     
     try:
+        # Display header at start of execution
+        print_header()
+        
         # Check if running on Debian/Ubuntu
         if not is_debian_or_ubuntu():
             logger.error("This script is only supported on Debian and Ubuntu systems")

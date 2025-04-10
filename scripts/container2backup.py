@@ -1,10 +1,21 @@
 #!/usr/bin/python3
 # -*- coding: utf-8 -*-
-# Script to backup Odoo database including FileStore under Docker
-# Version 4.1.0
-# Date 19.04.2025
-################################################################################
-#    Shell Script for Odoo, Open Source Management Solution
+# ==============================================================================
+# Title:            container2backup.py
+# Description:      Script to backup Odoo database including FileStore under Docker
+# Version:          4.2.0
+# Date:             19.04.2025
+# Author:           Equitania Software GmbH
+# ==============================================================================
+# Feature Overview:
+#   - Database backup (SQL + Filestore) for multiple Odoo instances
+#   - Support for SQL-only backups (--sql-only parameter)
+#   - FastReport backup integration
+#   - Service backups (nginx, letsencrypt, docker builds)
+#   - Multiple compression formats (7z, zip, gzip, zstd)
+#   - Optional AES-256 encryption (7z format only)
+#   - Automatic cleanup of old backups
+# ==============================================================================
 #    Copyright (C) 2014-now Equitania Software GmbH(<http://www.equitania.de>).
 #
 #    This program is free software: you can redistribute it and/or modify
@@ -34,6 +45,7 @@ from dotenv import load_dotenv
 import tempfile
 import shutil
 import platform
+import argparse  # Add argparse for command line parameters
 
 def check_compression_tools():
     """
@@ -573,163 +585,173 @@ def compress_directory(source_dir, output_file_base, config):
         return None
 
 # Main script
-base_path = expanduser("~")
-backup_config = base_path + '/container2backup.yaml'
-
-# Read YAML config file and create backups
-if not os.path.exists(backup_config):
-    print(f"Backup configuration file {backup_config} not found!")
-    exit(1)
-
-try:
-    with open(backup_config, 'r', encoding="utf8") as config_file:
-        config = yaml.safe_load(config_file)
+if __name__ == "__main__":
+    # Parse command line arguments
+    parser = argparse.ArgumentParser(description='Backup Odoo databases with Docker')
+    parser.add_argument('--sql-only', action='store_true', 
+                        help='Force SQL dump only mode for all databases (overrides YAML settings)')
+    args = parser.parse_args()
     
-    # Get backup path from config or use default
-    backup_path = os.path.expandvars(os.path.expanduser(
-        config.get('defaults', {}).get('backup_path', '/opt/backups')
-    ))
-    
-    # Check and create temp path if needed
-    temp_path = os.path.expandvars(os.path.expanduser(
-        config.get('defaults', {}).get('temp_path', '')
-    ))
-    if temp_path and not os.path.exists(temp_path):
-        try:
-            os.makedirs(temp_path, exist_ok=True)
-            print(f"Created temporary directory: {temp_path}")
-        except PermissionError:
-            print(f"Warning: No permission to create temporary directory {temp_path}")
-            print("Will use system default temporary directory instead.")
-    
-    # Create directories if they don't exist
-    if not os.path.exists(backup_path):
-        try:
-            os.makedirs(backup_path, exist_ok=True)
-        except PermissionError:
-            print(f"Error: No permission to create {backup_path}")
-            exit(1)
+    base_path = expanduser("~")
+    backup_config = base_path + '/container2backup.yaml'
 
-    # Create service-specific backup directories
-    for service_dir in ['nginx', 'docker-builds', 'docker']:
-        service_path = os.path.join(backup_path, service_dir)
-        if not os.path.exists(service_path):
-            os.makedirs(service_path, exist_ok=True)
+    # Read YAML config file and create backups
+    if not os.path.exists(backup_config):
+        print(f"Backup configuration file {backup_config} not found!")
+        exit(1)
 
-    print("Backup path: " + backup_path)
-
-    # Validate paths before starting backup
-    path_issues = check_paths(config)
-    if path_issues:
-        print("WARNING: The following issues were found:")
-        for issue in path_issues:
-            print(f"- {issue}")
+    try:
+        with open(backup_config, 'r', encoding="utf8") as config_file:
+            config = yaml.safe_load(config_file)
         
-        # Optional: Ask for confirmation to continue
-        response = input("Do you want to continue anyway? (y/N): ")
-        if response.lower() != 'y':
-            print("Backup aborted.")
-            exit(1)
-    
-    # Get default settings
-    defaults = config.get('defaults', {})
-    default_retention = defaults.get('retention_days', 14)
-    default_db_user = defaults.get('db_user', 'ownerp')
-    
-    # Get default additional paths
-    default_additional_paths = defaults.get('additional_paths', {})
-    
-    # Process each database
-    for db in config.get('databases', []):
-        db_name = db['name']
-        db_user = db.get('db_user', default_db_user)
-        sql_container = db['sql_container']
-        data_container = db['data_container']
-        retention_days = db.get('retention_days', default_retention)
+        # Get backup path from config or use default
+        backup_path = os.path.expandvars(os.path.expanduser(
+            config.get('defaults', {}).get('backup_path', '/opt/backups')
+        ))
         
-        # Get only_sql_dump setting for this database (default to False if not specified)
-        only_sql_dump = db.get('only_sql_dump', False)
+        # Check and create temp path if needed
+        temp_path = os.path.expandvars(os.path.expanduser(
+            config.get('defaults', {}).get('temp_path', '')
+        ))
+        if temp_path and not os.path.exists(temp_path):
+            try:
+                os.makedirs(temp_path, exist_ok=True)
+                print(f"Created temporary directory: {temp_path}")
+            except PermissionError:
+                print(f"Warning: No permission to create temporary directory {temp_path}")
+                print("Will use system default temporary directory instead.")
         
-        print(f"\nProcessing backup for database {db_name}")
-        print(f"Using container: {sql_container}")
-        if only_sql_dump:
-            print(f"SQL dump only mode: filestore will be skipped")
-        
-        # Merge default and database-specific additional paths
-        additional_paths = {}
-        for path_name, default_path_config in default_additional_paths.items():
-            additional_paths[path_name] = default_path_config.copy()
+        # Create directories if they don't exist
+        if not os.path.exists(backup_path):
+            try:
+                os.makedirs(backup_path, exist_ok=True)
+            except PermissionError:
+                print(f"Error: No permission to create {backup_path}")
+                exit(1)
+
+        # Create service-specific backup directories
+        for service_dir in ['nginx', 'docker-builds', 'docker']:
+            service_path = os.path.join(backup_path, service_dir)
+            if not os.path.exists(service_path):
+                os.makedirs(service_path, exist_ok=True)
+
+        print("Backup path: " + backup_path)
+
+        # Validate paths before starting backup
+        path_issues = check_paths(config)
+        if path_issues:
+            print("WARNING: The following issues were found:")
+            for issue in path_issues:
+                print(f"- {issue}")
             
-        db_additional_paths = db.get('additional_paths', {})
-        for path_name, path_config in db_additional_paths.items():
-            if path_name in additional_paths:
-                additional_paths[path_name].update(path_config)
-            else:
-                additional_paths[path_name] = path_config
+            # Optional: Ask for confirmation to continue
+            response = input("Do you want to continue anyway? (y/N): ")
+            if response.lower() != 'y':
+                print("Backup aborted.")
+                exit(1)
         
-        # Create timestamp for backup
-        ts = time.time()
-        timestamp = datetime.datetime.fromtimestamp(ts).strftime('%Y-%m-%d_%H-%M-%S')
+        # Get default settings
+        defaults = config.get('defaults', {})
+        default_retention = defaults.get('retention_days', 14)
+        default_db_user = defaults.get('db_user', 'ownerp')
         
-        # Create database backup
-        create_backup(
-            db_name, 
-            db_user, 
-            sql_container, 
-            data_container, 
-            backup_path, 
-            timestamp,
-            additional_paths,
-            only_sql_dump
-        )
+        # Get default additional paths
+        default_additional_paths = defaults.get('additional_paths', {})
         
-        # Create FastReport backup if configured
-        fast_report = db.get('fast_report', {})
-        if fast_report:
-            backup_fast_report(db_name, fast_report, backup_path, timestamp)
-        
-        # Clean up old backups for this database
-        docker_backup_path = os.path.join(backup_path, 'docker')
-        cutoff_timestamp = time.time() - (float(retention_days) * 86400)
-        
-        print(f"\nCleaning up old backups for {db_name}")
-        print(f"Retention period: {retention_days} days")
-        
-        # Clean up database backups (both .zip and .7z)
-        db_backup_pattern = f"{db_name}_{data_container}_dockerbackup_"
-        cleanup_backups_by_pattern(docker_backup_path, cutoff_timestamp, db_backup_pattern)
-        
-        # Clean up FastReport backups
-        fr_backup_pattern = f"{db_name}_FastReport_"
-        cleanup_backups_by_pattern(docker_backup_path, cutoff_timestamp, fr_backup_pattern)
-    
-    # Process additional backups
-    timestamp = datetime.datetime.fromtimestamp(time.time()).strftime('%Y-%m-%d_%H-%M-%S')
-    additional_backups = config.get('services', {})
-
-    for service_name, service_config in additional_backups.items():
-        backup_additional_service(service_config, backup_path, timestamp)
-        
-        # Clean up old backups for this service
-        service_backup_path = os.path.join(backup_path, service_config['backup_path'])
-        service_retention = service_config.get('retention_days', default_retention)
-        service_cutoff = time.time() - (float(service_retention) * 86400)
-        cleanup_backups(service_backup_path, service_cutoff)
-    
-    # Process rsync commands from YAML config
-    rsync_config = config.get('rsync', {})
-    if rsync_config.get('enabled', False):
-        print("Executing rsync commands...")
-        rsync_commands = rsync_config.get('commands', [])
-        for cmd in rsync_commands:
-            print(f"Running: {cmd}")
-            subprocess.run(cmd, shell=True, check=False)
+        # Process each database
+        for db in config.get('databases', []):
+            db_name = db['name']
+            db_user = db.get('db_user', default_db_user)
+            sql_container = db['sql_container']
+            data_container = db['data_container']
+            retention_days = db.get('retention_days', default_retention)
             
-except yaml.YAMLError as e:
-    print(f"Error reading YAML configuration: {str(e)}")
-    exit(1)
-except KeyError as e:
-    print(f"Missing required configuration field: {str(e)}")
-    exit(1)
+            # Get only_sql_dump setting for this database (default to False if not specified)
+            # Override with command line argument if --sql-only is provided
+            only_sql_dump = args.sql_only or db.get('only_sql_dump', False)
+            
+            print(f"\nProcessing backup for database {db_name}")
+            print(f"Using container: {sql_container}")
+            if only_sql_dump:
+                print(f"SQL dump only mode: filestore will be skipped")
+                if args.sql_only:
+                    print("(SQL-only mode forced by command line parameter)")
+            
+            # Merge default and database-specific additional paths
+            additional_paths = {}
+            for path_name, default_path_config in default_additional_paths.items():
+                additional_paths[path_name] = default_path_config.copy()
+                
+            db_additional_paths = db.get('additional_paths', {})
+            for path_name, path_config in db_additional_paths.items():
+                if path_name in additional_paths:
+                    additional_paths[path_name].update(path_config)
+                else:
+                    additional_paths[path_name] = path_config
+            
+            # Create timestamp for backup
+            ts = time.time()
+            timestamp = datetime.datetime.fromtimestamp(ts).strftime('%Y-%m-%d_%H-%M-%S')
+            
+            # Create database backup
+            create_backup(
+                db_name, 
+                db_user, 
+                sql_container, 
+                data_container, 
+                backup_path, 
+                timestamp,
+                additional_paths,
+                only_sql_dump
+            )
+            
+            # Create FastReport backup if configured
+            fast_report = db.get('fast_report', {})
+            if fast_report:
+                backup_fast_report(db_name, fast_report, backup_path, timestamp)
+            
+            # Clean up old backups for this database
+            docker_backup_path = os.path.join(backup_path, 'docker')
+            cutoff_timestamp = time.time() - (float(retention_days) * 86400)
+            
+            print(f"\nCleaning up old backups for {db_name}")
+            print(f"Retention period: {retention_days} days")
+            
+            # Clean up database backups (both .zip and .7z)
+            db_backup_pattern = f"{db_name}_{data_container}_dockerbackup_"
+            cleanup_backups_by_pattern(docker_backup_path, cutoff_timestamp, db_backup_pattern)
+            
+            # Clean up FastReport backups
+            fr_backup_pattern = f"{db_name}_FastReport_"
+            cleanup_backups_by_pattern(docker_backup_path, cutoff_timestamp, fr_backup_pattern)
+        
+        # Process additional backups
+        timestamp = datetime.datetime.fromtimestamp(time.time()).strftime('%Y-%m-%d_%H-%M-%S')
+        additional_backups = config.get('services', {})
 
-print('Backup completed!')
+        for service_name, service_config in additional_backups.items():
+            backup_additional_service(service_config, backup_path, timestamp)
+            
+            # Clean up old backups for this service
+            service_backup_path = os.path.join(backup_path, service_config['backup_path'])
+            service_retention = service_config.get('retention_days', default_retention)
+            service_cutoff = time.time() - (float(service_retention) * 86400)
+            cleanup_backups(service_backup_path, service_cutoff)
+        
+        # Process rsync commands from YAML config
+        rsync_config = config.get('rsync', {})
+        if rsync_config.get('enabled', False):
+            print("Executing rsync commands...")
+            rsync_commands = rsync_config.get('commands', [])
+            for cmd in rsync_commands:
+                print(f"Running: {cmd}")
+                subprocess.run(cmd, shell=True, check=False)
+            
+    except yaml.YAMLError as e:
+        print(f"Error reading YAML configuration: {str(e)}")
+        exit(1)
+    except KeyError as e:
+        print(f"Missing required configuration field: {str(e)}")
+        exit(1)
+
+    print('Backup completed!')

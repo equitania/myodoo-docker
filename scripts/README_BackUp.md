@@ -373,7 +373,25 @@ rm -rf /tmp/odoo_restore
 - Die Aufbewahrungsfrist wird für jeden Service und jede Datenbank separat eingestellt
 - Achten Sie darauf, keine anderen wichtigen Dateien in den Backup-Verzeichnissen zu speichern, die den gleichen Präfix haben
 
-## Automatisierung mit Cron
+## Ausführung und Automatisierung
+
+### Kommandozeilenparameter
+
+Das Skript unterstützt folgende Kommandozeilenparameter:
+
+- `--sql-only`: Erzwingt den SQL-Dump-Only-Modus für alle Datenbanken, unabhängig von der Einstellung in der YAML-Datei
+
+Diese Option ist besonders nützlich, wenn das Skript per Cron zu unterschiedlichen Zeiten mit unterschiedlichen Backup-Strategien ausgeführt werden soll:
+
+```bash
+# Vollständiges Backup (SQL + Filestore)
+/pfad/zu/container2backup.py
+
+# Nur SQL-Dump (schneller, spart Speicherplatz)
+/pfad/zu/container2backup.py --sql-only
+```
+
+### Automatisierung mit Cron
 
 Sie können das Backup-Skript über einen Cron-Job automatisieren:
 
@@ -382,9 +400,13 @@ Sie können das Backup-Skript über einen Cron-Job automatisieren:
    crontab -e
    ```
 
-2. Fügen Sie eine Zeile hinzu, um das Backup täglich um 2 Uhr morgens auszuführen:
+2. Beispiele für Cron-Jobs:
    ```bash
-   0 2 * * * python3 /pfad/zu/container2backup.py
+   # Vollständiges Backup täglich um 2 Uhr morgens
+   0 2 * * * /pfad/zu/container2backup.py 2>&1 | tee -a /var/log/container2backup.log
+   
+   # Nur SQL-Dump täglich um 14 Uhr
+   0 14 * * * /pfad/zu/container2backup.py --sql-only 2>&1 | tee -a /var/log/container2backup.log
    ```
 
 ---
@@ -758,7 +780,25 @@ rm -rf /tmp/odoo_restore
 - The retention period is set separately for each service and database
 - Be careful not to store other important files in the backup directories that have the same prefix
 
-## Automation with Cron
+## Execution and Automation
+
+### Command Line Parameters
+
+The script supports the following command line parameters:
+
+- `--sql-only`: Forces SQL dump only mode for all databases, regardless of the settings in the YAML file
+
+This option is particularly useful when the script is executed by cron at different times with different backup strategies:
+
+```bash
+# Full backup (SQL + filestore)
+/path/to/container2backup.py
+
+# SQL dump only (faster, saves disk space)
+/path/to/container2backup.py --sql-only
+```
+
+### Automation with Cron
 
 You can automate the backup script via a cron job:
 
@@ -767,9 +807,13 @@ You can automate the backup script via a cron job:
    crontab -e
    ```
 
-2. Add a line to run the backup daily at 2 AM:
+2. Examples for cron jobs:
    ```bash
-   0 2 * * * python3 /path/to/container2backup.py
+   # Full backup daily at 2 AM
+   0 2 * * * /path/to/container2backup.py 2>&1 | tee -a /var/log/container2backup.log
+   
+   # SQL dump only daily at 2 PM
+   0 14 * * * /path/to/container2backup.py --sql-only 2>&1 | tee -a /var/log/container2backup.log
    ```
 
 
