@@ -1,8 +1,8 @@
-#!/usr/bin/python3
+
 # -*- coding: utf-8 -*-
 # Script for organizing Docker servers
-# Version 6.6.2
-# Date 09.04.2025
+# Version 6.6.3
+# Date 10.04.2025
 ##############################################################################
 #
 #    Shell Script for devops
@@ -55,19 +55,19 @@ if os.environ.get('GETSCRIPTS_DEBUG', '').lower() in ('1', 'true', 'yes'):
     logger.debug("Debug logging enabled")
 
 # Script version and date
-SCRIPT_VERSION = "6.6.2"
-SCRIPT_DATE = "09.04.2025"
+SCRIPT_VERSION = "6.6.3"
+SCRIPT_DATE = "10.04.2025"
 
 def print_header() -> None:
     """Print a nicely formatted header with script version and date."""
     header = f"""
-╔══════════════════════════════════════════════════════════════╗
-║                                                              ║
-║             getScripts.py - Docker Server Utility            ║
-║                                                              ║
-║             Version: {SCRIPT_VERSION.ljust(10)}          Date: {SCRIPT_DATE}         ║
-║                                                              ║
-╚══════════════════════════════════════════════════════════════╝
+╔═════════════════════════════════════════════╗
+║                                             ║
+║      getScripts.py - Docker Server Utility  ║
+║                                             ║
+║      Version: {SCRIPT_VERSION}      Date: {SCRIPT_DATE}  ║
+║                                             ║
+╚═════════════════════════════════════════════╝
 """
     print(header)
     logger.info(f"Running getScripts.py version {SCRIPT_VERSION} ({SCRIPT_DATE})")
