@@ -1,8 +1,8 @@
 #!/usr/bin/python3
 # -*- coding: utf-8 -*-
 # Script for organizing Docker servers
-# Version 6.6.3
-# Date 10.04.2025
+# Version 6.6.6
+# Date 10.05.2025
 ##############################################################################
 #
 #    Shell Script for devops
@@ -55,8 +55,8 @@ if os.environ.get('GETSCRIPTS_DEBUG', '').lower() in ('1', 'true', 'yes'):
     logger.debug("Debug logging enabled")
 
 # Script version and date
-SCRIPT_VERSION = "6.6.3"
-SCRIPT_DATE = "10.04.2025"
+SCRIPT_VERSION = "6.6.6"
+SCRIPT_DATE = "10.05.2025"
 
 def print_header() -> None:
     """Print a nicely formatted header with script version and date."""
@@ -445,6 +445,11 @@ def get_pip_install_command(package_name: str, upgrade: bool = True) -> str:
 
 def upgrade_pip_package(package_name: str) -> None:
     """Upgrade a pip package to the latest version."""
+    # Skip zstd upgrade through this function - it will be handled separately
+    if package_name == "zstd":
+        logger.info("Skipping zstd upgrade through pip. It will be handled separately.")
+        return
+    
     cmd = get_pip_install_command(package_name, upgrade=True)
     run_command(cmd)
 
@@ -753,8 +758,18 @@ def install_or_update_zstd():
         if not check_zstd_version():
             logger.info("Installing/updating zstd...")
             if os_id in ["ubuntu", "debian"]:
+                # First install python3-dev which is required for building the zstd Python package
+                logger.info("Installing python3-dev which is required for building zstd Python package")
                 run_command("sudo apt update")
+                run_command("sudo apt install -y python3-dev")
+                
+                # Now install the zstd system package
                 run_command("sudo apt install -y zstd")
+                
+                # Try to install zstd with PEP 517 build to avoid deprecation warning
+                logger.info("Installing zstd Python package with PEP 517 build")
+                run_command(f"{sys.executable} -m pip install --upgrade zstd --use-pep517")
+            
             # Verify installation
             if not check_zstd_version():
                 raise RuntimeError("Failed to install/update zstd")
