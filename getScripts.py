@@ -1,7 +1,7 @@
 #!/usr/bin/python3
 # -*- coding: utf-8 -*-
 # Script for organizing Docker servers
-# Version 6.6.6
+# Version 6.6.7
 # Date 10.05.2025
 ##############################################################################
 #
@@ -55,7 +55,7 @@ if os.environ.get('GETSCRIPTS_DEBUG', '').lower() in ('1', 'true', 'yes'):
     logger.debug("Debug logging enabled")
 
 # Script version and date
-SCRIPT_VERSION = "6.6.6"
+SCRIPT_VERSION = "6.6.7"
 SCRIPT_DATE = "10.05.2025"
 
 def print_header() -> None:
@@ -1219,6 +1219,92 @@ def ensure_path_in_zshrc() -> None:
     except Exception as e:
         logger.error(f"Error updating .zshrc: {e}")
 
+def get_latest_pypi_version(package_name: str) -> Optional[str]:
+    """Get the latest version of a package from PyPI.
+    
+    Args:
+        package_name (str): Name of the package
+        
+    Returns:
+        Optional[str]: Latest version string if available, None otherwise
+    """
+    try:
+        url = f"https://pypi.org/pypi/{package_name}/json"
+        logger.info(f"Checking latest version of {package_name} from PyPI")
+        response = requests.get(url, timeout=10)
+        if response.status_code == 200:
+            data = response.json()
+            latest_version = data["info"]["version"]
+            logger.info(f"Latest {package_name} version on PyPI: {latest_version}")
+            return latest_version
+        logger.error(f"Failed to get latest {package_name} version. Status code: {response.status_code}")
+    except Exception as e:
+        logger.error(f"Error fetching latest {package_name} version from PyPI: {str(e)}")
+    return None
+
+def get_installed_pipx_version(package_name: str) -> Optional[str]:
+    """Get the installed version of a pipx package.
+    
+    Args:
+        package_name (str): Name of the package
+        
+    Returns:
+        Optional[str]: Installed version string if available, None otherwise
+    """
+    try:
+        # Check if package is installed with pipx
+        result = subprocess.run(['pipx', 'list', '--json'], capture_output=True, text=True)
+        if result.returncode == 0:
+            import json
+            installed_packages = json.loads(result.stdout)
+            
+            if package_name in installed_packages['venvs']:
+                version = installed_packages['venvs'][package_name]['metadata']['main_package']['package_version']
+                logger.info(f"Installed {package_name} version: {version}")
+                return version
+            logger.info(f"{package_name} is not installed with pipx")
+        return None
+    except Exception as e:
+        logger.error(f"Error getting installed {package_name} version: {str(e)}")
+        return None
+
+def install_or_update_nginx_set_conf() -> None:
+    """Install or update nginx-set-conf to the latest version."""
+    package_name = "nginx-set-conf"
+    
+    try:
+        # Check if already installed with pipx
+        current_version = get_installed_pipx_version(package_name)
+        
+        # Get latest version from PyPI
+        latest_version = get_latest_pypi_version(package_name)
+        if not latest_version:
+            logger.error(f"Could not determine latest {package_name} version")
+            return
+            
+        # Check if update is needed
+        if current_version and current_version == latest_version:
+            logger.info(f"{package_name} is already at the latest version ({latest_version})")
+            return
+            
+        # Uninstall if already installed (to ensure a clean installation)
+        if current_version:
+            logger.info(f"Uninstalling {package_name} version {current_version} to update to {latest_version}")
+            run_command(f"pipx uninstall {package_name}")
+        
+        # Install latest version
+        logger.info(f"Installing {package_name} version {latest_version}")
+        run_command(f"pipx install {package_name}")
+        
+        # Verify installation
+        new_version = get_installed_pipx_version(package_name)
+        if new_version:
+            logger.info(f"Successfully installed {package_name} version {new_version}")
+        else:
+            logger.error(f"Failed to verify {package_name} installation")
+    except Exception as e:
+        logger.error(f"Error installing/updating {package_name}: {str(e)}")
+
 def main() -> None:
     """Main function to execute the script"""
     original_dir = os.getcwd()
@@ -1367,10 +1453,15 @@ def main() -> None:
             # Ensure PATH is set in .zshrc
             ensure_path_in_zshrc()
 
+        # Install or update nginx-set-conf
+        install_or_update_nginx_set_conf()
+        
         # Install specific versions of packages with pipx
         if is_pipx_installed():
             for package, version in package_info["pipx"].items():
-                install_specific_pipx_package(package, version)
+                # Skip nginx-set-conf as it's handled separately
+                if package != "nginx-set-conf":
+                    install_specific_pipx_package(package, version)
         else:
             logger.error("pipx is not installed. Please install pipx first.")
             
