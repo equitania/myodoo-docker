@@ -1416,7 +1416,7 @@ def get_tilde_version() -> Optional[str]:
 
 @lru_cache(maxsize=128)
 def get_latest_tilde_version() -> Optional[str]:
-    """Get the latest version of tilde from GitHub releases with caching.
+    """Get the latest version of tilde from the official website.
     
     Returns:
         Optional[str]: Latest version string if available, None otherwise
@@ -1428,40 +1428,24 @@ def get_latest_tilde_version() -> Optional[str]:
         return cached_data.get("version")
     
     try:
-        response = requests.get("https://api.github.com/repos/gphalkes/tilde/releases/latest")
-        if response.status_code == 200:
-            data = response.json()
-            version = data["tag_name"].lstrip('v')
-            logger.info(f"Found latest tilde version: {version}")
-            
-            # Cache the result
-            cache_version_info(cache_key, {"version": version})
-            return version
-        logger.error(f"Failed to get latest tilde version. Status code: {response.status_code}")
+        # Tilde doesn't have GitHub releases, check official website or use package info
+        # For now, we'll rely on the system package manager version as authoritative
+        logger.info("Tilde upstream version checking not available, relying on package manager")
+        return None
     except Exception as e:
         logger.error(f"Error fetching latest tilde version: {str(e)}")
     return None
 
 def install_or_update_tilde() -> None:
-    """Install or update tilde, checking both system packages and latest upstream version."""
+    """Install or update tilde using package manager."""
     try:
         # Check current version if installed
         installed = check_tilde_installed()
         current_version = get_tilde_version() if installed else None
         logger.info(f"Current tilde version: {current_version if installed else 'not installed'}")
         
-        # Get latest version from GitHub
+        # Get latest version from upstream (if available)
         latest_version = get_latest_tilde_version()
-        if latest_version:
-            logger.info(f"Latest tilde version available: {latest_version}")
-            
-            # Compare versions if both are available
-            if current_version and latest_version:
-                if compare_versions(current_version, latest_version) >= 0:
-                    logger.info(f"tilde is already at or newer than the latest version ({current_version} >= {latest_version})")
-                    return
-                else:
-                    logger.info(f"tilde update available: {current_version} -> {latest_version}")
         
         # Install or update
         if not installed:
@@ -1473,9 +1457,6 @@ def install_or_update_tilde() -> None:
             new_version = get_tilde_version()
             if new_version:
                 logger.info(f"tilde {new_version} has been successfully installed")
-                # Check if this is the latest available
-                if latest_version and compare_versions(new_version, latest_version) < 0:
-                    logger.warning(f"Installed tilde {new_version} is older than latest {latest_version}. Consider manual update from source.")
             else:
                 raise RuntimeError("Failed to verify tilde installation")
         else:
@@ -1488,11 +1469,7 @@ def install_or_update_tilde() -> None:
             if new_version != current_version:
                 logger.info(f"tilde updated from {current_version} to {new_version}")
             else:
-                logger.info(f"No package manager updates available for tilde ({current_version})")
-            
-            # Final check against latest version
-            if latest_version and compare_versions(new_version or current_version, latest_version) < 0:
-                logger.warning(f"Package manager version ({new_version or current_version}) is older than latest upstream ({latest_version}). Consider manual update from source.")
+                logger.info(f"tilde is already at the latest available version ({current_version})")
             
     except Exception as e:
         logger.error(f"Error installing/updating tilde: {str(e)}")
