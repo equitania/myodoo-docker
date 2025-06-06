@@ -1,8 +1,8 @@
 #!/usr/bin/python3
 # -*- coding: utf-8 -*-
 # Script for organizing Docker servers
-# Version 6.6.7
-# Date 10.05.2025
+# Version 6.7.0
+# Date 06.06.2025
 ##############################################################################
 #
 #    Shell Script for devops
@@ -28,15 +28,17 @@ import requests
 from pathlib import Path
 import sys
 import logging
-from typing import Tuple, Optional
-from functools import wraps
+from typing import Tuple, Optional, Dict, List, Any
+from functools import wraps, lru_cache
 import hashlib
 import time
 import platform
 import re
 import tempfile
-
-latest_fastfetch_assets = None
+import json
+from concurrent.futures import ThreadPoolExecutor, as_completed
+from datetime import datetime, timedelta
+import pickle
 
 # Configure logging
 logging.basicConfig(
@@ -55,8 +57,81 @@ if os.environ.get('GETSCRIPTS_DEBUG', '').lower() in ('1', 'true', 'yes'):
     logger.debug("Debug logging enabled")
 
 # Script version and date
-SCRIPT_VERSION = "6.6.7"
-SCRIPT_DATE = "10.05.2025"
+SCRIPT_VERSION = "6.7.0"
+SCRIPT_DATE = "06.06.2025"
+
+# Cache settings
+CACHE_DIR = os.path.expanduser("~/.cache/getscripts")
+CACHE_EXPIRY_HOURS = 24  # Cache version info for 24 hours
+
+# Global cache for version information
+version_cache: Dict[str, Dict[str, Any]] = {}
+
+def ensure_cache_dir() -> None:
+    """Ensure cache directory exists."""
+    os.makedirs(CACHE_DIR, exist_ok=True)
+
+def get_cache_file_path(key: str) -> str:
+    """Get the cache file path for a given key."""
+    return os.path.join(CACHE_DIR, f"{key}.cache")
+
+def get_cached_version(key: str) -> Optional[Dict[str, Any]]:
+    """Get cached version information.
+    
+    Args:
+        key: Cache key
+        
+    Returns:
+        Optional[Dict[str, Any]]: Cached data if valid, None otherwise
+    """
+    ensure_cache_dir()
+    cache_file = get_cache_file_path(key)
+    
+    if not os.path.exists(cache_file):
+        return None
+    
+    try:
+        with open(cache_file, 'rb') as f:
+            cached_data = pickle.load(f)
+            
+        # Check if cache is expired
+        cache_time = datetime.fromtimestamp(os.path.getmtime(cache_file))
+        if datetime.now() - cache_time > timedelta(hours=CACHE_EXPIRY_HOURS):
+            logger.debug(f"Cache for {key} is expired")
+            os.remove(cache_file)
+            return None
+            
+        logger.debug(f"Using cached data for {key}")
+        return cached_data
+    except Exception as e:
+        logger.error(f"Error reading cache for {key}: {e}")
+        if os.path.exists(cache_file):
+            os.remove(cache_file)
+        return None
+
+def cache_version_info(key: str, data: Dict[str, Any]) -> None:
+    """Cache version information.
+    
+    Args:
+        key: Cache key
+        data: Data to cache
+    """
+    ensure_cache_dir()
+    cache_file = get_cache_file_path(key)
+    
+    try:
+        with open(cache_file, 'wb') as f:
+            pickle.dump(data, f)
+        logger.debug(f"Cached data for {key}")
+    except Exception as e:
+        logger.error(f"Error caching data for {key}: {e}")
+
+def clear_cache() -> None:
+    """Clear all cached data."""
+    if os.path.exists(CACHE_DIR):
+        import shutil
+        shutil.rmtree(CACHE_DIR)
+        logger.info("Cache cleared")
 
 def print_header() -> None:
     """Print a nicely formatted header with script version and date."""
@@ -226,30 +301,52 @@ def download_and_install_deb(url: str, filename: str) -> None:
             os.remove(filename)
         raise
 
-def get_latest_fastfetch_version() -> Optional[str]:
-    """Get the latest version of fastfetch from GitHub releases."""
+def get_latest_fastfetch_version() -> Tuple[Optional[str], Optional[List[Dict]]]:
+    """Get the latest version of fastfetch from GitHub releases.
+    
+    Returns:
+        Tuple[Optional[str], Optional[List[Dict]]]: Version and assets if available
+    """
+    cache_key = "fastfetch_latest"
+    cached_data = get_cached_version(cache_key)
+    
+    if cached_data:
+        return cached_data.get("version"), cached_data.get("assets")
+    
     try:
         response = requests.get("https://api.github.com/repos/fastfetch-cli/fastfetch/releases/latest")
         if response.status_code == 200:
             data = response.json()
             version = data["tag_name"].lstrip('v')
+            assets = data["assets"]
             logger.info(f"Found latest FastFetch version: {version}")
-            # Also store the assets for later use
-            global latest_fastfetch_assets
-            latest_fastfetch_assets = data["assets"]
-            return version
+            
+            # Cache the result
+            cache_version_info(cache_key, {"version": version, "assets": assets})
+            return version, assets
         logger.error(f"Failed to get latest fastfetch version. Status code: {response.status_code}")
     except Exception as e:
         logger.error(f"Error fetching latest fastfetch version: {str(e)}")
-    return None
+    return None, None
 
-def get_fastfetch_download_url(version: str, os_id: str) -> Optional[str]:
-    """Get the appropriate download URL for fastfetch based on OS."""
+def get_fastfetch_download_url(version: str, os_id: str, assets: Optional[List[Dict]] = None) -> Optional[str]:
+    """Get the appropriate download URL for fastfetch based on OS.
+    
+    Args:
+        version: Version string
+        os_id: Operating system ID
+        assets: Optional list of release assets
+    
+    Returns:
+        Optional[str]: Download URL if found
+    """
     try:
-        global latest_fastfetch_assets
-        if not latest_fastfetch_assets:
-            logger.error("No release assets found")
-            return None
+        if not assets:
+            # Try to get from cache or fetch again
+            _, assets = get_latest_fastfetch_version()
+            if not assets:
+                logger.error("No release assets found")
+                return None
 
         if os_id == "ubuntu" or os_id == "debian":
             arch = "amd64" if platform.machine() == "x86_64" else "arm64"
@@ -257,7 +354,7 @@ def get_fastfetch_download_url(version: str, os_id: str) -> Optional[str]:
             
             # Log available assets for debugging
             logger.info("Available FastFetch packages:")
-            for asset in latest_fastfetch_assets:
+            for asset in assets:
                 logger.info(f"- {asset['name']}")
                 if asset["name"] == target_package:
                     logger.info(f"Found matching package: {asset['name']}")
@@ -283,7 +380,7 @@ def install_fastfetch_if_needed() -> None:
         logger.info(f"Current FastFetch version: {current_version if installed else 'not installed'}")
         
         # Get latest version from GitHub
-        latest_version = get_latest_fastfetch_version()
+        latest_version, assets = get_latest_fastfetch_version()
         if not latest_version:
             logger.error("Could not determine latest fastfetch version")
             return
@@ -294,7 +391,7 @@ def install_fastfetch_if_needed() -> None:
             return
 
         # Get download URL
-        download_url = get_fastfetch_download_url(latest_version, os_id)
+        download_url = get_fastfetch_download_url(latest_version, os_id, assets)
         if not download_url:
             logger.error("Could not find appropriate fastfetch package")
             return
@@ -344,44 +441,75 @@ def ensure_directory_exists(directory: str) -> None:
     os.makedirs(directory, exist_ok=True)
     logger.info(f"Directory '{directory}' was created or already exists.")
 
-def run_command(command: str, check: bool = False, shell: bool = False, capture_output: bool = False) -> None:
-    """Run a shell command with optional error checking."""
+class CommandError(Exception):
+    """Custom exception for command execution errors."""
+    pass
+
+class InstallationError(Exception):
+    """Custom exception for installation errors."""
+    pass
+
+def run_command(command: str, check: bool = False, shell: bool = False, capture_output: bool = False, retries: int = 0) -> subprocess.CompletedProcess:
+    """Run a shell command with optional error checking and retry logic.
+    
+    Args:
+        command: Command to run
+        check: Whether to raise exception on non-zero exit
+        shell: Whether to run through shell
+        capture_output: Whether to capture stdout/stderr
+        retries: Number of retry attempts for transient failures
+        
+    Returns:
+        subprocess.CompletedProcess: Result of the command
+        
+    Raises:
+        CommandError: If command fails and check=True
+    """
+    # If the command contains shell operators like |, &&, ||, >, <, etc., force shell=True
+    if any(op in command for op in ['|', '&&', '||', '>', '<', '>>', '<<']):
+        shell = True
+    
+    # Check if we're in a valid directory before running command
     try:
-        # If the command contains shell operators like |, &&, ||, >, <, etc., force shell=True
-        if any(op in command for op in ['|', '&&', '||', '>', '<', '>>', '<<']):
-            shell = True
-        
-        # Check if we're in a valid directory before running command
+        os.getcwd()
+    except FileNotFoundError:
+        # If current directory doesn't exist, move to home directory
+        logger.warning("Current directory doesn't exist, moving to home directory")
+        os.chdir(os.path.expanduser("~"))
+    
+    last_exception = None
+    for attempt in range(retries + 1):
         try:
-            os.getcwd()
-        except FileNotFoundError:
-            # If current directory doesn't exist, move to home directory
-            logger.warning("Current directory doesn't exist, moving to home directory")
-            os.chdir(os.path.expanduser("~"))
-        
-        if shell:
-            logger.debug(f"Running shell command: {command}")
-            result = subprocess.run(command, shell=True, check=check, capture_output=capture_output)
-        else:
-            logger.debug(f"Running command: {command}")
-            result = subprocess.run(command.split(), check=check, capture_output=capture_output)
-        
-        if result.returncode != 0:
-            logger.warning(f"Command returned non-zero exit code: {result.returncode}")
-            if capture_output and result.stderr:
-                logger.warning(f"Error output: {result.stderr.decode('utf-8', errors='replace')}")
-        
-        return result
-    except subprocess.CalledProcessError as e:
-        logger.error(f"Command failed with code {e.returncode}: {e}")
-        if e.stderr:
-            logger.error(f"Error output: {e.stderr.decode('utf-8', errors='replace')}")
-        if check:
-            raise
-    except Exception as e:
-        logger.error(f"Error running command {command}: {e}")
-        if check:
-            raise
+            if shell:
+                logger.debug(f"Running shell command (attempt {attempt + 1}): {command}")
+                result = subprocess.run(command, shell=True, check=False, capture_output=capture_output)
+            else:
+                logger.debug(f"Running command (attempt {attempt + 1}): {command}")
+                result = subprocess.run(command.split(), check=False, capture_output=capture_output)
+            
+            if result.returncode != 0:
+                error_msg = f"Command returned non-zero exit code: {result.returncode}"
+                if capture_output and result.stderr:
+                    error_msg += f"\nError output: {result.stderr.decode('utf-8', errors='replace')}"
+                
+                if check:
+                    raise CommandError(error_msg)
+                else:
+                    logger.warning(error_msg)
+            
+            return result
+            
+        except Exception as e:
+            last_exception = e
+            if attempt < retries:
+                logger.warning(f"Command failed on attempt {attempt + 1}, retrying...")
+                time.sleep(2 ** attempt)  # Exponential backoff
+            else:
+                logger.error(f"Command failed after {retries + 1} attempts: {e}")
+                if check:
+                    raise CommandError(f"Command failed: {command}") from e
+    
+    return subprocess.CompletedProcess(command, -1, '', '')  # Return failed result
 
 def is_debian_or_ubuntu() -> bool:
     """Check if the system is Debian or Ubuntu"""
@@ -443,13 +571,57 @@ def get_pip_install_command(package_name: str, upgrade: bool = True) -> str:
     
     return " ".join(cmd)
 
+def get_pip_package_version(package_name: str) -> Optional[str]:
+    """Get the installed version of a pip package.
+    
+    Args:
+        package_name: Name of the package
+        
+    Returns:
+        Optional[str]: Version string if installed, None otherwise
+    """
+    try:
+        result = subprocess.run(
+            [sys.executable, "-m", "pip", "show", package_name],
+            capture_output=True,
+            text=True
+        )
+        if result.returncode == 0:
+            for line in result.stdout.split('\n'):
+                if line.startswith('Version:'):
+                    return line.split(':', 1)[1].strip()
+    except Exception as e:
+        logger.error(f"Error getting pip package version for {package_name}: {e}")
+    return None
+
 def upgrade_pip_package(package_name: str) -> None:
-    """Upgrade a pip package to the latest version."""
+    """Upgrade a pip package to the latest version only if needed."""
     # Skip zstd upgrade through this function - it will be handled separately
     if package_name == "zstd":
         logger.info("Skipping zstd upgrade through pip. It will be handled separately.")
         return
     
+    # Check current version
+    current_version = get_pip_package_version(package_name)
+    
+    # Get latest version from PyPI
+    latest_version = get_latest_pypi_version(package_name)
+    
+    if not latest_version:
+        logger.warning(f"Could not determine latest version for {package_name}")
+        # Install anyway if not installed
+        if not current_version:
+            cmd = get_pip_install_command(package_name, upgrade=True)
+            run_command(cmd)
+        return
+    
+    # Check if update is needed
+    if current_version and current_version == latest_version:
+        logger.info(f"{package_name} is already at the latest version ({latest_version})")
+        return
+    
+    # Update needed
+    logger.info(f"Updating {package_name} from {current_version or 'not installed'} to {latest_version}")
     cmd = get_pip_install_command(package_name, upgrade=True)
     run_command(cmd)
 
@@ -647,26 +819,52 @@ def compare_versions(version1: str, version2: str) -> int:
         return -1
 
 def install_system_package(package: str, version: Optional[str] = None) -> None:
-    """Install a system package with version checking."""
-    current_version = get_system_package_version(package)
+    """Install a system package with version checking and error recovery.
     
-    if current_version:
-        if version:
-            # If specific version is requested, compare versions
-            if compare_versions(current_version, version) >= 0:
-                logger.info(f"{package} version {current_version} is already installed (requested: {version})")
+    Args:
+        package: Package name
+        version: Optional specific version to install
+        
+    Raises:
+        InstallationError: If installation fails after retries
+    """
+    try:
+        current_version = get_system_package_version(package)
+        
+        if current_version:
+            if version:
+                # If specific version is requested, compare versions
+                if compare_versions(current_version, version) >= 0:
+                    logger.info(f"{package} version {current_version} is already installed (requested: {version})")
+                    return
+            else:
+                # If no specific version requested, just log current version
+                logger.info(f"{package} is already installed (version {current_version})")
                 return
-        else:
-            # If no specific version requested, just log current version
-            logger.info(f"{package} is already installed (version {current_version})")
-            return
 
-    # Install package
-    logger.info(f"Installing {package}{f' version {version}' if version else ''}")
-    if version:
-        run_command(f"sudo apt install -y {package}={version}")
-    else:
-        run_command(f"sudo apt install -y {package}")
+        # Update package list before installation
+        logger.info("Updating package list...")
+        try:
+            run_command("sudo apt update", check=True, retries=2)
+        except CommandError:
+            logger.warning("Failed to update package list, continuing anyway...")
+
+        # Install package
+        logger.info(f"Installing {package}{f' version {version}' if version else ''}")
+        install_cmd = f"sudo apt install -y {package}" + (f"={version}" if version else "")
+        
+        try:
+            run_command(install_cmd, check=True, retries=1)
+        except CommandError as e:
+            # Try to fix broken packages
+            logger.warning("Installation failed, attempting to fix broken packages...")
+            run_command("sudo apt-get -f install -y", check=False)
+            
+            # Retry installation
+            run_command(install_cmd, check=True)
+            
+    except Exception as e:
+        raise InstallationError(f"Failed to install {package}: {str(e)}") from e
 
 def get_bat_version() -> Optional[tuple]:
     """Get installed bat version as tuple (major, minor, patch)"""
@@ -979,18 +1177,28 @@ def get_oxker_version() -> Optional[str]:
         logger.debug(f"Error in get_oxker_version: {e}")
         return None
 
+@lru_cache(maxsize=128)
 def get_latest_oxker_version() -> Optional[str]:
-    """Get the latest version of oxker from GitHub releases.
+    """Get the latest version of oxker from GitHub releases with caching.
     
     Returns:
         Optional[str]: Latest version string if available, None otherwise
     """
+    cache_key = "oxker_latest"
+    cached_data = get_cached_version(cache_key)
+    
+    if cached_data:
+        return cached_data.get("version")
+    
     try:
         response = requests.get("https://api.github.com/repos/mrjackwills/oxker/releases/latest")
         if response.status_code == 200:
             data = response.json()
             version = data["tag_name"].lstrip('v')
             logger.info(f"Found latest oxker version: {version}")
+            
+            # Cache the result
+            cache_version_info(cache_key, {"version": version})
             return version
         logger.error(f"Failed to get latest oxker version. Status code: {response.status_code}")
     except Exception as e:
@@ -1219,8 +1427,9 @@ def ensure_path_in_zshrc() -> None:
     except Exception as e:
         logger.error(f"Error updating .zshrc: {e}")
 
+@lru_cache(maxsize=128)
 def get_latest_pypi_version(package_name: str) -> Optional[str]:
-    """Get the latest version of a package from PyPI.
+    """Get the latest version of a package from PyPI with caching.
     
     Args:
         package_name (str): Name of the package
@@ -1228,6 +1437,12 @@ def get_latest_pypi_version(package_name: str) -> Optional[str]:
     Returns:
         Optional[str]: Latest version string if available, None otherwise
     """
+    cache_key = f"pypi_{package_name}"
+    cached_data = get_cached_version(cache_key)
+    
+    if cached_data:
+        return cached_data.get("version")
+    
     try:
         url = f"https://pypi.org/pypi/{package_name}/json"
         logger.info(f"Checking latest version of {package_name} from PyPI")
@@ -1236,6 +1451,9 @@ def get_latest_pypi_version(package_name: str) -> Optional[str]:
             data = response.json()
             latest_version = data["info"]["version"]
             logger.info(f"Latest {package_name} version on PyPI: {latest_version}")
+            
+            # Cache the result
+            cache_version_info(cache_key, {"version": latest_version})
             return latest_version
         logger.error(f"Failed to get latest {package_name} version. Status code: {response.status_code}")
     except Exception as e:
@@ -1305,211 +1523,255 @@ def install_or_update_nginx_set_conf() -> None:
     except Exception as e:
         logger.error(f"Error installing/updating {package_name}: {str(e)}")
 
+def check_versions_parallel(packages: List[Tuple[str, str]]) -> Dict[str, Dict[str, Any]]:
+    """Check package versions in parallel.
+    
+    Args:
+        packages: List of (package_name, package_type) tuples
+        
+    Returns:
+        Dict[str, Dict[str, Any]]: Version information for each package
+    """
+    results = {}
+    
+    def check_version(package_name: str, package_type: str) -> Tuple[str, Dict[str, Any]]:
+        """Check version for a single package."""
+        try:
+            if package_type == "pypi":
+                latest = get_latest_pypi_version(package_name)
+                current = get_pip_package_version(package_name)
+                return package_name, {"type": "pypi", "current": current, "latest": latest}
+            elif package_type == "system":
+                current = get_system_package_version(package_name)
+                return package_name, {"type": "system", "current": current}
+            elif package_type == "pipx":
+                current = get_installed_pipx_version(package_name)
+                latest = get_latest_pypi_version(package_name)
+                return package_name, {"type": "pipx", "current": current, "latest": latest}
+        except Exception as e:
+            logger.error(f"Error checking version for {package_name}: {e}")
+            return package_name, {"type": package_type, "error": str(e)}
+    
+    with ThreadPoolExecutor(max_workers=10) as executor:
+        futures = [executor.submit(check_version, name, ptype) for name, ptype in packages]
+        for future in as_completed(futures):
+            name, info = future.result()
+            results[name] = info
+    
+    return results
+
+def setup_environment() -> Tuple[str, str]:
+    """Setup initial environment and return home and local bin paths."""
+    print_header()
+    
+    # Check if running on Debian/Ubuntu
+    if not is_debian_or_ubuntu():
+        logger.error("This script is only supported on Debian and Ubuntu systems")
+        sys.exit(1)
+    
+    _myhome = os.path.expanduser('~')
+    local_bin = os.path.join(_myhome, ".local", "bin")
+    
+    # Ensure .local/bin is in PATH
+    ensure_directory_exists(local_bin)
+    ensure_path_in_zshrc()
+    
+    # Set timezone
+    try:
+        run_command("sudo timedatectl set-timezone Europe/Berlin", check=True)
+    except CommandError:
+        logger.warning("Failed to set timezone")
+    
+    return _myhome, local_bin
+
+def update_repository(myodoo_docker: str, server_version: str) -> None:
+    """Update the myodoo-docker repository."""
+    if not os.path.exists(myodoo_docker):
+        raise FileNotFoundError(f"Directory {myodoo_docker} does not exist")
+    
+    os.chdir(myodoo_docker)
+    
+    # Check current branch and switch if needed
+    current_branch = subprocess.check_output(["git", "rev-parse", "--abbrev-ref", "HEAD"], text=True).strip()
+    if current_branch != server_version:
+        logger.info(f"Switching to branch {server_version}")
+        run_command(f"git checkout {server_version}")
+    
+    # Configure git pull
+    run_command("git config pull.ff only", capture_output=True)
+    
+    # Check for updates
+    before_pull = subprocess.check_output(["git", "rev-parse", "HEAD"], text=True).strip()
+    run_command("git pull", capture_output=True)
+    after_pull = subprocess.check_output(["git", "rev-parse", "HEAD"], text=True).strip()
+    
+    if before_pull != after_pull:
+        logger.info("Repository updated, new changes downloaded")
+        run_command("git --no-pager log --oneline --no-decorate HEAD@{1}..HEAD")
+    
+    # Clean pyc files
+    run_command("find . -name '*.pyc' -type f -delete")
+
+def copy_configuration_files(_myhome: str, myodoo_docker: str) -> None:
+    """Copy configuration files from repository to home directory."""
+    # Copy .zshrc
+    source_zshrc = os.path.join(myodoo_docker, ".zshrc")
+    target_zshrc = os.path.join(_myhome, ".zshrc")
+    if os.path.exists(source_zshrc):
+        if os.path.exists(target_zshrc):
+            backup_path = f"{target_zshrc}.bak"
+            logger.info(f"Backing up existing .zshrc to {backup_path}")
+            run_command(f"cp {target_zshrc} {backup_path}")
+        
+        logger.info(f"Copying .zshrc from {source_zshrc} to {target_zshrc}")
+        run_command(f"cp {source_zshrc} {target_zshrc}")
+        ensure_path_in_zshrc()
+    
+    # Copy fastfetch config
+    config_directory = os.path.join(_myhome, ".config", "fastfetch")
+    ensure_directory_exists(config_directory)
+    
+    source_fastfetch = os.path.join(myodoo_docker, "scripts", "fastfetch", "config.jsonc")
+    target_fastfetch = os.path.join(config_directory, "config.jsonc")
+    if os.path.exists(source_fastfetch):
+        run_command(f"cp {source_fastfetch} {target_fastfetch}")
+
+def copy_scripts(_myhome: str, myodoo_docker: str) -> None:
+    """Copy utility scripts to home directory."""
+    scripts = [
+        "update_docker_odoo.py",
+        "update_docker_myodoo.py",
+        "docker-clean-logs.sh",
+        "cleanup-weblogs.py",
+        "container2backup.py",
+        "container2backup_zstd.py",
+        "restore-zip.sh",
+        "ssl-renew.sh",
+        "getScripts.py"
+    ]
+    
+    for script in scripts:
+        source = os.path.join(myodoo_docker, 
+                            "scripts" if script != "getScripts.py" else "", 
+                            script)
+        target = os.path.join(_myhome, script)
+        if os.path.exists(source):
+            run_command(f"cp {source} {target}")
+
+def install_packages(package_info: Dict[str, Any]) -> None:
+    """Install all required packages."""
+    # Install required system packages for Python virtual environments
+    if not is_package_installed("python3-venv"):
+        logger.info("Installing python3-venv...")
+        install_system_package("python3-venv")
+    
+    # Check if pipx is installed
+    if not is_pipx_installed():
+        logger.info("Installing pipx...")
+        install_system_package("pipx")
+        run_command("pipx ensurepath")
+        ensure_path_in_zshrc()
+    
+    # Install or update nginx-set-conf
+    install_or_update_nginx_set_conf()
+    
+    # Install specific versions of packages with pipx
+    if is_pipx_installed():
+        for package, version in package_info["pipx"].items():
+            if package != "nginx-set-conf":
+                install_specific_pipx_package(package, version)
+    
+    # Collect all packages for parallel version checking
+    all_packages = []
+    for package in package_info["pip"]:
+        all_packages.append((package, "pypi"))
+    
+    # Check versions in parallel
+    logger.info("Checking package versions...")
+    version_info = check_versions_parallel(all_packages)
+    
+    # Upgrade pip packages based on version check
+    for package in package_info["pip"]:
+        info = version_info.get(package, {})
+        if "error" not in info:
+            upgrade_pip_package(package)
+    
+    # Install specific tools
+    install_or_update_zstd()
+    install_or_update_bat()
+    install_or_update_7zip()
+    
+    # Install system packages
+    for package in package_info["system"]:
+        if "==" in package:
+            name, version = package.split("==")
+            if name == "zoxide":
+                install_zoxide_if_needed(version)
+            elif name == "fastfetch":
+                install_fastfetch_if_needed()
+            else:
+                install_system_package(name, version)
+        else:
+            install_system_package(package)
+    
+    # Install additional tools
+    install_or_update_oxker()
+    install_or_update_tilde()
+
 def main() -> None:
-    """Main function to execute the script"""
+    """Main function to execute the script."""
     original_dir = os.getcwd()
     
     try:
-        # Display header at start of execution
-        print_header()
+        # Setup environment
+        _myhome, local_bin = setup_environment()
         
-        # Check if running on Debian/Ubuntu
-        if not is_debian_or_ubuntu():
-            logger.error("This script is only supported on Debian and Ubuntu systems")
-            sys.exit(1)
-
         # First, upgrade pip if needed
         upgrade_pip()
-
+        
         global_server_version = '2025'
-        _myhome = os.path.expanduser('~')
-        
-        # Ensure .local/bin is in PATH
-        local_bin = os.path.join(_myhome, ".local", "bin")
-        ensure_directory_exists(local_bin)
-        ensure_path_in_zshrc()
-        
-        # Make sure we have a valid directory before continuing
-        try:
-            config_directory = os.path.join(_myhome, ".config", "fastfetch")
-            ensure_directory_exists(config_directory)
-        except Exception as e:
-            logger.error(f"Error creating config directory: {e}")
-            # Go to home directory as a safe fallback
-            os.chdir(_myhome)
-
-        run_command("sudo timedatectl set-timezone Europe/Berlin", check=True)
-
-        # Use absolute paths to avoid directory issues
         myodoo_docker = os.path.join(_myhome, "myodoo-docker")
         
-        # Make sure we can access the target directory
-        if not os.path.exists(myodoo_docker):
-            logger.error(f"Directory {myodoo_docker} does not exist")
-            sys.exit(1)
-            
+        # Update repository
         try:
-            os.chdir(myodoo_docker)
+            update_repository(myodoo_docker, global_server_version)
         except Exception as e:
-            logger.error(f"Cannot change to directory {myodoo_docker}: {e}")
+            logger.error(f"Failed to update repository: {e}")
             sys.exit(1)
-
-        # Check current branch and switch if needed
-        current_branch = subprocess.check_output(["git", "rev-parse", "--abbrev-ref", "HEAD"], text=True).strip()
-        if current_branch != global_server_version:
-            logger.info(f"Switching to branch {global_server_version}")
-            run_command(f"git checkout {global_server_version}")
-
-        # Configure git pull
-        run_command("git config pull.ff only", capture_output=True)
-
-        # Check for updates
-        before_pull = subprocess.check_output(["git", "rev-parse", "HEAD"], text=True).strip()
-        run_command("git pull", capture_output=True)
-        after_pull = subprocess.check_output(["git", "rev-parse", "HEAD"], text=True).strip()
         
-        if before_pull != after_pull:
-            logger.info("Repository updated, new changes downloaded")
-            # Show what changed
-            run_command("git --no-pager log --oneline --no-decorate HEAD@{1}..HEAD")
-
-        run_command("find . -name '*.pyc' -type f -delete")
-
-        # Copy configuration files
-        source_zshrc = os.path.join(myodoo_docker, ".zshrc")
-        target_zshrc = os.path.join(_myhome, ".zshrc")
-        if os.path.exists(source_zshrc):
-            # Backup existing .zshrc if it exists
-            if os.path.exists(target_zshrc):
-                backup_path = f"{target_zshrc}.bak"
-                logger.info(f"Backing up existing .zshrc to {backup_path}")
-                run_command(f"cp {target_zshrc} {backup_path}")
-            
-            logger.info(f"Copying .zshrc from {source_zshrc} to {target_zshrc}")
-            run_command(f"cp {source_zshrc} {target_zshrc}")
-            
-            # Make sure ~/.local/bin is in PATH in the new .zshrc
-            ensure_path_in_zshrc()
-
-        source_fastfetch = os.path.join(myodoo_docker, "scripts", "fastfetch", "config.jsonc")
-        target_fastfetch = os.path.join(_myhome, ".config", "fastfetch", "config.jsonc")
-        if os.path.exists(source_fastfetch):
-            run_command(f"cp {source_fastfetch} {target_fastfetch}")
+        # Copy configuration files and scripts
+        copy_configuration_files(_myhome, myodoo_docker)
+        copy_scripts(_myhome, myodoo_docker)
         
-        scripts = [
-            "update_docker_odoo.py",
-            "update_docker_myodoo.py",
-            "docker-clean-logs.sh",
-            "cleanup-weblogs.py",
-            "container2backup.py",
-            "container2backup_zstd.py",
-            "restore-zip.sh",
-            "ssl-renew.sh",
-            "getScripts.py"
-
-        ]
-        
-        # Copy scripts to home directory
-        for script in scripts:
-            source = os.path.join(myodoo_docker, 
-                                "scripts" if script != "getScripts.py" else "", 
-                                script)
-            target = os.path.join(_myhome, script)
-            if os.path.exists(source):
-                run_command(f"cp {source} {target}")
-
         os.chdir(_myhome)
-
-        # Check for nginx-set-conf-equitania and replace with nginx-set-conf if needed
+        
+        # Clean up old packages
         if is_pip_package_installed("nginx-set-conf-equitania"):
-            print("Removing nginx-set-conf-equitania...")
+            logger.info("Removing nginx-set-conf-equitania...")
             uninstall_pip_package("nginx-set-conf-equitania")
-
-        # Check for odoo-fast-report-mapper-equitania 
+        
         if is_pip_package_installed("odoo-fast-report-mapper-equitania"):
-            print("Removing odoo-fast-report-mapper-equitania...")
+            logger.info("Removing odoo-fast-report-mapper-equitania...")
             uninstall_pip_package("odoo-fast-report-mapper-equitania")
-
+        
         # Read package versions from packages.txt
-        package_info = read_package_versions(os.path.join(_myhome, "myodoo-docker", "packages.txt"))
-
-        # Install required system packages for Python virtual environments
-        if not is_package_installed("python3-venv"):
-            logger.info("Installing python3-venv...")
-            run_command("sudo apt update")
-            run_command("sudo apt install -y python3-venv")
-        else:
-            logger.info("python3-venv is already installed")
-
-        # Check if pipx is installed
-        if not is_pipx_installed():
-            logger.info("Installing pipx...")
-            run_command("sudo apt install -y pipx")
-            run_command("pipx ensurepath")
-            
-            # Add pipx to PATH and reload environment
-            pipx_bin = "/root/.local/bin"
-            os.environ["PATH"] = f"{pipx_bin}:{os.environ.get('PATH', '')}"
-            # Ensure PATH is set in .zshrc
-            ensure_path_in_zshrc()
-
-        # Install or update nginx-set-conf
-        install_or_update_nginx_set_conf()
+        package_info = read_package_versions(os.path.join(myodoo_docker, "packages.txt"))
         
-        # Install specific versions of packages with pipx
-        if is_pipx_installed():
-            for package, version in package_info["pipx"].items():
-                # Skip nginx-set-conf as it's handled separately
-                if package != "nginx-set-conf":
-                    install_specific_pipx_package(package, version)
-        else:
-            logger.error("pipx is not installed. Please install pipx first.")
-            
-        # Upgrade pip packages
-        for package in package_info["pip"]:
-            upgrade_pip_package(package)
-
-        install_or_update_zstd()
-        install_or_update_bat()
-        install_or_update_7zip()
+        # Install all packages
+        install_packages(package_info)
         
-        # Install system packages if they're not already installed
-        for package in package_info["system"]:
-            if "==" in package:
-                name, version = package.split("==")
-                if name == "zoxide":
-                    install_zoxide_if_needed(version)
-                elif name == "fastfetch":
-                    install_fastfetch_if_needed()
-                else:
-                    install_system_package(name, version)
-            else:
-                install_system_package(package)
-        
-        # Install oxker if not already installed
-        install_or_update_oxker()
-        
-        # Install tilde if not already installed
-        install_or_update_tilde()
-
-        # At the end, before reloading zsh configuration
+        # Reload shell configuration
         logger.info("Reloading shell configuration...")
         try:
-            # Make sure PATH is updated in current process
             if local_bin not in os.environ.get("PATH", ""):
                 os.environ["PATH"] = f"{local_bin}:{os.environ.get('PATH', '')}"
-                
-            # Use absolute paths in the command
-            zoxide_path = os.path.join(_myhome, ".local", "bin", "zoxide")
             
-            # First check if the file exists
+            zoxide_path = os.path.join(_myhome, ".local", "bin", "zoxide")
             if os.path.exists(zoxide_path):
                 run_command(f"/usr/bin/zsh -c 'source <({zoxide_path} init zsh)'", shell=True)
             else:
-                # Try using PATH
                 run_command("/usr/bin/zsh -c 'hash -r && source <(zoxide init zsh)'", shell=True)
-                
-            # Add a note about new sessions
+            
             logger.info("For the PATH changes to take effect in new shells, you may need to restart your terminal or run 'source ~/.zshrc'")
             
         except Exception as e:
@@ -1519,12 +1781,12 @@ def main() -> None:
         try:
             os.chdir(original_dir)
         except FileNotFoundError:
-            # If original directory doesn't exist anymore, go to home
             os.chdir(_myhome)
-            
+        
+        logger.info("Script completed successfully!")
+        
     except Exception as e:
         logger.error(f"An error occurred in main: {str(e)}")
-        # Make sure we're in a valid directory
         try:
             os.getcwd()
         except FileNotFoundError:
@@ -1532,4 +1794,29 @@ def main() -> None:
         sys.exit(1)
 
 if __name__ == "__main__":
+    import argparse
+    
+    parser = argparse.ArgumentParser(description="Docker Server Utility Script")
+    parser.add_argument("--clear-cache", action="store_true", 
+                       help="Clear all cached version information")
+    parser.add_argument("--no-cache", action="store_true",
+                       help="Disable cache for this run")
+    parser.add_argument("--debug", action="store_true",
+                       help="Enable debug logging")
+    
+    args = parser.parse_args()
+    
+    if args.debug:
+        logger.setLevel(logging.DEBUG)
+    
+    if args.clear_cache:
+        clear_cache()
+        logger.info("Cache cleared successfully")
+    
+    if args.no_cache:
+        # Disable cache by setting expiry to 0
+        global CACHE_EXPIRY_HOURS
+        CACHE_EXPIRY_HOURS = 0
+        logger.info("Cache disabled for this run")
+    
     main()
