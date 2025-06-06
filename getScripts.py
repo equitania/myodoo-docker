@@ -894,9 +894,52 @@ def check_bat_version() -> bool:
     logger.info(f"Current bat version: {'.'.join(map(str, current_version))}")
     return True
 
-def install_or_update_bat():
-    """Install or update bat package"""
+@lru_cache(maxsize=128)
+def get_latest_bat_version() -> Optional[str]:
+    """Get the latest version of bat from GitHub releases with caching.
+    
+    Returns:
+        Optional[str]: Latest version string if available, None otherwise
+    """
+    cache_key = "bat_latest"
+    cached_data = get_cached_version(cache_key)
+    
+    if cached_data:
+        return cached_data.get("version")
+    
     try:
+        response = requests.get("https://api.github.com/repos/sharkdp/bat/releases/latest")
+        if response.status_code == 200:
+            data = response.json()
+            version = data["tag_name"].lstrip('v')
+            logger.info(f"Found latest bat version: {version}")
+            
+            # Cache the result
+            cache_version_info(cache_key, {"version": version})
+            return version
+        logger.error(f"Failed to get latest bat version. Status code: {response.status_code}")
+    except Exception as e:
+        logger.error(f"Error fetching latest bat version: {str(e)}")
+    return None
+
+def install_or_update_bat():
+    """Install or update bat package with upstream version checking"""
+    try:
+        current_version = get_bat_version()
+        latest_version = get_latest_bat_version()
+        
+        if current_version:
+            current_str = '.'.join(map(str, current_version))
+            logger.info(f"Current bat version: {current_str}")
+            
+            if latest_version:
+                logger.info(f"Latest bat version available: {latest_version}")
+                if compare_versions(current_str, latest_version) >= 0:
+                    logger.info(f"bat is already at or newer than the latest version ({current_str} >= {latest_version})")
+                    return
+                else:
+                    logger.info(f"bat update available: {current_str} -> {latest_version}")
+        
         if not check_bat_version():
             logger.info("Installing/updating bat...")
             run_command("sudo apt update")
@@ -906,7 +949,14 @@ def install_or_update_bat():
             if not check_bat_version():
                 raise RuntimeError("Failed to install/update bat")
             
-            logger.info("bat installation/update completed")
+            new_version = get_bat_version()
+            if new_version:
+                new_str = '.'.join(map(str, new_version))
+                logger.info(f"bat installation/update completed: {new_str}")
+                
+                # Check if this is the latest available
+                if latest_version and compare_versions(new_str, latest_version) < 0:
+                    logger.warning(f"Installed bat {new_str} is older than latest {latest_version}. Consider manual update from source.")
     except Exception as e:
         logger.error(f"Error installing/updating bat: {str(e)}")
         raise RuntimeError("Failed to install/update bat")
@@ -1364,13 +1414,54 @@ def get_tilde_version() -> Optional[str]:
         logger.error(f"Error getting tilde version: {e}")
     return None
 
+@lru_cache(maxsize=128)
+def get_latest_tilde_version() -> Optional[str]:
+    """Get the latest version of tilde from GitHub releases with caching.
+    
+    Returns:
+        Optional[str]: Latest version string if available, None otherwise
+    """
+    cache_key = "tilde_latest"
+    cached_data = get_cached_version(cache_key)
+    
+    if cached_data:
+        return cached_data.get("version")
+    
+    try:
+        response = requests.get("https://api.github.com/repos/gphalkes/tilde/releases/latest")
+        if response.status_code == 200:
+            data = response.json()
+            version = data["tag_name"].lstrip('v')
+            logger.info(f"Found latest tilde version: {version}")
+            
+            # Cache the result
+            cache_version_info(cache_key, {"version": version})
+            return version
+        logger.error(f"Failed to get latest tilde version. Status code: {response.status_code}")
+    except Exception as e:
+        logger.error(f"Error fetching latest tilde version: {str(e)}")
+    return None
+
 def install_or_update_tilde() -> None:
-    """Install or update tilde using apt."""
+    """Install or update tilde, checking both system packages and latest upstream version."""
     try:
         # Check current version if installed
         installed = check_tilde_installed()
         current_version = get_tilde_version() if installed else None
         logger.info(f"Current tilde version: {current_version if installed else 'not installed'}")
+        
+        # Get latest version from GitHub
+        latest_version = get_latest_tilde_version()
+        if latest_version:
+            logger.info(f"Latest tilde version available: {latest_version}")
+            
+            # Compare versions if both are available
+            if current_version and latest_version:
+                if compare_versions(current_version, latest_version) >= 0:
+                    logger.info(f"tilde is already at or newer than the latest version ({current_version} >= {latest_version})")
+                    return
+                else:
+                    logger.info(f"tilde update available: {current_version} -> {latest_version}")
         
         # Install or update
         if not installed:
@@ -1382,10 +1473,13 @@ def install_or_update_tilde() -> None:
             new_version = get_tilde_version()
             if new_version:
                 logger.info(f"tilde {new_version} has been successfully installed")
+                # Check if this is the latest available
+                if latest_version and compare_versions(new_version, latest_version) < 0:
+                    logger.warning(f"Installed tilde {new_version} is older than latest {latest_version}. Consider manual update from source.")
             else:
                 raise RuntimeError("Failed to verify tilde installation")
         else:
-            logger.info("Checking for tilde updates...")
+            logger.info("Checking for tilde updates via package manager...")
             run_command("sudo apt update")
             run_command("sudo apt install --only-upgrade -y tilde")
             
@@ -1394,7 +1488,12 @@ def install_or_update_tilde() -> None:
             if new_version != current_version:
                 logger.info(f"tilde updated from {current_version} to {new_version}")
             else:
-                logger.info(f"tilde is already at the latest version ({current_version})")
+                logger.info(f"No package manager updates available for tilde ({current_version})")
+            
+            # Final check against latest version
+            if latest_version and compare_versions(new_version or current_version, latest_version) < 0:
+                logger.warning(f"Package manager version ({new_version or current_version}) is older than latest upstream ({latest_version}). Consider manual update from source.")
+            
     except Exception as e:
         logger.error(f"Error installing/updating tilde: {str(e)}")
         raise
