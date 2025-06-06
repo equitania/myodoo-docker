@@ -84,6 +84,10 @@ def get_cached_version(key: str) -> Optional[Dict[str, Any]]:
     Returns:
         Optional[Dict[str, Any]]: Cached data if valid, None otherwise
     """
+    # Check if caching is disabled
+    if getattr(get_cached_version, 'disabled', False):
+        return None
+        
     ensure_cache_dir()
     cache_file = get_cache_file_path(key)
     
@@ -1814,9 +1818,8 @@ if __name__ == "__main__":
         logger.info("Cache cleared successfully")
     
     if args.no_cache:
-        # Disable cache by setting expiry to 0
-        global CACHE_EXPIRY_HOURS
-        CACHE_EXPIRY_HOURS = 0
+        # Disable cache by setting a flag on the function
+        get_cached_version.disabled = True
         logger.info("Cache disabled for this run")
     
     main()
