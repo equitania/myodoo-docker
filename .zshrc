@@ -1,6 +1,6 @@
 #ZSH powered by ownerp.com
-# Version 3.3.0
-# Date 11.04.2025
+# Version 3.4.0
+# Date 11.07.2025
 
 ################################
 # BASIC CONFIGURATION
@@ -93,6 +93,11 @@ alias syspatch='sudo journalctl --vacuum-time=7d && sudo journalctl --vacuum-siz
 alias dusort='du /var --max-depth=1 | sort -nr | cut -f2 | xargs -n 1 du -hs'
 alias f2b='fail2ban-client status '
 alias ups='sudo $HOME/getScripts.py && sudo cp $HOME/myodoo-docker/getScripts.py $HOME/ && source ~/.zshrc'
+
+# Claude CLI alias (if installed)
+if [ -f "$HOME/.claude/local/claude" ]; then
+    alias claude="$HOME/.claude/local/claude"
+fi
 
 # ownERP aliases
 alias dobk='$HOME/container2backup.py'
