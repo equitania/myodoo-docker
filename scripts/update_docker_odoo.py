@@ -1,7 +1,7 @@
 #!/usr/bin/python3
 # -*- coding: utf-8 -*-
 # This script performs an update of an Odoo database in a Docker container
-# Version 5.1.3
+# Version 5.1.5
 # Date 15.07.2025
 ##############################################################################
 #
@@ -713,13 +713,21 @@ def process_container(container):
         return False, total_info, total_warnings, total_errors
         
     # Build new image
-    logger.info(f"Building new Docker image {image} in {os.getcwd()}...")
-    success, _, info, warn, err = run_command(f"docker build -t {image} .")
+    print(f"Building new Docker image {image} in {os.getcwd()}...")
+    print("This process downloads 977 modules individually and may take 10-20 minutes")
+    print("Progress will be shown below - please wait...")
+    
+    success, _, info, warn, err = run_command(f"docker build -t {image} .", timeout=3600)
     total_info += info
     total_warnings += warn
     total_errors += err
     if not success:
-        logger.error("Failed to build Docker image")
+        print("ERROR: Failed to build Docker image")
+        print("This may be due to:")
+        print("- Network timeout while downloading modules")
+        print("- Insufficient disk space")
+        print("- Build process was interrupted")
+        print("You can retry the build by running the script again")
         try:
             os.chdir(original_dir)  # Change back to original directory
         except:
@@ -934,10 +942,9 @@ def main():
         logger.error(f"Failed to load configuration from {args.config}. Exiting.")
         return 1
     
-    # Optimize DNS configuration for containers (always run, not just in verbose mode)
+    # Optimize DNS configuration for containers (ALWAYS run, regardless of verbose mode)
     config_modified = False
-    if logger.level <= logging.INFO:
-        logger.info("Checking DNS optimization for Docker containers...")
+    print("Checking DNS optimization for Docker containers...")
     
     for container in config['containers']:
         if not container.get('active', True):
@@ -952,25 +959,21 @@ def main():
         if was_modified:
             container['volume'] = optimized_volume
             config_modified = True
-            # Always show DNS optimization in non-verbose mode with print, verbose with logger
-            if logger.level <= logging.INFO:
-                logger.info(f"DNS optimization applied to container: {container_name}")
-            else:
-                print(f"DNS optimization applied to container: {container_name}")
+            # Always show DNS optimization
+            print(f"DNS optimization applied to container: {container_name}")
         else:
-            if logger.level <= logging.INFO:
-                logger.info(f"DNS configuration already optimal for container: {container_name}")
+            print(f"DNS configuration already optimal for container: {container_name}")
     
     # Save updated configuration if modifications were made
     if config_modified:
         if save_updated_config(config, args.config):
-            # Always show this message, even in non-verbose mode
+            # Always show this message
             print("Configuration updated with DNS optimizations")
-            if logger.level <= logging.INFO:
-                logger.info("Configuration updated with DNS optimizations")
         else:
-            logger.error("Failed to save DNS optimizations to configuration file")
+            print("ERROR: Failed to save DNS optimizations to configuration file")
             return 1
+    else:
+        print("No DNS optimization needed - configuration is already optimal")
     
     # Process active containers
     success_count = 0
