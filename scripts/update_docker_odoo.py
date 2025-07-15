@@ -1,7 +1,7 @@
 #!/usr/bin/python3
 # -*- coding: utf-8 -*-
 # This script performs an update of an Odoo database in a Docker container
-# Version 5.1.0
+# Version 5.1.1
 # Date 15.07.2025
 ##############################################################################
 #
@@ -83,49 +83,52 @@ def optimize_dns_for_container(volume_config):
     # Recommended DNS servers for optimal performance
     recommended_dns = ["1.1.1.1", "8.8.8.8", "9.9.9.9"]
     
-    # Check if DNS is already configured
+    # Check if DNS is already configured in the container
     if "--dns" in volume_config:
         logger.info("DNS servers already configured in volume settings")
         return volume_config, False
     
-    # Check if host DNS is optimized (avoid DNS issues with Hetzner->DigitalOcean)
-    host_dns_optimized = False
+    # IMPORTANT: Docker containers do NOT inherit host DNS configuration by default!
+    # Docker uses its own DNS resolver (127.0.0.11) which may use different DNS servers
+    # than the host system. Therefore, we should ALWAYS optimize container DNS unless
+    # it's already explicitly configured.
+    
+    # Check host DNS for informational purposes only
+    host_dns_info = []
     try:
-        # Check if host system has optimal DNS configuration
         if os.path.exists("/etc/resolv.conf"):
             with open("/etc/resolv.conf", "r") as f:
                 content = f.read()
-                nameservers = []
                 for line in content.split('\n'):
                     if line.strip().startswith('nameserver'):
                         nameserver = line.split()[1] if len(line.split()) > 1 else None
                         if nameserver:
-                            nameservers.append(nameserver)
-                
-                # Check if the primary DNS is optimized
-                if nameservers and nameservers[0] in recommended_dns:
-                    host_dns_optimized = True
-                    logger.info(f"Host DNS is optimized with {nameservers[0]} as primary DNS")
-                else:
-                    logger.info("Host DNS is not optimized for Docker containers")
+                            host_dns_info.append(nameserver)
     except Exception as e:
         logger.warning(f"Could not check host DNS configuration: {e}")
     
-    # If host DNS is not optimized, add DNS servers to container
-    if not host_dns_optimized:
-        dns_args = " ".join([f"--dns {dns}" for dns in recommended_dns])
-        
-        # Add DNS configuration to volume string
-        if volume_config.strip():
-            # Insert DNS configuration before the image name (at the end)
-            volume_config = f"{volume_config} {dns_args}"
+    # Log host DNS information
+    if host_dns_info:
+        primary_dns = host_dns_info[0]
+        if primary_dns in recommended_dns:
+            logger.info(f"Host DNS is optimized with {primary_dns}, but containers need explicit DNS configuration")
         else:
-            volume_config = dns_args
-        
-        logger.info(f"Added DNS optimization to container: {dns_args}")
-        return volume_config, True
+            logger.info(f"Host DNS uses {primary_dns}, containers will be optimized with better DNS servers")
+    else:
+        logger.info("Could not determine host DNS configuration")
     
-    return volume_config, False
+    # Always add DNS optimization to containers unless already configured
+    logger.info("Adding DNS optimization to container for better performance and reliability")
+    dns_args = " ".join([f"--dns {dns}" for dns in recommended_dns])
+    
+    # Add DNS configuration to volume string
+    if volume_config.strip():
+        volume_config = f"{volume_config} {dns_args}"
+    else:
+        volume_config = dns_args
+    
+    logger.info(f"Added DNS servers to container: {dns_args}")
+    return volume_config, True
 
 def save_updated_config(config, config_file):
     """
