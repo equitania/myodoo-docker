@@ -1,7 +1,7 @@
 #!/usr/bin/python3
 # -*- coding: utf-8 -*-
 # This script performs an update of an Odoo database in a Docker container
-# Version 5.1.4
+# Version 5.1.3
 # Date 15.07.2025
 ##############################################################################
 #
@@ -714,9 +714,7 @@ def process_container(container):
         
     # Build new image
     logger.info(f"Building new Docker image {image} in {os.getcwd()}...")
-    logger.info("⚠️  This may take several minutes as modules are downloaded individually")
-    logger.info("💡 Progress will be shown in real-time - please be patient")
-    success, _, info, warn, err = run_command(f"docker build -t {image} .", timeout=3600)  # 1 hour timeout
+    success, _, info, warn, err = run_command(f"docker build -t {image} .")
     total_info += info
     total_warnings += warn
     total_errors += err
@@ -749,7 +747,8 @@ def process_container(container):
             update_command, 
             show_output=True,  # Always show output
             filter_output=should_filter,  # Only filter if not verbose
-            show_progress=False,  # Disable progress spinner
+            show_progress=True,
+            progress_msg=f"Updating database {db_name}",
             timeout=1800  # 30 minute timeout
         )
         total_info += info
@@ -780,7 +779,8 @@ def process_container(container):
             neutralize_command, 
             show_output=True,  # Always show output
             filter_output=should_filter,  # Only filter if not verbose
-            show_progress=False,  # Disable progress spinner
+            show_progress=True,
+            progress_msg=f"Neutralizing database {db_name}",
             timeout=900  # 15 minute timeout
         )
         total_info += info
@@ -809,7 +809,8 @@ def process_container(container):
             update_command, 
             show_output=True,  # Always show output
             filter_output=should_filter,  # Only filter if not verbose
-            show_progress=False,  # Disable progress spinner
+            show_progress=True,
+            progress_msg=f"Updating database {db_name}",
             timeout=1800  # 30 minute timeout
         )
         total_info += info
