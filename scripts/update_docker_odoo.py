@@ -1,7 +1,7 @@
 #!/usr/bin/python3
 # -*- coding: utf-8 -*-
 # This script performs an update of an Odoo database in a Docker container
-# Version 5.1.2
+# Version 5.1.3
 # Date 15.07.2025
 ##############################################################################
 #
@@ -636,7 +636,7 @@ def process_container(container):
         download_check_script = f"{git_path}{version}{check_script}"
         
         logger.info(f"Downloading build script from: {download_build_script}")
-        success, _, info, warn, err = run_command(f"wget -q -N {download_build_script}")
+        success, _, info, warn, err = run_command(f"wget -q -N --timeout=30 --tries=3 {download_build_script}", timeout=60)
         total_info += info
         total_warnings += warn
         total_errors += err
@@ -644,7 +644,7 @@ def process_container(container):
             logger.warning(f"Failed to download build script from {download_build_script} - continuing anyway")
         
         logger.info(f"Downloading check script from: {download_check_script}")
-        success, _, info, warn, err = run_command(f"wget -q -N {download_check_script}")
+        success, _, info, warn, err = run_command(f"wget -q -N --timeout=30 --tries=3 {download_check_script}", timeout=60)
         total_info += info
         total_warnings += warn
         total_errors += err
@@ -934,9 +934,10 @@ def main():
         logger.error(f"Failed to load configuration from {args.config}. Exiting.")
         return 1
     
-    # Optimize DNS configuration for containers
+    # Optimize DNS configuration for containers (always run, not just in verbose mode)
     config_modified = False
-    logger.info("Checking DNS optimization for Docker containers...")
+    if logger.level <= logging.INFO:
+        logger.info("Checking DNS optimization for Docker containers...")
     
     for container in config['containers']:
         if not container.get('active', True):
@@ -951,14 +952,22 @@ def main():
         if was_modified:
             container['volume'] = optimized_volume
             config_modified = True
-            logger.info(f"DNS optimization applied to container: {container_name}")
+            # Always show DNS optimization in non-verbose mode with print, verbose with logger
+            if logger.level <= logging.INFO:
+                logger.info(f"DNS optimization applied to container: {container_name}")
+            else:
+                print(f"DNS optimization applied to container: {container_name}")
         else:
-            logger.info(f"DNS configuration already optimal for container: {container_name}")
+            if logger.level <= logging.INFO:
+                logger.info(f"DNS configuration already optimal for container: {container_name}")
     
     # Save updated configuration if modifications were made
     if config_modified:
         if save_updated_config(config, args.config):
-            logger.info("Configuration updated with DNS optimizations")
+            # Always show this message, even in non-verbose mode
+            print("Configuration updated with DNS optimizations")
+            if logger.level <= logging.INFO:
+                logger.info("Configuration updated with DNS optimizations")
         else:
             logger.error("Failed to save DNS optimizations to configuration file")
             return 1
