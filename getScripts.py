@@ -1,7 +1,7 @@
 #!/usr/bin/python3
 # -*- coding: utf-8 -*-
 # Script for organizing Docker servers
-# Version 6.7.1
+# Version 6.7.2
 # Date 15.07.2025
 ##############################################################################
 #
@@ -57,7 +57,7 @@ if os.environ.get('GETSCRIPTS_DEBUG', '').lower() in ('1', 'true', 'yes'):
     logger.debug("Debug logging enabled")
 
 # Script version and date
-SCRIPT_VERSION = "6.7.1"
+SCRIPT_VERSION = "6.7.2"
 SCRIPT_DATE = "15.07.2025"
 
 # Cache settings
@@ -1475,6 +1475,37 @@ def install_or_update_tilde() -> None:
         logger.error(f"Error installing/updating tilde: {str(e)}")
         raise
 
+def is_dns_already_optimized() -> bool:
+    """Check if DNS has already been optimized by getScripts.py
+    
+    Returns:
+        bool: True if DNS appears to be already optimized
+    """
+    try:
+        # Check if resolvconf head file exists with our marker
+        head_file = "/etc/resolvconf/resolv.conf.d/head"
+        if os.path.exists(head_file):
+            with open(head_file, "r") as f:
+                content = f.read()
+                if "managed by getScripts.py" in content:
+                    return True
+        
+        # Check if systemd-resolved config exists with our marker
+        resolved_config = "/etc/systemd/resolved.conf.d/dns-optimization.conf"
+        if os.path.exists(resolved_config):
+            return True
+        
+        # Check if direct resolv.conf has our marker
+        if os.path.exists("/etc/resolv.conf"):
+            with open("/etc/resolv.conf", "r") as f:
+                content = f.read()
+                if "managed by getScripts.py" in content:
+                    return True
+        
+        return False
+    except Exception:
+        return False
+
 def check_dns_configuration() -> Dict[str, Any]:
     """Check the current DNS configuration on the system.
     
@@ -1607,9 +1638,31 @@ def optimize_dns_configuration() -> bool:
     hetzner_dns = ["185.12.64.1", "185.12.64.2", "2a01:4ff:ff00::add:1", "2a01:4ff:ff00::add:2"]
     current_dns = dns_info['resolv_conf']
     
-    if any(dns in hetzner_dns for dns in current_dns):
-        logger.warning("\n⚠️  Detected Hetzner DNS servers which may cause issues with some providers")
-        needs_optimization = True
+    # Check if already optimized with recommended DNS servers
+    recommended_dns = ["1.1.1.1", "8.8.8.8", "9.9.9.9"]
+    primary_dns = current_dns[0] if current_dns else None
+    
+    # Check if DNS was already optimized by our script
+    already_optimized = is_dns_already_optimized()
+    
+    # Check if the primary DNS is already optimized
+    if primary_dns in recommended_dns and already_optimized:
+        logger.info(f"\n✅ DNS is already optimized with {primary_dns} as primary DNS server")
+        # Still check for Hetzner DNS in fallback positions for information
+        if any(dns in hetzner_dns for dns in current_dns[3:]):  # Check fallback servers only
+            logger.info("ℹ️  Note: Hetzner DNS servers are present as fallback servers (positions 4+)")
+    elif primary_dns in recommended_dns and not already_optimized:
+        # DNS servers are good but not set by our script - might be manually configured
+        logger.info(f"\n✅ DNS appears to be manually optimized with {primary_dns} as primary DNS server")
+        # Check if Hetzner DNS is in primary positions
+        if any(dns in hetzner_dns for dns in current_dns[:2]):
+            logger.warning("\n⚠️  Detected Hetzner DNS servers in primary/secondary positions")
+            needs_optimization = True
+    else:
+        # Not using recommended DNS servers
+        if any(dns in hetzner_dns for dns in current_dns):
+            logger.warning("\n⚠️  Detected Hetzner DNS servers which may cause issues with some providers")
+            needs_optimization = True
     
     # Check if current DNS is slow
     if dns_info["dns_performance"]:
@@ -1656,7 +1709,7 @@ EOF''',
         logger.info("\nOptimization method: resolvconf configuration")
         optimization_commands = [
             '''sudo tee /etc/resolvconf/resolv.conf.d/head > /dev/null << EOF
-# Optimized DNS servers
+# Optimized DNS servers - managed by getScripts.py
 nameserver 1.1.1.1
 nameserver 8.8.8.8
 nameserver 9.9.9.9
@@ -1668,7 +1721,7 @@ EOF''',
         optimization_commands = [
             "sudo cp /etc/resolv.conf /etc/resolv.conf.backup",
             '''sudo tee /etc/resolv.conf > /dev/null << EOF
-# Optimized DNS configuration
+# Optimized DNS configuration - managed by getScripts.py
 nameserver 1.1.1.1
 nameserver 8.8.8.8
 nameserver 9.9.9.9
