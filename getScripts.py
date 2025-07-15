@@ -1,8 +1,8 @@
 #!/usr/bin/python3
 # -*- coding: utf-8 -*-
 # Script for organizing Docker servers
-# Version 6.7.0
-# Date 06.06.2025
+# Version 6.7.1
+# Date 15.07.2025
 ##############################################################################
 #
 #    Shell Script for devops
@@ -57,8 +57,8 @@ if os.environ.get('GETSCRIPTS_DEBUG', '').lower() in ('1', 'true', 'yes'):
     logger.debug("Debug logging enabled")
 
 # Script version and date
-SCRIPT_VERSION = "6.7.0"
-SCRIPT_DATE = "06.06.2025"
+SCRIPT_VERSION = "6.7.1"
+SCRIPT_DATE = "15.07.2025"
 
 # Cache settings
 CACHE_DIR = os.path.expanduser("~/.cache/getscripts")
@@ -1475,6 +1475,257 @@ def install_or_update_tilde() -> None:
         logger.error(f"Error installing/updating tilde: {str(e)}")
         raise
 
+def check_dns_configuration() -> Dict[str, Any]:
+    """Check the current DNS configuration on the system.
+    
+    Returns:
+        Dict[str, Any]: DNS configuration information
+    """
+    dns_info = {
+        "resolv_conf": [],
+        "systemd_resolved": False,
+        "systemd_resolved_status": None,
+        "resolvconf": False,
+        "networkmanager": False,
+        "dns_performance": {}
+    }
+    
+    try:
+        # Check /etc/resolv.conf
+        if os.path.exists("/etc/resolv.conf"):
+            with open("/etc/resolv.conf", "r") as f:
+                content = f.read()
+                # Extract nameservers
+                for line in content.split('\n'):
+                    if line.strip().startswith('nameserver'):
+                        nameserver = line.split()[1] if len(line.split()) > 1 else None
+                        if nameserver:
+                            dns_info["resolv_conf"].append(nameserver)
+        
+        # Check if systemd-resolved is active
+        try:
+            result = subprocess.run(["systemctl", "is-active", "systemd-resolved"], 
+                                  capture_output=True, text=True)
+            dns_info["systemd_resolved"] = result.returncode == 0
+            if dns_info["systemd_resolved"]:
+                # Get systemd-resolved status
+                status_result = subprocess.run(["resolvectl", "status"], 
+                                             capture_output=True, text=True)
+                if status_result.returncode == 0:
+                    dns_info["systemd_resolved_status"] = status_result.stdout
+        except Exception:
+            pass
+        
+        # Check if resolvconf is managing DNS
+        if os.path.islink("/etc/resolv.conf"):
+            link_target = os.readlink("/etc/resolv.conf")
+            if "resolvconf" in link_target:
+                dns_info["resolvconf"] = True
+        
+        # Check if NetworkManager is active
+        try:
+            result = subprocess.run(["systemctl", "is-active", "NetworkManager"], 
+                                  capture_output=True, text=True)
+            dns_info["networkmanager"] = result.returncode == 0
+        except Exception:
+            pass
+            
+        # Test DNS performance
+        test_domains = ["google.com", "cloudflare.com", "github.com"]
+        test_dns_servers = {
+            "current": dns_info["resolv_conf"][0] if dns_info["resolv_conf"] else None,
+            "cloudflare": "1.1.1.1",
+            "google": "8.8.8.8",
+            "quad9": "9.9.9.9"
+        }
+        
+        for server_name, server_ip in test_dns_servers.items():
+            if server_ip:
+                total_time = 0
+                successful_queries = 0
+                
+                for domain in test_domains:
+                    try:
+                        start_time = time.time()
+                        result = subprocess.run(
+                            ["dig", f"@{server_ip}", domain, "+short", "+stats"],
+                            capture_output=True, text=True, timeout=5
+                        )
+                        end_time = time.time()
+                        
+                        if result.returncode == 0:
+                            query_time = (end_time - start_time) * 1000  # Convert to ms
+                            total_time += query_time
+                            successful_queries += 1
+                    except Exception:
+                        pass
+                
+                if successful_queries > 0:
+                    avg_time = total_time / successful_queries
+                    dns_info["dns_performance"][server_name] = {
+                        "server": server_ip,
+                        "avg_query_time_ms": round(avg_time, 2),
+                        "successful_queries": successful_queries
+                    }
+        
+    except Exception as e:
+        logger.error(f"Error checking DNS configuration: {e}")
+    
+    return dns_info
+
+def optimize_dns_configuration() -> bool:
+    """Optimize DNS configuration based on detected setup.
+    
+    Returns:
+        bool: True if optimization was applied, False otherwise
+    """
+    logger.info("\n" + "="*60)
+    logger.info("DNS Configuration Check and Optimization")
+    logger.info("="*60)
+    
+    # Get current DNS configuration
+    dns_info = check_dns_configuration()
+    
+    # Display current configuration
+    logger.info("\nCurrent DNS Configuration:")
+    logger.info(f"- Nameservers: {', '.join(dns_info['resolv_conf']) if dns_info['resolv_conf'] else 'None'}")
+    logger.info(f"- systemd-resolved: {'Active' if dns_info['systemd_resolved'] else 'Inactive'}")
+    logger.info(f"- resolvconf: {'Active' if dns_info['resolvconf'] else 'Inactive'}")
+    logger.info(f"- NetworkManager: {'Active' if dns_info['networkmanager'] else 'Inactive'}")
+    
+    # Display DNS performance results
+    if dns_info["dns_performance"]:
+        logger.info("\nDNS Performance Test Results:")
+        for server_name, perf_data in dns_info["dns_performance"].items():
+            logger.info(f"- {server_name} ({perf_data['server']}): "
+                       f"{perf_data['avg_query_time_ms']}ms avg query time")
+    
+    # Check if optimization is needed
+    needs_optimization = False
+    
+    # Check if using Hetzner DNS (known to have issues with DigitalOcean)
+    hetzner_dns = ["185.12.64.1", "185.12.64.2", "2a01:4ff:ff00::add:1", "2a01:4ff:ff00::add:2"]
+    current_dns = dns_info['resolv_conf']
+    
+    if any(dns in hetzner_dns for dns in current_dns):
+        logger.warning("\n⚠️  Detected Hetzner DNS servers which may cause issues with some providers")
+        needs_optimization = True
+    
+    # Check if current DNS is slow
+    if dns_info["dns_performance"]:
+        current_perf = dns_info["dns_performance"].get("current", {})
+        if current_perf and current_perf.get("avg_query_time_ms", 0) > 50:
+            logger.warning(f"\n⚠️  Current DNS response time ({current_perf['avg_query_time_ms']}ms) is slow")
+            needs_optimization = True
+    
+    # Check if Docker DNS (127.0.0.11) is being used
+    if "127.0.0.11" in current_dns:
+        logger.info("\n📦 Detected Docker container environment (DNS: 127.0.0.11)")
+        logger.info("For Docker containers, DNS should be configured in docker-compose.yml or docker run command")
+        
+    if not needs_optimization and "127.0.0.11" not in current_dns:
+        logger.info("\n✅ DNS configuration appears to be optimal")
+        return False
+    
+    # Ask user if they want to optimize
+    logger.info("\n" + "-"*60)
+    logger.info("DNS Optimization Recommended")
+    logger.info("-"*60)
+    logger.info("\nRecommended DNS servers for better performance:")
+    logger.info("- Primary: 1.1.1.1 (Cloudflare)")
+    logger.info("- Secondary: 8.8.8.8 (Google)")
+    logger.info("- Tertiary: 9.9.9.9 (Quad9)")
+    
+    # Different optimization based on DNS management system
+    if dns_info["systemd_resolved"]:
+        logger.info("\nOptimization method: systemd-resolved configuration")
+        optimization_commands = [
+            "sudo mkdir -p /etc/systemd/resolved.conf.d",
+            '''sudo tee /etc/systemd/resolved.conf.d/dns-optimization.conf > /dev/null << EOF
+[Resolve]
+DNS=1.1.1.1 8.8.8.8 9.9.9.9
+FallbackDNS=8.8.4.4 1.0.0.1
+DNSOverTLS=opportunistic
+DNSSEC=allow-downgrade
+Cache=yes
+CacheFromLocalhost=yes
+EOF''',
+            "sudo systemctl restart systemd-resolved"
+        ]
+    elif dns_info["resolvconf"]:
+        logger.info("\nOptimization method: resolvconf configuration")
+        optimization_commands = [
+            '''sudo tee /etc/resolvconf/resolv.conf.d/head > /dev/null << EOF
+# Optimized DNS servers
+nameserver 1.1.1.1
+nameserver 8.8.8.8
+nameserver 9.9.9.9
+EOF''',
+            "sudo resolvconf -u"
+        ]
+    else:
+        logger.info("\nOptimization method: direct resolv.conf modification")
+        optimization_commands = [
+            "sudo cp /etc/resolv.conf /etc/resolv.conf.backup",
+            '''sudo tee /etc/resolv.conf > /dev/null << EOF
+# Optimized DNS configuration
+nameserver 1.1.1.1
+nameserver 8.8.8.8
+nameserver 9.9.9.9
+EOF'''
+        ]
+    
+    # Docker-specific instructions
+    if "127.0.0.11" in current_dns:
+        logger.info("\n📋 For Docker containers, add this to your docker-compose.yml:")
+        logger.info("""
+services:
+  your-service:
+    dns:
+      - 1.1.1.1
+      - 8.8.8.8
+      - 9.9.9.9
+""")
+        logger.info("\n📋 Or use these flags with docker run:")
+        logger.info("docker run --dns 1.1.1.1 --dns 8.8.8.8 --dns 9.9.9.9 ...")
+        return False
+    
+    # Ask for confirmation
+    try:
+        response = input("\nDo you want to apply DNS optimization? (y/N): ").strip().lower()
+        if response != 'y':
+            logger.info("DNS optimization skipped")
+            return False
+    except KeyboardInterrupt:
+        logger.info("\nDNS optimization cancelled")
+        return False
+    
+    # Apply optimization
+    logger.info("\nApplying DNS optimization...")
+    try:
+        for cmd in optimization_commands:
+            logger.info(f"Running: {cmd[:50]}...")
+            run_command(cmd, shell=True, check=True)
+        
+        # Test new configuration
+        logger.info("\nTesting new DNS configuration...")
+        time.sleep(2)  # Wait for changes to take effect
+        
+        new_dns_info = check_dns_configuration()
+        if new_dns_info["dns_performance"]:
+            new_perf = new_dns_info["dns_performance"].get("current", {})
+            if new_perf:
+                logger.info(f"New DNS query time: {new_perf['avg_query_time_ms']}ms")
+        
+        logger.info("\n✅ DNS optimization completed successfully!")
+        logger.info("Note: For containers, remember to add DNS configuration to docker-compose.yml")
+        return True
+        
+    except Exception as e:
+        logger.error(f"Error applying DNS optimization: {e}")
+        logger.info("You can manually optimize DNS by editing the appropriate configuration files")
+        return False
+
 def ensure_path_in_zshrc() -> None:
     """Ensure ~/.local/bin is in PATH in .zshrc file."""
     try:
@@ -1809,6 +2060,9 @@ def main() -> None:
         # First, upgrade pip if needed
         upgrade_pip()
         
+        # Check and optimize DNS configuration
+        optimize_dns_configuration()
+        
         global_server_version = '2025'
         myodoo_docker = os.path.join(_myhome, "myodoo-docker")
         
@@ -1883,6 +2137,8 @@ if __name__ == "__main__":
                        help="Disable cache for this run")
     parser.add_argument("--debug", action="store_true",
                        help="Enable debug logging")
+    parser.add_argument("--dns-check", action="store_true",
+                       help="Only check and optimize DNS configuration")
     
     args = parser.parse_args()
     
@@ -1897,5 +2153,10 @@ if __name__ == "__main__":
         # Disable cache by setting a flag on the function
         get_cached_version.disabled = True
         logger.info("Cache disabled for this run")
+    
+    if args.dns_check:
+        # Only run DNS optimization
+        optimize_dns_configuration()
+        sys.exit(0)
     
     main()

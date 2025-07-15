@@ -18,6 +18,9 @@ Dieses Repository enthält eine Sammlung von Docker-Konfigurationen und Verwaltu
 git clone https://github.com/equitania/myodoo-docker.git
 cp myodoo-docker/getScripts.py /root/
 ./getScripts.py
+
+# DNS-Optimierung (eigenständig)
+./getScripts.py --dns-check
 ```
 
 ### Hauptkomponenten
@@ -28,6 +31,9 @@ cp myodoo-docker/getScripts.py /root/
   - Hauptinstallationsskript
   - Installiert alle benötigten Werkzeuge und Abhängigkeiten
   - Aktualisiert bestehende Installationen
+  - **NEU**: DNS-Konfigurationsprüfung und -optimierung
+  - Erkennt Hetzner-DNS-Probleme mit DigitalOcean
+  - Unterstützt systemd-resolved, resolvconf und direkte DNS-Konfiguration
 
 - **container2backup.py**
   - Automatisches Backup-System für Odoo-Datenbanken
@@ -60,6 +66,7 @@ cp myodoo-docker/getScripts.py /root/
 - Verschlüsselte Backups (AES-256)
 - Automatische SSL-Zertifikatserneuerung
 - Sichere Standardkonfigurationen
+- **NEU**: DNS-Optimierung für bessere Performance
 
 #### 4. Shell-Aliasse
 
@@ -130,6 +137,51 @@ Die ZSH-Konfiguration enthält nützliche Aliasse für die tägliche Arbeit:
 - `ox` - Shortcut für oxker
 - `dkprfs` - docker system cleanup with force option
 
+#### 5. DNS-Optimierung (NEU)
+
+**Automatische DNS-Konfigurationsprüfung und -optimierung**
+
+Das getScripts.py-Skript prüft automatisch die DNS-Konfiguration und bietet bei Bedarf Optimierungen an:
+
+```bash
+# DNS-Optimierung als Teil der Installation
+./getScripts.py
+
+# Nur DNS-Prüfung durchführen
+./getScripts.py --dns-check
+```
+
+**Erkannte Probleme:**
+- Hetzner-DNS-Server können Probleme mit DigitalOcean-Servern verursachen
+- Langsame DNS-Auflösungszeiten (>50ms)
+- Suboptimale DNS-Konfiguration
+
+**Unterstützte DNS-Systeme:**
+- systemd-resolved (Standard bei Debian Bookworm)
+- resolvconf (klassische Konfiguration)
+- Direkte /etc/resolv.conf-Bearbeitung
+
+**Empfohlene DNS-Server:**
+- Primär: 1.1.1.1 (Cloudflare)
+- Sekundär: 8.8.8.8 (Google)
+- Tertiär: 9.9.9.9 (Quad9)
+
+**Docker-Container-Konfiguration:**
+```yaml
+# docker-compose.yml
+services:
+  odoo:
+    dns:
+      - 1.1.1.1
+      - 8.8.8.8
+      - 9.9.9.9
+```
+
+```bash
+# docker run
+docker run --dns 1.1.1.1 --dns 8.8.8.8 --dns 9.9.9.9 your-image
+```
+
 ### Branch-Verwaltung
 
 ```bash
@@ -156,6 +208,9 @@ This repository contains a collection of Docker configurations and management sc
 git clone https://github.com/equitania/myodoo-docker.git
 cp myodoo-docker/getScripts.py /root/
 ./getScripts.py
+
+# DNS optimization (standalone)
+./getScripts.py --dns-check
 ```
 
 ### Main Components
@@ -166,6 +221,9 @@ cp myodoo-docker/getScripts.py /root/
   - Main installation script
   - Installs all required tools and dependencies
   - Updates existing installations
+  - **NEW**: DNS configuration check and optimization
+  - Detects Hetzner DNS issues with DigitalOcean
+  - Supports systemd-resolved, resolvconf, and direct DNS configuration
 
 - **container2backup.py**
   - Automatic backup system for Odoo databases
@@ -198,6 +256,7 @@ cp myodoo-docker/getScripts.py /root/
 - Encrypted backups (AES-256)
 - Automatic SSL certificate renewal
 - Secure default configurations
+- **NEW**: DNS optimization for better performance
 
 #### 4. Shell Aliases
 
@@ -267,6 +326,51 @@ The ZSH configuration includes useful aliases for daily work:
 - `dkprfa` - complete docker system cleanup incl. volumes
 - `ox` - shortcut for oxker
 - `dkprfs` - docker system cleanup with force option
+
+#### 5. DNS Optimization (NEW)
+
+**Automatic DNS Configuration Check and Optimization**
+
+The getScripts.py script automatically checks the DNS configuration and offers optimizations when needed:
+
+```bash
+# DNS optimization as part of installation
+./getScripts.py
+
+# Run DNS check only
+./getScripts.py --dns-check
+```
+
+**Detected Issues:**
+- Hetzner DNS servers may cause issues with DigitalOcean servers
+- Slow DNS resolution times (>50ms)
+- Suboptimal DNS configuration
+
+**Supported DNS Systems:**
+- systemd-resolved (default on Debian Bookworm)
+- resolvconf (classic configuration)
+- Direct /etc/resolv.conf editing
+
+**Recommended DNS Servers:**
+- Primary: 1.1.1.1 (Cloudflare)
+- Secondary: 8.8.8.8 (Google)
+- Tertiary: 9.9.9.9 (Quad9)
+
+**Docker Container Configuration:**
+```yaml
+# docker-compose.yml
+services:
+  odoo:
+    dns:
+      - 1.1.1.1
+      - 8.8.8.8
+      - 9.9.9.9
+```
+
+```bash
+# docker run
+docker run --dns 1.1.1.1 --dns 8.8.8.8 --dns 9.9.9.9 your-image
+```
 
 ### Branch Management
 
