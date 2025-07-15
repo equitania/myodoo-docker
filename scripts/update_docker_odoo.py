@@ -1,8 +1,8 @@
 #!/usr/bin/python3
 # -*- coding: utf-8 -*-
 # This script performs an update of an Odoo database in a Docker container
-# Version 5.0.4
-# Date 20.03.2025
+# Version 5.1.0
+# Date 15.07.2025
 ##############################################################################
 #
 #    Shell Script for Odoo, Open Source Management Solution
@@ -67,6 +67,92 @@ def expand_path(path):
     expanded_path = os.path.expandvars(expanded_path)
     return expanded_path
 
+def optimize_dns_for_container(volume_config):
+    """
+    Optimize DNS configuration for Docker containers.
+    
+    Args:
+        volume_config (str): Current volume configuration string
+        
+    Returns:
+        tuple: (optimized_volume_config, was_modified)
+    """
+    if not volume_config:
+        volume_config = ""
+    
+    # Recommended DNS servers for optimal performance
+    recommended_dns = ["1.1.1.1", "8.8.8.8", "9.9.9.9"]
+    
+    # Check if DNS is already configured
+    if "--dns" in volume_config:
+        logger.info("DNS servers already configured in volume settings")
+        return volume_config, False
+    
+    # Check if host DNS is optimized (avoid DNS issues with Hetzner->DigitalOcean)
+    host_dns_optimized = False
+    try:
+        # Check if host system has optimal DNS configuration
+        if os.path.exists("/etc/resolv.conf"):
+            with open("/etc/resolv.conf", "r") as f:
+                content = f.read()
+                nameservers = []
+                for line in content.split('\n'):
+                    if line.strip().startswith('nameserver'):
+                        nameserver = line.split()[1] if len(line.split()) > 1 else None
+                        if nameserver:
+                            nameservers.append(nameserver)
+                
+                # Check if the primary DNS is optimized
+                if nameservers and nameservers[0] in recommended_dns:
+                    host_dns_optimized = True
+                    logger.info(f"Host DNS is optimized with {nameservers[0]} as primary DNS")
+                else:
+                    logger.info("Host DNS is not optimized for Docker containers")
+    except Exception as e:
+        logger.warning(f"Could not check host DNS configuration: {e}")
+    
+    # If host DNS is not optimized, add DNS servers to container
+    if not host_dns_optimized:
+        dns_args = " ".join([f"--dns {dns}" for dns in recommended_dns])
+        
+        # Add DNS configuration to volume string
+        if volume_config.strip():
+            # Insert DNS configuration before the image name (at the end)
+            volume_config = f"{volume_config} {dns_args}"
+        else:
+            volume_config = dns_args
+        
+        logger.info(f"Added DNS optimization to container: {dns_args}")
+        return volume_config, True
+    
+    return volume_config, False
+
+def save_updated_config(config, config_file):
+    """
+    Save the updated configuration back to the YAML file.
+    
+    Args:
+        config (dict): Configuration dictionary
+        config_file (str): Path to configuration file
+    """
+    try:
+        # Create backup of original file
+        backup_file = f"{config_file}.backup"
+        if os.path.exists(config_file):
+            import shutil
+            shutil.copy2(config_file, backup_file)
+            logger.info(f"Backup created: {backup_file}")
+        
+        # Write updated configuration
+        with open(config_file, 'w') as f:
+            yaml.dump(config, f, default_flow_style=False, allow_unicode=True, indent=2)
+        
+        logger.info(f"Updated configuration saved to: {config_file}")
+        return True
+    except Exception as e:
+        logger.error(f"Failed to save updated configuration: {e}")
+        return False
+
 def parse_arguments():
     """Parse command line arguments."""
     parser = argparse.ArgumentParser(
@@ -79,6 +165,7 @@ Examples:
   python3 update_docker_odoo.py -v                    # Verbose output
   python3 update_docker_odoo.py -s live-odoo          # Update only specified container
   python3 update_docker_odoo.py --validate            # Only validate config, don't update
+  python3 update_docker_odoo.py --dns-optimize        # Only optimize DNS configuration
   
 Configuration File Format (YAML):
   containers:
@@ -94,9 +181,12 @@ Configuration File Format (YAML):
       db_user: "user"                             # Database username
       db_password: "password"                     # Database password
       db_host: "db-host"                          # Database hostname/IP
-      volume: "--network net -v /path:/data"      # Docker volume config
+      volume: "--network net -v /path:/data"      # Docker volume config (DNS auto-optimized)
       odoo_version: "16"                          # Odoo version for scripts
       translate: "Y"                              # Load translations? Y/N
+      
+Note: DNS optimization is automatically applied to containers if host DNS is not optimal.
+      This helps resolve DNS issues between different cloud providers (e.g., Hetzner <-> DigitalOcean).
 '''
     )
     
@@ -114,6 +204,10 @@ Configuration File Format (YAML):
     parser.add_argument('--validate', 
                         action='store_true',
                         help='Only validate the configuration without performing updates')
+    
+    parser.add_argument('--dns-optimize', 
+                        action='store_true',
+                        help='Only optimize DNS configuration without performing updates')
     
     return parser.parse_args()
 
@@ -771,6 +865,35 @@ def main():
         logger.error(f"Failed to load configuration from {args.config}. Exiting.")
         return 1
     
+    # Optimize DNS configuration for containers
+    config_modified = False
+    logger.info("Checking DNS optimization for Docker containers...")
+    
+    for container in config['containers']:
+        if not container.get('active', True):
+            continue
+        
+        container_name = container.get('container_name', 'unknown')
+        current_volume = container.get('volume', '')
+        
+        # Optimize DNS configuration
+        optimized_volume, was_modified = optimize_dns_for_container(current_volume)
+        
+        if was_modified:
+            container['volume'] = optimized_volume
+            config_modified = True
+            logger.info(f"DNS optimization applied to container: {container_name}")
+        else:
+            logger.info(f"DNS configuration already optimal for container: {container_name}")
+    
+    # Save updated configuration if modifications were made
+    if config_modified:
+        if save_updated_config(config, args.config):
+            logger.info("Configuration updated with DNS optimizations")
+        else:
+            logger.error("Failed to save DNS optimizations to configuration file")
+            return 1
+    
     # Process active containers
     success_count = 0
     failure_count = 0
@@ -800,8 +923,8 @@ def main():
             total_error_count += 1
             continue
         
-        # If only validating, skip processing
-        if args.validate:
+        # If only validating or DNS optimizing, skip processing
+        if args.validate or args.dns_optimize:
             continue
         
         # Process container
@@ -836,6 +959,15 @@ def main():
     if args.validate:
         print_summary(f"Configuration validation completed in {int(minutes)}m {int(seconds)}s.")
         print_summary(f"Valid configurations: {validate_count}")
+        if failure_count > 0:
+            print_summary(f"Invalid configurations: {failure_count}")
+    elif args.dns_optimize:
+        print_summary(f"DNS optimization completed in {int(minutes)}m {int(seconds)}s.")
+        print_summary(f"Valid configurations: {validate_count}")
+        if config_modified:
+            print_summary("DNS optimization applied to configuration file")
+        else:
+            print_summary("DNS configuration was already optimal")
         if failure_count > 0:
             print_summary(f"Invalid configurations: {failure_count}")
     else:
