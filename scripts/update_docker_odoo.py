@@ -1,7 +1,7 @@
 #!/usr/bin/python3
 # -*- coding: utf-8 -*-
 # This script performs an update of an Odoo database in a Docker container
-# Version 5.1.1
+# Version 5.1.2
 # Date 15.07.2025
 ##############################################################################
 #
@@ -132,7 +132,8 @@ def optimize_dns_for_container(volume_config):
 
 def save_updated_config(config, config_file):
     """
-    Save the updated configuration back to the YAML file.
+    Save the updated configuration back to the YAML file while preserving
+    original formatting, comments, and structure.
     
     Args:
         config (dict): Configuration dictionary
@@ -146,14 +147,79 @@ def save_updated_config(config, config_file):
             shutil.copy2(config_file, backup_file)
             logger.info(f"Backup created: {backup_file}")
         
-        # Write updated configuration
-        with open(config_file, 'w') as f:
-            yaml.dump(config, f, default_flow_style=False, allow_unicode=True, indent=2)
+        # Read original file to preserve comments and structure
+        with open(config_file, 'r', encoding='utf-8') as f:
+            original_lines = f.readlines()
         
-        logger.info(f"Updated configuration saved to: {config_file}")
+        # Build new content by modifying only the volume lines
+        new_lines = []
+        in_containers_section = False
+        current_container = None
+        container_index = 0
+        
+        for line in original_lines:
+            stripped = line.strip()
+            
+            # Detect containers section
+            if stripped == "containers:":
+                in_containers_section = True
+                new_lines.append(line)
+                continue
+            
+            # Stop processing containers when we hit a new top-level section
+            if in_containers_section and stripped and not stripped.startswith((' ', '-', '#')):
+                in_containers_section = False
+                current_container = None
+            
+            # Detect new container entry
+            if in_containers_section and stripped.startswith("- active:"):
+                if container_index < len(config['containers']):
+                    current_container = config['containers'][container_index]
+                    container_index += 1
+                else:
+                    current_container = None
+                new_lines.append(line)
+                continue
+            
+            # Update volume line if we're in a container and this is a volume line
+            if (in_containers_section and current_container and 
+                stripped.startswith('volume:') and 'volume' in current_container):
+                
+                # Preserve original indentation
+                indent = len(line) - len(line.lstrip())
+                indent_str = ' ' * indent
+                
+                # Check if the original line had quotes
+                original_volume_line = line.strip()
+                has_quotes = '"' in original_volume_line
+                
+                # Format with quotes to maintain original style
+                new_volume = current_container['volume']
+                if has_quotes:
+                    new_lines.append(f'{indent_str}volume: "{new_volume}"\n')
+                else:
+                    new_lines.append(f'{indent_str}volume: "{new_volume}"\n')
+                continue
+            
+            # Keep all other lines unchanged
+            new_lines.append(line)
+        
+        # Write the modified content
+        with open(config_file, 'w', encoding='utf-8') as f:
+            f.writelines(new_lines)
+        
+        logger.info(f"Updated configuration saved to: {config_file} (preserving original format)")
         return True
     except Exception as e:
         logger.error(f"Failed to save updated configuration: {e}")
+        # Fallback to restore backup
+        try:
+            if os.path.exists(backup_file):
+                import shutil
+                shutil.copy2(backup_file, config_file)
+                logger.info("Restored original configuration from backup")
+        except Exception as restore_error:
+            logger.error(f"Failed to restore backup: {restore_error}")
         return False
 
 def parse_arguments():
