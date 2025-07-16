@@ -1,8 +1,8 @@
 #!/usr/bin/python3
 # -*- coding: utf-8 -*-
 # This script builds a new server using the Release Manager
-# Version 2.1.1
-# Date 08.04.2025
+# Version 2.1.2
+# Date 16.07.2025
 ##############################################################################
 #
 #    Shell Script for Odoo, Open Source Management Solution
@@ -28,7 +28,6 @@ import csv
 import urllib3
 import platform
 import sys
-from pathlib import Path
 import subprocess
 
 _build_path = '/opt/odoo'
@@ -37,45 +36,46 @@ _release_file = 'release.file'
 # Check if we are running on macOS or Linux
 is_macos = platform.system() == 'Darwin'
 
-def download_file(url, filename, current_progress=None):
+# Global connection pool for efficient HTTP requests
+http_pool = urllib3.PoolManager(
+    maxsize=10,
+    block=True,
+    timeout=urllib3.Timeout(connect=30, read=300)
+)
+
+def download_file(url, filename):
     """Download a file from URL and save it to the given filename."""
     try:
-        # Create an urllib3.PoolManager instance
-        http = urllib3.PoolManager()
-        
-        # Send an HTTP GET request to the URL
-        response = http.request('GET', url)
+        # Use global connection pool for efficient HTTP requests
+        response = http_pool.request('GET', url)
         
         # Check if the request was successful (status code 200)
         if response.status == 200:
             # Open the local file in binary write mode and write the downloaded content to it
             with open(filename, 'wb') as f:
                 f.write(response.data)
-            if current_progress:
-                print(f"File downloaded successfully to {filename} - Progress: {current_progress}")
-            else:
-                print(f"File downloaded successfully to {filename}")
+            print(f"Downloaded: {filename}")
             return True
         else:
-            print(f"Failed to download file from {url}. Status code: {response.status}")
+            print(f"Failed to download {filename}. Status code: {response.status}")
             return False
     except Exception as e:
-        print(f"Error downloading file: {e}")
+        print(f"Error downloading {filename}: {e}")
         return False
 
 def run_command(command):
     """Run a shell command with proper error handling."""
     try:
-        result = subprocess.run(command, shell=True, check=True, 
-                               stdout=subprocess.PIPE, stderr=subprocess.PIPE, 
-                               universal_newlines=True)
+        subprocess.run(command, shell=True, check=True, 
+                       stdout=subprocess.PIPE, stderr=subprocess.PIPE, 
+                       universal_newlines=True)
         return True
     except subprocess.CalledProcessError as e:
         print(f"Command failed: {command}")
         print(f"Error: {e.stderr}")
         return False
 
-def extract_zip(zipfile, destination=".", current_progress=None):
+def extract_zip(zipfile, destination="."):
     """Extract a zip file to the specified destination."""
     if is_macos:
         # macOS unzip command
@@ -85,10 +85,7 @@ def extract_zip(zipfile, destination=".", current_progress=None):
         command = f"unzip -q -o {zipfile} -d {destination}"
     
     if run_command(command):
-        if current_progress:
-            print(f"File: {zipfile} extracted to {destination} - Progress: {current_progress}")
-        else:
-            print(f"File: {zipfile} extracted to {destination}")
+        print(f"Extracted: {zipfile} to {destination}")
         return True
     else:
         print(f"Failed to extract {zipfile}")
@@ -117,20 +114,17 @@ def count_zip_files_in_csv(file_path):
                     zip_count += 1
     return zip_count
 
-def format_progress(current, total, downloaded_files=None, total_files=None):
-    """Format the progress as a percentage with a progress bar."""
-    percent = 100 * (current / total)
-    bar_length = 30
-    filled_length = int(bar_length * current // total)
-    bar = '█' * filled_length + '░' * (bar_length - filled_length)
-    progress_text = f"[{bar}] {percent:.1f}% ({current}/{total})"
-    
-    # Add file download progress if available
-    if downloaded_files is not None and total_files is not None:
-        file_percent = 100 * (downloaded_files / total_files) if total_files > 0 else 0
-        progress_text += f" | Files: {downloaded_files}/{total_files} ({file_percent:.1f}%)"
-    
-    return progress_text
+def download_and_extract(url, filename, destination):
+    """Download and extract a file in one operation."""
+    if download_file(url, filename):
+        if extract_zip(filename, destination):
+            return True
+        else:
+            print(f"Failed to extract {filename}")
+            return False
+    else:
+        print(f"Failed to download {filename}")
+        return False
 
 # Main script execution
 if not os.path.isfile(_release_file):
@@ -147,13 +141,11 @@ if os.stat(_release_file).st_size == 0:
 
 print('Starting with build at ' + _build_path)
 
-# Count total rows for progress tracking
-total_rows = count_csv_rows(_release_file)
 # Count the total number of ZIP files to download
 total_zip_files = count_zip_files_in_csv(_release_file)
 downloaded_files = 0
 
-print(f"Release file contains {total_rows} entries with {total_zip_files} files to download.")
+print(f"Release file contains {total_zip_files} files to download.")
 
 # Change to the build directory
 try:
@@ -176,9 +168,7 @@ with open(_release_file, encoding="utf8") as csvfile:
         if not _row:  # Skip empty rows
             continue
         
-        # Calculate and display progress
-        progress = format_progress(_count, total_rows, downloaded_files, total_zip_files)
-        print(f"\nProcessing entry {_count}/{total_rows} - {progress}")
+        print(f"\nProcessing entry {_count}...")
             
         _column = _row[0].replace(' ', '')
         
@@ -203,28 +193,20 @@ with open(_release_file, encoding="utf8") as csvfile:
                 # Download kernel
                 _zip_url = f"{_url}/{_column}"
                 downloaded_files += 1
-                current_progress = format_progress(_count, total_rows, downloaded_files, total_zip_files)
-                if download_file(_zip_url, _column, current_progress):
-                    # Extract kernel
-                    if extract_zip(_column, 'odoo-server', current_progress):
-                        print(f'kernel: {_column} loaded and installed..')
-                    else:
-                        print(f'Failed to extract kernel: {_column}')
-                        sys.exit(1)
+                if download_and_extract(_zip_url, _column, 'odoo-server'):
+                    print(f'kernel: {_column} loaded and installed..')
                 else:
-                    print(f'Failed to download kernel: {_column}')
+                    print(f'Failed to process kernel: {_column}')
                     sys.exit(1)
                     
         else:  # Modules
             if _column.find('.zip') != -1:
                 _zip_url = f"{_url}/{_column}"
                 downloaded_files += 1
-                current_progress = format_progress(_count, total_rows, downloaded_files, total_zip_files)
-                if download_file(_zip_url, _column, current_progress):
-                    if extract_zip(_column, 'odoo-server/addons', current_progress):
-                        print(f'file: {_column} loaded and installed..')
-                    else:
-                        print(f'Failed to extract module: {_column}')
+                if download_and_extract(_zip_url, _column, 'odoo-server/addons'):
+                    print(f'file: {_column} loaded and installed..')
+                else:
+                    print(f'Failed to process module: {_column}')
         
         _count += 1
 
