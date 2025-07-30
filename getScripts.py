@@ -1,8 +1,8 @@
 #!/usr/bin/python3
 # -*- coding: utf-8 -*-
 # Script for organizing Docker servers
-# Version 6.7.2
-# Date 15.07.2025
+# Version 6.7.3
+# Date 30.07.2025
 ##############################################################################
 #
 #    Shell Script for devops
@@ -1015,8 +1015,18 @@ def install_or_update_zstd():
                 run_command("sudo apt update")
                 run_command("sudo apt install -y python3-dev")
                 
-                # Now install the zstd system package
-                run_command("sudo apt install -y zstd")
+                # Check OS version to determine installation method
+                if os_id == "ubuntu" and os_version.startswith("20.04"):
+                    # Ubuntu 20.04 has outdated zstd in repos, need to install from newer source
+                    logger.info("Ubuntu 20.04 detected, installing newer zstd version")
+                    # Add Ubuntu 22.04 repository for newer zstd
+                    run_command("sudo add-apt-repository -y 'deb http://archive.ubuntu.com/ubuntu jammy main universe'")
+                    run_command("sudo apt update")
+                    # Install specific version that meets requirements
+                    run_command("sudo apt install -y -t jammy zstd")
+                else:
+                    # Standard installation for other versions
+                    run_command("sudo apt install -y zstd")
                 
                 # Try to install zstd with PEP 517 build to avoid deprecation warning
                 logger.info("Installing zstd Python package with PEP 517 build")
@@ -1894,9 +1904,14 @@ def install_or_update_nginx_set_conf() -> None:
             logger.info(f"Uninstalling {package_name} version {current_version} to update to {latest_version}")
             run_command(f"pipx uninstall {package_name}")
         
-        # Install latest version
+        # Install latest version with force flag to handle existing directory
         logger.info(f"Installing {package_name} version {latest_version}")
-        run_command(f"pipx install {package_name}")
+        result = run_command(f"pipx install {package_name}", capture_output=True)
+        
+        # If installation fails due to existing directory, use force flag
+        if result.returncode != 0 and "existing directory" in result.stderr:
+            logger.info(f"Directory exists, installing with --force flag")
+            run_command(f"pipx install --force {package_name}")
         
         # Verify installation
         new_version = get_installed_pipx_version(package_name)
