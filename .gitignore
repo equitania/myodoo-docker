@@ -58,3 +58,5 @@ odoo-ce.zip
 
 #vs code
 .vscode
+
+.serena/cache
