@@ -21,6 +21,7 @@ if [ -f /usr/bin/certbot ]
 then
     /usr/bin/certbot renew  # --force-renew
 fi
+rm -rf /var/cache/nginx
 echo "nginx start"
 systemctl start nginx
 systemctl status nginx
