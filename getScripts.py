@@ -57,8 +57,8 @@ if os.environ.get('GETSCRIPTS_DEBUG', '').lower() in ('1', 'true', 'yes'):
     logger.debug("Debug logging enabled")
 
 # Script version and date
-SCRIPT_VERSION = "6.7.2"
-SCRIPT_DATE = "15.07.2025"
+SCRIPT_VERSION = "6.7.3"
+SCRIPT_DATE = "13.10.2025"
 
 # Cache settings
 CACHE_DIR = os.path.expanduser("~/.cache/getscripts")
@@ -1393,96 +1393,71 @@ def install_or_update_oxker() -> None:
             os.chdir(os.path.expanduser("~"))
         raise
 
-def check_tilde_installed() -> bool:
-    """Check if tilde is installed.
-    
+def check_mcedit_installed() -> bool:
+    """Check if mcedit (Midnight Commander editor) is installed.
+
     Returns:
-        bool: True if tilde is installed, False otherwise
+        bool: True if mcedit is installed, False otherwise
     """
     try:
-        result = subprocess.run(['which', 'tilde'], capture_output=True, text=True)
+        result = subprocess.run(['which', 'mcedit'], capture_output=True, text=True)
         return result.returncode == 0
     except Exception as e:
-        logger.error(f"Error checking tilde installation: {e}")
+        logger.error(f"Error checking mcedit installation: {e}")
         return False
 
-def get_tilde_version() -> Optional[str]:
-    """Get installed tilde version.
-    
+def get_mcedit_version() -> Optional[str]:
+    """Get installed mcedit/mc version.
+
     Returns:
         Optional[str]: Version string if installed, None otherwise
     """
     try:
-        result = subprocess.run(['tilde', '--version'], capture_output=True, text=True)
+        result = subprocess.run(['mcedit', '--version'], capture_output=True, text=True)
         if result.returncode == 0:
-            # The output might be like: "tilde version X.Y.Z"
+            # The output might be like: "GNU Midnight Commander X.Y.Z"
             version_line = result.stdout.strip()
             match = re.search(r'(\d+\.\d+\.\d+)', version_line)
             if match:
                 return match.group(1)
     except Exception as e:
-        logger.error(f"Error getting tilde version: {e}")
+        logger.error(f"Error getting mcedit version: {e}")
     return None
 
-@lru_cache(maxsize=128)
-def get_latest_tilde_version() -> Optional[str]:
-    """Get the latest version of tilde from the official website.
-    
-    Returns:
-        Optional[str]: Latest version string if available, None otherwise
-    """
-    cache_key = "tilde_latest"
-    cached_data = get_cached_version(cache_key)
-    
-    if cached_data:
-        return cached_data.get("version")
-    
-    try:
-        # Tilde doesn't have GitHub releases, check official website or use package info
-        # For now, we'll rely on the system package manager version as authoritative
-        logger.info("Tilde upstream version checking not available, relying on package manager")
-        return None
-    except Exception as e:
-        logger.error(f"Error fetching latest tilde version: {str(e)}")
-    return None
-
-def install_or_update_tilde() -> None:
-    """Install or update tilde using package manager."""
+def install_or_update_mcedit() -> None:
+    """Install or update mcedit (Midnight Commander) using package manager."""
     try:
         # Check current version if installed
-        installed = check_tilde_installed()
-        current_version = get_tilde_version() if installed else None
-        logger.info(f"Current tilde version: {current_version if installed else 'not installed'}")
-        
-        # Get latest version from upstream (if available)
-        latest_version = get_latest_tilde_version()
-        
+        installed = check_mcedit_installed()
+        current_version = get_mcedit_version() if installed else None
+        logger.info(f"Current mcedit version: {current_version if installed else 'not installed'}")
+
         # Install or update
         if not installed:
-            logger.info("Installing tilde...")
+            logger.info("Installing mc (Midnight Commander with mcedit)...")
             run_command("sudo apt update")
-            run_command("sudo apt install -y tilde")
-            
+            run_command("sudo apt install -y mc")
+
             # Verify installation
-            new_version = get_tilde_version()
+            new_version = get_mcedit_version()
             if new_version:
-                logger.info(f"tilde {new_version} has been successfully installed")
+                logger.info(f"mcedit {new_version} has been successfully installed")
             else:
-                raise RuntimeError("Failed to verify tilde installation")
+                raise RuntimeError("Failed to verify mcedit installation")
         else:
-            logger.info("Checking for tilde updates via package manager...")
+            logger.info("Checking for mc/mcedit updates via package manager...")
             run_command("sudo apt update")
-            run_command("sudo apt install --only-upgrade -y tilde")
-            
+            run_command("sudo apt install --only-upgrade -y mc")
+
             # Verify update
-            new_version = get_tilde_version()
+            new_version = get_mcedit_version()
             if new_version != current_version:
-                logger.info(f"tilde updated from {current_version} to {new_version}")
+                logger.info(f"mcedit updated from {current_version} to {new_version}")
             else:
-                logger.info(f"tilde is already at the latest available version ({current_version})")
-            
+                logger.info(f"mcedit is already at the latest available version ({current_version})")
+
     except Exception as e:
-        logger.error(f"Error installing/updating tilde: {str(e)}")
+        logger.error(f"Error installing/updating mcedit: {str(e)}")
         raise
 
 def is_dns_already_optimized() -> bool:
@@ -2115,7 +2090,7 @@ def install_packages(package_info: Dict[str, Any]) -> None:
     
     # Install additional tools
     install_or_update_oxker()
-    install_or_update_tilde()
+    install_or_update_mcedit()
 
 def main() -> None:
     """Main function to execute the script."""
