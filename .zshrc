@@ -1,6 +1,6 @@
 #ZSH powered by ownerp.com
-# Version 3.4.0
-# Date 11.07.2025
+# Version 3.4.1
+# Date 13.10.2025
 
 ################################
 # BASIC CONFIGURATION
@@ -103,10 +103,10 @@ fi
 alias dobk='$HOME/container2backup.py'
 alias doup='$HOME/update_docker_odoo.py'
 alias doup2='$HOME/update_docker_myodoo.py'
-alias edbk='tilde $HOME/container2backup.yaml'
-alias edbk2='tilde $HOME/container2backup.csv'
-alias edup='tilde $HOME/docker2update.yaml'
-alias edup2='tilde $HOME/docker2update.csv'
+alias edbk='mcedit $HOME/container2backup.yaml'
+alias edbk2='mcedit $HOME/container2backup.csv'
+alias edup='mcedit $HOME/docker2update.yaml'
+alias edup2='mcedit $HOME/docker2update.csv'
 alias llbk='ll /opt/backups/docker'
 alias cpbk='cp /opt/backups/docker/'
 
