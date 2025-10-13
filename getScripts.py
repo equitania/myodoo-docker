@@ -600,11 +600,15 @@ def get_pip_package_version(package_name: str) -> Optional[str]:
 
 def upgrade_pip_package(package_name: str) -> None:
     """Upgrade a pip package to the latest version only if needed."""
-    # Skip zstd upgrade through this function - it will be handled separately
+    # Skip packages that should not be upgraded through pip
     if package_name == "zstd":
         logger.info("Skipping zstd upgrade through pip. It will be handled separately.")
         return
-    
+
+    if package_name == "pip":
+        logger.info("Skipping pip self-upgrade. System pip managed by package manager.")
+        return
+
     # Check current version
     current_version = get_pip_package_version(package_name)
     
