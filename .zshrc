@@ -1,5 +1,5 @@
 #ZSH powered by ownerp.com
-# Version 3.4.1
+# Version 3.4.2
 # Date 13.10.2025
 
 ################################
@@ -33,7 +33,6 @@ plugins=(
   pip
   python
   screen
-  thefuck
 )
 
 source $ZSH/oh-my-zsh.sh
