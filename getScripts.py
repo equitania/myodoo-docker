@@ -1,8 +1,7 @@
 #!/usr/bin/python3
 # -*- coding: utf-8 -*-
 # Script for organizing Docker servers
-# Version 6.7.3
-# Date 30.07.2025
+
 ##############################################################################
 #
 #    Shell Script for devops
@@ -57,8 +56,8 @@ if os.environ.get('GETSCRIPTS_DEBUG', '').lower() in ('1', 'true', 'yes'):
     logger.debug("Debug logging enabled")
 
 # Script version and date
-SCRIPT_VERSION = "6.7.3"
-SCRIPT_DATE = "13.10.2025"
+SCRIPT_VERSION = "6.7.4"
+SCRIPT_DATE = "14.10.2025"
 
 # Cache settings
 CACHE_DIR = os.path.expanduser("~/.cache/getscripts")
@@ -1112,7 +1111,17 @@ def get_7zip_version() -> Optional[tuple]:
 def check_7zip_version() -> bool:
     """Check if 7-Zip is installed and meets minimum version requirements"""
     try:
-        # First check if the package is installed via dpkg
+        # First try to find the 7zz command (new version)
+        try:
+            result = subprocess.run(['which', '7zz'], capture_output=True, text=True)
+            if result.returncode != 0:
+                logger.warning("7zz command not found. Need to install newer 7-Zip version.")
+                return False
+        except Exception:
+            logger.warning("7zz command not found. Need to install newer 7-Zip version.")
+            return False
+
+        # Check if the package is installed via dpkg
         if is_package_installed("7zip"):
             version = get_7zip_version()
             if version:
@@ -1120,7 +1129,7 @@ def check_7zip_version() -> bool:
                 logger.info(f"Current 7-Zip version: {version_str}")
                 # Minimum required version for newer 7zip
                 min_version = (21, 0, 0)  # 21.x is newer and preferred
-                
+
                 if version < min_version:
                     logger.warning(f"7-Zip version {version_str} is outdated. Minimum required version is {'.'.join(map(str, min_version[:2]))}")
                     return False
@@ -1129,16 +1138,16 @@ def check_7zip_version() -> bool:
                 # Package is installed but version detection failed
                 logger.info("7-Zip package is installed, but version detection failed. Assuming it's valid.")
                 return True
-        
+
         # If we get here, check using the normal version detection
         version = get_7zip_version()
         if not version:
             logger.error("7-Zip is not installed")
             return False
-            
+
         version_str = '.'.join(map(str, version[:2]))  # Only show major.minor
         logger.info(f"Current 7-Zip version: {version_str}")
-        
+
         # Check if old p7zip-full is installed (which provides 7z command)
         try:
             old_result = subprocess.run(['which', '7z'], capture_output=True, text=True)
@@ -1147,10 +1156,10 @@ def check_7zip_version() -> bool:
                 return False
         except:
             pass
-            
+
         # Minimum required version for newer 7zip
         min_version = (21, 0, 0)  # 21.x is newer and preferred
-        
+
         if version < min_version:
             logger.warning(f"7-Zip version {version_str} is outdated. Minimum required version is {'.'.join(map(str, min_version[:2]))}")
             return False
@@ -1160,24 +1169,79 @@ def check_7zip_version() -> bool:
         return False
 
 def install_or_update_7zip():
-    """Install or update 7-Zip package"""
+    """Install or update 7-Zip package with official version that provides 7zz command"""
     try:
         # First check if p7zip-full is installed and remove it if needed
         if is_package_installed("p7zip-full"):
             logger.info("Removing old p7zip-full package...")
             run_command("sudo apt remove -y p7zip-full")
-            
+
         # Now check if the new 7zip needs to be installed or updated
         if not check_7zip_version():
-            logger.info("Installing/updating 7-Zip...")
+            logger.info("Installing/updating 7-Zip to version with 7zz command...")
+
+            # Check if apt package 7zip is available
             run_command("sudo apt update")
-            run_command("sudo apt install -y 7zip")
-            
+            result = subprocess.run(['apt-cache', 'show', '7zip'],
+                                  capture_output=True, text=True)
+
+            if result.returncode == 0 and '7zip' in result.stdout:
+                # Try to install via apt first (Ubuntu 24.04+)
+                logger.info("Installing 7zip package from repository...")
+                run_command("sudo apt install -y 7zip")
+            else:
+                # Install from official 7-Zip source
+                logger.info("7zip package not available in repository, installing from official source...")
+                arch = platform.machine()
+                if arch == "x86_64":
+                    download_url = "https://www.7-zip.org/a/7z2408-linux-x64.tar.xz"
+                    filename = "7z2408-linux-x64.tar.xz"
+                elif arch == "aarch64":
+                    download_url = "https://www.7-zip.org/a/7z2408-linux-arm64.tar.xz"
+                    filename = "7z2408-linux-arm64.tar.xz"
+                else:
+                    raise RuntimeError(f"Unsupported architecture for 7-Zip: {arch}")
+
+                # Download and install in /usr/local/bin
+                with tempfile.TemporaryDirectory() as temp_dir:
+                    os.chdir(temp_dir)
+
+                    logger.info(f"Downloading 7-Zip from {download_url}...")
+                    response = requests.get(download_url, stream=True)
+                    response.raise_for_status()
+
+                    with open(filename, 'wb') as f:
+                        for chunk in response.iter_content(chunk_size=8192):
+                            f.write(chunk)
+
+                    # Extract the archive
+                    logger.info("Extracting 7-Zip archive...")
+                    run_command(f"tar xJf {filename}")
+
+                    # Install to /usr/local/bin
+                    logger.info("Installing 7zz to /usr/local/bin...")
+                    run_command("sudo install -Dm 755 7zz -t /usr/local/bin")
+
+                    # Create symlink for 7z if it doesn't exist
+                    try:
+                        run_command("sudo ln -sf /usr/local/bin/7zz /usr/local/bin/7z")
+                    except:
+                        pass
+
             # Verify installation
             if not check_7zip_version():
                 raise RuntimeError("Failed to install/update 7-Zip")
-            
-            logger.info("7-Zip installation/update completed")
+
+            logger.info("7-Zip installation/update completed successfully")
+
+            # Show installed version
+            try:
+                result = subprocess.run(['7zz', '--help'], capture_output=True, text=True)
+                version_line = result.stdout.split('\n')[0].strip()
+                logger.info(f"Installed: {version_line}")
+            except:
+                pass
+
     except Exception as e:
         logger.error(f"Error installing/updating 7-Zip: {str(e)}")
         raise
