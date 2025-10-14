@@ -8,7 +8,6 @@ wheel
 setuptools
 distro-info
 odoorpc-toolbox
-thefuck
 zstd
 python-dotenv
 
