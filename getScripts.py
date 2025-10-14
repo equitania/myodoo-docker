@@ -56,7 +56,7 @@ if os.environ.get('GETSCRIPTS_DEBUG', '').lower() in ('1', 'true', 'yes'):
     logger.debug("Debug logging enabled")
 
 # Script version and date
-SCRIPT_VERSION = "6.7.4"
+SCRIPT_VERSION = "6.7.5"
 SCRIPT_DATE = "14.10.2025"
 
 # Cache settings
@@ -224,8 +224,8 @@ def is_zoxide_installed() -> Tuple[bool, Optional[str]]:
                 logger.info(f"zoxide version {version} found")
                 return True, version
     except FileNotFoundError:
-        # Try checking in /root/.local/bin directly
-        local_zoxide = "/root/.local/bin/zoxide"
+        # Try checking in ~/.local/bin directly
+        local_zoxide = os.path.expanduser("~/.local/bin/zoxide")
         if os.path.exists(local_zoxide):
             try:
                 result = subprocess.run(
@@ -240,7 +240,7 @@ def is_zoxide_installed() -> Tuple[bool, Optional[str]]:
                     parts = output.split()
                     if len(parts) >= 2:
                         version = parts[1]
-                        logger.info(f"zoxide version {version} found in /root/.local/bin")
+                        logger.info(f"zoxide version {version} found in ~/.local/bin")
                         return True, version
             except Exception:
                 pass
@@ -416,12 +416,12 @@ def install_zoxide_if_needed(desired_version: str = "0.9.6") -> None:
         if version == desired_version:
             logger.info(f"zoxide version {desired_version} is already installed.")
             # Ensure PATH is set correctly
-            local_bin = "/root/.local/bin"
+            local_bin = os.path.expanduser("~/.local/bin")
             if local_bin not in os.environ.get("PATH", ""):
                 logger.info(f"Adding {local_bin} to PATH...")
                 os.environ["PATH"] = f"{local_bin}:{os.environ.get('PATH', '')}"
                 # Add to .zshrc if it exists
-                zshrc = "/root/.zshrc"
+                zshrc = os.path.expanduser("~/.zshrc")
                 if os.path.exists(zshrc):
                     with open(zshrc, "a") as f:
                         f.write(f'\nexport PATH="{local_bin}:$PATH"\n')
@@ -513,6 +513,21 @@ def run_command(command: str, check: bool = False, shell: bool = False, capture_
                     raise CommandError(f"Command failed: {command}") from e
     
     return subprocess.CompletedProcess(command, -1, '', '')  # Return failed result
+
+def is_root_or_has_sudo() -> bool:
+    """Check if running as root or has sudo privileges"""
+    # Check if running as root
+    if os.geteuid() == 0:
+        return True
+
+    # Check if sudo is available
+    try:
+        result = subprocess.run(['sudo', '-n', 'true'],
+                              capture_output=True,
+                              stderr=subprocess.DEVNULL)
+        return result.returncode == 0
+    except Exception:
+        return False
 
 def is_debian_or_ubuntu() -> bool:
     """Check if the system is Debian or Ubuntu"""
@@ -827,17 +842,22 @@ def compare_versions(version1: str, version2: str) -> int:
 
 def install_system_package(package: str, version: Optional[str] = None) -> None:
     """Install a system package with version checking and error recovery.
-    
+
     Args:
         package: Package name
         version: Optional specific version to install
-        
+
     Raises:
         InstallationError: If installation fails after retries
     """
+    # Check if we have sudo privileges
+    if not is_root_or_has_sudo():
+        logger.warning(f"Skipping system package installation for {package} (no sudo privileges)")
+        return
+
     try:
         current_version = get_system_package_version(package)
-        
+
         if current_version:
             if version:
                 # If specific version is requested, compare versions
@@ -859,17 +879,17 @@ def install_system_package(package: str, version: Optional[str] = None) -> None:
         # Install package
         logger.info(f"Installing {package}{f' version {version}' if version else ''}")
         install_cmd = f"sudo apt install -y {package}" + (f"={version}" if version else "")
-        
+
         try:
             run_command(install_cmd, check=True, retries=1)
         except CommandError as e:
             # Try to fix broken packages
             logger.warning("Installation failed, attempting to fix broken packages...")
             run_command("sudo apt-get -f install -y", check=False)
-            
+
             # Retry installation
             run_command(install_cmd, check=True)
-            
+
     except Exception as e:
         raise InstallationError(f"Failed to install {package}: {str(e)}") from e
 
@@ -1171,8 +1191,11 @@ def check_7zip_version() -> bool:
 def install_or_update_7zip():
     """Install or update 7-Zip package with official version that provides 7zz command"""
     try:
+        # Check if we have sudo privileges
+        has_sudo = is_root_or_has_sudo()
+
         # First check if p7zip-full is installed and remove it if needed
-        if is_package_installed("p7zip-full"):
+        if has_sudo and is_package_installed("p7zip-full"):
             logger.info("Removing old p7zip-full package...")
             run_command("sudo apt remove -y p7zip-full")
 
@@ -1180,45 +1203,67 @@ def install_or_update_7zip():
         if not check_7zip_version():
             logger.info("Installing/updating 7-Zip to version with 7zz command...")
 
-            # Check if apt package 7zip is available
-            run_command("sudo apt update")
-            result = subprocess.run(['apt-cache', 'show', '7zip'],
-                                  capture_output=True, text=True)
+            # Check if apt package 7zip is available (only if we have sudo)
+            if has_sudo:
+                run_command("sudo apt update")
+                result = subprocess.run(['apt-cache', 'show', '7zip'],
+                                      capture_output=True, text=True)
 
-            if result.returncode == 0 and '7zip' in result.stdout:
-                # Try to install via apt first (Ubuntu 24.04+)
-                logger.info("Installing 7zip package from repository...")
-                run_command("sudo apt install -y 7zip")
+                if result.returncode == 0 and '7zip' in result.stdout:
+                    # Try to install via apt first (Ubuntu 24.04+)
+                    logger.info("Installing 7zip package from repository...")
+                    run_command("sudo apt install -y 7zip")
+
+                    # Verify installation
+                    if not check_7zip_version():
+                        raise RuntimeError("Failed to install/update 7-Zip")
+
+                    logger.info("7-Zip installation/update completed successfully")
+
+                    # Show installed version
+                    try:
+                        result = subprocess.run(['7zz', '--help'], capture_output=True, text=True)
+                        version_line = result.stdout.split('\n')[0].strip()
+                        logger.info(f"Installed: {version_line}")
+                    except:
+                        pass
+                    return
+
+            # Install from official 7-Zip source (works without sudo for user installation)
+            if not has_sudo:
+                logger.info("No sudo privileges, installing 7-Zip to ~/.local/bin...")
             else:
-                # Install from official 7-Zip source
                 logger.info("7zip package not available in repository, installing from official source...")
-                arch = platform.machine()
-                if arch == "x86_64":
-                    download_url = "https://www.7-zip.org/a/7z2408-linux-x64.tar.xz"
-                    filename = "7z2408-linux-x64.tar.xz"
-                elif arch == "aarch64":
-                    download_url = "https://www.7-zip.org/a/7z2408-linux-arm64.tar.xz"
-                    filename = "7z2408-linux-arm64.tar.xz"
-                else:
-                    raise RuntimeError(f"Unsupported architecture for 7-Zip: {arch}")
 
-                # Download and install in /usr/local/bin
-                with tempfile.TemporaryDirectory() as temp_dir:
-                    os.chdir(temp_dir)
+            arch = platform.machine()
+            if arch == "x86_64":
+                download_url = "https://www.7-zip.org/a/7z2408-linux-x64.tar.xz"
+                filename = "7z2408-linux-x64.tar.xz"
+            elif arch == "aarch64":
+                download_url = "https://www.7-zip.org/a/7z2408-linux-arm64.tar.xz"
+                filename = "7z2408-linux-arm64.tar.xz"
+            else:
+                raise RuntimeError(f"Unsupported architecture for 7-Zip: {arch}")
 
-                    logger.info(f"Downloading 7-Zip from {download_url}...")
-                    response = requests.get(download_url, stream=True)
-                    response.raise_for_status()
+            # Download and install
+            with tempfile.TemporaryDirectory() as temp_dir:
+                os.chdir(temp_dir)
 
-                    with open(filename, 'wb') as f:
-                        for chunk in response.iter_content(chunk_size=8192):
-                            f.write(chunk)
+                logger.info(f"Downloading 7-Zip from {download_url}...")
+                response = requests.get(download_url, stream=True)
+                response.raise_for_status()
 
-                    # Extract the archive
-                    logger.info("Extracting 7-Zip archive...")
-                    run_command(f"tar xJf {filename}")
+                with open(filename, 'wb') as f:
+                    for chunk in response.iter_content(chunk_size=8192):
+                        f.write(chunk)
 
-                    # Install to /usr/local/bin
+                # Extract the archive
+                logger.info("Extracting 7-Zip archive...")
+                run_command(f"tar xJf {filename}")
+
+                # Install based on privileges
+                if has_sudo:
+                    # Install to /usr/local/bin (system-wide)
                     logger.info("Installing 7zz to /usr/local/bin...")
                     run_command("sudo install -Dm 755 7zz -t /usr/local/bin")
 
@@ -1227,6 +1272,21 @@ def install_or_update_7zip():
                         run_command("sudo ln -sf /usr/local/bin/7zz /usr/local/bin/7z")
                     except:
                         pass
+                else:
+                    # Install to ~/.local/bin (user-specific)
+                    local_bin = os.path.expanduser("~/.local/bin")
+                    ensure_directory_exists(local_bin)
+                    logger.info(f"Installing 7zz to {local_bin}...")
+                    run_command(f"install -Dm 755 7zz -t {local_bin}")
+
+                    # Create symlink for 7z
+                    try:
+                        run_command(f"ln -sf {local_bin}/7zz {local_bin}/7z")
+                    except:
+                        pass
+
+                    # Ensure PATH is set
+                    ensure_path_in_zshrc()
 
             # Verify installation
             if not check_7zip_version():
@@ -2005,12 +2065,27 @@ def check_versions_parallel(packages: List[Tuple[str, str]]) -> Dict[str, Dict[s
 def setup_environment() -> Tuple[str, str]:
     """Setup initial environment and return home and local bin paths."""
     print_header()
-    
+
     # Check if running on Debian/Ubuntu
     if not is_debian_or_ubuntu():
         logger.error("This script is only supported on Debian and Ubuntu systems")
         sys.exit(1)
-    
+
+    # Check for sudo privileges
+    if not is_root_or_has_sudo():
+        logger.warning("⚠️  This script requires sudo privileges for system package installation.")
+        logger.warning("⚠️  Some features (system packages, 7-Zip, bat, zstd) will be skipped.")
+        logger.warning("⚠️  User-level installations (pipx, pip packages) will still work.")
+        logger.warning("")
+        try:
+            response = input("Do you want to continue without sudo? (y/N): ").strip().lower()
+            if response != 'y':
+                logger.info("Exiting. Please run with sudo or configure passwordless sudo.")
+                sys.exit(0)
+        except KeyboardInterrupt:
+            logger.info("\nExiting.")
+            sys.exit(0)
+
     _myhome = os.path.expanduser('~')
     local_bin = os.path.join(_myhome, ".local", "bin")
     
