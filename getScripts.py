@@ -56,7 +56,7 @@ if os.environ.get('GETSCRIPTS_DEBUG', '').lower() in ('1', 'true', 'yes'):
     logger.debug("Debug logging enabled")
 
 # Script version and date
-SCRIPT_VERSION = "6.8.0"
+SCRIPT_VERSION = "6.8.2"
 SCRIPT_DATE = "15.10.2025"
 
 # Cache settings
@@ -2086,7 +2086,25 @@ def setup_environment() -> Tuple[str, str]:
             logger.info("\nExiting.")
             sys.exit(0)
 
-    _myhome = os.path.expanduser('~')
+    # Get appropriate home directory based on execution context
+    # Priority: SUDO_USER (if running with sudo) > current user home
+    if os.environ.get('SUDO_USER'):
+        # Running with sudo - use the real user's home directory
+        import pwd
+        sudo_user = os.environ['SUDO_USER']
+        try:
+            _myhome = pwd.getpwnam(sudo_user).pw_dir
+            logger.info(f"Running with sudo as user '{sudo_user}', using home: {_myhome}")
+        except KeyError:
+            # Fallback if user lookup fails
+            logger.warning(f"Could not find home for SUDO_USER '{sudo_user}', using current home")
+            _myhome = os.path.expanduser('~')
+    else:
+        # Running as root or normal user without sudo
+        _myhome = os.path.expanduser('~')
+        current_user = os.environ.get('USER', 'unknown')
+        logger.info(f"Running as user '{current_user}', using home: {_myhome}")
+
     local_bin = os.path.join(_myhome, ".local", "bin")
     
     # Ensure .local/bin is in PATH
@@ -2243,7 +2261,13 @@ def install_packages(package_info: Dict[str, Any]) -> None:
             else:
                 install_system_package(name, version)
         else:
-            install_system_package(package)
+            # Handle special packages without version
+            if package == "zoxide":
+                install_zoxide_if_needed()
+            elif package == "fastfetch":
+                install_fastfetch_if_needed()
+            else:
+                install_system_package(package)
     
     # Install additional tools
     install_or_update_oxker()
