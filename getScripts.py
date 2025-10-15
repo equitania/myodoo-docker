@@ -56,8 +56,8 @@ if os.environ.get('GETSCRIPTS_DEBUG', '').lower() in ('1', 'true', 'yes'):
     logger.debug("Debug logging enabled")
 
 # Script version and date
-SCRIPT_VERSION = "6.7.5"
-SCRIPT_DATE = "14.10.2025"
+SCRIPT_VERSION = "6.8.0"
+SCRIPT_DATE = "15.10.2025"
 
 # Cache settings
 CACHE_DIR = os.path.expanduser("~/.cache/getscripts")
@@ -2102,30 +2102,44 @@ def setup_environment() -> Tuple[str, str]:
     return _myhome, local_bin
 
 def update_repository(myodoo_docker: str, server_version: str) -> None:
-    """Update the myodoo-docker repository."""
+    """Update or clone the myodoo-docker repository."""
+    parent_dir = os.path.dirname(myodoo_docker)
+
+    # Clone repository if it doesn't exist
     if not os.path.exists(myodoo_docker):
-        raise FileNotFoundError(f"Directory {myodoo_docker} does not exist")
-    
+        logger.info(f"Repository directory {myodoo_docker} does not exist, cloning...")
+        os.chdir(parent_dir)
+        clone_url = "https://github.com/equitania/myodoo-docker.git"
+        logger.info(f"Cloning {clone_url} into {myodoo_docker}")
+        run_command(f"git clone -b {server_version} {clone_url}")
+        logger.info("Repository cloned successfully")
+
+        # Clean pyc files after initial clone
+        os.chdir(myodoo_docker)
+        run_command("find . -name '*.pyc' -type f -delete")
+        return
+
+    # Repository exists, update it
     os.chdir(myodoo_docker)
-    
+
     # Check current branch and switch if needed
     current_branch = subprocess.check_output(["git", "rev-parse", "--abbrev-ref", "HEAD"], text=True).strip()
     if current_branch != server_version:
         logger.info(f"Switching to branch {server_version}")
         run_command(f"git checkout {server_version}")
-    
+
     # Configure git pull
     run_command("git config pull.ff only", capture_output=True)
-    
+
     # Check for updates
     before_pull = subprocess.check_output(["git", "rev-parse", "HEAD"], text=True).strip()
     run_command("git pull", capture_output=True)
     after_pull = subprocess.check_output(["git", "rev-parse", "HEAD"], text=True).strip()
-    
+
     if before_pull != after_pull:
         logger.info("Repository updated, new changes downloaded")
         run_command("git --no-pager log --oneline --no-decorate HEAD@{1}..HEAD")
-    
+
     # Clean pyc files
     run_command("find . -name '*.pyc' -type f -delete")
 
@@ -2252,11 +2266,12 @@ def main() -> None:
         global_server_version = '2025'
         myodoo_docker = os.path.join(_myhome, "myodoo-docker")
         
-        # Update repository
+        # Update or clone repository
         try:
             update_repository(myodoo_docker, global_server_version)
         except Exception as e:
-            logger.error(f"Failed to update repository: {e}")
+            logger.error(f"Failed to update or clone repository: {e}")
+            logger.error(f"Please check network connectivity and permissions")
             sys.exit(1)
         
         # Copy configuration files and scripts
