@@ -3,8 +3,8 @@
 # ==============================================================================
 # Title:            container2backup.py
 # Description:      Script to backup Odoo database including FileStore under Docker
-# Version:          4.3.0
-# Date:             19.04.2025
+# Version:          4.3.1
+# Date:             20.10.2025
 # Author:           Equitania Software GmbH
 # ==============================================================================
 # Feature Overview:
@@ -50,7 +50,7 @@ import argparse  # Add argparse for command line parameters
 def check_compression_tools():
     """
     Checks which compression tools are available
-    
+
     Returns:
         dict: Dictionary containing availability of compression tools
     """
@@ -60,35 +60,23 @@ def check_compression_tools():
         'gzip': False,
         'zstd': False
     }
-    
-    # Check 7zz (newer 7-Zip)
-    try:
-        subprocess.run(['7zz', '--help'], stdout=subprocess.PIPE, stderr=subprocess.PIPE, check=False)
+
+    # Check 7zz (newer 7-Zip) - use shutil.which for robust binary detection
+    if shutil.which('7zz') is not None:
         tools['7zz'] = True
-    except (subprocess.SubprocessError, FileNotFoundError):
-        pass
-        
+
     # Check zip
-    try:
-        subprocess.run(['zip', '--help'], stdout=subprocess.PIPE, stderr=subprocess.PIPE, check=False)
+    if shutil.which('zip') is not None:
         tools['zip'] = True
-    except (subprocess.SubprocessError, FileNotFoundError):
-        pass
-        
+
     # Check gzip
-    try:
-        subprocess.run(['gzip', '--help'], stdout=subprocess.PIPE, stderr=subprocess.PIPE, check=False)
+    if shutil.which('gzip') is not None:
         tools['gzip'] = True
-    except (subprocess.SubprocessError, FileNotFoundError):
-        pass
-        
+
     # Check zstd
-    try:
-        subprocess.run(['zstd', '--help'], stdout=subprocess.PIPE, stderr=subprocess.PIPE, check=False)
+    if shutil.which('zstd') is not None:
         tools['zstd'] = True
-    except (subprocess.SubprocessError, FileNotFoundError):
-        pass
-        
+
     return tools
 
 def compress_with_7zip(source_dir, output_file):
@@ -656,8 +644,8 @@ if __name__ == "__main__":
     # Display version information
     print("===================================================")
     print("Odoo Docker Backup System")
-    print("Version: 4.3.0")
-    print("Date: 19.04.2025")
+    print("Version: 4.3.1")
+    print("Date: 20.10.2025")
     print("===================================================")
     
     # Display system information
