@@ -56,8 +56,8 @@ if os.environ.get('GETSCRIPTS_DEBUG', '').lower() in ('1', 'true', 'yes'):
     logger.debug("Debug logging enabled")
 
 # Script version and date
-SCRIPT_VERSION = "6.8.2"
-SCRIPT_DATE = "15.10.2025"
+SCRIPT_VERSION = "6.8.4"
+SCRIPT_DATE = "20.10.2025"
 
 # Cache settings
 CACHE_DIR = os.path.expanduser("~/.cache/getscripts")
@@ -1590,7 +1590,7 @@ def install_or_update_mcedit() -> None:
 
 def is_dns_already_optimized() -> bool:
     """Check if DNS has already been optimized by getScripts.py
-    
+
     Returns:
         bool: True if DNS appears to be already optimized
     """
@@ -1602,22 +1602,55 @@ def is_dns_already_optimized() -> bool:
                 content = f.read()
                 if "managed by getScripts.py" in content:
                     return True
-        
+
         # Check if systemd-resolved config exists with our marker
         resolved_config = "/etc/systemd/resolved.conf.d/dns-optimization.conf"
         if os.path.exists(resolved_config):
             return True
-        
+
         # Check if direct resolv.conf has our marker
         if os.path.exists("/etc/resolv.conf"):
             with open("/etc/resolv.conf", "r") as f:
                 content = f.read()
                 if "managed by getScripts.py" in content:
                     return True
-        
+
         return False
     except Exception:
         return False
+
+def is_dns_optimization_declined() -> bool:
+    """Check if DNS optimization was previously declined by the user.
+
+    Returns:
+        bool: True if optimization was declined
+    """
+    ensure_cache_dir()
+    decline_marker = os.path.join(CACHE_DIR, "dns-optimization-declined")
+    return os.path.exists(decline_marker)
+
+def mark_dns_optimization_declined() -> None:
+    """Mark DNS optimization as declined by the user."""
+    ensure_cache_dir()
+    decline_marker = os.path.join(CACHE_DIR, "dns-optimization-declined")
+    try:
+        with open(decline_marker, "w") as f:
+            f.write(f"DNS optimization declined on {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}\n")
+            f.write("To reset this decision, delete this file or run: ./getScripts.py --dns-check\n")
+        logger.debug(f"Created DNS optimization decline marker: {decline_marker}")
+    except Exception as e:
+        logger.error(f"Could not create DNS decline marker: {e}")
+
+def clear_dns_optimization_declined() -> None:
+    """Clear the DNS optimization declined marker (when explicitly requested)."""
+    ensure_cache_dir()
+    decline_marker = os.path.join(CACHE_DIR, "dns-optimization-declined")
+    try:
+        if os.path.exists(decline_marker):
+            os.remove(decline_marker)
+            logger.debug("Cleared DNS optimization decline marker")
+    except Exception as e:
+        logger.error(f"Could not remove DNS decline marker: {e}")
 
 def check_dns_configuration() -> Dict[str, Any]:
     """Check the current DNS configuration on the system.
@@ -1717,16 +1750,29 @@ def check_dns_configuration() -> Dict[str, Any]:
     
     return dns_info
 
-def optimize_dns_configuration() -> bool:
+def optimize_dns_configuration(explicit_request: bool = False) -> bool:
     """Optimize DNS configuration based on detected setup.
-    
+
+    Args:
+        explicit_request: True if called with --dns-check flag (always ask user)
+
     Returns:
         bool: True if optimization was applied, False otherwise
     """
     logger.info("\n" + "="*60)
     logger.info("DNS Configuration Check and Optimization")
     logger.info("="*60)
-    
+
+    # If explicitly requested via --dns-check, clear any previous decline marker
+    if explicit_request:
+        clear_dns_optimization_declined()
+
+    # Check if optimization was previously declined (unless explicitly requested)
+    if not explicit_request and is_dns_optimization_declined():
+        logger.info("\n✅ DNS optimization was previously declined")
+        logger.info("To reconsider, run: ./getScripts.py --dns-check")
+        return False
+
     # Get current DNS configuration
     dns_info = check_dns_configuration()
     
@@ -1831,14 +1877,27 @@ EOF''',
         ]
     else:
         logger.info("\nOptimization method: direct resolv.conf modification")
+        logger.info("\nNote: /etc/resolv.conf will be made immutable to prevent automatic changes")
+        logger.info("To manually edit later, first run: sudo chattr -i /etc/resolv.conf")
         optimization_commands = [
-            "sudo cp /etc/resolv.conf /etc/resolv.conf.backup",
+            # Backup existing resolv.conf
+            "sudo cp /etc/resolv.conf /etc/resolv.conf.backup.$(date +%Y%m%d_%H%M%S)",
+            # Remove immutable attribute if present
+            "sudo chattr -i /etc/resolv.conf 2>/dev/null || true",
+            # Check if resolv.conf is a symlink and remove it
+            "sudo test -L /etc/resolv.conf && sudo rm /etc/resolv.conf || true",
+            # Create new resolv.conf with optimized DNS
             '''sudo tee /etc/resolv.conf > /dev/null << EOF
 # Optimized DNS configuration - managed by getScripts.py
+# Date: $(date +%Y-%m-%d)
+# To modify this file, first run: sudo chattr -i /etc/resolv.conf
 nameserver 1.1.1.1
 nameserver 8.8.8.8
 nameserver 9.9.9.9
-EOF'''
+options timeout:2 attempts:3 rotate
+EOF''',
+            # Make the file immutable to prevent automatic changes
+            "sudo chattr +i /etc/resolv.conf"
         ]
     
     # Docker-specific instructions
@@ -1861,9 +1920,17 @@ services:
         response = input("\nDo you want to apply DNS optimization? (y/N): ").strip().lower()
         if response != 'y':
             logger.info("DNS optimization skipped")
+            # Remember this decision (unless explicitly requested with --dns-check)
+            if not explicit_request:
+                mark_dns_optimization_declined()
+                logger.info("This decision has been saved. To reconsider, run: ./getScripts.py --dns-check")
             return False
     except KeyboardInterrupt:
         logger.info("\nDNS optimization cancelled")
+        # Remember this decision (unless explicitly requested with --dns-check)
+        if not explicit_request:
+            mark_dns_optimization_declined()
+            logger.info("\nThis decision has been saved. To reconsider, run: ./getScripts.py --dns-check")
         return False
     
     # Apply optimization
@@ -2380,8 +2447,8 @@ if __name__ == "__main__":
         logger.info("Cache disabled for this run")
     
     if args.dns_check:
-        # Only run DNS optimization
-        optimize_dns_configuration()
+        # Only run DNS optimization (explicitly requested, always ask user)
+        optimize_dns_configuration(explicit_request=True)
         sys.exit(0)
     
     main()
