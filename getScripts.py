@@ -24,17 +24,14 @@
 import os
 import subprocess
 import requests
-from pathlib import Path
 import sys
 import logging
 from typing import Tuple, Optional, Dict, List, Any
 from functools import wraps, lru_cache
-import hashlib
 import time
 import platform
 import re
 import tempfile
-import json
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from datetime import datetime, timedelta
 import pickle
@@ -56,7 +53,7 @@ if os.environ.get('GETSCRIPTS_DEBUG', '').lower() in ('1', 'true', 'yes'):
     logger.debug("Debug logging enabled")
 
 # Script version and date
-SCRIPT_VERSION = "6.8.4"
+SCRIPT_VERSION = "6.8.6"
 SCRIPT_DATE = "20.10.2025"
 
 # Cache settings
@@ -262,23 +259,21 @@ def download_and_install_deb(url: str, filename: str) -> None:
     try:
         response = requests.get(url, stream=True)
         response.raise_for_status()
-        
-        # Download with progress tracking
-        total_size = int(response.headers.get('content-length', 0))
+
+        # Download file in chunks
         block_size = 1024
-        
         with open(filename, 'wb') as file:
             for data in response.iter_content(block_size):
                 file.write(data)
-        
+
         # Verify file exists and is not empty
         if not os.path.exists(filename) or os.path.getsize(filename) == 0:
             raise Exception("Downloaded file is empty or does not exist")
-            
+
         logger.info(f"Successfully downloaded {filename}")
-        
+
         # Install the package
-        result = subprocess.run(
+        subprocess.run(
             ["sudo", "dpkg", "-i", filename],
             capture_output=True,
             text=True,
@@ -479,8 +474,7 @@ def run_command(command: str, check: bool = False, shell: bool = False, capture_
         # If current directory doesn't exist, move to home directory
         logger.warning("Current directory doesn't exist, moving to home directory")
         os.chdir(os.path.expanduser("~"))
-    
-    last_exception = None
+
     for attempt in range(retries + 1):
         try:
             if shell:
@@ -489,21 +483,20 @@ def run_command(command: str, check: bool = False, shell: bool = False, capture_
             else:
                 logger.debug(f"Running command (attempt {attempt + 1}): {command}")
                 result = subprocess.run(command.split(), check=False, capture_output=capture_output)
-            
+
             if result.returncode != 0:
                 error_msg = f"Command returned non-zero exit code: {result.returncode}"
                 if capture_output and result.stderr:
                     error_msg += f"\nError output: {result.stderr.decode('utf-8', errors='replace')}"
-                
+
                 if check:
                     raise CommandError(error_msg)
                 else:
                     logger.warning(error_msg)
-            
+
             return result
-            
+
         except Exception as e:
-            last_exception = e
             if attempt < retries:
                 logger.warning(f"Command failed on attempt {attempt + 1}, retrying...")
                 time.sleep(2 ** attempt)  # Exponential backoff
@@ -1552,15 +1545,57 @@ def get_mcedit_version() -> Optional[str]:
         logger.error(f"Error getting mcedit version: {e}")
     return None
 
+def is_mcedit_update_available() -> Tuple[bool, Optional[str], Optional[str]]:
+    """Check if an update for mc/mcedit is available.
+
+    Returns:
+        Tuple[bool, Optional[str], Optional[str]]: (update_available, current_version, available_version)
+    """
+    try:
+        # Get current installed version
+        current_version = get_mcedit_version()
+        if not current_version:
+            return (True, None, None)  # Not installed, so "update" needed (install)
+
+        # Check available version via apt-cache policy
+        result = subprocess.run(
+            ['apt-cache', 'policy', 'mc'],
+            capture_output=True,
+            text=True,
+            check=False
+        )
+
+        if result.returncode == 0:
+            # Parse output to find installed and candidate versions
+            installed_line = None
+            candidate_line = None
+
+            for line in result.stdout.split('\n'):
+                line = line.strip()
+                if line.startswith('Installed:'):
+                    installed_line = line.split(':', 1)[1].strip()
+                elif line.startswith('Candidate:'):
+                    candidate_line = line.split(':', 1)[1].strip()
+
+            # Compare versions
+            if candidate_line and installed_line:
+                # If candidate is different from installed, update is available
+                if candidate_line != installed_line and candidate_line != '(none)':
+                    return (True, installed_line, candidate_line)
+
+        return (False, current_version, current_version)
+
+    except Exception as e:
+        logger.debug(f"Error checking mcedit update availability: {e}")
+        return (False, None, None)
+
 def install_or_update_mcedit() -> None:
     """Install or update mcedit (Midnight Commander) using package manager."""
     try:
-        # Check current version if installed
+        # Check if installed
         installed = check_mcedit_installed()
-        current_version = get_mcedit_version() if installed else None
-        logger.info(f"Current mcedit version: {current_version if installed else 'not installed'}")
 
-        # Install or update
+        # Install if not present
         if not installed:
             logger.info("Installing mc (Midnight Commander with mcedit)...")
             run_command("sudo apt update")
@@ -1572,8 +1607,14 @@ def install_or_update_mcedit() -> None:
                 logger.info(f"mcedit {new_version} has been successfully installed")
             else:
                 raise RuntimeError("Failed to verify mcedit installation")
-        else:
-            logger.info("Checking for mc/mcedit updates via package manager...")
+            return
+
+        # Check if update is available (silent check)
+        update_available, current_version, available_version = is_mcedit_update_available()
+
+        if update_available and available_version:
+            logger.info(f"mc/mcedit update available: {current_version} → {available_version}")
+            logger.info("Updating mc (Midnight Commander with mcedit)...")
             run_command("sudo apt update")
             run_command("sudo apt install --only-upgrade -y mc")
 
@@ -1582,7 +1623,10 @@ def install_or_update_mcedit() -> None:
             if new_version != current_version:
                 logger.info(f"mcedit updated from {current_version} to {new_version}")
             else:
-                logger.info(f"mcedit is already at the latest available version ({current_version})")
+                logger.info(f"mcedit update completed")
+        else:
+            # Already up to date - no message needed
+            logger.debug(f"mcedit is up to date ({current_version})")
 
     except Exception as e:
         logger.error(f"Error installing/updating mcedit: {str(e)}")
