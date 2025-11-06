@@ -53,7 +53,7 @@ if os.environ.get('GETSCRIPTS_DEBUG', '').lower() in ('1', 'true', 'yes'):
     logger.debug("Debug logging enabled")
 
 # Script version and date
-SCRIPT_VERSION = "6.8.8"
+SCRIPT_VERSION = "6.8.9"
 SCRIPT_DATE = "06.11.2025"
 
 # Cache settings
@@ -327,14 +327,14 @@ def get_latest_fastfetch_version() -> Tuple[Optional[str], Optional[List[Dict]]]
         logger.error(f"Error fetching latest fastfetch version: {str(e)}")
     return None, None
 
-def get_fastfetch_download_url(version: str, os_id: str, assets: Optional[List[Dict]] = None) -> Optional[str]:
+def get_fastfetch_download_url(_version: str, os_id: str, assets: Optional[List[Dict]] = None) -> Optional[str]:
     """Get the appropriate download URL for fastfetch based on OS.
-    
+
     Args:
-        version: Version string
+        _version: Version string (currently unused, reserved for future use)
         os_id: Operating system ID
         assets: Optional list of release assets
-    
+
     Returns:
         Optional[str]: Download URL if found
     """
@@ -403,13 +403,50 @@ def install_fastfetch_if_needed() -> None:
     except Exception as e:
         logger.error(f"Error installing fastfetch: {str(e)}")
 
-def install_zoxide_if_needed(desired_version: str = "0.9.6") -> None:
+def get_latest_zoxide_version() -> Optional[str]:
+    """Get the latest version of zoxide from GitHub releases.
+
+    Returns:
+        Optional[str]: Version string if available
+    """
+    cache_key = "zoxide_latest"
+    cached_data = get_cached_version(cache_key)
+
+    if cached_data:
+        return cached_data.get("version")
+
+    try:
+        response = requests.get("https://api.github.com/repos/ajeetdsouza/zoxide/releases/latest")
+        if response.status_code == 200:
+            data = response.json()
+            version = data["tag_name"].lstrip('v')
+            logger.info(f"Found latest zoxide version: {version}")
+
+            # Cache the result
+            cache_version_info(cache_key, {"version": version})
+            return version
+        logger.error(f"Failed to get latest zoxide version. Status code: {response.status_code}")
+    except Exception as e:
+        logger.error(f"Error fetching latest zoxide version: {str(e)}")
+    return None
+
+def install_zoxide_if_needed() -> None:
     """Install zoxide if it's not already installed or if the version is outdated."""
-    installed, version = is_zoxide_installed()
+    installed, current_version = is_zoxide_installed()
+
+    # Get latest version from GitHub
+    latest_version = get_latest_zoxide_version()
+    if not latest_version:
+        logger.warning("Could not determine latest zoxide version, skipping update check")
+        if installed:
+            logger.info(f"zoxide version {current_version} is already installed.")
+            return
+        # Use a fallback version if we can't get the latest
+        latest_version = "0.9.7"
 
     if installed:
-        if version == desired_version:
-            logger.info(f"zoxide version {desired_version} is already installed.")
+        if current_version == latest_version:
+            logger.info(f"zoxide version {latest_version} is already installed.")
             # Ensure PATH is set correctly
             local_bin = os.path.expanduser("~/.local/bin")
             if local_bin not in os.environ.get("PATH", ""):
@@ -422,17 +459,26 @@ def install_zoxide_if_needed(desired_version: str = "0.9.6") -> None:
                         f.write(f'\nexport PATH="{local_bin}:$PATH"\n')
             return
         else:
-            logger.info(f"zoxide version {version} is installed, but version {desired_version} is required.")
+            # Compare versions to decide if update is needed
+            try:
+                from packaging import version as pkg_version
+                if pkg_version.parse(current_version) >= pkg_version.parse(latest_version):
+                    logger.info(f"zoxide version {current_version} is already up to date (latest: {latest_version}).")
+                    return
+            except ImportError:
+                # Fallback to simple string comparison if packaging module not available
+                pass
+            logger.info(f"zoxide version {current_version} is installed, updating to version {latest_version}.")
     else:
         logger.info("zoxide is not installed.")
 
-    logger.info(f"Downloading zoxide version {desired_version}...")
-    
+    logger.info(f"Downloading zoxide version {latest_version}...")
+
     # Installation using curl and bash with proper shell execution
     install_cmd = "curl -sS https://raw.githubusercontent.com/ajeetdsouza/zoxide/main/install.sh | bash"
     run_command(install_cmd, shell=True, check=True)
-    
-    logger.info(f"zoxide version {desired_version} was successfully installed.")
+
+    logger.info(f"zoxide version {latest_version} was successfully installed.")
 
 def ensure_directory_exists(directory: str) -> None:
     """Ensure a directory exists, creating it if necessary."""
