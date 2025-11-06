@@ -53,8 +53,8 @@ if os.environ.get('GETSCRIPTS_DEBUG', '').lower() in ('1', 'true', 'yes'):
     logger.debug("Debug logging enabled")
 
 # Script version and date
-SCRIPT_VERSION = "6.8.6"
-SCRIPT_DATE = "20.10.2025"
+SCRIPT_VERSION = "6.8.7"
+SCRIPT_DATE = "06.11.2025"
 
 # Cache settings
 CACHE_DIR = os.path.expanduser("~/.cache/getscripts")
@@ -1197,6 +1197,7 @@ def install_or_update_7zip():
             logger.info("Installing/updating 7-Zip to version with 7zz command...")
 
             # Check if apt package 7zip is available (only if we have sudo)
+            apt_install_successful = False
             if has_sudo:
                 run_command("sudo apt update")
                 result = subprocess.run(['apt-cache', 'show', '7zip'],
@@ -1207,24 +1208,33 @@ def install_or_update_7zip():
                     logger.info("Installing 7zip package from repository...")
                     run_command("sudo apt install -y 7zip")
 
-                    # Verify installation
-                    if not check_7zip_version():
-                        raise RuntimeError("Failed to install/update 7-Zip")
+                    # Verify installation - check if 7zz command is now available
+                    if check_7zip_version():
+                        logger.info("7-Zip installation/update completed successfully via apt")
 
-                    logger.info("7-Zip installation/update completed successfully")
+                        # Show installed version
+                        try:
+                            result = subprocess.run(['7zz', '--help'], capture_output=True, text=True)
+                            version_line = result.stdout.split('\n')[0].strip()
+                            logger.info(f"Installed: {version_line}")
+                        except:
+                            pass
+                        return
+                    else:
+                        # Debian/Ubuntu apt package doesn't provide 7zz, continue to manual install
+                        logger.warning("Repository 7zip package does not provide 7zz command, falling back to official source...")
+                        apt_install_successful = False
 
-                    # Show installed version
-                    try:
-                        result = subprocess.run(['7zz', '--help'], capture_output=True, text=True)
-                        version_line = result.stdout.split('\n')[0].strip()
-                        logger.info(f"Installed: {version_line}")
-                    except:
-                        pass
-                    return
+                        # Remove the repository package to avoid conflicts
+                        if is_package_installed("7zip"):
+                            logger.info("Removing repository 7zip package to install official version...")
+                            run_command("sudo apt remove -y 7zip")
 
             # Install from official 7-Zip source (works without sudo for user installation)
             if not has_sudo:
                 logger.info("No sudo privileges, installing 7-Zip to ~/.local/bin...")
+            elif not apt_install_successful:
+                logger.info("Installing 7-Zip from official source to get 7zz command...")
             else:
                 logger.info("7zip package not available in repository, installing from official source...")
 
