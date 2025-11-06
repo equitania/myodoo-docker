@@ -53,7 +53,7 @@ if os.environ.get('GETSCRIPTS_DEBUG', '').lower() in ('1', 'true', 'yes'):
     logger.debug("Debug logging enabled")
 
 # Script version and date
-SCRIPT_VERSION = "6.8.7"
+SCRIPT_VERSION = "6.8.8"
 SCRIPT_DATE = "06.11.2025"
 
 # Cache settings
@@ -1077,18 +1077,28 @@ def upgrade_pip() -> None:
 
 def get_7zip_version() -> Optional[tuple]:
     """Get installed 7-Zip version as tuple (major, minor, patch)"""
+    import shutil
+
+    # Try to find 7zz in common locations
+    seven_zz_cmd = None
+    for path in [shutil.which('7zz'), '/usr/local/bin/7zz', os.path.expanduser('~/.local/bin/7zz')]:
+        if path and os.path.isfile(path) and os.access(path, os.X_OK):
+            seven_zz_cmd = path
+            break
+
     try:
-        # First try 7zz (new version)
-        result = subprocess.run(['7zz', '--help'], capture_output=True, text=True)
-        if result.returncode == 0:
-            # 7zz output format: "7-Zip (z) [64] 21.07 : Copyright (c) 1999-2021 Igor Pavlov"
-            version_line = result.stdout.split('\n')[0].strip()
-            version_match = re.search(r'\d+\.\d+', version_line)
-            if version_match:
-                version_str = version_match.group(0)
-                # Convert to tuple (major, minor, 0) as 7zip usually only has major.minor
-                major, minor = map(int, version_str.split('.'))
-                return (major, minor, 0)
+        # First try 7zz (new version) using the found path
+        if seven_zz_cmd:
+            result = subprocess.run([seven_zz_cmd, '--help'], capture_output=True, text=True)
+            if result.returncode == 0:
+                # 7zz output format: "7-Zip (z) [64] 21.07 : Copyright (c) 1999-2021 Igor Pavlov"
+                version_line = result.stdout.split('\n')[0].strip()
+                version_match = re.search(r'\d+\.\d+', version_line)
+                if version_match:
+                    version_str = version_match.group(0)
+                    # Convert to tuple (major, minor, 0) as 7zip usually only has major.minor
+                    major, minor = map(int, version_str.split('.'))
+                    return (major, minor, 0)
     except FileNotFoundError:
         # Fall back to checking old 7z command, but we'll eventually remove/replace it
         try:
@@ -1125,12 +1135,23 @@ def check_7zip_version() -> bool:
     """Check if 7-Zip is installed and meets minimum version requirements"""
     try:
         # First try to find the 7zz command (new version)
-        try:
-            result = subprocess.run(['which', '7zz'], capture_output=True, text=True)
-            if result.returncode != 0:
-                logger.warning("7zz command not found. Need to install newer 7-Zip version.")
-                return False
-        except Exception:
+        # Use shutil.which for more robust binary detection
+        import shutil
+
+        # Check common installation paths
+        seven_zz_paths = [
+            shutil.which('7zz'),  # Check PATH
+            '/usr/local/bin/7zz',  # System-wide installation
+            os.path.expanduser('~/.local/bin/7zz')  # User installation
+        ]
+
+        seven_zz_found = False
+        for path in seven_zz_paths:
+            if path and os.path.isfile(path) and os.access(path, os.X_OK):
+                seven_zz_found = True
+                break
+
+        if not seven_zz_found:
             logger.warning("7zz command not found. Need to install newer 7-Zip version.")
             return False
 
