@@ -1360,7 +1360,7 @@ def install_or_update_7zip():
                         pass
 
                     # Ensure PATH is set
-                    ensure_path_in_zshrc()
+                    ensure_path_in_shell_config()
 
             # Verify installation
             if not check_7zip_version():
@@ -1536,10 +1536,10 @@ def install_or_update_oxker() -> None:
                 local_bin = os.path.expanduser("~/.local/bin")
                 ensure_directory_exists(local_bin)
                 run_command(f"install -Dm 755 oxker -t {local_bin}")
-                
-                # Ensure PATH is set in .zshrc
-                ensure_path_in_zshrc()
-                
+
+                # Ensure PATH is set in Fish config
+                ensure_path_in_shell_config()
+
                 # Try to set PATH for current process
                 if local_bin not in os.environ.get("PATH", ""):
                     os.environ["PATH"] = f"{local_bin}:{os.environ.get('PATH', '')}"
@@ -2103,79 +2103,51 @@ def get_current_shell() -> str:
                 shell_name = parent.name()
             except ImportError:
                 logger.warning("psutil not available, cannot detect shell from process")
-                shell_name = 'zsh'  # Default to zsh
+                shell_name = 'fish'  # Default to fish
 
         logger.info(f"Detected shell: {shell_name}")
         return shell_name
     except Exception as e:
-        logger.warning(f"Could not detect shell, defaulting to zsh: {e}")
-        return 'zsh'
+        logger.warning(f"Could not detect shell, defaulting to fish: {e}")
+        return 'fish'
 
 def ensure_path_in_shell_config() -> None:
-    """Ensure ~/.local/bin is in PATH in shell configuration file."""
+    """Ensure ~/.local/bin is in PATH in Fish shell configuration file."""
     try:
         home = os.path.expanduser("~")
         local_bin = os.path.join(home, ".local", "bin")
-        shell = get_current_shell()
 
-        if shell == 'fish':
-            # Fish shell configuration
-            fish_config_dir = os.path.join(home, ".config", "fish")
-            fish_config_path = os.path.join(fish_config_dir, "config.fish")
+        # Fish shell configuration
+        fish_config_dir = os.path.join(home, ".config", "fish")
+        fish_config_path = os.path.join(fish_config_dir, "config.fish")
 
-            # Ensure config directory exists
-            os.makedirs(fish_config_dir, exist_ok=True)
+        # Ensure config directory exists
+        os.makedirs(fish_config_dir, exist_ok=True)
 
-            # Check if config.fish exists
-            if not os.path.exists(fish_config_path):
-                logger.info("config.fish not found, creating it")
-                with open(fish_config_path, "w") as f:
-                    f.write(f'# Created by getScripts.py\nset -gx PATH {local_bin} $PATH\n')
-                return
+        # Check if config.fish exists
+        if not os.path.exists(fish_config_path):
+            logger.info("config.fish not found, creating it")
+            with open(fish_config_path, "w") as f:
+                f.write(f'# Created by getScripts.py\nset -gx PATH {local_bin} $PATH\n')
+            return
 
-            # Read current config.fish
-            with open(fish_config_path, "r") as f:
-                content = f.read()
+        # Read current config.fish
+        with open(fish_config_path, "r") as f:
+            content = f.read()
 
-            # Check if PATH is already set correctly
-            if f'set -gx PATH {local_bin}' in content or f'set -x PATH {local_bin}' in content:
-                logger.info(f"{local_bin} is already in PATH in config.fish")
-                return
+        # Check if PATH is already set correctly
+        if f'set -gx PATH {local_bin}' in content or f'set -x PATH {local_bin}' in content:
+            logger.info(f"{local_bin} is already in PATH in config.fish")
+            return
 
-            # Add PATH to config.fish
-            logger.info(f"Adding {local_bin} to PATH in config.fish")
-            with open(fish_config_path, "a") as f:
-                f.write(f'\n# Added by getScripts.py\nset -gx PATH {local_bin} $PATH\n')
+        # Add PATH to config.fish
+        logger.info(f"Adding {local_bin} to PATH in config.fish")
+        with open(fish_config_path, "a") as f:
+            f.write(f'\n# Added by getScripts.py\nset -gx PATH {local_bin} $PATH\n')
 
-            logger.info("config.fish updated, PATH will be available in new shells")
-        else:
-            # ZSH/Bash shell configuration
-            zshrc_path = os.path.join(home, ".zshrc")
-
-            # Check if .zshrc exists
-            if not os.path.exists(zshrc_path):
-                logger.info(".zshrc not found, creating it")
-                with open(zshrc_path, "w") as f:
-                    f.write(f'# Created by getScripts.py\nexport PATH="{local_bin}:$PATH"\n')
-                return
-
-            # Read current .zshrc
-            with open(zshrc_path, "r") as f:
-                content = f.read()
-
-            # Check if PATH is already set correctly
-            if f'export PATH="{local_bin}:$PATH"' in content or f"export PATH={local_bin}:$PATH" in content:
-                logger.info(f"{local_bin} is already in PATH in .zshrc")
-                return
-
-            # Add PATH to .zshrc
-            logger.info(f"Adding {local_bin} to PATH in .zshrc")
-            with open(zshrc_path, "a") as f:
-                f.write(f'\n# Added by getScripts.py\nexport PATH="{local_bin}:$PATH"\n')
-
-            logger.info(".zshrc updated, PATH will be available in new shells")
+        logger.info("config.fish updated, PATH will be available in new shells")
     except Exception as e:
-        logger.error(f"Error updating shell configuration: {e}")
+        logger.error(f"Error updating Fish shell configuration: {e}")
 
 def ensure_path_in_zshrc() -> None:
     """Ensure ~/.local/bin is in PATH in .zshrc file.
@@ -2423,40 +2395,24 @@ def update_repository(myodoo_docker: str, server_version: str) -> None:
     run_command("find . -name '*.pyc' -type f -delete")
 
 def copy_configuration_files(_myhome: str, myodoo_docker: str) -> None:
-    """Copy configuration files from repository to home directory."""
-    shell = get_current_shell()
+    """Copy Fish shell configuration files from repository to home directory."""
+    # Copy Fish configuration
+    source_fish = os.path.join(myodoo_docker, "scripts", "fish", "config.fish")
+    fish_config_dir = os.path.join(_myhome, ".config", "fish")
+    target_fish = os.path.join(fish_config_dir, "config.fish")
 
-    if shell == 'fish':
-        # Copy Fish configuration
-        source_fish = os.path.join(myodoo_docker, "scripts", "fish", "config.fish")
-        fish_config_dir = os.path.join(_myhome, ".config", "fish")
-        target_fish = os.path.join(fish_config_dir, "config.fish")
+    if os.path.exists(source_fish):
+        # Ensure config directory exists
+        ensure_directory_exists(fish_config_dir)
 
-        if os.path.exists(source_fish):
-            # Ensure config directory exists
-            ensure_directory_exists(fish_config_dir)
+        if os.path.exists(target_fish):
+            backup_path = f"{target_fish}.bak"
+            logger.info(f"Backing up existing config.fish to {backup_path}")
+            run_command(f"cp {target_fish} {backup_path}")
 
-            if os.path.exists(target_fish):
-                backup_path = f"{target_fish}.bak"
-                logger.info(f"Backing up existing config.fish to {backup_path}")
-                run_command(f"cp {target_fish} {backup_path}")
-
-            logger.info(f"Copying config.fish from {source_fish} to {target_fish}")
-            run_command(f"cp {source_fish} {target_fish}")
-            ensure_path_in_shell_config()
-    else:
-        # Copy .zshrc for ZSH/Bash
-        source_zshrc = os.path.join(myodoo_docker, ".zshrc")
-        target_zshrc = os.path.join(_myhome, ".zshrc")
-        if os.path.exists(source_zshrc):
-            if os.path.exists(target_zshrc):
-                backup_path = f"{target_zshrc}.bak"
-                logger.info(f"Backing up existing .zshrc to {backup_path}")
-                run_command(f"cp {target_zshrc} {backup_path}")
-
-            logger.info(f"Copying .zshrc from {source_zshrc} to {target_zshrc}")
-            run_command(f"cp {source_zshrc} {target_zshrc}")
-            ensure_path_in_shell_config()
+        logger.info(f"Copying config.fish from {source_fish} to {target_fish}")
+        run_command(f"cp {source_fish} {target_fish}")
+        ensure_path_in_shell_config()
 
     # Copy fastfetch config
     config_directory = os.path.join(_myhome, ".config", "fastfetch")
@@ -2501,7 +2457,7 @@ def install_packages(package_info: Dict[str, Any]) -> None:
         logger.info("Installing pipx...")
         install_system_package("pipx")
         run_command("pipx ensurepath")
-        ensure_path_in_zshrc()
+        ensure_path_in_shell_config()
     
     # Install or update nginx-set-conf
     install_or_update_nginx_set_conf()

@@ -1,9 +1,20 @@
 # prepare-system.py - System Preparation Script
 
-Version: 1.1.0
+Version: 1.2.0
 Date: 19.11.2025
 
 ## Changelog
+
+### Version 1.2.0 (19.11.2025)
+- **Added**: Fish shell installation and configuration
+- **Added**: Starship prompt installation with automatic shell integration
+- **Added**: Shell change notification (fish shell)
+- **Improved**: Integrated pipx installation into essential packages
+- **Improved**: Streamlined installation workflow
+
+### Version 1.1.1 (19.11.2025)
+- **Removed**: software-properties-common (not available in Debian 13+, not needed)
+- **Fixed**: Unused variable warnings in code quality checks
 
 ### Version 1.1.0 (19.11.2025)
 - **Added**: Lazygit installation with automatic architecture detection
@@ -27,7 +38,7 @@ Date: 19.11.2025
 - Initial release
 - Essential system package installation
 - Fastfetch and zoxide installation
-- Fish and ZSH shell support
+- Fish shell support
 - Smart caching system
 
 ## Description
@@ -36,12 +47,15 @@ A standalone system preparation script that installs essential tools and librari
 
 ## Features
 
-- **Shell Detection**: Automatically detects and configures Fish or ZSH shell
+- **Fish Shell Support**: Automatically configures Fish shell environment
 - **Essential Tools Installation**:
   - fastfetch (system information tool)
   - zoxide (smart directory navigation)
   - pipx (Python application isolation)
-- **PATH Configuration**: Automatically configures `~/.local/bin` in shell config
+  - lazygit (terminal UI for git)
+  - starship (cross-shell prompt)
+  - Node.js 20.x and Claude Code CLI
+- **PATH Configuration**: Automatically configures `~/.local/bin` in Fish config
 - **Cache System**: Smart caching of version information (24h expiry)
 - **Retry Mechanism**: Automatic retry for network operations
 - **Logging**: Comprehensive logging to `prepare-system.log`
@@ -127,12 +141,17 @@ sudo -E python3 prepare-system.py
 - gnupg
 - lsb-release
 - apt-transport-https
-- software-properties-common
 
-### Package Managers
+### Shell Packages
+- **fish**: Modern, user-friendly command-line shell
 - **pipx**: Python application isolation tool
 
 ### Development Tools
+
+- **starship**: Fast, customizable shell prompt
+  - Installed via official installer script
+  - Automatically configured for Fish and ZSH
+  - Cross-shell compatible
 
 - **fastfetch**: Fast system information tool
   - Auto-detects architecture (amd64, arm64, armhf, armel)
@@ -163,15 +182,11 @@ sudo -E python3 prepare-system.py
 
 ### Shell Configuration
 
-#### For Fish Shell
+The script automatically configures Fish shell:
 - Creates/updates `~/.config/fish/config.fish`
 - Adds PATH configuration: `set -gx PATH ~/.local/bin $PATH`
-- Adds zoxide initialization
-
-#### For ZSH/Bash
-- Creates/updates `~/.zshrc`
-- Adds PATH configuration: `export PATH="~/.local/bin:$PATH"`
-- Adds zoxide initialization: `eval "$(zoxide init zsh)"`
+- Adds zoxide initialization: `zoxide init fish | source`
+- Adds starship prompt initialization: `starship init fish | source`
 
 ## Cache System
 
@@ -257,7 +272,7 @@ sudo python3 prepare-system.py
 echo $SHELL
 
 # Manually set if needed
-export SHELL=/usr/bin/fish  # or /usr/bin/zsh
+export SHELL=/usr/bin/fish
 sudo -E python3 prepare-system.py
 ```
 
@@ -265,13 +280,9 @@ sudo -E python3 prepare-system.py
 
 After successful installation:
 
-1. **Reload shell configuration**:
+1. **Reload Fish shell configuration**:
    ```bash
-   # For Fish
    source ~/.config/fish/config.fish
-
-   # For ZSH
-   source ~/.zshrc
    ```
 
 2. **Verify installations**:
@@ -279,6 +290,10 @@ After successful installation:
    fastfetch --version
    zoxide --version
    pipx --version
+   lazygit --version
+   starship --version
+   node --version
+   claude --version
    ```
 
 3. **Test zoxide**:

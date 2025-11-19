@@ -59,19 +59,14 @@ alias dusort='du /var --max-depth=1 | sort -nr | cut -f2 | xargs -n 1 du -hs'
 alias f2b='fail2ban-client status'
 alias ups="sudo $HOME/getScripts.py && sudo cp $HOME/myodoo-docker/getScripts.py $HOME/ && source ~/.config/fish/config.fish"
 
-# Claude CLI alias (if installed)
-if test -f "$HOME/.claude/local/claude"
-    alias claude="$HOME/.claude/local/claude"
-end
+# Note: Claude CLI is installed globally via npm and should be in PATH
+# No alias needed - just run 'claude' command directly
 
 # ownERP aliases
 alias dobk="$HOME/container2backup.py"
 alias doup="$HOME/update_docker_odoo.py"
-alias doup2="$HOME/update_docker_myodoo.py"
 alias edbk="mcedit $HOME/container2backup.yaml"
-alias edbk2="mcedit $HOME/container2backup.csv"
 alias edup="mcedit $HOME/docker2update.yaml"
-alias edup2="mcedit $HOME/docker2update.csv"
 alias llbk='ll /opt/backups/docker'
 alias cpbk='cp /opt/backups/docker/'
 

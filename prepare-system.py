@@ -52,7 +52,7 @@ if os.environ.get('PREPARE_SYSTEM_DEBUG', '').lower() in ('1', 'true', 'yes'):
     logger.debug("Debug logging enabled")
 
 # Script version and date
-SCRIPT_VERSION = "1.1.0"
+SCRIPT_VERSION = "1.2.0"
 SCRIPT_DATE = "19.11.2025"
 
 # Cache settings
@@ -184,7 +184,7 @@ def get_current_shell() -> str:
     """Detect the current shell type.
 
     Returns:
-        str: Shell type ('fish', 'zsh', 'bash', etc.)
+        str: Shell type ('fish' or other)
     """
     try:
         shell_path = os.environ.get('SHELL', '')
@@ -197,68 +197,45 @@ def get_current_shell() -> str:
                 shell_name = parent.name()
             except ImportError:
                 logger.warning("psutil not available, cannot detect shell from process")
-                shell_name = 'zsh'
+                shell_name = 'fish'
 
         logger.info(f"Detected shell: {shell_name}")
         return shell_name
     except Exception as e:
-        logger.warning(f"Could not detect shell, defaulting to zsh: {e}")
-        return 'zsh'
+        logger.warning(f"Could not detect shell, defaulting to fish: {e}")
+        return 'fish'
 
 def ensure_path_in_shell_config() -> None:
-    """Ensure ~/.local/bin is in PATH in shell configuration file."""
+    """Ensure ~/.local/bin is in PATH in Fish shell configuration file."""
     try:
         home = os.path.expanduser("~")
         local_bin = os.path.join(home, ".local", "bin")
-        shell = get_current_shell()
 
-        if shell == 'fish':
-            fish_config_dir = os.path.join(home, ".config", "fish")
-            fish_config_path = os.path.join(fish_config_dir, "config.fish")
+        fish_config_dir = os.path.join(home, ".config", "fish")
+        fish_config_path = os.path.join(fish_config_dir, "config.fish")
 
-            os.makedirs(fish_config_dir, exist_ok=True)
+        os.makedirs(fish_config_dir, exist_ok=True)
 
-            if not os.path.exists(fish_config_path):
-                logger.info("config.fish not found, creating it")
-                with open(fish_config_path, "w") as f:
-                    f.write(f'# Created by prepare-system.py\nset -gx PATH {local_bin} $PATH\n')
-                return
+        if not os.path.exists(fish_config_path):
+            logger.info("config.fish not found, creating it")
+            with open(fish_config_path, "w") as f:
+                f.write(f'# Created by prepare-system.py\nset -gx PATH {local_bin} $PATH\n')
+            return
 
-            with open(fish_config_path, "r") as f:
-                content = f.read()
+        with open(fish_config_path, "r") as f:
+            content = f.read()
 
-            if f'set -gx PATH {local_bin}' in content or f'set -x PATH {local_bin}' in content:
-                logger.info(f"{local_bin} is already in PATH in config.fish")
-                return
+        if f'set -gx PATH {local_bin}' in content or f'set -x PATH {local_bin}' in content:
+            logger.info(f"{local_bin} is already in PATH in config.fish")
+            return
 
-            logger.info(f"Adding {local_bin} to PATH in config.fish")
-            with open(fish_config_path, "a") as f:
-                f.write(f'\n# Added by prepare-system.py\nset -gx PATH {local_bin} $PATH\n')
+        logger.info(f"Adding {local_bin} to PATH in config.fish")
+        with open(fish_config_path, "a") as f:
+            f.write(f'\n# Added by prepare-system.py\nset -gx PATH {local_bin} $PATH\n')
 
-            logger.info("config.fish updated, PATH will be available in new shells")
-        else:
-            zshrc_path = os.path.join(home, ".zshrc")
-
-            if not os.path.exists(zshrc_path):
-                logger.info(".zshrc not found, creating it")
-                with open(zshrc_path, "w") as f:
-                    f.write(f'# Created by prepare-system.py\nexport PATH="{local_bin}:$PATH"\n')
-                return
-
-            with open(zshrc_path, "r") as f:
-                content = f.read()
-
-            if f'export PATH="{local_bin}:$PATH"' in content or f"export PATH={local_bin}:$PATH" in content:
-                logger.info(f"{local_bin} is already in PATH in .zshrc")
-                return
-
-            logger.info(f"Adding {local_bin} to PATH in .zshrc")
-            with open(zshrc_path, "a") as f:
-                f.write(f'\n# Added by prepare-system.py\nexport PATH="{local_bin}:$PATH"\n')
-
-            logger.info(".zshrc updated, PATH will be available in new shells")
+        logger.info("config.fish updated, PATH will be available in new shells")
     except Exception as e:
-        logger.error(f"Error updating shell configuration: {e}")
+        logger.error(f"Error updating Fish shell configuration: {e}")
 
 def is_package_installed(package_name: str) -> bool:
     """Check if a system package is installed."""
@@ -581,22 +558,15 @@ def install_zoxide_if_needed() -> None:
 
             logger.info(f"zoxide installed to {target_binary}")
 
-            shell = get_current_shell()
-            if shell == 'fish':
-                fish_config = os.path.join(home, ".config", "fish", "config.fish")
-                if os.path.exists(fish_config):
-                    with open(fish_config, "r") as f:
-                        content = f.read()
-                    if "zoxide init fish" not in content:
-                        with open(fish_config, "a") as f:
-                            f.write("\n# Initialize zoxide\nif type -q zoxide\n    zoxide init fish | source\nend\n")
-                        logger.info("Added zoxide initialization to config.fish")
-            else:
-                zshrc = os.path.join(home, ".zshrc")
-                if os.path.exists(zshrc):
-                    with open(zshrc, "a") as f:
-                        f.write('\n# Initialize zoxide\neval "$(zoxide init zsh)"\n')
-                    logger.info("Added zoxide initialization to .zshrc")
+            # Add zoxide initialization to Fish config
+            fish_config = os.path.join(home, ".config", "fish", "config.fish")
+            if os.path.exists(fish_config):
+                with open(fish_config, "r") as f:
+                    content = f.read()
+                if "zoxide init fish" not in content:
+                    with open(fish_config, "a") as f:
+                        f.write("\n# Initialize zoxide\nif type -q zoxide\n    zoxide init fish | source\nend\n")
+                    logger.info("Added zoxide initialization to config.fish")
 
             ensure_path_in_shell_config()
 
@@ -867,6 +837,99 @@ def install_claude_cli_if_needed() -> None:
     except Exception as e:
         logger.error(f"Error installing Claude Code CLI: {e}")
 
+def is_starship_installed() -> Tuple[bool, Optional[str]]:
+    """Check if starship is installed and get its version."""
+    try:
+        result = subprocess.run(
+            ["starship", "--version"],
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            text=True,
+            check=False
+        )
+        if result.returncode == 0:
+            output = result.stdout.strip()
+            # Extract version from output like "starship 1.17.1"
+            parts = output.split()
+            if len(parts) >= 2:
+                version = parts[1]
+                logger.info(f"starship version {version} found")
+                return True, version
+        return False, None
+    except FileNotFoundError:
+        logger.info("starship not found")
+        return False, None
+
+def install_starship_if_needed() -> None:
+    """Install starship prompt."""
+    try:
+        is_installed, current_version = is_starship_installed()
+
+        if is_installed:
+            logger.info(f"starship {current_version} is already installed")
+            return
+
+        logger.info("Installing starship prompt...")
+
+        # Install starship using official installer
+        install_script = "curl -sS https://starship.rs/install.sh | sh -s -- -y"
+
+        result = subprocess.run(
+            install_script,
+            shell=True,
+            capture_output=True,
+            text=True,
+            check=False
+        )
+
+        if result.returncode == 0:
+            logger.info("starship installed successfully")
+
+            # Add starship initialization to Fish config
+            home = os.path.expanduser("~")
+            fish_config = os.path.join(home, ".config", "fish", "config.fish")
+            if os.path.exists(fish_config):
+                with open(fish_config, "r") as f:
+                    content = f.read()
+                if "starship init fish" not in content:
+                    with open(fish_config, "a") as f:
+                        f.write('\n# Initialize starship prompt\nstarship init fish | source\n')
+                    logger.info("Added starship initialization to config.fish")
+        else:
+            logger.error(f"Failed to install starship: {result.stderr}")
+
+    except Exception as e:
+        logger.error(f"Error installing starship: {e}")
+
+def change_default_shell_to_fish() -> None:
+    """Change default shell to fish (optional, requires user confirmation)."""
+    try:
+        # Check if fish is installed
+        if not is_package_installed("fish"):
+            logger.info("Fish shell is not installed, skipping shell change")
+            return
+
+        # Check current shell
+        current_shell = os.environ.get('SHELL', '')
+
+        if '/fish' in current_shell:
+            logger.info("Default shell is already fish")
+            return
+
+        # Check if fish binary exists
+        fish_path = "/usr/bin/fish"
+        if not os.path.exists(fish_path):
+            logger.warning("Fish binary not found at /usr/bin/fish")
+            return
+
+        logger.info("Fish shell is installed but not set as default")
+        logger.info(f"Current shell: {current_shell}")
+        logger.info(f"To change default shell to fish, run: chsh -s {fish_path}")
+        logger.info("Note: You will need to log out and log back in for changes to take effect")
+
+    except Exception as e:
+        logger.error(f"Error checking shell: {e}")
+
 def is_pipx_installed() -> bool:
     """Check if pipx is installed."""
     try:
@@ -931,7 +994,12 @@ def install_essential_packages() -> None:
         "gnupg",
         "lsb-release",
         "apt-transport-https",
-        "software-properties-common",
+    ]
+
+    # Shell and development tools
+    shell_packages = [
+        "fish",        # Fish shell
+        "pipx",        # Python application isolation
     ]
 
     logger.info("Installing essential packages...")
@@ -957,6 +1025,16 @@ def install_essential_packages() -> None:
         else:
             logger.info(f"{package} is already installed")
 
+    # Install shell and development packages
+    for package in shell_packages:
+        if not is_package_installed(package):
+            try:
+                install_system_package(package)
+            except Exception as e:
+                logger.info(f"Skipping shell package {package} (not available on this system)")
+        else:
+            logger.info(f"{package} is already installed")
+
 def main() -> None:
     """Main function to execute the script."""
     try:
@@ -972,17 +1050,12 @@ def main() -> None:
         # Upgrade pip first
         upgrade_pip()
 
-        # Install essential packages
+        # Install essential packages (includes fish, pipx, python3-pip)
         install_essential_packages()
 
-        # Install pipx if needed
-        if not is_pipx_installed():
-            logger.info("Installing pipx...")
-            install_system_package("pipx")
+        # Setup pipx if it was just installed
+        if is_pipx_installed():
             run_command("pipx ensurepath")
-            ensure_path_in_shell_config()
-        else:
-            logger.info("pipx is already installed")
 
         # Install essential tools
         logger.info("Installing essential development tools...")
@@ -996,6 +1069,9 @@ def main() -> None:
         # Install lazygit
         install_lazygit_if_needed()
 
+        # Install starship prompt
+        install_starship_if_needed()
+
         # Install Node.js and Claude Code CLI
         logger.info("Installing Node.js and Claude Code CLI...")
         install_nodejs_if_needed(node_major=20)
@@ -1004,15 +1080,13 @@ def main() -> None:
         # Ensure PATH is correctly set
         ensure_path_in_shell_config()
 
+        # Check and inform about fish shell
+        change_default_shell_to_fish()
+
         logger.info("=" * 50)
         logger.info("System preparation completed successfully!")
         logger.info("=" * 50)
-
-        shell = get_current_shell()
-        if shell == 'fish':
-            logger.info("Please restart your terminal or run: source ~/.config/fish/config.fish")
-        else:
-            logger.info("Please restart your terminal or run: source ~/.zshrc")
+        logger.info("Please restart your terminal or run: source ~/.config/fish/config.fish")
 
     except Exception as e:
         logger.error(f"An error occurred: {str(e)}")
