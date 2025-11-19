@@ -635,15 +635,34 @@ def install_lazygit_if_needed() -> None:
             logger.error(f"Unsupported architecture for lazygit: {arch}")
             return
 
-        pattern = f"lazygit_{latest_version}_Linux_{target_arch}.tar.gz"
+        # Try multiple pattern variations
+        patterns = [
+            f"lazygit_{latest_version}_Linux_{target_arch}.tar.gz",
+            f"lazygit_{latest_version}_linux_{target_arch}.tar.gz",
+            f"lazygit_{latest_version}_Linux{target_arch}.tar.gz",
+            f"lazygit_Linux_{target_arch}.tar.gz",
+        ]
+
         download_url = None
-        for asset in release_data.get("assets", []):
-            if pattern in asset.get("name", ""):
-                download_url = asset.get("browser_download_url")
+        assets = release_data.get("assets", [])
+
+        # Log available assets for debugging
+        logger.debug(f"Available lazygit assets: {[a.get('name') for a in assets]}")
+
+        for pattern in patterns:
+            for asset in assets:
+                asset_name = asset.get("name", "")
+                if pattern in asset_name or (f"Linux" in asset_name and target_arch in asset_name and asset_name.endswith(".tar.gz")):
+                    download_url = asset.get("browser_download_url")
+                    logger.info(f"Found lazygit asset: {asset_name}")
+                    break
+            if download_url:
                 break
 
         if not download_url:
             logger.warning(f"No suitable lazygit package found for {target_arch}")
+            logger.warning(f"Tried patterns: {patterns}")
+            logger.warning(f"Available assets: {[a.get('name') for a in assets if 'Linux' in a.get('name', '')]}")
             return
 
         with tempfile.TemporaryDirectory() as tmpdir:
@@ -764,12 +783,41 @@ def install_nodejs_if_needed(node_major: int = 20) -> None:
         run_command("sudo apt-get update")
         install_system_package("nodejs")
 
-        # Verify installation
+        # Verify Node.js installation
         is_installed, version = is_nodejs_installed()
         if is_installed:
             logger.info(f"Node.js {version} installed successfully")
         else:
             logger.error("Node.js installation verification failed")
+
+        # Verify npm is available
+        try:
+            npm_result = subprocess.run(
+                ["npm", "--version"],
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+                text=True,
+                check=False
+            )
+            if npm_result.returncode == 0:
+                npm_version = npm_result.stdout.strip()
+                logger.info(f"npm version {npm_version} found")
+            else:
+                logger.warning("npm not found after Node.js installation")
+                # Try to locate npm
+                which_npm = subprocess.run(
+                    ["which", "npm"],
+                    stdout=subprocess.PIPE,
+                    stderr=subprocess.PIPE,
+                    text=True,
+                    check=False
+                )
+                if which_npm.returncode == 0:
+                    logger.info(f"npm found at: {which_npm.stdout.strip()}")
+                else:
+                    logger.error("npm is not in PATH - Claude CLI installation will fail")
+        except FileNotFoundError:
+            logger.error("npm command not found - Claude CLI installation will fail")
 
     except Exception as e:
         logger.error(f"Error installing Node.js: {e}")
@@ -803,6 +851,42 @@ def install_claude_cli_if_needed() -> None:
             logger.info("Installing Node.js first...")
             install_nodejs_if_needed()
 
+        # Check if npm is available (might need hash refresh after Node.js install)
+        npm_available = False
+        try:
+            # Try direct npm call
+            npm_check = subprocess.run(
+                ["npm", "--version"],
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+                text=True,
+                check=False
+            )
+            if npm_check.returncode == 0:
+                npm_available = True
+                logger.info(f"npm version {npm_check.stdout.strip()} found")
+            else:
+                # Try with explicit path
+                npm_check = subprocess.run(
+                    ["/usr/bin/npm", "--version"],
+                    stdout=subprocess.PIPE,
+                    stderr=subprocess.PIPE,
+                    text=True,
+                    check=False
+                )
+                if npm_check.returncode == 0:
+                    npm_available = True
+                    logger.info(f"npm version {npm_check.stdout.strip()} found at /usr/bin/npm")
+        except FileNotFoundError:
+            logger.error("npm not found - cannot install Claude Code CLI")
+            logger.info("Please ensure npm is installed: sudo apt install npm")
+            return
+
+        if not npm_available:
+            logger.error("npm is not available - cannot install Claude Code CLI")
+            logger.info("Try running: hash -r && npm --version")
+            return
+
         is_installed, current_version = is_claude_cli_installed()
 
         if is_installed:
@@ -815,11 +899,16 @@ def install_claude_cli_if_needed() -> None:
         try:
             run_command("sudo npm install -g @anthropic-ai/claude-code")
             logger.info("Claude Code CLI installed globally")
-        except Exception:
+        except Exception as e:
             # Fallback to user installation if sudo fails
+            logger.info(f"Sudo installation failed: {e}")
             logger.info("Trying user-level installation...")
-            run_command("npm install -g @anthropic-ai/claude-code")
-            logger.info("Claude Code CLI installed for current user")
+            try:
+                run_command("npm install -g @anthropic-ai/claude-code")
+                logger.info("Claude Code CLI installed for current user")
+            except Exception as e2:
+                logger.error(f"User-level installation also failed: {e2}")
+                return
 
         # Create Claude directory with proper permissions
         home = os.path.expanduser("~")

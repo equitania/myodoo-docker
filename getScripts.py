@@ -2511,6 +2511,421 @@ def install_packages(package_info: Dict[str, Any]) -> None:
     install_or_update_oxker()
     install_or_update_mcedit()
 
+def is_lazygit_installed() -> Tuple[bool, Optional[str]]:
+    """Check if lazygit is installed and get its version."""
+    try:
+        result = subprocess.run(
+            ["lazygit", "--version"],
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            text=True,
+            check=False
+        )
+        if result.returncode == 0:
+            output = result.stdout.strip()
+            # Extract version from output like "version=0.40.2"
+            match = re.search(r'version=(\S+)', output)
+            if match:
+                version = match.group(1)
+                logger.info(f"lazygit version {version} found")
+                return True, version
+        return False, None
+    except FileNotFoundError:
+        logger.info("lazygit not found")
+        return False, None
+
+def install_lazygit_if_needed() -> None:
+    """Install or update lazygit if needed."""
+    try:
+        is_installed, current_version = is_lazygit_installed()
+
+        release_data = get_latest_github_release("jesseduffield/lazygit")
+        if not release_data:
+            if is_installed:
+                logger.info(f"lazygit {current_version} is installed, cannot check for updates")
+            else:
+                logger.warning("Could not fetch lazygit release information")
+            return
+
+        latest_version = release_data.get("tag_name", "").lstrip("v")
+
+        if is_installed:
+            if current_version == latest_version:
+                logger.info(f"lazygit {current_version} is up to date")
+                return
+            logger.info(f"Updating lazygit from {current_version} to {latest_version}")
+        else:
+            logger.info(f"Installing lazygit {latest_version}")
+
+        # Detect architecture
+        arch = platform.machine().lower()
+        arch_mapping = {
+            'x86_64': 'x86_64',
+            'amd64': 'x86_64',
+            'aarch64': 'arm64',
+            'arm64': 'arm64',
+        }
+
+        target_arch = arch_mapping.get(arch)
+        if not target_arch:
+            logger.error(f"Unsupported architecture for lazygit: {arch}")
+            return
+
+        # Try multiple pattern variations
+        patterns = [
+            f"lazygit_{latest_version}_Linux_{target_arch}.tar.gz",
+            f"lazygit_{latest_version}_linux_{target_arch}.tar.gz",
+            f"lazygit_{latest_version}_Linux{target_arch}.tar.gz",
+            f"lazygit_Linux_{target_arch}.tar.gz",
+        ]
+
+        download_url = None
+        assets = release_data.get("assets", [])
+
+        # Log available assets for debugging
+        logger.debug(f"Available lazygit assets: {[a.get('name') for a in assets]}")
+
+        for pattern in patterns:
+            for asset in assets:
+                asset_name = asset.get("name", "")
+                if pattern in asset_name or (f"Linux" in asset_name and target_arch in asset_name and asset_name.endswith(".tar.gz")):
+                    download_url = asset.get("browser_download_url")
+                    logger.info(f"Found lazygit asset: {asset_name}")
+                    break
+            if download_url:
+                break
+
+        if not download_url:
+            logger.warning(f"No suitable lazygit package found for {target_arch}")
+            logger.warning(f"Tried patterns: {patterns}")
+            logger.warning(f"Available assets: {[a.get('name') for a in assets if 'Linux' in a.get('name', '')]}")
+            return
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            tar_file = os.path.join(tmpdir, "lazygit.tar.gz")
+
+            response = requests.get(download_url, stream=True)
+            response.raise_for_status()
+
+            with open(tar_file, 'wb') as f:
+                for chunk in response.iter_content(chunk_size=8192):
+                    f.write(chunk)
+
+            logger.info("Downloaded lazygit archive")
+
+            import tarfile
+            with tarfile.open(tar_file, 'r:gz') as tar:
+                try:
+                    tar.extractall(tmpdir, filter='data')
+                except TypeError:
+                    tar.extractall(tmpdir)
+
+            lazygit_binary = os.path.join(tmpdir, "lazygit")
+            if not os.path.exists(lazygit_binary):
+                logger.error("lazygit binary not found in archive")
+                return
+
+            # Install to /usr/local/bin (requires sudo) or ~/.local/bin
+            try:
+                run_command(f"sudo install {lazygit_binary} /usr/local/bin/lazygit")
+                logger.info("lazygit installed to /usr/local/bin/lazygit")
+            except Exception:
+                # Fallback to ~/.local/bin if sudo fails
+                home = os.path.expanduser("~")
+                local_bin = os.path.join(home, ".local", "bin")
+                os.makedirs(local_bin, exist_ok=True)
+
+                target_binary = os.path.join(local_bin, "lazygit")
+                run_command(f"cp {lazygit_binary} {target_binary}")
+                run_command(f"chmod +x {target_binary}")
+                logger.info(f"lazygit installed to {target_binary}")
+                ensure_path_in_shell_config()
+
+        logger.info("lazygit installation completed successfully")
+
+    except Exception as e:
+        logger.error(f"Error installing lazygit: {e}")
+
+def is_nodejs_installed() -> Tuple[bool, Optional[str]]:
+    """Check if Node.js is installed and get its version."""
+    try:
+        result = subprocess.run(
+            ["node", "--version"],
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            text=True,
+            check=False
+        )
+        if result.returncode == 0:
+            version = result.stdout.strip().lstrip("v")
+            logger.info(f"Node.js version {version} found")
+            return True, version
+        return False, None
+    except FileNotFoundError:
+        logger.info("Node.js not found")
+        return False, None
+
+def install_nodejs_if_needed(node_major: int = 20) -> None:
+    """Install Node.js from NodeSource repository."""
+    try:
+        is_installed, current_version = is_nodejs_installed()
+
+        if is_installed and current_version:
+            major_version = int(current_version.split('.')[0])
+            if major_version >= node_major:
+                logger.info(f"Node.js {current_version} is already installed (>= {node_major}.x)")
+                return
+            logger.info(f"Updating Node.js from {current_version} to {node_major}.x")
+        else:
+            logger.info(f"Installing Node.js {node_major}.x from NodeSource")
+
+        # Install required packages
+        for package in ["ca-certificates", "curl", "gnupg"]:
+            if not is_package_installed(package):
+                install_system_package(package)
+
+        # Setup NodeSource repository
+        logger.info("Setting up NodeSource repository...")
+
+        # Create keyrings directory
+        run_command("sudo mkdir -p /etc/apt/keyrings")
+
+        # Download and add GPG key
+        gpg_key_url = "https://deb.nodesource.com/gpgkey/nodesource-repo.gpg.key"
+        gpg_key_path = "/etc/apt/keyrings/nodesource.gpg"
+
+        gpg_download = subprocess.run(
+            f"curl -fsSL {gpg_key_url} | sudo gpg --dearmor -o {gpg_key_path}",
+            shell=True,
+            capture_output=True,
+            text=True
+        )
+
+        if gpg_download.returncode != 0:
+            logger.error("Failed to download NodeSource GPG key")
+            return
+
+        # Add NodeSource repository
+        sources_list = f'deb [signed-by={gpg_key_path}] https://deb.nodesource.com/node_{node_major}.x nodistro main'
+
+        with tempfile.NamedTemporaryFile(mode='w', delete=False, suffix='.list') as f:
+            f.write(sources_list + '\n')
+            temp_file = f.name
+
+        run_command(f"sudo mv {temp_file} /etc/apt/sources.list.d/nodesource.list")
+
+        # Update and install Node.js
+        logger.info("Installing Node.js from NodeSource...")
+        run_command("sudo apt-get update")
+        install_system_package("nodejs")
+
+        # Verify Node.js installation
+        is_installed, version = is_nodejs_installed()
+        if is_installed:
+            logger.info(f"Node.js {version} installed successfully")
+        else:
+            logger.error("Node.js installation verification failed")
+
+        # Verify npm is available
+        try:
+            npm_result = subprocess.run(
+                ["npm", "--version"],
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+                text=True,
+                check=False
+            )
+            if npm_result.returncode == 0:
+                npm_version = npm_result.stdout.strip()
+                logger.info(f"npm version {npm_version} found")
+            else:
+                logger.warning("npm not found after Node.js installation")
+                # Try to locate npm
+                which_npm = subprocess.run(
+                    ["which", "npm"],
+                    stdout=subprocess.PIPE,
+                    stderr=subprocess.PIPE,
+                    text=True,
+                    check=False
+                )
+                if which_npm.returncode == 0:
+                    logger.info(f"npm found at: {which_npm.stdout.strip()}")
+                else:
+                    logger.error("npm is not in PATH - Claude CLI installation will fail")
+        except FileNotFoundError:
+            logger.error("npm command not found - Claude CLI installation will fail")
+
+    except Exception as e:
+        logger.error(f"Error installing Node.js: {e}")
+
+def is_claude_cli_installed() -> Tuple[bool, Optional[str]]:
+    """Check if Claude Code CLI is installed and get its version."""
+    try:
+        result = subprocess.run(
+            ["claude", "--version"],
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            text=True,
+            check=False
+        )
+        if result.returncode == 0:
+            version = result.stdout.strip()
+            logger.info(f"Claude Code CLI version {version} found")
+            return True, version
+        return False, None
+    except FileNotFoundError:
+        logger.info("Claude Code CLI not found")
+        return False, None
+
+def install_claude_cli_if_needed() -> None:
+    """Install Claude Code CLI via npm."""
+    try:
+        # First check if Node.js is installed
+        is_node_installed, _node_version = is_nodejs_installed()
+        if not is_node_installed:
+            logger.warning("Node.js is required for Claude Code CLI installation")
+            logger.info("Installing Node.js first...")
+            install_nodejs_if_needed()
+
+        # Check if npm is available (might need hash refresh after Node.js install)
+        npm_available = False
+        try:
+            # Try direct npm call
+            npm_check = subprocess.run(
+                ["npm", "--version"],
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+                text=True,
+                check=False
+            )
+            if npm_check.returncode == 0:
+                npm_available = True
+                logger.info(f"npm version {npm_check.stdout.strip()} found")
+            else:
+                # Try with explicit path
+                npm_check = subprocess.run(
+                    ["/usr/bin/npm", "--version"],
+                    stdout=subprocess.PIPE,
+                    stderr=subprocess.PIPE,
+                    text=True,
+                    check=False
+                )
+                if npm_check.returncode == 0:
+                    npm_available = True
+                    logger.info(f"npm version {npm_check.stdout.strip()} found at /usr/bin/npm")
+        except FileNotFoundError:
+            logger.error("npm not found - cannot install Claude Code CLI")
+            logger.info("Please ensure npm is installed: sudo apt install npm")
+            return
+
+        if not npm_available:
+            logger.error("npm is not available - cannot install Claude Code CLI")
+            logger.info("Try running: hash -r && npm --version")
+            return
+
+        is_installed, current_version = is_claude_cli_installed()
+
+        if is_installed:
+            logger.info(f"Claude Code CLI {current_version} is already installed")
+            logger.info("Use 'npm update -g @anthropic-ai/claude-code' to update")
+            return
+
+        logger.info("Installing Claude Code CLI globally via npm...")
+
+        try:
+            run_command("sudo npm install -g @anthropic-ai/claude-code")
+            logger.info("Claude Code CLI installed globally")
+        except Exception as e:
+            # Fallback to user installation if sudo fails
+            logger.info(f"Sudo installation failed: {e}")
+            logger.info("Trying user-level installation...")
+            try:
+                run_command("npm install -g @anthropic-ai/claude-code")
+                logger.info("Claude Code CLI installed for current user")
+            except Exception as e2:
+                logger.error(f"User-level installation also failed: {e2}")
+                return
+
+        # Create Claude directory with proper permissions
+        home = os.path.expanduser("~")
+        claude_dir = os.path.join(home, ".claude")
+        os.makedirs(claude_dir, exist_ok=True)
+        logger.info(f"Created Claude directory: {claude_dir}")
+
+        # Verify installation
+        is_installed, version = is_claude_cli_installed()
+        if is_installed:
+            logger.info(f"Claude Code CLI {version} installed successfully")
+        else:
+            logger.warning("Claude Code CLI installation could not be verified")
+
+    except Exception as e:
+        logger.error(f"Error installing Claude Code CLI: {e}")
+
+def is_starship_installed() -> Tuple[bool, Optional[str]]:
+    """Check if starship is installed and get its version."""
+    try:
+        result = subprocess.run(
+            ["starship", "--version"],
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            text=True,
+            check=False
+        )
+        if result.returncode == 0:
+            output = result.stdout.strip()
+            # Extract version from output like "starship 1.17.1"
+            parts = output.split()
+            if len(parts) >= 2:
+                version = parts[1]
+                logger.info(f"starship version {version} found")
+                return True, version
+        return False, None
+    except FileNotFoundError:
+        logger.info("starship not found")
+        return False, None
+
+def install_starship_if_needed() -> None:
+    """Install starship prompt."""
+    try:
+        is_installed, current_version = is_starship_installed()
+
+        if is_installed:
+            logger.info(f"starship {current_version} is already installed")
+            return
+
+        logger.info("Installing starship prompt...")
+
+        # Install starship using official installer
+        install_script = "curl -sS https://starship.rs/install.sh | sh -s -- -y"
+
+        result = subprocess.run(
+            install_script,
+            shell=True,
+            capture_output=True,
+            text=True,
+            check=False
+        )
+
+        if result.returncode == 0:
+            logger.info("starship installed successfully")
+
+            # Add starship initialization to Fish config
+            home = os.path.expanduser("~")
+            fish_config = os.path.join(home, ".config", "fish", "config.fish")
+            if os.path.exists(fish_config):
+                with open(fish_config, "r") as f:
+                    content = f.read()
+                if "starship init fish" not in content:
+                    with open(fish_config, "a") as f:
+                        f.write('\n# Initialize starship prompt\nstarship init fish | source\n')
+                    logger.info("Added starship initialization to config.fish")
+        else:
+            logger.error(f"Failed to install starship: {result.stderr}")
+
+    except Exception as e:
+        logger.error(f"Error installing starship: {e}")
+
 def main() -> None:
     """Main function to execute the script."""
     original_dir = os.getcwd()
@@ -2556,33 +2971,31 @@ def main() -> None:
         
         # Install all packages
         install_packages(package_info)
-        
-        # Reload shell configuration
-        logger.info("Reloading shell configuration...")
+
+        # Install essential development tools
+        logger.info("Installing essential development tools...")
+        install_lazygit_if_needed()
+        install_starship_if_needed()
+        install_nodejs_if_needed(node_major=20)
+        install_claude_cli_if_needed()
+
+        # Reload Fish shell configuration
+        logger.info("Reloading Fish shell configuration...")
         try:
             if local_bin not in os.environ.get("PATH", ""):
                 os.environ["PATH"] = f"{local_bin}:{os.environ.get('PATH', '')}"
 
-            shell = get_current_shell()
             zoxide_path = os.path.join(_myhome, ".local", "bin", "zoxide")
 
-            if shell == 'fish':
-                if os.path.exists(zoxide_path):
-                    run_command(f"/usr/bin/fish -c 'source ({zoxide_path} init fish | psub)'", shell=True)
-                else:
-                    run_command("/usr/bin/fish -c 'hash -r && zoxide init fish | source'", shell=True)
-
-                logger.info("For the PATH changes to take effect in new shells, you may need to restart your terminal or run 'source ~/.config/fish/config.fish'")
+            if os.path.exists(zoxide_path):
+                run_command(f"/usr/bin/fish -c 'source ({zoxide_path} init fish | psub)'", shell=True)
             else:
-                if os.path.exists(zoxide_path):
-                    run_command(f"/usr/bin/zsh -c 'source <({zoxide_path} init zsh)'", shell=True)
-                else:
-                    run_command("/usr/bin/zsh -c 'hash -r && source <(zoxide init zsh)'", shell=True)
+                run_command("/usr/bin/fish -c 'hash -r && zoxide init fish | source'", shell=True)
 
-                logger.info("For the PATH changes to take effect in new shells, you may need to restart your terminal or run 'source ~/.zshrc'")
+            logger.info("For the PATH changes to take effect in new shells, restart your terminal or run 'source ~/.config/fish/config.fish'")
 
         except Exception as e:
-            logger.error(f"Error reloading shell configuration: {e}")
+            logger.error(f"Error reloading Fish shell configuration: {e}")
         
         # Return to original directory
         try:
