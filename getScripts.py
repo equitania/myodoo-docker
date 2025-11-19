@@ -53,8 +53,8 @@ if os.environ.get('GETSCRIPTS_DEBUG', '').lower() in ('1', 'true', 'yes'):
     logger.debug("Debug logging enabled")
 
 # Script version and date
-SCRIPT_VERSION = "6.8.9"
-SCRIPT_DATE = "06.11.2025"
+SCRIPT_VERSION = "6.8.10"
+SCRIPT_DATE = "19.11.2025"
 
 # Cache settings
 CACHE_DIR = os.path.expanduser("~/.cache/getscripts")
@@ -475,10 +475,14 @@ def install_zoxide_if_needed() -> None:
     logger.info(f"Downloading zoxide version {latest_version}...")
 
     # Installation using curl and bash with proper shell execution
-    install_cmd = "curl -sS https://raw.githubusercontent.com/ajeetdsouza/zoxide/main/install.sh | bash"
-    run_command(install_cmd, shell=True, check=True)
-
-    logger.info(f"zoxide version {latest_version} was successfully installed.")
+    try:
+        install_cmd = "curl -sS https://raw.githubusercontent.com/ajeetdsouza/zoxide/main/install.sh | bash"
+        run_command(install_cmd, shell=True, check=True)
+        logger.info(f"zoxide version {latest_version} was successfully installed.")
+    except Exception as e:
+        logger.warning(f"zoxide installation failed (this is not critical): {str(e)}")
+        logger.warning("zoxide is optional - continuing without it. You can install it manually if needed.")
+        logger.warning("For Alpine Linux (musl), try: apk add zoxide")
 
 def ensure_directory_exists(directory: str) -> None:
     """Ensure a directory exists, creating it if necessary."""
