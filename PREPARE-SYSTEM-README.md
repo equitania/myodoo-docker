@@ -1,9 +1,14 @@
 # prepare-system.py - System Preparation Script
 
-Version: 1.2.0
+Version: 1.2.1
 Date: 19.11.2025
 
 ## Changelog
+
+### Version 1.2.1 (19.11.2025)
+- **Changed**: Claude CLI installation now uses official claude.ai installer (curl method)
+- **Improved**: npm installation as fallback method for Claude CLI
+- **Fixed**: More reliable Claude CLI installation process
 
 ### Version 1.2.0 (19.11.2025)
 - **Added**: Fish shell installation and configuration
@@ -175,10 +180,11 @@ sudo -E python3 prepare-system.py
   - System-wide installation to `/usr/bin/node`
 
 - **Claude Code CLI**: AI-powered coding assistant
-  - Requires Node.js (auto-installed if missing)
-  - Installed globally via npm
+  - Installed via official claude.ai installer (curl method)
+  - Fallback to npm installation if curl method fails
   - Creates `~/.claude` directory for configuration
-  - Location: `/usr/local/bin/claude` or user npm global bin
+  - Location: `~/.local/bin/claude` or npm global bin
+  - Update with: `claude update`
 
 ### Shell Configuration
 

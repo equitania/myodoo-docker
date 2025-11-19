@@ -53,7 +53,7 @@ if os.environ.get('GETSCRIPTS_DEBUG', '').lower() in ('1', 'true', 'yes'):
     logger.debug("Debug logging enabled")
 
 # Script version and date
-SCRIPT_VERSION = "6.8.10"
+SCRIPT_VERSION = "6.8.11"
 SCRIPT_DATE = "19.11.2025"
 
 # Cache settings
@@ -2767,19 +2767,50 @@ def is_claude_cli_installed() -> Tuple[bool, Optional[str]]:
         return False, None
 
 def install_claude_cli_if_needed() -> None:
-    """Install Claude Code CLI via npm."""
+    """Install Claude Code CLI using official installer from claude.ai."""
     try:
+        is_installed, current_version = is_claude_cli_installed()
+
+        if is_installed:
+            logger.info(f"Claude Code CLI {current_version} is already installed")
+            logger.info("Use 'claude update' to update to the latest version")
+            return
+
+        logger.info("Installing Claude Code CLI using official installer...")
+
+        # Primary method: Use official claude.ai installer
+        try:
+            run_command('curl -fsSL https://claude.ai/install.sh | bash -s latest', shell=True)
+            logger.info("Claude Code CLI installed successfully via official installer")
+
+            # Create Claude directory with proper permissions
+            home = os.path.expanduser("~")
+            claude_dir = os.path.join(home, ".claude")
+            os.makedirs(claude_dir, exist_ok=True)
+            logger.info(f"Created Claude directory: {claude_dir}")
+
+            # Verify installation
+            is_installed, version = is_claude_cli_installed()
+            if is_installed:
+                logger.info(f"Claude Code CLI {version} installed successfully")
+                return
+            else:
+                logger.warning("Installation completed but verification failed - trying fallback method...")
+        except Exception as e:
+            logger.warning(f"Official installer failed: {e}")
+            logger.info("Trying npm fallback installation...")
+
+        # Fallback method: npm installation
         # First check if Node.js is installed
         is_node_installed, _node_version = is_nodejs_installed()
         if not is_node_installed:
-            logger.warning("Node.js is required for Claude Code CLI installation")
+            logger.warning("Node.js is required for npm installation")
             logger.info("Installing Node.js first...")
             install_nodejs_if_needed()
 
-        # Check if npm is available (might need hash refresh after Node.js install)
+        # Check if npm is available
         npm_available = False
         try:
-            # Try direct npm call
             npm_check = subprocess.run(
                 ["npm", "--version"],
                 stdout=subprocess.PIPE,
@@ -2790,67 +2821,32 @@ def install_claude_cli_if_needed() -> None:
             if npm_check.returncode == 0:
                 npm_available = True
                 logger.info(f"npm version {npm_check.stdout.strip()} found")
-            else:
-                # Try with explicit path
-                npm_check = subprocess.run(
-                    ["/usr/bin/npm", "--version"],
-                    stdout=subprocess.PIPE,
-                    stderr=subprocess.PIPE,
-                    text=True,
-                    check=False
-                )
-                if npm_check.returncode == 0:
-                    npm_available = True
-                    logger.info(f"npm version {npm_check.stdout.strip()} found at /usr/bin/npm")
         except FileNotFoundError:
             pass
 
-        # If npm is not available, install it
         if not npm_available:
             logger.warning("npm not found - installing npm...")
             try:
                 install_system_package("npm")
                 logger.info("npm installed successfully")
-
-                # Verify npm installation
-                npm_check = subprocess.run(
-                    ["npm", "--version"],
-                    stdout=subprocess.PIPE,
-                    stderr=subprocess.PIPE,
-                    text=True,
-                    check=False
-                )
-                if npm_check.returncode == 0:
-                    logger.info(f"npm version {npm_check.stdout.strip()} is now available")
-                    npm_available = True
-                else:
-                    logger.error("npm installation failed - cannot install Claude Code CLI")
-                    return
             except Exception as e:
                 logger.error(f"Failed to install npm: {e}")
+                logger.error("Could not install Claude Code CLI via any method")
                 return
 
-        is_installed, current_version = is_claude_cli_installed()
-
-        if is_installed:
-            logger.info(f"Claude Code CLI {current_version} is already installed")
-            logger.info("Use 'npm update -g @anthropic-ai/claude-code' to update")
-            return
-
-        logger.info("Installing Claude Code CLI globally via npm...")
+        logger.info("Installing Claude Code CLI via npm...")
 
         try:
             run_command("sudo npm install -g @anthropic-ai/claude-code")
-            logger.info("Claude Code CLI installed globally")
+            logger.info("Claude Code CLI installed globally via npm")
         except Exception as e:
-            # Fallback to user installation if sudo fails
-            logger.info(f"Sudo installation failed: {e}")
-            logger.info("Trying user-level installation...")
+            logger.info(f"Sudo npm installation failed: {e}")
+            logger.info("Trying user-level npm installation...")
             try:
                 run_command("npm install -g @anthropic-ai/claude-code")
-                logger.info("Claude Code CLI installed for current user")
+                logger.info("Claude Code CLI installed for current user via npm")
             except Exception as e2:
-                logger.error(f"User-level installation also failed: {e2}")
+                logger.error(f"User-level npm installation also failed: {e2}")
                 return
 
         # Create Claude directory with proper permissions
