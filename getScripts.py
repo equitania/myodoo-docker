@@ -452,11 +452,8 @@ def install_zoxide_if_needed() -> None:
             if local_bin not in os.environ.get("PATH", ""):
                 logger.info(f"Adding {local_bin} to PATH...")
                 os.environ["PATH"] = f"{local_bin}:{os.environ.get('PATH', '')}"
-                # Add to .zshrc if it exists
-                zshrc = os.path.expanduser("~/.zshrc")
-                if os.path.exists(zshrc):
-                    with open(zshrc, "a") as f:
-                        f.write(f'\nexport PATH="{local_bin}:$PATH"\n')
+                # Add to Fish shell config
+                ensure_path_in_shell_config()
             return
         else:
             # Compare versions to decide if update is needed
@@ -2149,14 +2146,6 @@ def ensure_path_in_shell_config() -> None:
     except Exception as e:
         logger.error(f"Error updating Fish shell configuration: {e}")
 
-def ensure_path_in_zshrc() -> None:
-    """Ensure ~/.local/bin is in PATH in .zshrc file.
-
-    This function is kept for backward compatibility but now calls
-    ensure_path_in_shell_config() which handles both zsh and fish.
-    """
-    ensure_path_in_shell_config()
-
 @lru_cache(maxsize=128)
 def get_latest_pypi_version(package_name: str) -> Optional[str]:
     """Get the latest version of a package from PyPI with caching.
@@ -2339,10 +2328,10 @@ def setup_environment() -> Tuple[str, str]:
         logger.info(f"Running as user '{current_user}', using home: {_myhome}")
 
     local_bin = os.path.join(_myhome, ".local", "bin")
-    
+
     # Ensure .local/bin is in PATH
     ensure_directory_exists(local_bin)
-    ensure_path_in_zshrc()
+    ensure_path_in_shell_config()
     
     # Set timezone
     try:
@@ -2814,14 +2803,32 @@ def install_claude_cli_if_needed() -> None:
                     npm_available = True
                     logger.info(f"npm version {npm_check.stdout.strip()} found at /usr/bin/npm")
         except FileNotFoundError:
-            logger.error("npm not found - cannot install Claude Code CLI")
-            logger.info("Please ensure npm is installed: sudo apt install npm")
-            return
+            pass
 
+        # If npm is not available, install it
         if not npm_available:
-            logger.error("npm is not available - cannot install Claude Code CLI")
-            logger.info("Try running: hash -r && npm --version")
-            return
+            logger.warning("npm not found - installing npm...")
+            try:
+                install_system_package("npm")
+                logger.info("npm installed successfully")
+
+                # Verify npm installation
+                npm_check = subprocess.run(
+                    ["npm", "--version"],
+                    stdout=subprocess.PIPE,
+                    stderr=subprocess.PIPE,
+                    text=True,
+                    check=False
+                )
+                if npm_check.returncode == 0:
+                    logger.info(f"npm version {npm_check.stdout.strip()} is now available")
+                    npm_available = True
+                else:
+                    logger.error("npm installation failed - cannot install Claude Code CLI")
+                    return
+            except Exception as e:
+                logger.error(f"Failed to install npm: {e}")
+                return
 
         is_installed, current_version = is_claude_cli_installed()
 

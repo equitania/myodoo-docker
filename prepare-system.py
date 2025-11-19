@@ -878,14 +878,32 @@ def install_claude_cli_if_needed() -> None:
                     npm_available = True
                     logger.info(f"npm version {npm_check.stdout.strip()} found at /usr/bin/npm")
         except FileNotFoundError:
-            logger.error("npm not found - cannot install Claude Code CLI")
-            logger.info("Please ensure npm is installed: sudo apt install npm")
-            return
+            pass
 
+        # If npm is not available, install it
         if not npm_available:
-            logger.error("npm is not available - cannot install Claude Code CLI")
-            logger.info("Try running: hash -r && npm --version")
-            return
+            logger.warning("npm not found - installing npm...")
+            try:
+                install_system_package("npm")
+                logger.info("npm installed successfully")
+
+                # Verify npm installation
+                npm_check = subprocess.run(
+                    ["npm", "--version"],
+                    stdout=subprocess.PIPE,
+                    stderr=subprocess.PIPE,
+                    text=True,
+                    check=False
+                )
+                if npm_check.returncode == 0:
+                    logger.info(f"npm version {npm_check.stdout.strip()} is now available")
+                    npm_available = True
+                else:
+                    logger.error("npm installation failed - cannot install Claude Code CLI")
+                    return
+            except Exception as e:
+                logger.error(f"Failed to install npm: {e}")
+                return
 
         is_installed, current_version = is_claude_cli_installed()
 

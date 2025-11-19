@@ -150,7 +150,7 @@ sudo -E python3 prepare-system.py
 
 - **starship**: Fast, customizable shell prompt
   - Installed via official installer script
-  - Automatically configured for Fish and ZSH
+  - Automatically configured for Fish
   - Cross-shell compatible
 
 - **fastfetch**: Fast system information tool
@@ -223,7 +223,7 @@ All operations are logged to:
 |---------|---------------|-------------------|
 | Repository cloning | ✅ Yes | ❌ No |
 | Script copying | ✅ Yes (container2backup, etc.) | ❌ No |
-| Config files | ✅ Full .zshrc/.config.fish | ✅ PATH only |
+| Config files | ✅ Fish config | ✅ PATH only |
 | Tool installation | ✅ All tools | ✅ Essential tools only |
 | Package installation | ✅ PyPI packages | ✅ System packages only |
 | DNS optimization | ✅ Yes | ❌ No |

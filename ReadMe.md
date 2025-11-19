@@ -70,7 +70,7 @@ cp myodoo-docker/getScripts.py /root/
 
 #### 4. Shell-Aliasse
 
-Die ZSH-Konfiguration enthält nützliche Aliasse für die tägliche Arbeit:
+Die Fish-Shell-Konfiguration enthält nützliche Aliasse für die tägliche Arbeit:
 
 ##### Grundlegende Aliasse
 - `ls` - verbesserte Verzeichnisanzeige
@@ -189,7 +189,7 @@ docker run --dns 1.1.1.1 --dns 8.8.8.8 --dns 9.9.9.9 your-image
 cd $HOME && rm -rf myodoo-docker && rm -rf nginx-conf && \
   git clone -b 2025 https://github.com/equitania/myodoo-docker.git && \
   cp myodoo-docker/getScripts.py $HOME && \
-  $HOME/getScripts.py && source ~/.zshrc
+  $HOME/getScripts.py && source ~/.config/fish/config.fish
 ```
 
 ---
@@ -260,7 +260,7 @@ cp myodoo-docker/getScripts.py /root/
 
 #### 4. Shell Aliases
 
-The ZSH configuration includes useful aliases for daily work:
+The Fish shell configuration includes useful aliases for daily work:
 
 ##### Basic Aliases
 - `ls` - enhanced directory listing
@@ -375,11 +375,11 @@ docker run --dns 1.1.1.1 --dns 8.8.8.8 --dns 9.9.9.9 your-image
 ### Branch Management
 
 ```bash
-# Switch to a specific version (e.g., 2024)
+# Switch to a specific version (e.g., 2025)
 cd $HOME && rm -rf myodoo-docker && rm -rf nginx-conf && \
   git clone -b 2025 https://github.com/equitania/myodoo-docker.git && \
   cp myodoo-docker/getScripts.py $HOME && \
-  $HOME/getScripts.py && source ~/.zshrc
+  $HOME/getScripts.py && source ~/.config/fish/config.fish
 ```
 
 ---

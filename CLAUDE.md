@@ -62,7 +62,7 @@ docker rmi myodoo:16 myodoo:18
 1. **Python Version**: Python 3.x required for all scripts
 2. **Configuration**: YAML-based configuration (container2backup.yaml, docker2update.yaml)
 3. **Error Handling**: Always include proper error handling and logging
-4. **Shell Aliases**: Extensive ZSH aliases available after running getScripts.py
+4. **Shell Aliases**: Extensive Fish shell aliases available after running getScripts.py
 
 ## Repository Overview
 
@@ -86,7 +86,7 @@ cp myodoo-docker/getScripts.py /root/
 cd $HOME && rm -rf myodoo-docker && rm -rf nginx-conf && \
   git clone -b 2025 https://github.com/equitania/myodoo-docker.git && \
   cp myodoo-docker/getScripts.py $HOME && \
-  $HOME/getScripts.py && source ~/.zshrc
+  $HOME/getScripts.py && source ~/.config/fish/config.fish
 
 # DNS optimization (standalone)
 ./getScripts.py --dns-check
@@ -230,11 +230,11 @@ myodoo-docker/
 
 ### Key Components
 
-#### 1. getScripts.py (v6.7.1)
+#### 1. getScripts.py (v6.8.10)
 - **Purpose**: Main installation and update script
 - **Features**:
   - Installs all dependencies and tools
-  - Configures ZSH with extensive aliases
+  - Configures Fish shell with extensive aliases
   - Sets up Docker management environment
   - Supports branch-specific installations
   - Includes smart version checking and caching
@@ -267,7 +267,7 @@ myodoo-docker/
 3. **Version Control**: Version numbers in script headers (format: X.Y.Z)
 4. **Date Format**: DD.MM.YYYY in German format
 5. **Encoding**: UTF-8 for all file operations
-6. **Shell Integration**: Extensive ZSH aliases for productivity
+6. **Shell Integration**: Extensive Fish shell aliases for productivity
 
 ### Testing and Validation
 
@@ -292,4 +292,4 @@ docker ps --format "table {{.Names}}\t{{.Status}}\t{{.Ports}}"
 3. **Encryption**: Available only with 7z format, uses AES-256
 4. **Branch Management**: Use specific branches (e.g., 2025) for major versions
 5. **Permissions**: Most scripts require root or sudo access
-6. **Shell**: ZSH is the default shell after installation
+6. **Shell**: Fish is the default shell after installation
