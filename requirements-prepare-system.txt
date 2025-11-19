@@ -1,0 +1,8 @@
+# Python dependencies for prepare-system.py
+# Install with: pip3 install -r requirements-prepare-system.txt
+
+# Required dependencies
+requests>=2.31.0
+
+# Optional dependencies (for enhanced functionality)
+psutil>=5.9.0  # For shell detection from process
