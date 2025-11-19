@@ -1,5 +1,5 @@
 # Fish Shell configuration powered by ownerp.com
-# Version 1.0.0
+# Version 1.0.1
 # Date 19.11.2025
 
 ################################
@@ -59,8 +59,8 @@ alias dusort='du /var --max-depth=1 | sort -nr | cut -f2 | xargs -n 1 du -hs'
 alias f2b='fail2ban-client status'
 alias ups="sudo $HOME/getScripts.py && sudo cp $HOME/myodoo-docker/getScripts.py $HOME/ && source ~/.config/fish/config.fish"
 
-# Note: Claude CLI is installed globally via npm and should be in PATH
-# No alias needed - just run 'claude' command directly
+# Claude CLI alias
+alias claude="~/.local/bin/claude"
 
 # ownERP aliases
 alias dobk="$HOME/container2backup.py"
