@@ -53,8 +53,8 @@ if os.environ.get('GETSCRIPTS_DEBUG', '').lower() in ('1', 'true', 'yes'):
     logger.debug("Debug logging enabled")
 
 # Script version and date
-SCRIPT_VERSION = "6.8.11"
-SCRIPT_DATE = "19.11.2025"
+SCRIPT_VERSION = "6.8.12"
+SCRIPT_DATE = "24.11.2025"
 
 # Cache settings
 CACHE_DIR = os.path.expanduser("~/.cache/getscripts")
@@ -1710,6 +1710,65 @@ def install_or_update_mcedit() -> None:
         logger.error(f"Error installing/updating mcedit: {str(e)}")
         raise
 
+
+def is_dig_available() -> bool:
+    """Check if the dig command is available on the system.
+
+    Returns:
+        bool: True if dig is available, False otherwise
+    """
+    import shutil
+    return shutil.which("dig") is not None
+
+
+def test_dns_with_dig(server_ip: str, domain: str) -> Optional[float]:
+    """Test DNS resolution time using dig command.
+
+    Args:
+        server_ip: DNS server IP address
+        domain: Domain to resolve
+
+    Returns:
+        Optional[float]: Query time in milliseconds, or None if failed
+    """
+    try:
+        start_time = time.time()
+        result = subprocess.run(
+            ["dig", f"@{server_ip}", domain, "+short", "+time=2", "+tries=1"],
+            capture_output=True, text=True, timeout=5
+        )
+        end_time = time.time()
+
+        if result.returncode == 0 and result.stdout.strip():
+            return (end_time - start_time) * 1000  # Convert to ms
+    except Exception:
+        pass
+    return None
+
+
+def test_dns_with_socket(domain: str) -> Optional[float]:
+    """Test DNS resolution time using Python socket (fallback method).
+
+    Note: This uses the system's configured DNS servers and cannot
+    test specific DNS servers like dig can.
+
+    Args:
+        domain: Domain to resolve
+
+    Returns:
+        Optional[float]: Query time in milliseconds, or None if failed
+    """
+    import socket
+    try:
+        start_time = time.time()
+        socket.gethostbyname(domain)
+        end_time = time.time()
+        return (end_time - start_time) * 1000  # Convert to ms
+    except Exception:
+        pass
+    return None
+
+
 def is_dns_already_optimized() -> bool:
     """Check if DNS has already been optimized by getScripts.py
 
@@ -1837,28 +1896,33 @@ def check_dns_configuration() -> Dict[str, Any]:
             "google": "8.8.8.8",
             "quad9": "9.9.9.9"
         }
-        
+
+        # Check if dig is available for DNS testing
+        dig_available = is_dig_available()
+        if not dig_available:
+            logger.warning("⚠️  'dig' command not found (install dnsutils package for full DNS testing)")
+            logger.info("Using Python socket fallback - can only test current DNS configuration")
+
         for server_name, server_ip in test_dns_servers.items():
             if server_ip:
                 total_time = 0
                 successful_queries = 0
-                
+
                 for domain in test_domains:
-                    try:
-                        start_time = time.time()
-                        result = subprocess.run(
-                            ["dig", f"@{server_ip}", domain, "+short", "+stats"],
-                            capture_output=True, text=True, timeout=5
-                        )
-                        end_time = time.time()
-                        
-                        if result.returncode == 0:
-                            query_time = (end_time - start_time) * 1000  # Convert to ms
-                            total_time += query_time
-                            successful_queries += 1
-                    except Exception:
-                        pass
-                
+                    if dig_available:
+                        # Use dig for specific DNS server testing
+                        query_time = test_dns_with_dig(server_ip, domain)
+                    elif server_name == "current":
+                        # Fallback: Use socket for current DNS only
+                        query_time = test_dns_with_socket(domain)
+                    else:
+                        # Cannot test specific DNS servers without dig
+                        query_time = None
+
+                    if query_time is not None:
+                        total_time += query_time
+                        successful_queries += 1
+
                 if successful_queries > 0:
                     avg_time = total_time / successful_queries
                     dns_info["dns_performance"][server_name] = {
@@ -1866,6 +1930,10 @@ def check_dns_configuration() -> Dict[str, Any]:
                         "avg_query_time_ms": round(avg_time, 2),
                         "successful_queries": successful_queries
                     }
+
+        # Note if dig was not available
+        if not dig_available:
+            dns_info["dig_available"] = False
         
     except Exception as e:
         logger.error(f"Error checking DNS configuration: {e}")
@@ -1911,7 +1979,14 @@ def optimize_dns_configuration(explicit_request: bool = False) -> bool:
         for server_name, perf_data in dns_info["dns_performance"].items():
             logger.info(f"- {server_name} ({perf_data['server']}): "
                        f"{perf_data['avg_query_time_ms']}ms avg query time")
-    
+    else:
+        logger.warning("\n⚠️  No DNS performance data available")
+
+    # Show note if dig was not available (limited testing)
+    if dns_info.get("dig_available") is False:
+        logger.info("\n💡 Tip: Install 'dnsutils' package for comprehensive DNS server comparison:")
+        logger.info("   sudo apt install dnsutils")
+
     # Check if optimization is needed
     needs_optimization = False
     
