@@ -1,7 +1,7 @@
 FROM myodoo/prepare-v19:25.12.08-3.12.12
 LABEL maintainer=info@ownerp.com
 # Mit diesem Skript überprüft das passende Dockerimage gemäß des Releasefiles
-# Date 10.12.2025
+# Date 10.12.2025 - Added odoo.upgrade fix for Community Edition
 
 # create the odoo user
 RUN adduser --home=/opt/odoo --disabled-password --gecos "" --shell=/bin/bash odoo
@@ -20,6 +20,10 @@ COPY odoo.conf /opt/odoo/etc/
 
 RUN cd /opt/odoo/ && \
     python3 build_odoo.py
+
+# Fix for Odoo 19: Create empty upgrade module (required for Community Edition)
+RUN mkdir -p /opt/odoo/odoo-server/odoo/upgrade && \
+    touch /opt/odoo/odoo-server/odoo/upgrade/__init__.py
 
 # Execution environment
 USER 0
