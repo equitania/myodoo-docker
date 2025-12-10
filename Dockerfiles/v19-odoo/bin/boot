@@ -1,0 +1,134 @@
+#!/bin/bash
+##############################################################################
+# This script is designed to be run inside the container
+# Version 2.1.0
+# Date 02.04.2025
+##############################################################################
+#
+#    Shell Script for Odoo Docker Container
+#    Copyright (C) 2014-now Equitania Software GmbH(<http://www.equitania.de>).
+#
+#    This program is free software: you can redistribute it and/or modify
+#    it under the terms of the GNU Affero General Public License as
+#    published by the Free Software Foundation, either version 3 of the
+#    License, or (at your option) any later version.
+#
+#    This program is distributed in the hope that it will be useful,
+#    but WITHOUT ANY WARRANTY; without even the implied warranty of
+#    MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+#    GNU Affero General Public License for more details.
+#
+#    You should have received a copy of the GNU Affero General Public License
+#    along with this program.  If not, see <http://www.gnu.org/licenses/>.
+#
+##############################################################################
+
+currentdate=$(date +"%d.%m.%Y %T")
+echo "Odoo Container starting now: $currentdate"
+
+# Configuration file path
+file="/opt/odoo/etc/odoo.conf"
+
+# Fail hard and fast even on pipelines
+set -eo pipefail
+
+# Function: start
+# Description: Starts the Odoo server with the specified configuration
+# Parameters: Additional command line arguments for Odoo
+function start {
+    echo "Running odoo..."
+    set +e
+    if [ ! -e $1 ]; then
+        echo "...with additional args: $*"
+    fi
+    
+    # Check if current user is already odoo
+    if [ "$(whoami)" = "odoo" ]; then
+        python3 /opt/odoo/odoo-server/odoo-bin -c $file $*
+    else
+        # Use su instead of sudo for user switching
+        su - odoo -c "python3 /opt/odoo/odoo-server/odoo-bin -c $file $*"
+    fi
+
+    SERVICE_PID=$!
+    set -e
+}
+
+# Function: update
+# Description: Updates all Odoo modules
+# Parameters: Additional command line arguments for Odoo
+function update {
+    echo "update odoo..."
+    set +e
+    if [ ! -e $1 ]; then
+        echo "...with additional args: $*"
+    fi
+    
+    # Check if current user is already odoo
+    if [ "$(whoami)" = "odoo" ]; then
+        python3 /opt/odoo/odoo-server/odoo-bin --update=all --workers=0 --no-xmlrpc --stop-after-init $*
+    else
+        # Use su instead of sudo for user switching
+        su - odoo -c "python3 /opt/odoo/odoo-server/odoo-bin --update=all --workers=0 --no-xmlrpc --stop-after-init $*"
+    fi
+
+    SERVICE_PID=$!
+    set -e
+}
+
+# Function: neutralize
+# Description: Neutralizes the Odoo instance
+# Parameters: Additional command line arguments for Odoo
+function neutralize {
+    echo "neutralize odoo..."
+    set +e
+    if [ ! -e $1 ]; then
+        echo "...with additional args: $*"
+    fi
+    
+    # Check if current user is already odoo
+    if [ "$(whoami)" = "odoo" ]; then
+        python3 /opt/odoo/odoo-server/odoo-bin neutralize --workers=0 --no-xmlrpc --stop-after-init $*
+    else
+        # Use su instead of sudo for user switching
+        su - odoo -c "python3 /opt/odoo/odoo-server/odoo-bin neutralize --workers=0 --no-xmlrpc --stop-after-init $*"
+    fi
+
+    SERVICE_PID=$!
+    set -e
+}
+
+# Function: on_exit
+# Description: Handles graceful shutdown on SIGINT and SIGTERM signals
+function on_exit() {
+    kill -TERM $SERVICE_PID
+    wait $SERVICE_PID 2>/dev/null
+    exit 0
+}
+trap on_exit INT TERM
+
+# Check and setup data directory
+datadir="/opt/odoo/data"
+if [ "$(ls -A $datadir)" ]; then
+    echo "$datadir is already exists"
+else
+    echo "Setting data directory permissions for odoo..."
+    # If current user is root, use chown directly
+    if [ "$(whoami)" = "root" ]; then
+        chown -R odoo $datadir
+    else
+        # If not root and no sudo, this might be problematic
+        # One solution would be to set file permissions beforehand
+        echo "Warning: Cannot set ownership without root privileges. Make sure $datadir has correct permissions."
+    fi
+fi
+
+# Execute all provided parameters
+echo "Running parameters..."
+for arg in "$*"
+do
+    $arg
+done
+
+# Wait for all background processes to complete
+wait
