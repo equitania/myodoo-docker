@@ -21,9 +21,9 @@ COPY odoo.conf /opt/odoo/etc/
 RUN cd /opt/odoo/ && \
     python3 build_odoo.py
 
-# Fix for Odoo 19: Create empty upgrade module (required for Community Edition)
-RUN mkdir -p /opt/odoo/odoo-server/odoo/upgrade && \
-    touch /opt/odoo/odoo-server/odoo/upgrade/__init__.py
+# Fix for Odoo 19: Create upgrade namespace package (NO __init__.py!)
+# Must be implicit namespace package for _NamespacePath to work
+RUN mkdir -p /opt/odoo/odoo-server/odoo/upgrade
 
 # Execution environment
 USER 0
