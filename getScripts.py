@@ -53,8 +53,8 @@ if os.environ.get('GETSCRIPTS_DEBUG', '').lower() in ('1', 'true', 'yes'):
     logger.debug("Debug logging enabled")
 
 # Script version and date
-SCRIPT_VERSION = "6.8.10"
-SCRIPT_DATE = "19.11.2025"
+SCRIPT_VERSION = "6.8.11"
+SCRIPT_DATE = "12.12.2025"
 
 # Cache settings
 CACHE_DIR = os.path.expanduser("~/.cache/getscripts")
@@ -198,11 +198,35 @@ def is_fastfetch_installed() -> Tuple[bool, Optional[str]]:
         logger.info("Fastfetch not found")
         return False, None
 
+
+def normalize_zoxide_version(version: str) -> str:
+    """Normalize zoxide version string for comparison.
+
+    Handles version strings like 'v0.4.3-unknown', '0.9.7', 'v0.9.7' etc.
+    Removes 'v' prefix and any suffixes like '-unknown', '-dirty'.
+
+    Args:
+        version: Raw version string from zoxide --version output
+
+    Returns:
+        Normalized version string (e.g., '0.4.3')
+    """
+    if not version:
+        return ""
+    # Strip 'v' prefix
+    clean_version = version.lstrip('v')
+    # Remove common suffixes like '-unknown', '-dirty', etc.
+    # Take only the numeric version part (e.g., '0.4.3' from '0.4.3-unknown')
+    if '-' in clean_version:
+        clean_version = clean_version.split('-')[0]
+    return clean_version
+
+
 def is_zoxide_installed() -> Tuple[bool, Optional[str]]:
     """Check if zoxide is installed and get its version.
-    
+
     Returns:
-        Tuple[bool, Optional[str]]: Installation status and version if installed
+        Tuple[bool, Optional[str]]: Installation status and normalized version if installed
     """
     # First try the normal PATH
     try:
@@ -217,8 +241,9 @@ def is_zoxide_installed() -> Tuple[bool, Optional[str]]:
             output = result.stdout.strip() or result.stderr.strip()
             parts = output.split()
             if len(parts) >= 2:
-                version = parts[1]
-                logger.info(f"zoxide version {version} found")
+                raw_version = parts[1]
+                version = normalize_zoxide_version(raw_version)
+                logger.info(f"zoxide version {raw_version} found (normalized: {version})")
                 return True, version
     except FileNotFoundError:
         # Try checking in ~/.local/bin directly
@@ -236,12 +261,13 @@ def is_zoxide_installed() -> Tuple[bool, Optional[str]]:
                     output = result.stdout.strip() or result.stderr.strip()
                     parts = output.split()
                     if len(parts) >= 2:
-                        version = parts[1]
-                        logger.info(f"zoxide version {version} found in ~/.local/bin")
+                        raw_version = parts[1]
+                        version = normalize_zoxide_version(raw_version)
+                        logger.info(f"zoxide version {raw_version} found in ~/.local/bin (normalized: {version})")
                         return True, version
             except Exception:
                 pass
-    
+
     logger.info("zoxide not found")
     return False, None
 
@@ -467,7 +493,11 @@ def install_zoxide_if_needed() -> None:
                     return
             except ImportError:
                 # Fallback to simple string comparison if packaging module not available
-                pass
+                logger.debug("packaging module not available, falling back to string comparison")
+            except Exception as version_error:
+                # Handle invalid version strings gracefully
+                logger.warning(f"Could not parse zoxide version '{current_version}': {version_error}")
+                logger.info("Proceeding with version update check using string comparison")
             logger.info(f"zoxide version {current_version} is installed, updating to version {latest_version}.")
     else:
         logger.info("zoxide is not installed.")
