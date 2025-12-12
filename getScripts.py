@@ -509,13 +509,13 @@ def install_zoxide_if_needed() -> None:
     else:
         logger.info("zoxide is not installed.")
 
-    logger.info(f"Downloading zoxide version {latest_version}...")
+    logger.info(f"Installing zoxide version {latest_version}...")
 
-    # Installation using curl and bash with proper shell execution
+    # Installation using curl and bash with suppressed output
     try:
-        install_cmd = "curl -sS https://raw.githubusercontent.com/ajeetdsouza/zoxide/main/install.sh | bash"
+        install_cmd = "curl -sS https://raw.githubusercontent.com/ajeetdsouza/zoxide/main/install.sh | bash >/dev/null 2>&1"
         run_command(install_cmd, shell=True, check=True)
-        logger.info(f"zoxide version {latest_version} was successfully installed.")
+        logger.info(f"zoxide {latest_version} installed successfully.")
     except Exception as e:
         logger.warning(f"zoxide installation failed (this is not critical): {str(e)}")
         logger.warning("zoxide is optional - continuing without it. You can install it manually if needed.")
