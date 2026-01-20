@@ -1,5 +1,8 @@
 # Docker Compose for Odoo 13
-# 21.09.2022
+# 20.01.2026
+#
+# SECURITY WARNING: This is a TEMPLATE file!
+# Replace all placeholder passwords before production use!
 version: '3.9'
 
 volumes:
@@ -13,7 +16,7 @@ services:
         image: postgres:14.5-alpine
         environment:
           - POSTGRES_USER=ownerp
-          - POSTGRES_PASSWORD=ownerp2021
+          - POSTGRES_PASSWORD=CHANGE_ME_BEFORE_PRODUCTION  # WARNING: Replace with secure password!
           - POSTGRES_DB=postgres
         networks:
           - ownerp-net

@@ -1,6 +1,9 @@
 # Docker Container Update Configuration
-# Date: 08.04.2025
-
+# Date: 20.01.2026
+#
+# SECURITY WARNING: This is a TEMPLATE file!
+# Replace all placeholder passwords before production use!
+#
 # Parameters:
 #   type: [M]odules, [F]ull update or [N]eutralize DB
 #   delay_time: timeout in seconds before restart
@@ -33,7 +36,7 @@ containers:
     dockerfile_path: "$HOME/docker-builds/live-odoo/"
     docker_image_name: "odoo/live"
     db_user: "ownerp"
-    db_password: "ownerp2023"
+    db_password: "CHANGE_ME_BEFORE_PRODUCTION"  # WARNING: Replace with secure password!
     db_host: "live-db"
     volume: "--network live-db-net -v /opt/odoo/live:/opt/odoo/data"
     odoo_version: "16"
@@ -49,7 +52,7 @@ containers:
     dockerfile_path: "$HOME/docker-builds/test-odoo/"
     docker_image_name: "odoo/test"
     db_user: "ownerp"
-    db_password: "ownerp2023"
+    db_password: "CHANGE_ME_BEFORE_PRODUCTION"  # WARNING: Replace with secure password!
     db_host: "test-db"
     volume: "--network test-db-net -v /opt/odoo/test:/opt/odoo/data"
     odoo_version: "16"
