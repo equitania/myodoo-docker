@@ -1,8 +1,8 @@
 #!/bin/bash
 ##############################################################################
 # This script is designed to be run inside the container
-# Version 2.1.0
-# Date 02.04.2025
+# Version 2.2.0
+# Date 20.01.2026
 ##############################################################################
 #
 #    Shell Script for Odoo Docker Container
@@ -57,19 +57,20 @@ function start {
 # Function: update
 # Description: Updates all Odoo modules
 # Parameters: Additional command line arguments for Odoo
+# Note: --no-xmlrpc removed in Odoo 19 (XML-RPC deprecated), use --no-http if needed
 function update {
     echo "update odoo..."
     set +e
     if [ ! -e $1 ]; then
         echo "...with additional args: $*"
     fi
-    
+
     # Check if current user is already odoo
     if [ "$(whoami)" = "odoo" ]; then
-        python3 /opt/odoo/odoo-server/odoo-bin --update=all --workers=0 --no-xmlrpc --stop-after-init $*
+        python3 /opt/odoo/odoo-server/odoo-bin --update=all --workers=0 --stop-after-init $*
     else
         # Use su instead of sudo for user switching
-        su - odoo -c "python3 /opt/odoo/odoo-server/odoo-bin --update=all --workers=0 --no-xmlrpc --stop-after-init $*"
+        su - odoo -c "python3 /opt/odoo/odoo-server/odoo-bin --update=all --workers=0 --stop-after-init $*"
     fi
 
     SERVICE_PID=$!
@@ -79,19 +80,20 @@ function update {
 # Function: neutralize
 # Description: Neutralizes the Odoo instance
 # Parameters: Additional command line arguments for Odoo
+# Note: --no-xmlrpc removed in Odoo 19 (XML-RPC deprecated), use --no-http if needed
 function neutralize {
     echo "neutralize odoo..."
     set +e
     if [ ! -e $1 ]; then
         echo "...with additional args: $*"
     fi
-    
+
     # Check if current user is already odoo
     if [ "$(whoami)" = "odoo" ]; then
-        python3 /opt/odoo/odoo-server/odoo-bin neutralize --workers=0 --no-xmlrpc --stop-after-init $*
+        python3 /opt/odoo/odoo-server/odoo-bin neutralize --workers=0 --stop-after-init $*
     else
         # Use su instead of sudo for user switching
-        su - odoo -c "python3 /opt/odoo/odoo-server/odoo-bin neutralize --workers=0 --no-xmlrpc --stop-after-init $*"
+        su - odoo -c "python3 /opt/odoo/odoo-server/odoo-bin neutralize --workers=0 --stop-after-init $*"
     fi
 
     SERVICE_PID=$!
