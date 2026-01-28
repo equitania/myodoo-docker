@@ -54,7 +54,7 @@ if os.environ.get('GETSCRIPTS_DEBUG', '').lower() in ('1', 'true', 'yes'):
     logger.debug("Debug logging enabled")
 
 # Script version and date
-SCRIPT_VERSION = "7.1.0"
+SCRIPT_VERSION = "7.1.1"
 SCRIPT_DATE = "28.01.2026"
 
 # Cache settings
@@ -287,41 +287,28 @@ def is_fish_repo_configured() -> bool:
 
 
 def install_fish_if_needed() -> Tuple[bool, bool]:
-    """Install Fish shell 4.0+ from official repository if not installed or outdated.
+    """Install or upgrade Fish shell from official repository.
 
     Uses official Fish shell repositories:
     - Debian: OpenSUSE Build Service (shells:fish:release:4)
     - Ubuntu: Launchpad PPA (ppa:fish-shell/release-4)
 
+    Always ensures the official repository is configured and Fish is upgraded
+    to the latest available version.
+
     Returns:
-        Tuple[bool, bool]: (is_available, is_fresh_install)
+        Tuple[bool, bool]: (is_available, needs_migration)
             - is_available: True if Fish 4.0+ is available after this function
-            - is_fresh_install: True if this was a first-time installation (triggers cleanup)
+            - needs_migration: True if this is a fresh install or migration from system packages
+              (triggers legacy cleanup and shell change prompt)
     """
     installed, current_version = is_fish_installed()
-    min_version = "4.0.0"
-    is_fresh_install = False
-
-    # Check if Fish 4.0+ is already installed from official repo
-    if installed:
-        try:
-            from packaging import version as pkg_version
-            if pkg_version.parse(current_version) >= pkg_version.parse(min_version):
-                logger.info(f"Fish {current_version} is already installed and up to date")
-                return True, False  # Already installed, not fresh
-            logger.info(f"Fish {current_version} is installed but outdated (need {min_version}+)")
-        except ImportError:
-            # Fallback to simple comparison
-            if compare_versions(current_version, min_version) >= 0:
-                logger.info(f"Fish {current_version} is already installed and up to date")
-                return True, False  # Already installed, not fresh
-
-    # If we get here, we need to install or upgrade
-    is_fresh_install = not installed  # First time if not previously installed
+    needs_migration = False
+    repo_was_added = False
 
     # Check if we have sudo privileges
     if not is_root_or_has_sudo():
-        logger.warning("Cannot install Fish without sudo privileges")
+        logger.warning("Cannot install/upgrade Fish without sudo privileges")
         return installed, False
 
     os_id, os_version = get_os_info()
@@ -330,24 +317,36 @@ def install_fish_if_needed() -> Tuple[bool, bool]:
     # UBUNTU: Use Launchpad PPA
     # =========================================================================
     if os_id == "ubuntu":
-        logger.info("Installing Fish shell 4.0+ from official PPA...")
         try:
-            # Check if PPA is already added
+            # Check if PPA needs to be added
             if not is_fish_repo_configured():
-                logger.info("Adding Fish shell PPA repository...")
+                logger.info("Adding official Fish shell PPA repository...")
                 run_command("sudo apt-add-repository -y ppa:fish-shell/release-4", check=True)
+                repo_was_added = True
+                needs_migration = True  # Migration from system packages
 
+            # Always update and upgrade to get latest version
             run_command("sudo apt update", check=True)
-            run_command("sudo apt install -y fish", check=True)
+
+            if installed:
+                logger.info(f"Fish {current_version} installed, checking for updates...")
+                run_command("sudo apt install -y --only-upgrade fish", check=True)
+            else:
+                logger.info("Installing Fish shell from official PPA...")
+                run_command("sudo apt install -y fish", check=True)
+                needs_migration = True  # Fresh install
 
             # Verify installation
             installed, new_version = is_fish_installed()
             if installed:
-                logger.info(f"Fish shell {new_version} installed successfully from PPA")
-                return True, is_fresh_install
+                if new_version != current_version:
+                    logger.info(f"Fish shell upgraded: {current_version or 'not installed'} → {new_version}")
+                else:
+                    logger.info(f"Fish shell {new_version} is already the latest version")
+                return True, needs_migration
         except Exception as e:
-            logger.error(f"Failed to install Fish from PPA: {e}")
-            return False, False
+            logger.error(f"Failed to install/upgrade Fish from PPA: {e}")
+            return installed, False
 
     # =========================================================================
     # DEBIAN: Use OpenSUSE Build Service repository
@@ -381,12 +380,10 @@ def install_fish_if_needed() -> Tuple[bool, bool]:
         repo_url = f"http://download.opensuse.org/repositories/shells:/fish:/release:/4/{debian_version}/"
         key_url = f"https://download.opensuse.org/repositories/shells:fish:release:4/{debian_version}/Release.key"
 
-        logger.info(f"Installing Fish shell 4.0+ from official repository ({debian_version})...")
-
         try:
-            # Check if repository is already configured
+            # Check if repository needs to be added
             if not is_fish_repo_configured():
-                logger.info(f"Adding Fish shell repository for {debian_version}...")
+                logger.info(f"Adding official Fish shell repository for {debian_version}...")
 
                 # Add repository
                 repo_list_content = f"deb {repo_url} /"
@@ -402,18 +399,31 @@ def install_fish_if_needed() -> Tuple[bool, bool]:
                     shell=True, check=True
                 )
 
-            # Update and install
+                repo_was_added = True
+                needs_migration = True  # Migration from system packages
+
+            # Always update and upgrade to get latest version
             run_command("sudo apt update", check=True)
-            run_command("sudo apt install -y fish", check=True)
+
+            if installed:
+                logger.info(f"Fish {current_version} installed, checking for updates...")
+                run_command("sudo apt install -y --only-upgrade fish", check=True)
+            else:
+                logger.info("Installing Fish shell from official repository...")
+                run_command("sudo apt install -y fish", check=True)
+                needs_migration = True  # Fresh install
 
             # Verify installation
             installed, new_version = is_fish_installed()
             if installed:
-                logger.info(f"Fish shell {new_version} installed successfully from official repository")
-                return True, is_fresh_install
+                if new_version != current_version:
+                    logger.info(f"Fish shell upgraded: {current_version or 'not installed'} → {new_version}")
+                else:
+                    logger.info(f"Fish shell {new_version} is already the latest version")
+                return True, needs_migration
         except Exception as e:
-            logger.error(f"Failed to install Fish from official repository: {e}")
-            return False, False
+            logger.error(f"Failed to install/upgrade Fish from official repository: {e}")
+            return installed, False
 
     else:
         logger.warning(f"Unsupported OS: {os_id}. Cannot install Fish shell automatically.")
@@ -3149,12 +3159,32 @@ def main() -> None:
         if starship_installed:
             copy_starship_configuration(_myhome, myodoo_docker)
 
-        # Create simplified ZSH fallback only on fresh Fish install or if .zshrc doesn't exist
+        # Create simplified ZSH fallback if needed
+        # Replace .zshrc if it contains oh-my-zsh, old ups alias, or doesn't exist
         zshrc_path = os.path.join(_myhome, ".zshrc")
-        if fish_is_fresh_install or not os.path.exists(zshrc_path):
+        should_replace_zshrc = False
+
+        if not os.path.exists(zshrc_path):
+            should_replace_zshrc = True
+            logger.info(".zshrc not found, creating simplified version")
+        elif fish_is_fresh_install:
+            should_replace_zshrc = True
+            logger.info("Fresh Fish installation, creating simplified .zshrc")
+        else:
+            # Check if existing .zshrc needs to be replaced (has oh-my-zsh or old ups alias)
+            try:
+                with open(zshrc_path, 'r') as f:
+                    zshrc_content = f.read()
+                if 'oh-my-zsh' in zshrc_content.lower() or 'source ~/.zshrc' in zshrc_content:
+                    should_replace_zshrc = True
+                    logger.info("Existing .zshrc contains Oh-My-Zsh or legacy ups alias, replacing...")
+            except Exception as e:
+                logger.warning(f"Could not read .zshrc: {e}")
+
+        if should_replace_zshrc:
             create_simplified_zshrc(_myhome)
         else:
-            logger.info("Keeping existing .zshrc (Fish was already installed)")
+            logger.info("Keeping existing .zshrc (already simplified)")
 
         # =====================================================================
         # LEGACY ZSH CONFIGURATION (Deprecated)
