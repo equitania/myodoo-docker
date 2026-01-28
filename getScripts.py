@@ -54,7 +54,7 @@ if os.environ.get('GETSCRIPTS_DEBUG', '').lower() in ('1', 'true', 'yes'):
     logger.debug("Debug logging enabled")
 
 # Script version and date
-SCRIPT_VERSION = "7.0.2"
+SCRIPT_VERSION = "7.0.3"
 SCRIPT_DATE = "28.01.2026"
 
 # Cache settings
@@ -548,22 +548,28 @@ def create_simplified_zshrc(_myhome: str) -> bool:
         except Exception as e:
             logger.warning(f"Could not check existing .zshrc: {e}")
 
+    # Note: Using ONLY syntax that both Fish and ZSH can parse!
+    # This allows the Fish guard to work before Fish hits incompatible syntax.
+    # Key: Use && chaining instead of if/then/fi (Fish uses if/end, not if/then/fi)
     simplified_zshrc = '''# ZSH Fallback Configuration (Fish is primary shell)
-# Version 4.0.0 | 28.01.2026
+# Version 4.1.0 | 28.01.2026
 # This is a minimal ZSH configuration without Oh-My-Zsh dependency
+#
+# IMPORTANT: If you are using Fish shell, do not source this file!
+# Fish uses: ~/.config/fish/config.fish
+
+# Guard: Exit if accidentally sourced from Fish shell
+# Uses syntax compatible with both Fish and ZSH
+test -n "$FISH_VERSION" && echo "Warning: .zshrc is for ZSH, not Fish. Use: source ~/.config/fish/config.fish" && return 0 2>/dev/null
 
 # PATH configuration
 export PATH="$HOME/bin:$HOME/.local/bin:/usr/local/bin:$PATH"
 
-# Zoxide (if available)
-if command -v zoxide &> /dev/null; then
-    eval "$(zoxide init zsh)"
-fi
+# Zoxide (if available) - using && instead of if/then/fi for Fish compatibility
+command -v zoxide > /dev/null 2>&1 && eval "$(zoxide init zsh)"
 
 # Starship prompt (if available)
-if command -v starship &> /dev/null; then
-    eval "$(starship init zsh)"
-fi
+command -v starship > /dev/null 2>&1 && eval "$(starship init zsh)"
 
 # Minimal aliases
 alias ls='ls -h --color --classify'
@@ -575,9 +581,7 @@ alias dk='docker'
 alias dps='docker ps -a --format "table {{.Names}}\\t{{.ID}}\\t{{.Image}}\\t{{.Status}}\\t{{.Ports}}" | sort'
 
 # Fastfetch on startup
-if command -v fastfetch &> /dev/null; then
-    fastfetch
-fi
+command -v fastfetch > /dev/null 2>&1 && fastfetch
 
 cd $HOME
 '''
