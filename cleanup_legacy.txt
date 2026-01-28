@@ -1,0 +1,52 @@
+# Legacy Cleanup List for ownERP Server Environment
+# Version 1.0.0 | 28.01.2026
+#
+# This file contains paths relative to $HOME that should be removed
+# during getScripts.py execution. Lines starting with # are comments.
+# Empty lines are ignored.
+#
+# Format: One path per line, relative to home directory
+# Use wildcards: *.bak, .zcompdump* etc.
+
+# =============================================================================
+# OLD SCRIPTS (replaced by YAML-based versions)
+# =============================================================================
+backup_manager.py
+container2backup_zstd.py
+update_docker_myodoo.py
+
+# =============================================================================
+# DEPRECATED CSV CONFIGURATIONS (replaced by YAML)
+# =============================================================================
+container2backup.csv
+container2backup_path.csv
+docker2update.csv
+rsync_targets.csv
+
+# =============================================================================
+# ZSH/OH-MY-ZSH ARTIFACTS (Fish is now primary shell)
+# =============================================================================
+.shell.pre-oh-my-zsh
+.zshrc.bak
+.zshrc.bak.ohmyzsh
+.zcompdump
+.zcompdump-*
+
+# =============================================================================
+# BASH ARTIFACTS (not used anymore)
+# =============================================================================
+.bash_history
+.bashrc
+
+# =============================================================================
+# MISCELLANEOUS CLEANUP
+# =============================================================================
+.selected_editor
+.wget-hsts
+restore-zip.sh
+
+# =============================================================================
+# OLD LOG FILES (optional - uncomment if desired)
+# =============================================================================
+# nginx_set_conf.log
+# getscripts.log
