@@ -54,7 +54,7 @@ if os.environ.get('GETSCRIPTS_DEBUG', '').lower() in ('1', 'true', 'yes'):
     logger.debug("Debug logging enabled")
 
 # Script version and date
-SCRIPT_VERSION = "7.1.2"
+SCRIPT_VERSION = "7.1.3"
 SCRIPT_DATE = "28.01.2026"
 
 # Cache settings
@@ -1245,12 +1245,56 @@ def get_os_info():
 def get_pip_version():
     """Get pip version as a tuple of integers."""
     try:
-        result = subprocess.run([sys.executable, "-m", "pip", "--version"], 
+        result = subprocess.run([sys.executable, "-m", "pip", "--version"],
                               capture_output=True, text=True)
+        if result.returncode != 0:
+            return (0, 0)
         version_str = result.stdout.split()[1]
         return tuple(map(int, version_str.split('.')))
     except:
         return (0, 0)
+
+
+def is_pip_installed() -> bool:
+    """Check if pip module is available for Python."""
+    try:
+        result = subprocess.run([sys.executable, "-m", "pip", "--version"],
+                              capture_output=True, text=True)
+        return result.returncode == 0
+    except:
+        return False
+
+
+def ensure_pip_installed() -> None:
+    """Ensure pip is installed, install via apt if missing."""
+    if is_pip_installed():
+        logger.info("pip is already installed")
+        return
+
+    logger.info("pip is not installed, installing python3-pip via apt...")
+
+    try:
+        # Check if we have sudo privileges
+        if not is_root_or_has_sudo():
+            logger.error("Cannot install python3-pip: no sudo privileges")
+            raise RuntimeError("pip is not installed and cannot be installed without sudo")
+
+        # Install python3-pip via apt
+        run_command("sudo apt update")
+        run_command("sudo apt install -y python3-pip")
+
+        # Verify installation
+        if not is_pip_installed():
+            raise RuntimeError("Failed to install python3-pip")
+
+        # Show installed version
+        version = get_pip_version()
+        logger.info(f"pip installed successfully, version: {'.'.join(map(str, version))}")
+
+    except Exception as e:
+        logger.error(f"Error installing pip: {str(e)}")
+        raise
+
 
 def get_pip_install_command(package_name: str, upgrade: bool = True) -> str:
     """Generate appropriate pip install command based on system version."""
@@ -1756,17 +1800,20 @@ def install_or_update_zstd():
         raise
 
 def upgrade_pip() -> None:
-    """Upgrade pip to the latest version."""
+    """Upgrade pip to the latest version. Installs pip first if not available."""
     try:
+        # First ensure pip is installed
+        ensure_pip_installed()
+
         logger.info("Checking pip version...")
         current_version = get_pip_version()
         logger.info(f"Current pip version: {'.'.join(map(str, current_version))}")
-        
+
         if current_version < (23, 0):
             logger.info("Upgrading pip to latest version...")
             # Use a basic command for old pip versions
             run_command(f"{sys.executable} -m pip install --upgrade pip --user")
-            
+
             # Verify upgrade
             new_version = get_pip_version()
             logger.info(f"Upgraded pip to version {'.'.join(map(str, new_version))}")
@@ -1774,128 +1821,133 @@ def upgrade_pip() -> None:
         logger.error(f"Error upgrading pip: {str(e)}")
 
 def get_7zip_version() -> Optional[tuple]:
-    """Get installed 7-Zip version as tuple (major, minor, patch)"""
+    """Get installed 7-Zip version as tuple (major, minor, patch).
+
+    Checks multiple locations for the 7zz binary and parses its version output.
+    """
     import shutil
 
     # Try to find 7zz in common locations
+    seven_zz_paths = [
+        shutil.which('7zz'),
+        '/usr/local/bin/7zz',
+        os.path.expanduser('~/.local/bin/7zz')
+    ]
+
     seven_zz_cmd = None
-    for path in [shutil.which('7zz'), '/usr/local/bin/7zz', os.path.expanduser('~/.local/bin/7zz')]:
+    for path in seven_zz_paths:
         if path and os.path.isfile(path) and os.access(path, os.X_OK):
             seven_zz_cmd = path
             break
 
-    try:
-        # First try 7zz (new version) using the found path
-        if seven_zz_cmd:
-            result = subprocess.run([seven_zz_cmd, '--help'], capture_output=True, text=True)
-            if result.returncode == 0:
-                # 7zz output format: "7-Zip (z) [64] 21.07 : Copyright (c) 1999-2021 Igor Pavlov"
-                version_line = result.stdout.split('\n')[0].strip()
-                version_match = re.search(r'\d+\.\d+', version_line)
-                if version_match:
-                    version_str = version_match.group(0)
-                    # Convert to tuple (major, minor, 0) as 7zip usually only has major.minor
-                    major, minor = map(int, version_str.split('.'))
-                    return (major, minor, 0)
-    except FileNotFoundError:
-        # Fall back to checking old 7z command, but we'll eventually remove/replace it
+    # Try 7zz (new version) using the found path
+    if seven_zz_cmd:
         try:
-            result = subprocess.run(['7z', '--help'], capture_output=True, text=True)
+            result = subprocess.run([seven_zz_cmd, '--help'],
+                                  capture_output=True, text=True, timeout=10)
             if result.returncode == 0:
-                # 7-Zip output format: "7-Zip [64] 16.02"
-                version_line = result.stdout.split('\n')[1].strip() if len(result.stdout.split('\n')) > 1 else result.stdout.strip()
-                version_match = re.search(r'\d+\.\d+', version_line)
+                # 7zz output format: "7-Zip (z) [64] 24.08 : Copyright (c) 1999-2024 Igor Pavlov"
+                version_line = result.stdout.split('\n')[0].strip()
+                version_match = re.search(r'(\d+)\.(\d+)', version_line)
                 if version_match:
-                    version_str = version_match.group(0)
-                    # Convert to tuple (major, minor, 0) as 7zip usually only has major.minor
-                    major, minor = map(int, version_str.split('.'))
+                    major = int(version_match.group(1))
+                    minor = int(version_match.group(2))
                     return (major, minor, 0)
-        except Exception:
-            # Ignore errors from the old version
-            pass
+        except subprocess.TimeoutExpired:
+            logger.debug(f"Timeout running {seven_zz_cmd}")
+        except Exception as e:
+            logger.debug(f"Error running {seven_zz_cmd}: {str(e)}")
+
+    # Fall back to checking old 7z command (p7zip-full)
+    try:
+        result = subprocess.run(['7z', '--help'], capture_output=True, text=True, timeout=10)
+        if result.returncode == 0:
+            # 7-Zip output format: "7-Zip [64] 16.02"
+            lines = result.stdout.split('\n')
+            version_line = lines[1].strip() if len(lines) > 1 else lines[0].strip()
+            version_match = re.search(r'(\d+)\.(\d+)', version_line)
+            if version_match:
+                major = int(version_match.group(1))
+                minor = int(version_match.group(2))
+                return (major, minor, 0)
+    except Exception:
+        pass  # Old 7z not available, continue
 
     # Check using dpkg if we're on Debian/Ubuntu
     try:
         if is_debian_or_ubuntu():
             result = subprocess.run(['dpkg', '-s', '7zip'], capture_output=True, text=True)
             if result.returncode == 0:
-                version_match = re.search(r'Version: (\d+\.\d+)', result.stdout)
+                version_match = re.search(r'Version: (\d+)\.(\d+)', result.stdout)
                 if version_match:
-                    version_str = version_match.group(1)
-                    # Convert to tuple (major, minor, 0)
-                    major, minor = map(int, version_str.split('.'))
+                    major = int(version_match.group(1))
+                    minor = int(version_match.group(2))
                     return (major, minor, 0)
-    except Exception as e:
-        logger.error(f"Error getting 7-Zip version: {str(e)}")
+    except Exception:
+        pass
+
     return None
 
 def check_7zip_version() -> bool:
-    """Check if 7-Zip is installed and meets minimum version requirements"""
-    try:
-        # First try to find the 7zz command (new version)
-        # Use shutil.which for more robust binary detection
-        import shutil
+    """Check if 7-Zip is installed and meets minimum version requirements.
 
-        # Check common installation paths
+    Supports both apt-installed and manually installed 7zz binaries.
+    """
+    import shutil
+
+    min_version = (21, 0, 0)  # 21.x is newer and preferred
+
+    try:
+        # Check common installation paths for 7zz binary
         seven_zz_paths = [
             shutil.which('7zz'),  # Check PATH
             '/usr/local/bin/7zz',  # System-wide installation
             os.path.expanduser('~/.local/bin/7zz')  # User installation
         ]
 
-        seven_zz_found = False
+        seven_zz_path = None
         for path in seven_zz_paths:
             if path and os.path.isfile(path) and os.access(path, os.X_OK):
-                seven_zz_found = True
+                seven_zz_path = path
                 break
 
-        if not seven_zz_found:
+        if not seven_zz_path:
             logger.warning("7zz command not found. Need to install newer 7-Zip version.")
             return False
 
-        # Check if the package is installed via dpkg
-        if is_package_installed("7zip"):
-            version = get_7zip_version()
-            if version:
-                version_str = '.'.join(map(str, version[:2]))  # Only show major.minor
-                logger.info(f"Current 7-Zip version: {version_str}")
-                # Minimum required version for newer 7zip
-                min_version = (21, 0, 0)  # 21.x is newer and preferred
-
-                if version < min_version:
-                    logger.warning(f"7-Zip version {version_str} is outdated. Minimum required version is {'.'.join(map(str, min_version[:2]))}")
-                    return False
-                return True
-            else:
-                # Package is installed but version detection failed
-                logger.info("7-Zip package is installed, but version detection failed. Assuming it's valid.")
-                return True
-
-        # If we get here, check using the normal version detection
-        version = get_7zip_version()
-        if not version:
-            logger.error("7-Zip is not installed")
-            return False
-
-        version_str = '.'.join(map(str, version[:2]))  # Only show major.minor
-        logger.info(f"Current 7-Zip version: {version_str}")
-
-        # Check if old p7zip-full is installed (which provides 7z command)
+        # Binary found - get version directly from it
         try:
-            old_result = subprocess.run(['which', '7z'], capture_output=True, text=True)
-            if old_result.returncode == 0 and not subprocess.run(['which', '7zz'], capture_output=True).returncode == 0:
-                logger.warning("Old p7zip-full package detected (7z command), but new 7zip (7zz) not found")
+            result = subprocess.run([seven_zz_path, '--help'], capture_output=True, text=True, timeout=10)
+            if result.returncode == 0:
+                # 7zz output format: "7-Zip (z) [64] 24.08 : Copyright (c) 1999-2024 Igor Pavlov"
+                version_line = result.stdout.split('\n')[0].strip()
+                version_match = re.search(r'(\d+)\.(\d+)', version_line)
+                if version_match:
+                    major = int(version_match.group(1))
+                    minor = int(version_match.group(2))
+                    version = (major, minor, 0)
+                    version_str = f"{major}.{minor}"
+                    logger.info(f"Current 7-Zip version: {version_str} (found at {seven_zz_path})")
+
+                    if version < min_version:
+                        logger.warning(f"7-Zip version {version_str} is outdated. "
+                                     f"Minimum required: {min_version[0]}.{min_version[1]}")
+                        return False
+                    return True
+                else:
+                    # Version not parseable but binary works
+                    logger.info(f"7-Zip found at {seven_zz_path} but version not parseable. Assuming valid.")
+                    return True
+            else:
+                logger.warning(f"7zz at {seven_zz_path} returned error code {result.returncode}")
                 return False
-        except:
-            pass
-
-        # Minimum required version for newer 7zip
-        min_version = (21, 0, 0)  # 21.x is newer and preferred
-
-        if version < min_version:
-            logger.warning(f"7-Zip version {version_str} is outdated. Minimum required version is {'.'.join(map(str, min_version[:2]))}")
+        except subprocess.TimeoutExpired:
+            logger.warning(f"7zz at {seven_zz_path} timed out")
             return False
-        return True
+        except Exception as e:
+            logger.warning(f"Error running 7zz at {seven_zz_path}: {str(e)}")
+            return False
+
     except Exception as e:
         logger.error(f"Error checking 7-Zip version: {str(e)}")
         return False
@@ -1967,7 +2019,10 @@ def install_or_update_7zip():
             else:
                 raise RuntimeError(f"Unsupported architecture for 7-Zip: {arch}")
 
-            # Download and install
+            # Download and install - save original working directory
+            original_cwd = os.getcwd()
+            install_path = '/usr/local/bin/7zz' if has_sudo else os.path.expanduser('~/.local/bin/7zz')
+
             with tempfile.TemporaryDirectory() as temp_dir:
                 os.chdir(temp_dir)
 
@@ -1982,6 +2037,10 @@ def install_or_update_7zip():
                 # Extract the archive
                 logger.info("Extracting 7-Zip archive...")
                 run_command(f"tar xJf {filename}")
+
+                # Verify extraction produced 7zz
+                if not os.path.isfile('7zz'):
+                    raise RuntimeError("7zz binary not found after extraction")
 
                 # Install based on privileges
                 if has_sudo:
@@ -2010,17 +2069,28 @@ def install_or_update_7zip():
                     # Ensure PATH is set
                     ensure_path_in_zshrc()
 
-            # Verify installation
+            # Restore original working directory
+            try:
+                os.chdir(original_cwd)
+            except:
+                os.chdir(os.path.expanduser("~"))
+
+            # Verify installation - check the installed binary directly
+            if not os.path.isfile(install_path) or not os.access(install_path, os.X_OK):
+                raise RuntimeError(f"7zz not found at {install_path} after installation")
+
+            # Run version check
             if not check_7zip_version():
-                raise RuntimeError("Failed to install/update 7-Zip")
+                raise RuntimeError("7-Zip version check failed after installation")
 
             logger.info("7-Zip installation/update completed successfully")
 
-            # Show installed version
+            # Show installed version using absolute path
             try:
-                result = subprocess.run(['7zz', '--help'], capture_output=True, text=True)
-                version_line = result.stdout.split('\n')[0].strip()
-                logger.info(f"Installed: {version_line}")
+                result = subprocess.run([install_path, '--help'], capture_output=True, text=True, timeout=10)
+                if result.returncode == 0:
+                    version_line = result.stdout.split('\n')[0].strip()
+                    logger.info(f"Installed: {version_line}")
             except:
                 pass
 
