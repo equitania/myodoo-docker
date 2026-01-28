@@ -53,7 +53,7 @@ if os.environ.get('GETSCRIPTS_DEBUG', '').lower() in ('1', 'true', 'yes'):
     logger.debug("Debug logging enabled")
 
 # Script version and date
-SCRIPT_VERSION = "7.0.0"
+SCRIPT_VERSION = "7.0.1"
 SCRIPT_DATE = "28.01.2026"
 
 # Cache settings
@@ -591,6 +591,83 @@ cd $HOME
         return False
 
 
+def cleanup_legacy_files(_myhome: str, myodoo_docker: str) -> int:
+    """Remove legacy files listed in cleanup_legacy.txt.
+
+    Args:
+        _myhome: User's home directory
+        myodoo_docker: Path to myodoo-docker repository
+
+    Returns:
+        int: Number of files/directories removed
+    """
+    import glob as glob_module
+
+    cleanup_file = os.path.join(myodoo_docker, "cleanup_legacy.txt")
+
+    if not os.path.exists(cleanup_file):
+        logger.warning(f"Cleanup list not found: {cleanup_file}")
+        return 0
+
+    removed_count = 0
+    skipped_count = 0
+
+    try:
+        with open(cleanup_file, 'r') as f:
+            lines = f.readlines()
+
+        logger.info("=" * 60)
+        logger.info("Cleaning up legacy files...")
+        logger.info("=" * 60)
+
+        for line in lines:
+            line = line.strip()
+
+            # Skip empty lines and comments
+            if not line or line.startswith('#'):
+                continue
+
+            # Expand wildcards
+            pattern = os.path.join(_myhome, line)
+            matches = glob_module.glob(pattern)
+
+            if not matches:
+                # No matches found, that's OK - file might already be removed
+                continue
+
+            for filepath in matches:
+                try:
+                    if os.path.isfile(filepath):
+                        os.remove(filepath)
+                        logger.info(f"  Removed: {os.path.basename(filepath)}")
+                        removed_count += 1
+                    elif os.path.isdir(filepath):
+                        import shutil
+                        shutil.rmtree(filepath)
+                        logger.info(f"  Removed directory: {os.path.basename(filepath)}")
+                        removed_count += 1
+                except PermissionError:
+                    logger.warning(f"  Permission denied: {filepath}")
+                    skipped_count += 1
+                except Exception as e:
+                    logger.warning(f"  Could not remove {filepath}: {e}")
+                    skipped_count += 1
+
+        if removed_count > 0:
+            logger.info(f"Cleanup complete: {removed_count} items removed")
+        else:
+            logger.info("Cleanup complete: No legacy files found")
+
+        if skipped_count > 0:
+            logger.warning(f"  {skipped_count} items could not be removed")
+
+        return removed_count
+
+    except Exception as e:
+        logger.error(f"Error during cleanup: {e}")
+        return 0
+
+
 def prompt_shell_change(_myhome: str) -> bool:
     """Ask user if they want to change their default shell to Fish.
 
@@ -1117,13 +1194,11 @@ def get_pip_package_version(package_name: str) -> Optional[str]:
 
 def upgrade_pip_package(package_name: str) -> None:
     """Upgrade a pip package to the latest version only if needed."""
-    # Skip packages that should not be upgraded through pip
-    if package_name == "zstd":
-        logger.info("Skipping zstd upgrade through pip. It will be handled separately.")
-        return
+    # Skip packages that should not be upgraded through pip (system-managed)
+    system_managed_packages = ["zstd", "pip", "wheel", "setuptools"]
 
-    if package_name == "pip":
-        logger.info("Skipping pip self-upgrade. System pip managed by package manager.")
+    if package_name in system_managed_packages:
+        logger.info(f"Skipping {package_name} upgrade - managed by system package manager.")
         return
 
     # Check current version
@@ -2980,6 +3055,9 @@ def main() -> None:
 
         # Copy scripts (without update_docker_myodoo.py - deprecated)
         copy_scripts(_myhome, myodoo_docker)
+
+        # Clean up legacy files from previous installations
+        cleanup_legacy_files(_myhome, myodoo_docker)
 
         # Copy fastfetch config
         config_directory = os.path.join(_myhome, ".config", "fastfetch")
