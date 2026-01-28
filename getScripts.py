@@ -36,13 +36,14 @@ from concurrent.futures import ThreadPoolExecutor, as_completed
 from datetime import datetime, timedelta
 import pickle
 
-# Configure logging
+# Configure logging - always log to home directory to avoid polluting system dirs
+_log_file = os.path.join(os.path.expanduser("~"), "getscripts.log")
 logging.basicConfig(
     level=logging.INFO,  # Default to INFO level
     format='%(asctime)s - %(levelname)s - %(message)s',
     handlers=[
         logging.StreamHandler(),
-        logging.FileHandler('getscripts.log')
+        logging.FileHandler(_log_file)
     ]
 )
 logger = logging.getLogger(__name__)
@@ -53,7 +54,7 @@ if os.environ.get('GETSCRIPTS_DEBUG', '').lower() in ('1', 'true', 'yes'):
     logger.debug("Debug logging enabled")
 
 # Script version and date
-SCRIPT_VERSION = "7.0.1"
+SCRIPT_VERSION = "7.0.2"
 SCRIPT_DATE = "28.01.2026"
 
 # Cache settings
@@ -3058,6 +3059,12 @@ def main() -> None:
 
         # Clean up legacy files from previous installations
         cleanup_legacy_files(_myhome, myodoo_docker)
+
+        # Clean up misplaced log file from earlier versions (was created in cwd with sudo)
+        misplaced_log = "/etc/apt/sources.list.d/getscripts.log"
+        if os.path.exists(misplaced_log):
+            logger.info(f"Removing misplaced log file: {misplaced_log}")
+            run_command(f"rm -f {misplaced_log}")
 
         # Copy fastfetch config
         config_directory = os.path.join(_myhome, ".config", "fastfetch")
