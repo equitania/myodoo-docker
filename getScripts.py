@@ -54,7 +54,7 @@ if os.environ.get('GETSCRIPTS_DEBUG', '').lower() in ('1', 'true', 'yes'):
     logger.debug("Debug logging enabled")
 
 # Script version and date
-SCRIPT_VERSION = "7.1.3"
+SCRIPT_VERSION = "7.1.4"
 SCRIPT_DATE = "28.01.2026"
 
 # Cache settings
@@ -3320,11 +3320,14 @@ def main() -> None:
                         run_command(f"fish -c 'zoxide init fish | source'", shell=True)
                     except Exception:
                         pass
-                # Also initialize for ZSH fallback
-                try:
-                    run_command(f"/usr/bin/zsh -c 'source <({zoxide_path} init zsh)'", shell=True)
-                except Exception:
-                    pass
+                # Also initialize for ZSH fallback (only if ZSH is installed)
+                import shutil as shutil_check
+                zsh_path = shutil_check.which('zsh')
+                if zsh_path:
+                    try:
+                        run_command(f"{zsh_path} -c 'source <({zoxide_path} init zsh)'", shell=True)
+                    except Exception:
+                        pass
 
         except Exception as e:
             logger.error(f"Error setting up shell environment: {e}")
