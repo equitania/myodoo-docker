@@ -54,7 +54,7 @@ if os.environ.get('GETSCRIPTS_DEBUG', '').lower() in ('1', 'true', 'yes'):
     logger.debug("Debug logging enabled")
 
 # Script version and date
-SCRIPT_VERSION = "7.0.3"
+SCRIPT_VERSION = "7.1.0"
 SCRIPT_DATE = "28.01.2026"
 
 # Cache settings
@@ -262,65 +262,164 @@ def is_fish_installed() -> Tuple[bool, Optional[str]]:
         return False, None
 
 
-def install_fish_if_needed() -> bool:
-    """Install Fish shell 4.0+ if not installed or outdated.
+def is_fish_repo_configured() -> bool:
+    """Check if the official Fish shell repository is already configured.
 
     Returns:
-        bool: True if Fish is available (installed or already present)
+        bool: True if Fish repo is configured
+    """
+    repo_list = "/etc/apt/sources.list.d/shells:fish:release:4.list"
+    # Alternative name (some systems replace : with _)
+    repo_list_alt = "/etc/apt/sources.list.d/shells_fish_release_4.list"
+    # PPA list for Ubuntu
+    ppa_list = "/etc/apt/sources.list.d/fish-shell-ubuntu-release-4"
+
+    # Check for Debian-style repo
+    if os.path.exists(repo_list) or os.path.exists(repo_list_alt):
+        return True
+
+    # Check for Ubuntu PPA (glob pattern for different Ubuntu versions)
+    import glob as glob_module
+    if glob_module.glob(f"{ppa_list}*.list"):
+        return True
+
+    return False
+
+
+def install_fish_if_needed() -> Tuple[bool, bool]:
+    """Install Fish shell 4.0+ from official repository if not installed or outdated.
+
+    Uses official Fish shell repositories:
+    - Debian: OpenSUSE Build Service (shells:fish:release:4)
+    - Ubuntu: Launchpad PPA (ppa:fish-shell/release-4)
+
+    Returns:
+        Tuple[bool, bool]: (is_available, is_fresh_install)
+            - is_available: True if Fish 4.0+ is available after this function
+            - is_fresh_install: True if this was a first-time installation (triggers cleanup)
     """
     installed, current_version = is_fish_installed()
     min_version = "4.0.0"
+    is_fresh_install = False
 
+    # Check if Fish 4.0+ is already installed from official repo
     if installed:
         try:
             from packaging import version as pkg_version
             if pkg_version.parse(current_version) >= pkg_version.parse(min_version):
                 logger.info(f"Fish {current_version} is already installed and up to date")
-                return True
+                return True, False  # Already installed, not fresh
             logger.info(f"Fish {current_version} is installed but outdated (need {min_version}+)")
         except ImportError:
             # Fallback to simple comparison
             if compare_versions(current_version, min_version) >= 0:
                 logger.info(f"Fish {current_version} is already installed and up to date")
-                return True
+                return True, False  # Already installed, not fresh
+
+    # If we get here, we need to install or upgrade
+    is_fresh_install = not installed  # First time if not previously installed
 
     # Check if we have sudo privileges
     if not is_root_or_has_sudo():
         logger.warning("Cannot install Fish without sudo privileges")
-        return installed
+        return installed, False
 
     os_id, os_version = get_os_info()
 
+    # =========================================================================
+    # UBUNTU: Use Launchpad PPA
+    # =========================================================================
     if os_id == "ubuntu":
-        logger.info("Installing Fish shell 4.0+ from PPA...")
+        logger.info("Installing Fish shell 4.0+ from official PPA...")
         try:
-            # Add Fish PPA for latest version
-            run_command("sudo apt-add-repository -y ppa:fish-shell/release-4", check=True)
+            # Check if PPA is already added
+            if not is_fish_repo_configured():
+                logger.info("Adding Fish shell PPA repository...")
+                run_command("sudo apt-add-repository -y ppa:fish-shell/release-4", check=True)
+
             run_command("sudo apt update", check=True)
             run_command("sudo apt install -y fish", check=True)
 
             # Verify installation
             installed, new_version = is_fish_installed()
             if installed:
-                logger.info(f"Fish shell {new_version} installed successfully")
-                return True
+                logger.info(f"Fish shell {new_version} installed successfully from PPA")
+                return True, is_fresh_install
         except Exception as e:
             logger.error(f"Failed to install Fish from PPA: {e}")
+            return False, False
 
+    # =========================================================================
+    # DEBIAN: Use OpenSUSE Build Service repository
+    # =========================================================================
     elif os_id == "debian":
-        logger.info("Installing Fish shell from Debian repository...")
+        # Map Debian version to repository name
+        # VERSION_ID: 12 = Bookworm, 13 = Trixie
+        debian_repos = {
+            "12": "Debian_12",
+            "13": "Debian_13",
+        }
+
+        # Handle testing/unstable (no VERSION_ID or unusual values)
+        if os_version not in debian_repos:
+            # Try to detect from VERSION_CODENAME
+            try:
+                with open("/etc/os-release") as f:
+                    content = f.read()
+                if "bookworm" in content.lower():
+                    os_version = "12"
+                elif "trixie" in content.lower():
+                    os_version = "13"
+                else:
+                    # Default to latest stable
+                    logger.warning(f"Unknown Debian version '{os_version}', defaulting to Debian 13")
+                    os_version = "13"
+            except:
+                os_version = "13"
+
+        debian_version = debian_repos.get(os_version, "Debian_13")
+        repo_url = f"http://download.opensuse.org/repositories/shells:/fish:/release:/4/{debian_version}/"
+        key_url = f"https://download.opensuse.org/repositories/shells:fish:release:4/{debian_version}/Release.key"
+
+        logger.info(f"Installing Fish shell 4.0+ from official repository ({debian_version})...")
+
         try:
+            # Check if repository is already configured
+            if not is_fish_repo_configured():
+                logger.info(f"Adding Fish shell repository for {debian_version}...")
+
+                # Add repository
+                repo_list_content = f"deb {repo_url} /"
+                run_command(
+                    f"echo '{repo_list_content}' | sudo tee /etc/apt/sources.list.d/shells:fish:release:4.list",
+                    shell=True, check=True
+                )
+
+                # Import GPG key
+                logger.info("Importing Fish shell repository GPG key...")
+                run_command(
+                    f"curl -fsSL {key_url} | gpg --dearmor | sudo tee /etc/apt/trusted.gpg.d/shells_fish_release_4.gpg > /dev/null",
+                    shell=True, check=True
+                )
+
+            # Update and install
             run_command("sudo apt update", check=True)
             run_command("sudo apt install -y fish", check=True)
 
+            # Verify installation
             installed, new_version = is_fish_installed()
             if installed:
-                logger.info(f"Fish shell {new_version} installed successfully")
-                return True
+                logger.info(f"Fish shell {new_version} installed successfully from official repository")
+                return True, is_fresh_install
         except Exception as e:
-            logger.error(f"Failed to install Fish: {e}")
+            logger.error(f"Failed to install Fish from official repository: {e}")
+            return False, False
 
-    return False
+    else:
+        logger.warning(f"Unsupported OS: {os_id}. Cannot install Fish shell automatically.")
+        return installed, False
+
+    return False, False
 
 
 def is_starship_installed() -> Tuple[bool, Optional[str]]:
@@ -3031,8 +3130,9 @@ def main() -> None:
         logger.info("Setting up Fish shell environment...")
         logger.info("=" * 60)
 
-        # Install Fish shell 4.0+
-        fish_installed = install_fish_if_needed()
+        # Install Fish shell 4.0+ from official repository
+        # Returns (is_available, is_fresh_install)
+        fish_installed, fish_is_fresh_install = install_fish_if_needed()
 
         # Install Starship prompt
         starship_installed = install_starship_if_needed()
@@ -3041,34 +3141,43 @@ def main() -> None:
         if fish_installed:
             install_fisher_if_needed()
 
-        # Copy Fish configuration
+        # Copy Fish configuration (always update to get latest changes)
         if fish_installed:
             copy_fish_configuration(_myhome, myodoo_docker)
 
-        # Copy Starship configuration
+        # Copy Starship configuration (always update to get latest changes)
         if starship_installed:
             copy_starship_configuration(_myhome, myodoo_docker)
 
-        # Create simplified ZSH fallback (without Oh-My-Zsh)
-        create_simplified_zshrc(_myhome)
+        # Create simplified ZSH fallback only on fresh Fish install or if .zshrc doesn't exist
+        zshrc_path = os.path.join(_myhome, ".zshrc")
+        if fish_is_fresh_install or not os.path.exists(zshrc_path):
+            create_simplified_zshrc(_myhome)
+        else:
+            logger.info("Keeping existing .zshrc (Fish was already installed)")
 
         # =====================================================================
         # LEGACY ZSH CONFIGURATION (Deprecated)
         # =====================================================================
         # Note: We no longer copy the full .zshrc with Oh-My-Zsh
-        # The simplified .zshrc is created above
+        # The simplified .zshrc is created above (only on fresh install)
 
         # Copy scripts (without update_docker_myodoo.py - deprecated)
         copy_scripts(_myhome, myodoo_docker)
 
-        # Clean up legacy files from previous installations
-        cleanup_legacy_files(_myhome, myodoo_docker)
+        # Clean up legacy files ONLY on fresh Fish installation
+        # This prevents running cleanup on every script execution
+        if fish_is_fresh_install:
+            logger.info("Fresh Fish installation detected - cleaning up legacy files...")
+            cleanup_legacy_files(_myhome, myodoo_docker)
 
-        # Clean up misplaced log file from earlier versions (was created in cwd with sudo)
-        misplaced_log = "/etc/apt/sources.list.d/getscripts.log"
-        if os.path.exists(misplaced_log):
-            logger.info(f"Removing misplaced log file: {misplaced_log}")
-            run_command(f"rm -f {misplaced_log}")
+            # Clean up misplaced log file from earlier versions
+            misplaced_log = "/etc/apt/sources.list.d/getscripts.log"
+            if os.path.exists(misplaced_log):
+                logger.info(f"Removing misplaced log file: {misplaced_log}")
+                run_command(f"rm -f {misplaced_log}")
+        else:
+            logger.info("Fish already installed - skipping legacy cleanup")
 
         # Copy fastfetch config
         config_directory = os.path.join(_myhome, ".config", "fastfetch")
@@ -3121,8 +3230,8 @@ def main() -> None:
         except Exception as e:
             logger.error(f"Error setting up shell environment: {e}")
 
-        # Ask user about changing default shell to Fish
-        if fish_installed:
+        # Ask user about changing default shell to Fish (only on fresh install)
+        if fish_installed and fish_is_fresh_install:
             prompt_shell_change(_myhome)
 
         # Return to original directory
