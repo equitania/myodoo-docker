@@ -53,8 +53,8 @@ if os.environ.get('GETSCRIPTS_DEBUG', '').lower() in ('1', 'true', 'yes'):
     logger.debug("Debug logging enabled")
 
 # Script version and date
-SCRIPT_VERSION = "6.8.11"
-SCRIPT_DATE = "12.12.2025"
+SCRIPT_VERSION = "7.0.0"
+SCRIPT_DATE = "28.01.2026"
 
 # Cache settings
 CACHE_DIR = os.path.expanduser("~/.cache/getscripts")
@@ -227,6 +227,429 @@ def normalize_zoxide_version(version: str) -> str:
     if '-' in clean_version:
         clean_version = clean_version.split('-')[0]
     return clean_version
+
+
+# =============================================================================
+# FISH SHELL SUPPORT (New in v7.0.0)
+# =============================================================================
+
+def is_fish_installed() -> Tuple[bool, Optional[str]]:
+    """Check if Fish shell is installed and get its version.
+
+    Returns:
+        Tuple[bool, Optional[str]]: Installation status and version if installed
+    """
+    try:
+        result = subprocess.run(
+            ["fish", "--version"],
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            text=True,
+            check=False
+        )
+        if result.returncode == 0:
+            output = result.stdout.strip() or result.stderr.strip()
+            # Fish version output: "fish, version 4.0.0"
+            version_match = re.search(r'version (\d+\.\d+\.\d+)', output)
+            if version_match:
+                version = version_match.group(1)
+                logger.info(f"Fish shell version {version} found")
+                return True, version
+        return False, None
+    except FileNotFoundError:
+        logger.info("Fish shell not found")
+        return False, None
+
+
+def install_fish_if_needed() -> bool:
+    """Install Fish shell 4.0+ if not installed or outdated.
+
+    Returns:
+        bool: True if Fish is available (installed or already present)
+    """
+    installed, current_version = is_fish_installed()
+    min_version = "4.0.0"
+
+    if installed:
+        try:
+            from packaging import version as pkg_version
+            if pkg_version.parse(current_version) >= pkg_version.parse(min_version):
+                logger.info(f"Fish {current_version} is already installed and up to date")
+                return True
+            logger.info(f"Fish {current_version} is installed but outdated (need {min_version}+)")
+        except ImportError:
+            # Fallback to simple comparison
+            if compare_versions(current_version, min_version) >= 0:
+                logger.info(f"Fish {current_version} is already installed and up to date")
+                return True
+
+    # Check if we have sudo privileges
+    if not is_root_or_has_sudo():
+        logger.warning("Cannot install Fish without sudo privileges")
+        return installed
+
+    os_id, os_version = get_os_info()
+
+    if os_id == "ubuntu":
+        logger.info("Installing Fish shell 4.0+ from PPA...")
+        try:
+            # Add Fish PPA for latest version
+            run_command("sudo apt-add-repository -y ppa:fish-shell/release-4", check=True)
+            run_command("sudo apt update", check=True)
+            run_command("sudo apt install -y fish", check=True)
+
+            # Verify installation
+            installed, new_version = is_fish_installed()
+            if installed:
+                logger.info(f"Fish shell {new_version} installed successfully")
+                return True
+        except Exception as e:
+            logger.error(f"Failed to install Fish from PPA: {e}")
+
+    elif os_id == "debian":
+        logger.info("Installing Fish shell from Debian repository...")
+        try:
+            run_command("sudo apt update", check=True)
+            run_command("sudo apt install -y fish", check=True)
+
+            installed, new_version = is_fish_installed()
+            if installed:
+                logger.info(f"Fish shell {new_version} installed successfully")
+                return True
+        except Exception as e:
+            logger.error(f"Failed to install Fish: {e}")
+
+    return False
+
+
+def is_starship_installed() -> Tuple[bool, Optional[str]]:
+    """Check if Starship prompt is installed and get its version.
+
+    Returns:
+        Tuple[bool, Optional[str]]: Installation status and version if installed
+    """
+    try:
+        result = subprocess.run(
+            ["starship", "--version"],
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            text=True,
+            check=False
+        )
+        if result.returncode == 0:
+            output = result.stdout.strip()
+            # Starship version output: "starship 1.17.1"
+            parts = output.split()
+            if len(parts) >= 2:
+                version = parts[1]
+                logger.info(f"Starship version {version} found")
+                return True, version
+        return False, None
+    except FileNotFoundError:
+        logger.info("Starship not found")
+        return False, None
+
+
+def install_starship_if_needed() -> bool:
+    """Install Starship prompt if not installed.
+
+    Returns:
+        bool: True if Starship is available
+    """
+    installed, current_version = is_starship_installed()
+
+    if installed:
+        logger.info(f"Starship {current_version} is already installed")
+        return True
+
+    logger.info("Installing Starship prompt...")
+    try:
+        # Install via official installer
+        run_command("curl -sS https://starship.rs/install.sh | sh -s -- -y", shell=True, check=True)
+
+        installed, new_version = is_starship_installed()
+        if installed:
+            logger.info(f"Starship {new_version} installed successfully")
+            return True
+    except Exception as e:
+        logger.error(f"Failed to install Starship: {e}")
+
+    return False
+
+
+def is_fisher_installed() -> bool:
+    """Check if Fisher plugin manager is installed for Fish.
+
+    Returns:
+        bool: True if Fisher is installed
+    """
+    fisher_path = os.path.expanduser("~/.config/fish/functions/fisher.fish")
+    return os.path.exists(fisher_path)
+
+
+def install_fisher_if_needed() -> bool:
+    """Install Fisher plugin manager for Fish if not installed.
+
+    Returns:
+        bool: True if Fisher is available
+    """
+    if is_fisher_installed():
+        logger.info("Fisher is already installed")
+        return True
+
+    # Check if Fish is available
+    installed, _ = is_fish_installed()
+    if not installed:
+        logger.warning("Cannot install Fisher without Fish shell")
+        return False
+
+    logger.info("Installing Fisher plugin manager...")
+    try:
+        install_cmd = 'fish -c "curl -sL https://raw.githubusercontent.com/jorgebucaran/fisher/main/functions/fisher.fish | source && fisher install jorgebucaran/fisher"'
+        run_command(install_cmd, shell=True, check=True)
+
+        if is_fisher_installed():
+            logger.info("Fisher installed successfully")
+            return True
+    except Exception as e:
+        logger.error(f"Failed to install Fisher: {e}")
+
+    return False
+
+
+def copy_fish_configuration(_myhome: str, myodoo_docker: str) -> bool:
+    """Copy Fish shell configuration from repository to user's config directory.
+
+    Args:
+        _myhome: User's home directory
+        myodoo_docker: Path to myodoo-docker repository
+
+    Returns:
+        bool: True if configuration was copied successfully
+    """
+    import shutil
+
+    source_fish_dir = os.path.join(myodoo_docker, "fish")
+    target_fish_dir = os.path.join(_myhome, ".config", "fish")
+
+    if not os.path.exists(source_fish_dir):
+        logger.warning(f"Fish configuration not found in repository: {source_fish_dir}")
+        return False
+
+    try:
+        # Create target directory if it doesn't exist
+        ensure_directory_exists(target_fish_dir)
+
+        # Backup existing configuration
+        if os.path.exists(os.path.join(target_fish_dir, "config.fish")):
+            backup_path = os.path.join(target_fish_dir, "config.fish.bak")
+            logger.info(f"Backing up existing Fish config to {backup_path}")
+            shutil.copy2(os.path.join(target_fish_dir, "config.fish"), backup_path)
+
+        # Copy config.fish
+        source_config = os.path.join(source_fish_dir, "config.fish")
+        if os.path.exists(source_config):
+            shutil.copy2(source_config, os.path.join(target_fish_dir, "config.fish"))
+            logger.info("Copied config.fish")
+
+        # Copy conf.d directory
+        source_confd = os.path.join(source_fish_dir, "conf.d")
+        target_confd = os.path.join(target_fish_dir, "conf.d")
+        if os.path.exists(source_confd):
+            ensure_directory_exists(target_confd)
+            for item in os.listdir(source_confd):
+                source_item = os.path.join(source_confd, item)
+                target_item = os.path.join(target_confd, item)
+                if os.path.isfile(source_item):
+                    shutil.copy2(source_item, target_item)
+            logger.info("Copied conf.d/ modules")
+
+        # Copy functions directory (Linux-specific)
+        source_functions = os.path.join(source_fish_dir, "functions", "linux")
+        target_functions = os.path.join(target_fish_dir, "functions")
+        if os.path.exists(source_functions):
+            ensure_directory_exists(target_functions)
+            for item in os.listdir(source_functions):
+                source_item = os.path.join(source_functions, item)
+                target_item = os.path.join(target_functions, item)
+                if os.path.isfile(source_item):
+                    shutil.copy2(source_item, target_item)
+            logger.info("Copied functions/")
+
+        logger.info("Fish configuration copied successfully")
+        return True
+
+    except Exception as e:
+        logger.error(f"Error copying Fish configuration: {e}")
+        return False
+
+
+def copy_starship_configuration(_myhome: str, myodoo_docker: str) -> bool:
+    """Copy Starship configuration from repository.
+
+    Args:
+        _myhome: User's home directory
+        myodoo_docker: Path to myodoo-docker repository
+
+    Returns:
+        bool: True if configuration was copied successfully
+    """
+    import shutil
+
+    source_starship = os.path.join(myodoo_docker, "starship.toml")
+    target_starship = os.path.join(_myhome, ".config", "starship.toml")
+
+    if not os.path.exists(source_starship):
+        logger.warning(f"Starship configuration not found: {source_starship}")
+        return False
+
+    try:
+        target_dir = os.path.dirname(target_starship)
+        ensure_directory_exists(target_dir)
+
+        if os.path.exists(target_starship):
+            backup_path = f"{target_starship}.bak"
+            logger.info(f"Backing up existing Starship config to {backup_path}")
+            shutil.copy2(target_starship, backup_path)
+
+        shutil.copy2(source_starship, target_starship)
+        logger.info("Starship configuration copied successfully")
+        return True
+
+    except Exception as e:
+        logger.error(f"Error copying Starship configuration: {e}")
+        return False
+
+
+def create_simplified_zshrc(_myhome: str) -> bool:
+    """Create a simplified .zshrc without Oh-My-Zsh dependency.
+
+    This serves as a fallback for users who need to use ZSH.
+
+    Args:
+        _myhome: User's home directory
+
+    Returns:
+        bool: True if created successfully
+    """
+    zshrc_path = os.path.join(_myhome, ".zshrc")
+
+    # Backup existing .zshrc if it has Oh-My-Zsh
+    if os.path.exists(zshrc_path):
+        try:
+            with open(zshrc_path, 'r') as f:
+                content = f.read()
+            if 'oh-my-zsh' in content.lower():
+                backup_path = f"{zshrc_path}.bak.ohmyzsh"
+                logger.info(f"Backing up Oh-My-Zsh config to {backup_path}")
+                import shutil
+                shutil.copy2(zshrc_path, backup_path)
+        except Exception as e:
+            logger.warning(f"Could not check existing .zshrc: {e}")
+
+    simplified_zshrc = '''# ZSH Fallback Configuration (Fish is primary shell)
+# Version 4.0.0 | 28.01.2026
+# This is a minimal ZSH configuration without Oh-My-Zsh dependency
+
+# PATH configuration
+export PATH="$HOME/bin:$HOME/.local/bin:/usr/local/bin:$PATH"
+
+# Zoxide (if available)
+if command -v zoxide &> /dev/null; then
+    eval "$(zoxide init zsh)"
+fi
+
+# Starship prompt (if available)
+if command -v starship &> /dev/null; then
+    eval "$(starship init zsh)"
+fi
+
+# Minimal aliases
+alias ls='ls -h --color --classify'
+alias ll='ls -alh --color --classify'
+alias lg='lazygit'
+alias grep='grep --color=auto'
+alias ff='fastfetch'
+alias dk='docker'
+alias dps='docker ps -a --format "table {{.Names}}\\t{{.ID}}\\t{{.Image}}\\t{{.Status}}\\t{{.Ports}}" | sort'
+
+# Fastfetch on startup
+if command -v fastfetch &> /dev/null; then
+    fastfetch
+fi
+
+cd $HOME
+'''
+
+    try:
+        with open(zshrc_path, 'w') as f:
+            f.write(simplified_zshrc)
+        logger.info("Created simplified .zshrc (Fish is now primary shell)")
+        return True
+    except Exception as e:
+        logger.error(f"Error creating simplified .zshrc: {e}")
+        return False
+
+
+def prompt_shell_change(_myhome: str) -> bool:
+    """Ask user if they want to change their default shell to Fish.
+
+    Args:
+        _myhome: User's home directory
+
+    Returns:
+        bool: True if shell was changed
+    """
+    installed, version = is_fish_installed()
+    if not installed:
+        return False
+
+    try:
+        # Check current shell
+        current_shell = os.environ.get('SHELL', '')
+        if 'fish' in current_shell:
+            logger.info("Fish is already the default shell")
+            return True
+
+        # Ask user
+        print()
+        print("=" * 60)
+        print(f"  Fish shell {version} has been installed and configured.")
+        print("  Fish is now the recommended shell for this environment.")
+        print("=" * 60)
+        print()
+
+        response = input("Do you want to set Fish as your default shell? (Y/n): ").strip().lower()
+
+        if response == '' or response == 'y' or response == 'yes':
+            # Find fish path
+            result = subprocess.run(['which', 'fish'], capture_output=True, text=True)
+            if result.returncode == 0:
+                fish_path = result.stdout.strip()
+
+                # Check if fish is in /etc/shells
+                with open('/etc/shells', 'r') as f:
+                    shells = f.read()
+                if fish_path not in shells:
+                    logger.info(f"Adding {fish_path} to /etc/shells")
+                    run_command(f"echo '{fish_path}' | sudo tee -a /etc/shells", shell=True)
+
+                # Change shell
+                logger.info(f"Changing default shell to {fish_path}")
+                run_command(f"chsh -s {fish_path}", check=True)
+                logger.info("Default shell changed to Fish!")
+                print()
+                print("Please log out and log back in for the change to take effect.")
+                print("Or start Fish now by typing: fish")
+                print()
+                return True
+        else:
+            logger.info("Keeping current shell. You can start Fish manually with: fish")
+            return False
+
+    except Exception as e:
+        logger.error(f"Error changing shell: {e}")
+        return False
 
 
 def is_zoxide_installed() -> Tuple[bool, Optional[str]]:
@@ -2391,24 +2814,19 @@ def update_repository(myodoo_docker: str, server_version: str) -> None:
     run_command("find . -name '*.pyc' -type f -delete")
 
 def copy_configuration_files(_myhome: str, myodoo_docker: str) -> None:
-    """Copy configuration files from repository to home directory."""
-    # Copy .zshrc
-    source_zshrc = os.path.join(myodoo_docker, ".zshrc")
-    target_zshrc = os.path.join(_myhome, ".zshrc")
-    if os.path.exists(source_zshrc):
-        if os.path.exists(target_zshrc):
-            backup_path = f"{target_zshrc}.bak"
-            logger.info(f"Backing up existing .zshrc to {backup_path}")
-            run_command(f"cp {target_zshrc} {backup_path}")
-        
-        logger.info(f"Copying .zshrc from {source_zshrc} to {target_zshrc}")
-        run_command(f"cp {source_zshrc} {target_zshrc}")
-        ensure_path_in_zshrc()
-    
+    """Copy configuration files from repository to home directory.
+
+    Note: As of v7.0.0, .zshrc is no longer copied from repository.
+    Fish shell is now the primary shell, and a simplified .zshrc is
+    generated by create_simplified_zshrc() for fallback purposes.
+    """
+    # Note: .zshrc copying removed in v7.0.0 - Fish is now primary shell
+    # The simplified .zshrc is created by create_simplified_zshrc()
+
     # Copy fastfetch config
     config_directory = os.path.join(_myhome, ".config", "fastfetch")
     ensure_directory_exists(config_directory)
-    
+
     source_fastfetch = os.path.join(myodoo_docker, "scripts", "fastfetch", "config.jsonc")
     target_fastfetch = os.path.join(config_directory, "config.jsonc")
     if os.path.exists(source_fastfetch):
@@ -2418,7 +2836,6 @@ def copy_scripts(_myhome: str, myodoo_docker: str) -> None:
     """Copy utility scripts to home directory."""
     scripts = [
         "update_docker_odoo.py",
-        "update_docker_myodoo.py",
         "docker-clean-logs.sh",
         "cleanup-weblogs.py",
         "container2backup.py",
@@ -2505,20 +2922,20 @@ def install_packages(package_info: Dict[str, Any]) -> None:
 def main() -> None:
     """Main function to execute the script."""
     original_dir = os.getcwd()
-    
+
     try:
         # Setup environment
         _myhome, local_bin = setup_environment()
-        
+
         # First, upgrade pip if needed
         upgrade_pip()
-        
+
         # Check and optimize DNS configuration
         optimize_dns_configuration()
-        
-        global_server_version = '2025'
+
+        global_server_version = '2026'
         myodoo_docker = os.path.join(_myhome, "myodoo-docker")
-        
+
         # Update or clone repository
         try:
             update_repository(myodoo_docker, global_server_version)
@@ -2526,53 +2943,116 @@ def main() -> None:
             logger.error(f"Failed to update or clone repository: {e}")
             logger.error(f"Please check network connectivity and permissions")
             sys.exit(1)
-        
-        # Copy configuration files and scripts
-        copy_configuration_files(_myhome, myodoo_docker)
+
+        # =====================================================================
+        # FISH SHELL SETUP (New in v7.0.0)
+        # =====================================================================
+        logger.info("=" * 60)
+        logger.info("Setting up Fish shell environment...")
+        logger.info("=" * 60)
+
+        # Install Fish shell 4.0+
+        fish_installed = install_fish_if_needed()
+
+        # Install Starship prompt
+        starship_installed = install_starship_if_needed()
+
+        # Install Fisher plugin manager (if Fish is available)
+        if fish_installed:
+            install_fisher_if_needed()
+
+        # Copy Fish configuration
+        if fish_installed:
+            copy_fish_configuration(_myhome, myodoo_docker)
+
+        # Copy Starship configuration
+        if starship_installed:
+            copy_starship_configuration(_myhome, myodoo_docker)
+
+        # Create simplified ZSH fallback (without Oh-My-Zsh)
+        create_simplified_zshrc(_myhome)
+
+        # =====================================================================
+        # LEGACY ZSH CONFIGURATION (Deprecated)
+        # =====================================================================
+        # Note: We no longer copy the full .zshrc with Oh-My-Zsh
+        # The simplified .zshrc is created above
+
+        # Copy scripts (without update_docker_myodoo.py - deprecated)
         copy_scripts(_myhome, myodoo_docker)
-        
+
+        # Copy fastfetch config
+        config_directory = os.path.join(_myhome, ".config", "fastfetch")
+        ensure_directory_exists(config_directory)
+        source_fastfetch = os.path.join(myodoo_docker, "scripts", "fastfetch", "config.jsonc")
+        target_fastfetch = os.path.join(config_directory, "config.jsonc")
+        if os.path.exists(source_fastfetch):
+            run_command(f"cp {source_fastfetch} {target_fastfetch}")
+
         os.chdir(_myhome)
-        
+
         # Clean up old packages
         if is_pip_package_installed("nginx-set-conf-equitania"):
             logger.info("Removing nginx-set-conf-equitania...")
             uninstall_pip_package("nginx-set-conf-equitania")
-        
+
         if is_pip_package_installed("odoo-fast-report-mapper-equitania"):
             logger.info("Removing odoo-fast-report-mapper-equitania...")
             uninstall_pip_package("odoo-fast-report-mapper-equitania")
-        
+
         # Read package versions from packages.txt
         package_info = read_package_versions(os.path.join(myodoo_docker, "packages.txt"))
-        
+
         # Install all packages
         install_packages(package_info)
-        
-        # Reload shell configuration
-        logger.info("Reloading shell configuration...")
+
+        # =====================================================================
+        # SHELL SETUP COMPLETION
+        # =====================================================================
+        logger.info("Setting up shell environment...")
         try:
             if local_bin not in os.environ.get("PATH", ""):
                 os.environ["PATH"] = f"{local_bin}:{os.environ.get('PATH', '')}"
-            
+
+            # Initialize zoxide for both shells
             zoxide_path = os.path.join(_myhome, ".local", "bin", "zoxide")
             if os.path.exists(zoxide_path):
-                run_command(f"/usr/bin/zsh -c 'source <({zoxide_path} init zsh)'", shell=True)
-            else:
-                run_command("/usr/bin/zsh -c 'hash -r && source <(zoxide init zsh)'", shell=True)
-            
-            logger.info("For the PATH changes to take effect in new shells, you may need to restart your terminal or run 'source ~/.zshrc'")
-            
+                # Try Fish first if available
+                if fish_installed:
+                    try:
+                        run_command(f"fish -c 'zoxide init fish | source'", shell=True)
+                    except Exception:
+                        pass
+                # Also initialize for ZSH fallback
+                try:
+                    run_command(f"/usr/bin/zsh -c 'source <({zoxide_path} init zsh)'", shell=True)
+                except Exception:
+                    pass
+
         except Exception as e:
-            logger.error(f"Error reloading shell configuration: {e}")
-        
+            logger.error(f"Error setting up shell environment: {e}")
+
+        # Ask user about changing default shell to Fish
+        if fish_installed:
+            prompt_shell_change(_myhome)
+
         # Return to original directory
         try:
             os.chdir(original_dir)
         except FileNotFoundError:
             os.chdir(_myhome)
-        
+
+        logger.info("")
+        logger.info("=" * 60)
         logger.info("Script completed successfully!")
-        
+        logger.info("=" * 60)
+        if fish_installed:
+            logger.info("Fish shell is now configured. Start it with: fish")
+            logger.info("Or log out and back in if you changed your default shell.")
+        else:
+            logger.info("For ZSH changes to take effect, run: source ~/.zshrc")
+        logger.info("")
+
     except Exception as e:
         logger.error(f"An error occurred in main: {str(e)}")
         try:
