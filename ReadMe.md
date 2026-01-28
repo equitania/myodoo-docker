@@ -28,10 +28,11 @@ cp myodoo-docker/getScripts.py /root/
 #### 1. Verwaltungsskripte
 
 - **getScripts.py**
-  - Hauptinstallationsskript
+  - Hauptinstallationsskript (Version 7.x)
+  - Installiert Fish Shell mit Starship Prompt
   - Installiert alle benötigten Werkzeuge und Abhängigkeiten
   - Aktualisiert bestehende Installationen
-  - **NEU**: DNS-Konfigurationsprüfung und -optimierung
+  - DNS-Konfigurationsprüfung und -optimierung
   - Erkennt Hetzner-DNS-Probleme mit DigitalOcean
   - Unterstützt systemd-resolved, resolvconf und direkte DNS-Konfiguration
 
@@ -39,7 +40,8 @@ cp myodoo-docker/getScripts.py /root/
   - Automatisches Backup-System für Odoo-Datenbanken
   - Sichert Datenbank, Filestore und zusätzliche Pfade
   - Konfiguration über YAML-Datei
-  - Optionale AES-256 Verschlüsselung
+  - Unterstützt 7z, zip, gzip und zstd Kompression
+  - Optionale AES-256 Verschlüsselung (nur 7z)
   - Automatische Bereinigung alter Backups
   ```yaml
   # Beispiel container2backup.yaml
@@ -47,7 +49,8 @@ cp myodoo-docker/getScripts.py /root/
     retention_days: 14
     db_user: ownerp
     compression:
-      level: 5  # 7-Zip Kompressionsgrad (0-9)
+      format: "7z"  # 7z, zip, gzip, zstd
+      level: 5      # Kompressionsgrad (0-9)
   ```
 
 - **update_docker_odoo.py**
@@ -55,37 +58,53 @@ cp myodoo-docker/getScripts.py /root/
   - Sicherheitsrelevante Updates
   - Neustart von Diensten
 
-#### 2. Systemkonfigurationen
+#### 2. Shell-Konfiguration (NEU ab Version 7.0)
+
+**Fish Shell** ist die primäre Shell mit Starship Prompt. ZSH bleibt als Fallback verfügbar.
+
+```
+fish/
+├── config.fish              # Einstiegspunkt
+├── conf.d/
+│   ├── 00-env.fish         # Umgebungsvariablen
+│   ├── 10-path.fish        # PATH-Konfiguration
+│   ├── 20-tools.fish       # Zoxide, Starship Init
+│   ├── 30-aliases-*.fish   # Domain-spezifische Aliase
+│   └── 50-prompt.fish      # Startup-Verhalten
+└── functions/linux/        # Linux-spezifische Funktionen
+```
+
+**Starship Prompt** zeigt:
+- Benutzername und Hostname
+- Git-Branch und Status
+- Docker-Kontext
+- Python/Node.js/Rust Versionen
+- Befehlsdauer (>2s)
+
+#### 3. Systemkonfigurationen
 
 - Nginx-Konfigurationen für Reverse Proxy
 - Let's Encrypt SSL-Integration
 - Docker-Build-Konfigurationen
 
-#### 3. Sicherheitsfeatures
+#### 4. Sicherheitsfeatures
 
 - Verschlüsselte Backups (AES-256)
 - Automatische SSL-Zertifikatserneuerung
 - Sichere Standardkonfigurationen
-- **NEU**: DNS-Optimierung für bessere Performance
+- DNS-Optimierung für bessere Performance
 
-#### 4. Shell-Aliasse
+#### 5. Shell-Aliasse
 
-Die ZSH-Konfiguration enthält nützliche Aliasse für die tägliche Arbeit:
+Die Fish/ZSH-Konfiguration enthält nützliche Aliasse für die tägliche Arbeit:
 
 ##### Grundlegende Aliasse
 - `ls` - verbesserte Verzeichnisanzeige
 - `ll` - ausführliche Verzeichnisanzeige
-- `lg` - Lazygit-Shortcut 
+- `lg` - Lazygit-Shortcut
 - `grep` - Ausgabe mit Farbhervorhebung
-- `nano` - Nano mit besseren Standardoptionen
 - `hg` - History-Suche
-- `nf` - Neofetch ausführen
 - `ff` - Fastfetch ausführen
-- `mce` - Shortcut für mcedit
-- `rm` - sichereres Löschen mit Bestätigung
-- `chmod` - mit Änderungsanzeige
-- `chown` - mit Änderungsanzeige
-- `shred` - sicheres Löschen von Dateien
 - `bat` - Alias für batcat
 
 ##### Nginx-Aliasse
@@ -96,14 +115,13 @@ Die ZSH-Konfiguration enthält nützliche Aliasse für die tägliche Arbeit:
 - `ngxr` - Nginx-Konfiguration neu laden
 - `ngxs` - Nginx-Status anzeigen
 - `ngx!` - Nginx-Konfigurationstest
-- `ngxl` - Nginx-Test mit spezifischer Konfigurationsdatei
 - `ngxset` - Nginx-Konfiguration setzen
 - `showcerts` - Zertifikate anzeigen
 
 ##### System-Aliasse
+- `syspatch` - Umfassende Systemaktualisierung und Bereinigung
 - `prepatch` - Systemupdate in einer Screen-Session vorbereiten
 - `cleandlog` - Docker-Logs bereinigen
-- `syspatch` - Umfassende Systemaktualisierung und Bereinigung (apt-basiert)
 - `dusort` - Verzeichnisgrößen sortiert anzeigen
 - `f2b` - Fail2ban-Client-Status anzeigen
 - `ups` - Update der ownERP-Skripte
@@ -111,37 +129,26 @@ Die ZSH-Konfiguration enthält nützliche Aliasse für die tägliche Arbeit:
 ##### ownERP-Aliasse
 - `dobk` - Ausführen des Backup-Skripts
 - `doup` - Aktualisieren der Docker-Container
-- `doup2` - Alternative Docker-Container-Aktualisierung
 - `edbk` - Backup-Konfiguration bearbeiten (YAML)
-- `edbk2` - Alternative Backup-Konfiguration bearbeiten (CSV)
 - `edup` - Update-Konfiguration bearbeiten (YAML)
-- `edup2` - Alternative Update-Konfiguration bearbeiten (CSV)
 - `llbk` - Backup-Verzeichnis auflisten
 - `cpbk` - Kopieren aus dem Backup-Verzeichnis
 
 ##### Docker-Aliasse
 - `dk` - Shortcut für docker
 - `dps` - Docker-Container übersichtlich auflisten
-- `dpsall` - Erweiterte Docker-Container-Auflistung
 - `dpi` - Docker-Images anzeigen
-- `dkpsf` - Docker-Containerkommandos anzeigen
 - `dkvol` - Docker-Volumes überprüfen
 - `dkstop` - Alle Container stoppen
-- `dkrm` - Alle Container entfernen
-- `dkrmi` - Alle Images entfernen
-- `dkrmv` - Alle Docker-Volumes entfernen
+- `dkrm` - Alle Container entfernen (mit Bestätigung)
+- `dkrmi` - Alle Images entfernen (mit Bestätigung)
+- `dkrmv` - Alle Docker-Volumes entfernen (mit Bestätigung)
 - `dkprs` - Docker-System bereinigen
-- `dkprv` - Docker-Volumes bereinigen
-- `dkprf` - Komplette Docker-Systembereinigung
-- `dkprfa` - Komplette Docker-Systembereinigung inkl. Volumes
 - `ox` - Shortcut für oxker
-- `dkprfs` - docker system cleanup with force option
 
-#### 5. DNS-Optimierung (NEU)
+#### 6. DNS-Optimierung
 
 **Automatische DNS-Konfigurationsprüfung und -optimierung**
-
-Das getScripts.py-Skript prüft automatisch die DNS-Konfiguration und bietet bei Bedarf Optimierungen an:
 
 ```bash
 # DNS-Optimierung als Teil der Installation
@@ -156,40 +163,34 @@ Das getScripts.py-Skript prüft automatisch die DNS-Konfiguration und bietet bei
 - Langsame DNS-Auflösungszeiten (>50ms)
 - Suboptimale DNS-Konfiguration
 
-**Unterstützte DNS-Systeme:**
-- systemd-resolved (Standard bei Debian Bookworm)
-- resolvconf (klassische Konfiguration)
-- Direkte /etc/resolv.conf-Bearbeitung
-
 **Empfohlene DNS-Server:**
 - Primär: 1.1.1.1 (Cloudflare)
 - Sekundär: 8.8.8.8 (Google)
 - Tertiär: 9.9.9.9 (Quad9)
 
-**Docker-Container-Konfiguration:**
-```yaml
-# docker-compose.yml
-services:
-  odoo:
-    dns:
-      - 1.1.1.1
-      - 8.8.8.8
-      - 9.9.9.9
-```
-
-```bash
-# docker run
-docker run --dns 1.1.1.1 --dns 8.8.8.8 --dns 9.9.9.9 your-image
-```
-
 ### Branch-Verwaltung
 
 ```bash
-# Wechsel zu einer spezifischen Version (z.B. 2025)
+# Wechsel zu einer spezifischen Version (z.B. 2026)
 cd $HOME && rm -rf myodoo-docker && rm -rf nginx-conf && \
-  git clone -b 2025 https://github.com/equitania/myodoo-docker.git && \
+  git clone -b 2026 https://github.com/equitania/myodoo-docker.git && \
   cp myodoo-docker/getScripts.py $HOME && \
-  $HOME/getScripts.py && source ~/.zshrc
+  $HOME/getScripts.py && source ~/.config/fish/config.fish
+```
+
+### Migration von ZSH zu Fish
+
+Bei bestehenden Installationen:
+1. `getScripts.py` ausführen - installiert Fish automatisch
+2. Bei der Frage "Fish als Standard-Shell?" mit "j" bestätigen
+3. Alte .zshrc bleibt als Fallback erhalten
+
+```bash
+# Manueller Wechsel zu Fish
+chsh -s /usr/bin/fish
+
+# Zurück zu ZSH falls nötig
+chsh -s /usr/bin/zsh
 ```
 
 ---
@@ -218,10 +219,11 @@ cp myodoo-docker/getScripts.py /root/
 #### 1. Management Scripts
 
 - **getScripts.py**
-  - Main installation script
+  - Main installation script (Version 7.x)
+  - Installs Fish Shell with Starship Prompt
   - Installs all required tools and dependencies
   - Updates existing installations
-  - **NEW**: DNS configuration check and optimization
+  - DNS configuration check and optimization
   - Detects Hetzner DNS issues with DigitalOcean
   - Supports systemd-resolved, resolvconf, and direct DNS configuration
 
@@ -229,7 +231,8 @@ cp myodoo-docker/getScripts.py /root/
   - Automatic backup system for Odoo databases
   - Backs up database, filestore, and additional paths
   - Configuration via YAML file
-  - Optional AES-256 encryption
+  - Supports 7z, zip, gzip and zstd compression
+  - Optional AES-256 encryption (7z only)
   - Automatic cleanup of old backups
   ```yaml
   # Example container2backup.yaml
@@ -237,7 +240,8 @@ cp myodoo-docker/getScripts.py /root/
     retention_days: 14
     db_user: ownerp
     compression:
-      level: 5  # 7-Zip compression level (0-9)
+      format: "7z"  # 7z, zip, gzip, zstd
+      level: 5      # Compression level (0-9)
   ```
 
 - **update_docker_odoo.py**
@@ -245,37 +249,53 @@ cp myodoo-docker/getScripts.py /root/
   - Security-relevant updates
   - Service restart management
 
-#### 2. System Configurations
+#### 2. Shell Configuration (NEW in Version 7.0)
+
+**Fish Shell** is the primary shell with Starship Prompt. ZSH remains available as fallback.
+
+```
+fish/
+├── config.fish              # Entry point
+├── conf.d/
+│   ├── 00-env.fish         # Environment variables
+│   ├── 10-path.fish        # PATH configuration
+│   ├── 20-tools.fish       # Zoxide, Starship init
+│   ├── 30-aliases-*.fish   # Domain-specific aliases
+│   └── 50-prompt.fish      # Startup behavior
+└── functions/linux/        # Linux-specific functions
+```
+
+**Starship Prompt** shows:
+- Username and hostname
+- Git branch and status
+- Docker context
+- Python/Node.js/Rust versions
+- Command duration (>2s)
+
+#### 3. System Configurations
 
 - Nginx configurations for reverse proxy
 - Let's Encrypt SSL integration
 - Docker build configurations
 
-#### 3. Security Features
+#### 4. Security Features
 
 - Encrypted backups (AES-256)
 - Automatic SSL certificate renewal
 - Secure default configurations
-- **NEW**: DNS optimization for better performance
+- DNS optimization for better performance
 
-#### 4. Shell Aliases
+#### 5. Shell Aliases
 
-The ZSH configuration includes useful aliases for daily work:
+The Fish/ZSH configuration includes useful aliases for daily work:
 
 ##### Basic Aliases
 - `ls` - enhanced directory listing
 - `ll` - detailed directory listing
 - `lg` - lazygit shortcut
 - `grep` - output with color highlighting
-- `nano` - nano with better default options
 - `hg` - history search
-- `nf` - run neofetch
 - `ff` - run fastfetch
-- `mce` - shortcut for mcedit
-- `rm` - safer removal with confirmation
-- `chmod` - with change display
-- `chown` - with change display
-- `shred` - secure file deletion
 - `bat` - alias for batcat
 
 ##### Nginx Aliases
@@ -286,14 +306,13 @@ The ZSH configuration includes useful aliases for daily work:
 - `ngxr` - reload nginx configuration
 - `ngxs` - show nginx status
 - `ngx!` - test nginx configuration
-- `ngxl` - test nginx with specific config file
 - `ngxset` - set nginx configuration
 - `showcerts` - show certificates
 
 ##### System Aliases
+- `syspatch` - comprehensive system update and cleanup
 - `prepatch` - prepare system update in a screen session
 - `cleandlog` - clean docker logs
-- `syspatch` - comprehensive system update and cleanup (apt-based)
 - `dusort` - show directory sizes sorted
 - `f2b` - show fail2ban client status
 - `ups` - update ownERP scripts
@@ -301,37 +320,26 @@ The ZSH configuration includes useful aliases for daily work:
 ##### ownERP Aliases
 - `dobk` - run backup script
 - `doup` - update docker containers
-- `doup2` - alternative docker container update
 - `edbk` - edit backup configuration (YAML)
-- `edbk2` - edit alternative backup configuration (CSV)
 - `edup` - edit update configuration (YAML)
-- `edup2` - edit alternative update configuration (CSV)
 - `llbk` - list backup directory
 - `cpbk` - copy from backup directory
 
 ##### Docker Aliases
 - `dk` - shortcut for docker
 - `dps` - list docker containers in a clear format
-- `dpsall` - extended docker container listing
 - `dpi` - show docker images
-- `dkpsf` - show docker container commands
 - `dkvol` - check docker volumes
 - `dkstop` - stop all containers
-- `dkrm` - remove all containers
-- `dkrmi` - remove all images
-- `dkrmv` - remove all docker volumes
+- `dkrm` - remove all containers (with confirmation)
+- `dkrmi` - remove all images (with confirmation)
+- `dkrmv` - remove all docker volumes (with confirmation)
 - `dkprs` - clean docker system
-- `dkprv` - clean docker volumes
-- `dkprf` - complete docker system cleanup
-- `dkprfa` - complete docker system cleanup incl. volumes
 - `ox` - shortcut for oxker
-- `dkprfs` - docker system cleanup with force option
 
-#### 5. DNS Optimization (NEW)
+#### 6. DNS Optimization
 
 **Automatic DNS Configuration Check and Optimization**
-
-The getScripts.py script automatically checks the DNS configuration and offers optimizations when needed:
 
 ```bash
 # DNS optimization as part of installation
@@ -346,44 +354,37 @@ The getScripts.py script automatically checks the DNS configuration and offers o
 - Slow DNS resolution times (>50ms)
 - Suboptimal DNS configuration
 
-**Supported DNS Systems:**
-- systemd-resolved (default on Debian Bookworm)
-- resolvconf (classic configuration)
-- Direct /etc/resolv.conf editing
-
 **Recommended DNS Servers:**
 - Primary: 1.1.1.1 (Cloudflare)
 - Secondary: 8.8.8.8 (Google)
 - Tertiary: 9.9.9.9 (Quad9)
 
-**Docker Container Configuration:**
-```yaml
-# docker-compose.yml
-services:
-  odoo:
-    dns:
-      - 1.1.1.1
-      - 8.8.8.8
-      - 9.9.9.9
-```
-
-```bash
-# docker run
-docker run --dns 1.1.1.1 --dns 8.8.8.8 --dns 9.9.9.9 your-image
-```
-
 ### Branch Management
 
 ```bash
-# Switch to a specific version (e.g., 2024)
+# Switch to a specific version (e.g., 2026)
 cd $HOME && rm -rf myodoo-docker && rm -rf nginx-conf && \
-  git clone -b 2025 https://github.com/equitania/myodoo-docker.git && \
+  git clone -b 2026 https://github.com/equitania/myodoo-docker.git && \
   cp myodoo-docker/getScripts.py $HOME && \
-  $HOME/getScripts.py && source ~/.zshrc
+  $HOME/getScripts.py && source ~/.config/fish/config.fish
+```
+
+### Migration from ZSH to Fish
+
+For existing installations:
+1. Run `getScripts.py` - installs Fish automatically
+2. Answer "y" when asked "Set Fish as default shell?"
+3. Old .zshrc remains as fallback
+
+```bash
+# Manual switch to Fish
+chsh -s /usr/bin/fish
+
+# Back to ZSH if needed
+chsh -s /usr/bin/zsh
 ```
 
 ---
 
 For more information:
 - [ownERP.com](https://www.ownerp.com)
-
