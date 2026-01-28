@@ -54,7 +54,7 @@ if os.environ.get('GETSCRIPTS_DEBUG', '').lower() in ('1', 'true', 'yes'):
     logger.debug("Debug logging enabled")
 
 # Script version and date
-SCRIPT_VERSION = "7.1.1"
+SCRIPT_VERSION = "7.1.2"
 SCRIPT_DATE = "28.01.2026"
 
 # Cache settings
@@ -661,15 +661,14 @@ def create_simplified_zshrc(_myhome: str) -> bool:
     # This allows the Fish guard to work before Fish hits incompatible syntax.
     # Key: Use && chaining instead of if/then/fi (Fish uses if/end, not if/then/fi)
     simplified_zshrc = '''# ZSH Fallback Configuration (Fish is primary shell)
-# Version 4.1.0 | 28.01.2026
+# Version 4.2.0 | 28.01.2026
 # This is a minimal ZSH configuration without Oh-My-Zsh dependency
 #
 # IMPORTANT: If you are using Fish shell, do not source this file!
 # Fish uses: ~/.config/fish/config.fish
 
-# Guard: Exit if accidentally sourced from Fish shell
-# Uses syntax compatible with both Fish and ZSH
-test -n "$FISH_VERSION" && echo "Warning: .zshrc is for ZSH, not Fish. Use: source ~/.config/fish/config.fish" && return 0 2>/dev/null
+# Guard: Silently exit if sourced from Fish shell (no warning, just return)
+test -n "$FISH_VERSION" && return 0 2>/dev/null
 
 # PATH configuration
 export PATH="$HOME/bin:$HOME/.local/bin:/usr/local/bin:$PATH"
