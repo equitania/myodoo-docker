@@ -54,7 +54,7 @@ if os.environ.get('GETSCRIPTS_DEBUG', '').lower() in ('1', 'true', 'yes'):
     logger.debug("Debug logging enabled")
 
 # Script version and date
-SCRIPT_VERSION = "8.0.0"
+SCRIPT_VERSION = "8.0.1"
 SCRIPT_DATE = "30.01.2026"
 
 # Cache settings
@@ -3569,22 +3569,31 @@ set -gx NO_PROXY "{no_proxy}"
 
 
 def get_dns_preference() -> List[str]:
-    """Interactive DNS server selection."""
+    """Interactive DNS server selection.
+
+    Returns:
+        List[str]: Selected DNS servers, empty list if skipped,
+                   or ["SKIP"] marker if user chose to skip
+    """
     print("\n" + "=" * 60)
     print("DNS Server Konfiguration")
     print("=" * 60)
-    print("\n1. Standard (Cloudflare 1.1.1.1, Google 8.8.8.8, Quad9 9.9.9.9)")
-    print("2. Benutzerdefiniert (eigene DNS-Server eingeben)")
-    print("3. Überspringen (keine Änderung)")
+    print("\n1. Öffentliche DNS-Server optimieren (Cloudflare, Google, Quad9)")
+    print("2. Interne DNS-Server verwenden (z.B. Firmen-DNS)")
+    print("3. Keine Änderung (DNS-Konfiguration beibehalten)")
 
     try:
         choice = input("\nAuswahl [1/2/3]: ").strip()
 
         if choice == "2":
+            print("\nInterne DNS-Server eingeben:")
             dns_servers = []
             primary = input("Primärer DNS-Server (z.B. 192.168.1.1): ").strip()
             if primary:
                 dns_servers.append(primary)
+            else:
+                print("Kein primärer DNS-Server angegeben, Abbruch.")
+                return ["SKIP"]
 
             secondary = input("Sekundärer DNS-Server (optional, Enter für keinen): ").strip()
             if secondary:
@@ -3594,18 +3603,87 @@ def get_dns_preference() -> List[str]:
             if tertiary:
                 dns_servers.append(tertiary)
 
-            if dns_servers:
-                return dns_servers
-            else:
-                print("Keine DNS-Server angegeben, verwende Standard")
-                return ["1.1.1.1", "8.8.8.8", "9.9.9.9"]
+            return dns_servers
 
         elif choice == "1":
             return ["1.1.1.1", "8.8.8.8", "9.9.9.9"]
         else:
-            return []  # Skip
+            return ["SKIP"]  # Explicit skip marker
     except (EOFError, KeyboardInterrupt):
-        return []
+        print("\nAbgebrochen.")
+        return ["SKIP"]
+
+
+def apply_dns_servers(dns_servers: List[str]) -> bool:
+    """Apply specified DNS servers to the system.
+
+    Args:
+        dns_servers: List of DNS server IPs to configure
+
+    Returns:
+        bool: True if successful
+    """
+    if not dns_servers:
+        return False
+
+    logger.info(f"\nKonfiguriere DNS-Server: {', '.join(dns_servers)}")
+
+    # Get current DNS configuration to determine method
+    dns_info = check_dns_configuration()
+
+    # Build DNS server strings
+    dns_list = ' '.join(dns_servers)
+    dns_nameservers = '\n'.join([f"nameserver {dns}" for dns in dns_servers])
+
+    try:
+        if dns_info["systemd_resolved"]:
+            logger.info("Methode: systemd-resolved")
+            config_content = f"""[Resolve]
+DNS={dns_list}
+FallbackDNS=8.8.4.4 1.0.0.1
+DNSOverTLS=opportunistic
+DNSSEC=allow-downgrade
+Cache=yes
+CacheFromLocalhost=yes
+"""
+            run_command("sudo mkdir -p /etc/systemd/resolved.conf.d", check=True)
+            run_command(f"echo '{config_content}' | sudo tee /etc/systemd/resolved.conf.d/dns-optimization.conf > /dev/null", shell=True, check=True)
+            run_command("sudo systemctl restart systemd-resolved", check=True)
+
+        elif dns_info["resolvconf"]:
+            logger.info("Methode: resolvconf")
+            config_content = f"""# DNS servers - managed by getScripts.py
+{dns_nameservers}
+"""
+            run_command(f"echo '{config_content}' | sudo tee /etc/resolvconf/resolv.conf.d/head > /dev/null", shell=True, check=True)
+            run_command("sudo resolvconf -u", check=True)
+
+        else:
+            logger.info("Methode: direkte /etc/resolv.conf Modifikation")
+            config_content = f"""# DNS configuration - managed by getScripts.py
+# Date: {datetime.now().strftime('%Y-%m-%d')}
+# To modify: sudo chattr -i /etc/resolv.conf
+{dns_nameservers}
+options timeout:2 attempts:3 rotate
+"""
+            run_command("sudo cp /etc/resolv.conf /etc/resolv.conf.backup.$(date +%Y%m%d_%H%M%S)", shell=True, check=True)
+            run_command("sudo chattr -i /etc/resolv.conf 2>/dev/null || true", shell=True, check=True)
+            run_command("sudo test -L /etc/resolv.conf && sudo rm /etc/resolv.conf || true", shell=True, check=True)
+            run_command(f"echo '{config_content}' | sudo tee /etc/resolv.conf > /dev/null", shell=True, check=True)
+            run_command("sudo chattr +i /etc/resolv.conf", check=True)
+
+        # Mark as optimized
+        marker_file = os.path.expanduser("~/.dns_optimized_by_getscripts")
+        with open(marker_file, "w") as f:
+            f.write(f"DNS optimized on {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}\n")
+            f.write(f"Servers: {', '.join(dns_servers)}\n")
+
+        logger.info("✅ DNS-Konfiguration erfolgreich angewendet!")
+        return True
+
+    except Exception as e:
+        logger.error(f"Fehler bei DNS-Konfiguration: {e}")
+        return False
 
 
 def run_first_time_setup() -> bool:
@@ -3616,20 +3694,19 @@ def run_first_time_setup() -> bool:
     print("\nDieses Script wird einmalig einige Einstellungen abfragen.")
     print("Sie können diese später mit --reconfigure erneut aufrufen.\n")
 
+    # Proxy Configuration first (network access might depend on it)
+    configure_proxy_settings()
+
     # DNS Configuration
     if not is_dns_already_optimized():
         dns_servers = get_dns_preference()
-        if dns_servers:
-            # Apply DNS optimization with custom servers
-            optimize_dns_configuration(explicit_request=True)
+        if dns_servers and dns_servers != ["SKIP"]:
+            apply_dns_servers(dns_servers)
         else:
             mark_dns_optimization_declined()
-            logger.info("DNS optimization skipped by user")
+            logger.info("DNS-Konfiguration übersprungen")
     else:
-        logger.info("DNS already optimized, skipping configuration")
-
-    # Proxy Configuration
-    configure_proxy_settings()
+        logger.info("DNS bereits optimiert, überspringe Konfiguration")
 
     # Mark as configured
     mark_configured()
