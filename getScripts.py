@@ -54,8 +54,8 @@ if os.environ.get('GETSCRIPTS_DEBUG', '').lower() in ('1', 'true', 'yes'):
     logger.debug("Debug logging enabled")
 
 # Script version and date
-SCRIPT_VERSION = "7.1.4"
-SCRIPT_DATE = "28.01.2026"
+SCRIPT_VERSION = "8.0.0"
+SCRIPT_DATE = "30.01.2026"
 
 # Cache settings
 CACHE_DIR = os.path.expanduser("~/.cache/getscripts")
@@ -259,6 +259,32 @@ def is_fish_installed() -> Tuple[bool, Optional[str]]:
         return False, None
     except FileNotFoundError:
         logger.info("Fish shell not found")
+        return False, None
+
+
+def is_zsh_installed() -> Tuple[bool, Optional[str]]:
+    """Check if ZSH is installed and get its version.
+
+    Returns:
+        Tuple[bool, Optional[str]]: Installation status and version if installed
+    """
+    try:
+        result = subprocess.run(
+            ["zsh", "--version"],
+            capture_output=True,
+            text=True,
+            check=False
+        )
+        if result.returncode == 0:
+            # Output: "zsh 5.9 (x86_64-debian-linux-gnu)"
+            match = re.search(r'zsh (\d+\.\d+(?:\.\d+)?)', result.stdout)
+            if match:
+                version = match.group(1)
+                logger.info(f"ZSH version {version} found")
+                return True, version
+        return False, None
+    except FileNotFoundError:
+        logger.info("ZSH not found")
         return False, None
 
 
@@ -635,13 +661,20 @@ def create_simplified_zshrc(_myhome: str) -> bool:
     """Create a simplified .zshrc without Oh-My-Zsh dependency.
 
     This serves as a fallback for users who need to use ZSH.
+    Only operates if ZSH is installed on the system.
 
     Args:
         _myhome: User's home directory
 
     Returns:
-        bool: True if created successfully
+        bool: True if created successfully, False if ZSH not installed or error
     """
+    # Check if ZSH is installed first
+    zsh_installed, _ = is_zsh_installed()
+    if not zsh_installed:
+        logger.info("ZSH not installed - skipping .zshrc creation")
+        return False
+
     zshrc_path = os.path.join(_myhome, ".zshrc")
 
     # Backup existing .zshrc if it has Oh-My-Zsh
@@ -661,7 +694,7 @@ def create_simplified_zshrc(_myhome: str) -> bool:
     # This allows the Fish guard to work before Fish hits incompatible syntax.
     # Key: Use && chaining instead of if/then/fi (Fish uses if/end, not if/then/fi)
     simplified_zshrc = '''# ZSH Fallback Configuration (Fish is primary shell)
-# Version 4.2.0 | 28.01.2026
+# Version 4.3.0 | 30.01.2026
 # This is a minimal ZSH configuration without Oh-My-Zsh dependency
 #
 # IMPORTANT: If you are using Fish shell, do not source this file!
@@ -2803,33 +2836,42 @@ services:
         return False
 
 def ensure_path_in_zshrc() -> None:
-    """Ensure ~/.local/bin is in PATH in .zshrc file."""
+    """Ensure ~/.local/bin is in PATH in .zshrc file.
+
+    Only operates if ZSH is installed on the system.
+    """
+    # Check if ZSH is installed first
+    zsh_installed, _ = is_zsh_installed()
+    if not zsh_installed:
+        logger.debug("ZSH not installed - skipping .zshrc PATH configuration")
+        return
+
     try:
         home = os.path.expanduser("~")
         zshrc_path = os.path.join(home, ".zshrc")
         local_bin = os.path.join(home, ".local", "bin")
-        
+
         # Check if .zshrc exists
         if not os.path.exists(zshrc_path):
             logger.info(".zshrc not found, creating it")
             with open(zshrc_path, "w") as f:
                 f.write(f'# Created by getScripts.py\nexport PATH="{local_bin}:$PATH"\n')
             return
-            
+
         # Read current .zshrc
         with open(zshrc_path, "r") as f:
             content = f.read()
-            
+
         # Check if PATH is already set correctly
         if f'export PATH="{local_bin}:$PATH"' in content or f"export PATH={local_bin}:$PATH" in content:
-            logger.info(f"{local_bin} is already in PATH in .zshrc")
+            logger.debug(f"{local_bin} is already in PATH in .zshrc")
             return
-            
+
         # Add PATH to .zshrc
         logger.info(f"Adding {local_bin} to PATH in .zshrc")
         with open(zshrc_path, "a") as f:
             f.write(f'\n# Added by getScripts.py\nexport PATH="{local_bin}:$PATH"\n')
-            
+
         logger.info(".zshrc updated, PATH will be available in new shells")
     except Exception as e:
         logger.error(f"Error updating .zshrc: {e}")
@@ -3228,32 +3270,36 @@ def main() -> None:
         if starship_installed:
             copy_starship_configuration(_myhome, myodoo_docker)
 
-        # Create simplified ZSH fallback if needed
+        # Create simplified ZSH fallback if needed (only if ZSH is installed)
         # Replace .zshrc if it contains oh-my-zsh, old ups alias, or doesn't exist
-        zshrc_path = os.path.join(_myhome, ".zshrc")
-        should_replace_zshrc = False
+        zsh_installed, _ = is_zsh_installed()
+        if zsh_installed:
+            zshrc_path = os.path.join(_myhome, ".zshrc")
+            should_replace_zshrc = False
 
-        if not os.path.exists(zshrc_path):
-            should_replace_zshrc = True
-            logger.info(".zshrc not found, creating simplified version")
-        elif fish_is_fresh_install:
-            should_replace_zshrc = True
-            logger.info("Fresh Fish installation, creating simplified .zshrc")
-        else:
-            # Check if existing .zshrc needs to be replaced (has oh-my-zsh or old ups alias)
-            try:
-                with open(zshrc_path, 'r') as f:
-                    zshrc_content = f.read()
-                if 'oh-my-zsh' in zshrc_content.lower() or 'source ~/.zshrc' in zshrc_content:
-                    should_replace_zshrc = True
-                    logger.info("Existing .zshrc contains Oh-My-Zsh or legacy ups alias, replacing...")
-            except Exception as e:
-                logger.warning(f"Could not read .zshrc: {e}")
+            if not os.path.exists(zshrc_path):
+                should_replace_zshrc = True
+                logger.info(".zshrc not found, creating simplified version")
+            elif fish_is_fresh_install:
+                should_replace_zshrc = True
+                logger.info("Fresh Fish installation, creating simplified .zshrc")
+            else:
+                # Check if existing .zshrc needs to be replaced (has oh-my-zsh or old ups alias)
+                try:
+                    with open(zshrc_path, 'r') as f:
+                        zshrc_content = f.read()
+                    if 'oh-my-zsh' in zshrc_content.lower() or 'source ~/.zshrc' in zshrc_content:
+                        should_replace_zshrc = True
+                        logger.info("Existing .zshrc contains Oh-My-Zsh or legacy ups alias, replacing...")
+                except Exception as e:
+                    logger.warning(f"Could not read .zshrc: {e}")
 
-        if should_replace_zshrc:
-            create_simplified_zshrc(_myhome)
+            if should_replace_zshrc:
+                create_simplified_zshrc(_myhome)
+            else:
+                logger.info("Keeping existing .zshrc (already simplified)")
         else:
-            logger.info("Keeping existing .zshrc (already simplified)")
+            logger.info("ZSH not installed - skipping .zshrc configuration")
 
         # =====================================================================
         # LEGACY ZSH CONFIGURATION (Deprecated)
@@ -3361,11 +3407,245 @@ def main() -> None:
             os.chdir(os.path.expanduser("~"))
         sys.exit(1)
 
+# =============================================================================
+# FIRST-RUN AND PROXY CONFIGURATION (New in v8.0.0)
+# =============================================================================
+
+# First-run marker file
+FIRST_RUN_MARKER = os.path.expanduser("~/.getscripts_configured")
+PROXY_CONFIG_FILE = os.path.expanduser("~/.getscripts_proxy")
+
+
+def is_first_run() -> bool:
+    """Check if this is the first run of getScripts.py on this system."""
+    return not os.path.exists(FIRST_RUN_MARKER)
+
+
+def mark_configured() -> None:
+    """Mark the system as configured after first run."""
+    try:
+        with open(FIRST_RUN_MARKER, 'w') as f:
+            f.write(f"Configured on {datetime.now().isoformat()}\n")
+            f.write(f"Version: {SCRIPT_VERSION}\n")
+        logger.info("System marked as configured")
+    except Exception as e:
+        logger.error(f"Failed to mark system as configured: {e}")
+
+
+def reset_configuration() -> None:
+    """Reset configuration marker to trigger first-run setup again."""
+    if os.path.exists(FIRST_RUN_MARKER):
+        try:
+            os.remove(FIRST_RUN_MARKER)
+            logger.info("Configuration marker removed")
+        except Exception as e:
+            logger.error(f"Failed to remove configuration marker: {e}")
+
+
+def validate_proxy_url(url: str) -> bool:
+    """Validate a proxy URL format."""
+    pattern = r'^https?://[a-zA-Z0-9.-]+(?::\d+)?/?$'
+    return bool(re.match(pattern, url))
+
+
+def configure_proxy_settings() -> bool:
+    """Interactive proxy configuration."""
+    print("\n" + "=" * 60)
+    print("Proxy-Konfiguration")
+    print("=" * 60)
+
+    try:
+        response = input("\nVerwendet dieses Netzwerk einen Proxy? (j/N): ").strip().lower()
+
+        if response not in ('j', 'ja', 'y', 'yes'):
+            logger.info("No proxy configuration needed")
+            return False
+
+        print("\nProxy-Einstellungen:")
+        http_proxy = input("HTTP Proxy (z.B. http://proxy.firma.de:8080): ").strip()
+
+        if not http_proxy:
+            logger.info("No proxy URL provided")
+            return False
+
+        if not validate_proxy_url(http_proxy):
+            print(f"Ungültiges Proxy-URL-Format: {http_proxy}")
+            return False
+
+        https_proxy = input("HTTPS Proxy (Enter = wie HTTP): ").strip() or http_proxy
+        no_proxy = input("Ausnahmen (kommagetrennt, z.B. localhost,127.0.0.1,.local): ").strip()
+
+        if not no_proxy:
+            no_proxy = "localhost,127.0.0.1,::1,.local"
+
+        proxy_config = {
+            'http_proxy': http_proxy,
+            'https_proxy': https_proxy,
+            'no_proxy': no_proxy
+        }
+
+        return apply_proxy_settings(proxy_config)
+
+    except (EOFError, KeyboardInterrupt):
+        print("\nProxy-Konfiguration abgebrochen")
+        return False
+
+
+def apply_proxy_settings(config: dict) -> bool:
+    """Apply proxy settings to system and shells."""
+    http_proxy = config.get('http_proxy', '')
+    https_proxy = config.get('https_proxy', '')
+    no_proxy = config.get('no_proxy', 'localhost,127.0.0.1,::1,.local')
+
+    success = True
+
+    # Save proxy configuration to marker file
+    try:
+        with open(PROXY_CONFIG_FILE, 'w') as f:
+            f.write(f"# Proxy configuration - managed by getScripts.py\n")
+            f.write(f"http_proxy={http_proxy}\n")
+            f.write(f"https_proxy={https_proxy}\n")
+            f.write(f"no_proxy={no_proxy}\n")
+        logger.info("Proxy configuration saved")
+    except Exception as e:
+        logger.error(f"Failed to save proxy configuration: {e}")
+        success = False
+
+    # Apply to Fish shell
+    fish_conf_dir = os.path.expanduser("~/.config/fish/conf.d")
+    ensure_directory_exists(fish_conf_dir)
+
+    proxy_fish = os.path.join(fish_conf_dir, "99-proxy.fish")
+    fish_content = f'''# Proxy Configuration - managed by getScripts.py
+# Remove or edit this file to change proxy settings
+
+set -gx http_proxy "{http_proxy}"
+set -gx https_proxy "{https_proxy}"
+set -gx HTTP_PROXY "{http_proxy}"
+set -gx HTTPS_PROXY "{https_proxy}"
+set -gx no_proxy "{no_proxy}"
+set -gx NO_PROXY "{no_proxy}"
+'''
+
+    try:
+        with open(proxy_fish, 'w') as f:
+            f.write(fish_content)
+        logger.info("Fish proxy configuration applied")
+    except Exception as e:
+        logger.error(f"Failed to apply Fish proxy configuration: {e}")
+        success = False
+
+    # Apply to /etc/environment (system-wide, requires sudo)
+    if is_root_or_has_sudo():
+        try:
+            env_file = "/etc/environment"
+            current_content = ""
+            if os.path.exists(env_file):
+                with open(env_file, 'r') as f:
+                    current_content = f.read()
+
+            # Remove existing proxy settings
+            lines = []
+            for line in current_content.split('\n'):
+                if not any(key in line.lower() for key in ['http_proxy', 'https_proxy', 'no_proxy']):
+                    lines.append(line)
+
+            # Add new proxy settings
+            lines.append(f'http_proxy="{http_proxy}"')
+            lines.append(f'https_proxy="{https_proxy}"')
+            lines.append(f'HTTP_PROXY="{http_proxy}"')
+            lines.append(f'HTTPS_PROXY="{https_proxy}"')
+            lines.append(f'no_proxy="{no_proxy}"')
+            lines.append(f'NO_PROXY="{no_proxy}"')
+
+            new_content = '\n'.join(line for line in lines if line.strip())
+
+            run_command(f"echo '{new_content}' | sudo tee {env_file}", shell=True, check=True)
+            logger.info("System environment proxy configuration applied")
+        except Exception as e:
+            logger.warning(f"Could not apply system-wide proxy: {e}")
+
+    return success
+
+
+def get_dns_preference() -> List[str]:
+    """Interactive DNS server selection."""
+    print("\n" + "=" * 60)
+    print("DNS Server Konfiguration")
+    print("=" * 60)
+    print("\n1. Standard (Cloudflare 1.1.1.1, Google 8.8.8.8, Quad9 9.9.9.9)")
+    print("2. Benutzerdefiniert (eigene DNS-Server eingeben)")
+    print("3. Überspringen (keine Änderung)")
+
+    try:
+        choice = input("\nAuswahl [1/2/3]: ").strip()
+
+        if choice == "2":
+            dns_servers = []
+            primary = input("Primärer DNS-Server (z.B. 192.168.1.1): ").strip()
+            if primary:
+                dns_servers.append(primary)
+
+            secondary = input("Sekundärer DNS-Server (optional, Enter für keinen): ").strip()
+            if secondary:
+                dns_servers.append(secondary)
+
+            tertiary = input("Tertiärer DNS-Server (optional, Enter für keinen): ").strip()
+            if tertiary:
+                dns_servers.append(tertiary)
+
+            if dns_servers:
+                return dns_servers
+            else:
+                print("Keine DNS-Server angegeben, verwende Standard")
+                return ["1.1.1.1", "8.8.8.8", "9.9.9.9"]
+
+        elif choice == "1":
+            return ["1.1.1.1", "8.8.8.8", "9.9.9.9"]
+        else:
+            return []  # Skip
+    except (EOFError, KeyboardInterrupt):
+        return []
+
+
+def run_first_time_setup() -> bool:
+    """Run first-time setup prompts for DNS and proxy."""
+    print("\n" + "=" * 60)
+    print("Erste Konfiguration von getScripts.py")
+    print("=" * 60)
+    print("\nDieses Script wird einmalig einige Einstellungen abfragen.")
+    print("Sie können diese später mit --reconfigure erneut aufrufen.\n")
+
+    # DNS Configuration
+    if not is_dns_already_optimized():
+        dns_servers = get_dns_preference()
+        if dns_servers:
+            # Apply DNS optimization with custom servers
+            optimize_dns_configuration(explicit_request=True)
+        else:
+            mark_dns_optimization_declined()
+            logger.info("DNS optimization skipped by user")
+    else:
+        logger.info("DNS already optimized, skipping configuration")
+
+    # Proxy Configuration
+    configure_proxy_settings()
+
+    # Mark as configured
+    mark_configured()
+
+    print("\n" + "=" * 60)
+    print("Erstkonfiguration abgeschlossen!")
+    print("=" * 60)
+
+    return True
+
+
 if __name__ == "__main__":
     import argparse
-    
+
     parser = argparse.ArgumentParser(description="Docker Server Utility Script")
-    parser.add_argument("--clear-cache", action="store_true", 
+    parser.add_argument("--clear-cache", action="store_true",
                        help="Clear all cached version information")
     parser.add_argument("--no-cache", action="store_true",
                        help="Disable cache for this run")
@@ -3373,24 +3653,52 @@ if __name__ == "__main__":
                        help="Enable debug logging")
     parser.add_argument("--dns-check", action="store_true",
                        help="Only check and optimize DNS configuration")
-    
+    parser.add_argument("--proxy-check", action="store_true",
+                       help="Only configure proxy settings")
+    parser.add_argument("--first-run", action="store_true",
+                       help="Force first-run setup (DNS + proxy)")
+    parser.add_argument("--reconfigure", action="store_true",
+                       help="Reset and reconfigure DNS + proxy settings")
+
     args = parser.parse_args()
-    
+
     if args.debug:
         logger.setLevel(logging.DEBUG)
-    
+
     if args.clear_cache:
         clear_cache()
         logger.info("Cache cleared successfully")
-    
+
     if args.no_cache:
         # Disable cache by setting a flag on the function
-        get_cached_version.disabled = True
+        get_cached_version.disabled = True  # type: ignore[attr-defined]
         logger.info("Cache disabled for this run")
-    
+
+    if args.reconfigure:
+        # Reset configuration and run first-time setup
+        reset_configuration()
+        clear_dns_optimization_declined()
+        run_first_time_setup()
+        sys.exit(0)
+
+    if args.first_run:
+        # Force first-run setup
+        reset_configuration()
+        run_first_time_setup()
+        sys.exit(0)
+
     if args.dns_check:
         # Only run DNS optimization (explicitly requested, always ask user)
         optimize_dns_configuration(explicit_request=True)
         sys.exit(0)
-    
+
+    if args.proxy_check:
+        # Only configure proxy settings
+        configure_proxy_settings()
+        sys.exit(0)
+
+    # Run first-time setup if this is the first run
+    if is_first_run():
+        run_first_time_setup()
+
     main()
