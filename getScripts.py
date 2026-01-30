@@ -54,7 +54,7 @@ if os.environ.get('GETSCRIPTS_DEBUG', '').lower() in ('1', 'true', 'yes'):
     logger.debug("Debug logging enabled")
 
 # Script version and date
-SCRIPT_VERSION = "8.0.1"
+SCRIPT_VERSION = "8.0.2"
 SCRIPT_DATE = "30.01.2026"
 
 # Cache settings
@@ -3230,8 +3230,8 @@ def main() -> None:
         # First, upgrade pip if needed
         upgrade_pip()
 
-        # Check and optimize DNS configuration
-        optimize_dns_configuration()
+        # Note: DNS configuration is handled in first-run setup
+        # For explicit DNS optimization, use: ./getScripts.py --dns-check
 
         global_server_version = '2026'
         myodoo_docker = os.path.join(_myhome, "myodoo-docker")
