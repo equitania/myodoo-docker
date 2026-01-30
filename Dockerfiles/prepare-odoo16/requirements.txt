@@ -73,7 +73,7 @@ urllib3==1.26.5 ; python_version < '3.12' # indirect / min version = 1.25.8 (Foc
 urllib3==2.0.7  ; python_version >= '3.12'  # (Noble) Compatibility with cryptography
 vobject==0.9.6.1
 Werkzeug==0.16.1 ; python_version <= '3.9'
-Werkzeug==2.0.2 ; python_version > '3.9'  # (Jammy)
+Werkzeug==3.1.5 ; python_version > '3.9'  # (Jammy)
 xlrd==1.1.0; python_version < '3.8'
 xlrd==1.2.0; python_version >= '3.8'
 XlsxWriter==1.1.2
