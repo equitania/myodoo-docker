@@ -6,8 +6,8 @@ Constants and configuration values for getScripts.py
 import os
 
 # Script version and metadata
-SCRIPT_VERSION = "8.0.2"
-SCRIPT_DATE = "30.01.2026"
+SCRIPT_VERSION = "8.0.4"
+SCRIPT_DATE = "16.02.2026"
 
 # Cache settings
 CACHE_DIR = os.path.expanduser("~/.cache/getscripts")
@@ -22,6 +22,9 @@ FIRST_RUN_MARKER = os.path.expanduser("~/.getscripts_configured")
 
 # Default DNS servers
 DEFAULT_DNS_SERVERS = ["1.1.1.1", "8.8.8.8", "9.9.9.9"]
+
+# Hetzner-optimized DNS servers (Hetzner primary for lowest latency on Hetzner servers)
+HETZNER_DNS_SERVERS = ["185.12.64.2", "1.1.1.1", "9.9.9.9"]
 
 # Repository URLs
 MYODOO_DOCKER_REPO = "https://github.com/equitania/myodoo-docker.git"

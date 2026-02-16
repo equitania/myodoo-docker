@@ -31,6 +31,7 @@ from functools import wraps, lru_cache
 import time
 import platform
 import re
+import socket
 import tempfile
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from datetime import datetime, timedelta
@@ -54,7 +55,7 @@ if os.environ.get('GETSCRIPTS_DEBUG', '').lower() in ('1', 'true', 'yes'):
     logger.debug("Debug logging enabled")
 
 # Script version and date
-SCRIPT_VERSION = "8.0.3"
+SCRIPT_VERSION = "8.0.4"
 SCRIPT_DATE = "16.02.2026"
 
 # Cache settings
@@ -2533,9 +2534,55 @@ def clear_dns_optimization_declined() -> None:
     except Exception as e:
         logger.error(f"Could not remove DNS decline marker: {e}")
 
+def is_hetzner_server() -> bool:
+    """Check if the server is running on Hetzner infrastructure.
+
+    Detection methods:
+    1. Hostname patterns (hetzner, your-server, static.hetzner)
+    2. Legacy Hetzner DNS in resolv.conf (213.133.x)
+    3. Known Hetzner IP ranges
+
+    Returns:
+        bool: True if on Hetzner infrastructure
+    """
+    # Check via hostname patterns
+    try:
+        hostname = socket.gethostname()
+        if any(pattern in hostname.lower() for pattern in ['hetzner', 'your-server', 'static.hetzner']):
+            logger.info("🏢 Detected Hetzner server via hostname")
+            return True
+    except Exception:
+        pass
+
+    # Check via /etc/resolv.conf for legacy Hetzner DNS
+    try:
+        if os.path.exists("/etc/resolv.conf"):
+            with open("/etc/resolv.conf", "r") as f:
+                content = f.read()
+            if any(pattern in content for pattern in ['213.133.100', '213.133.98', '213.133.99']):
+                logger.info("🏢 Detected Hetzner server via legacy DNS configuration")
+                return True
+    except Exception:
+        pass
+
+    # Check via network configuration for known Hetzner IP ranges
+    try:
+        result = subprocess.run(['ip', 'addr'], capture_output=True, text=True, check=False)
+        if result.returncode == 0:
+            hetzner_patterns = ['159.69.', '116.203.', '135.181.', '65.108.', '5.75.']
+            for pattern in hetzner_patterns:
+                if pattern in result.stdout:
+                    logger.info(f"🏢 Detected Hetzner server via IP range {pattern}*")
+                    return True
+    except Exception:
+        pass
+
+    return False
+
+
 def check_dns_configuration() -> Dict[str, Any]:
     """Check the current DNS configuration on the system.
-    
+
     Returns:
         Dict[str, Any]: DNS configuration information
     """
@@ -2634,6 +2681,9 @@ def check_dns_configuration() -> Dict[str, Any]:
 def optimize_dns_configuration(explicit_request: bool = False) -> bool:
     """Optimize DNS configuration based on detected setup.
 
+    Detects Hetzner infrastructure and prioritizes Hetzner DNS (185.12.64.2)
+    for lowest latency on Hetzner servers. Enforces Linux 3-nameserver limit.
+
     Args:
         explicit_request: True if called with --dns-check flag (always ask user)
 
@@ -2656,88 +2706,130 @@ def optimize_dns_configuration(explicit_request: bool = False) -> bool:
 
     # Get current DNS configuration
     dns_info = check_dns_configuration()
-    
+
+    # Detect Hetzner infrastructure and select recommended DNS servers
+    on_hetzner = is_hetzner_server()
+    if on_hetzner:
+        recommended_dns = ["185.12.64.2", "1.1.1.1", "9.9.9.9"]
+        logger.info("🏢 Hetzner server detected — using Hetzner DNS as primary (lowest latency)")
+    else:
+        recommended_dns = ["1.1.1.1", "8.8.8.8", "9.9.9.9"]
+
     # Display current configuration
     logger.info("\nCurrent DNS Configuration:")
     logger.info(f"- Nameservers: {', '.join(dns_info['resolv_conf']) if dns_info['resolv_conf'] else 'None'}")
     logger.info(f"- systemd-resolved: {'Active' if dns_info['systemd_resolved'] else 'Inactive'}")
     logger.info(f"- resolvconf: {'Active' if dns_info['resolvconf'] else 'Inactive'}")
     logger.info(f"- NetworkManager: {'Active' if dns_info['networkmanager'] else 'Inactive'}")
-    
+
     # Display DNS performance results
     if dns_info["dns_performance"]:
         logger.info("\nDNS Performance Test Results:")
         for server_name, perf_data in dns_info["dns_performance"].items():
             logger.info(f"- {server_name} ({perf_data['server']}): "
                        f"{perf_data['avg_query_time_ms']}ms avg query time")
-    
+
     # Check if optimization is needed
     needs_optimization = False
-    
-    # Check if using Hetzner DNS (known to have issues with DigitalOcean)
+
     hetzner_dns = ["185.12.64.1", "185.12.64.2", "2a01:4ff:ff00::add:1", "2a01:4ff:ff00::add:2"]
     current_dns = dns_info['resolv_conf']
-    
-    # Check if already optimized with recommended DNS servers
-    recommended_dns = ["1.1.1.1", "8.8.8.8", "9.9.9.9"]
     primary_dns = current_dns[0] if current_dns else None
-    
+
     # Check if DNS was already optimized by our script
     already_optimized = is_dns_already_optimized()
-    
-    # Check if the primary DNS is already optimized
-    if primary_dns in recommended_dns and already_optimized:
-        logger.info(f"\n✅ DNS is already optimized with {primary_dns} as primary DNS server")
-        # Still check for Hetzner DNS in fallback positions for information
-        if any(dns in hetzner_dns for dns in current_dns[3:]):  # Check fallback servers only
-            logger.info("ℹ️  Note: Hetzner DNS servers are present as fallback servers (positions 4+)")
-    elif primary_dns in recommended_dns and not already_optimized:
-        # DNS servers are good but not set by our script - might be manually configured
-        logger.info(f"\n✅ DNS appears to be manually optimized with {primary_dns} as primary DNS server")
-        # Check if Hetzner DNS is in primary positions
-        if any(dns in hetzner_dns for dns in current_dns[:2]):
-            logger.warning("\n⚠️  Detected Hetzner DNS servers in primary/secondary positions")
+
+    # Check Linux 3-nameserver limit (MAXNS)
+    if len(current_dns) > 3:
+        logger.warning(f"\n⚠️  {len(current_dns)} nameservers configured, but Linux uses max 3 (MAXNS limit)")
+        needs_optimization = True
+
+    # Hetzner-aware DNS evaluation
+    if on_hetzner:
+        # On Hetzner: Hetzner DNS as primary is OPTIMAL
+        if primary_dns in hetzner_dns and already_optimized:
+            logger.info(f"\n✅ DNS is already optimized with Hetzner DNS ({primary_dns}) as primary")
+        elif primary_dns in hetzner_dns and not already_optimized:
+            logger.info(f"\n✅ Hetzner DNS ({primary_dns}) is already primary (good for Hetzner servers)")
+            # Check if secondary/tertiary are public DNS for redundancy
+            public_dns_present = any(dns in ["1.1.1.1", "8.8.8.8", "9.9.9.9"] for dns in current_dns[1:3])
+            if not public_dns_present:
+                logger.info("ℹ️  Consider adding public DNS (Cloudflare/Quad9) as fallback for redundancy")
+                needs_optimization = True
+        elif primary_dns in recommended_dns and already_optimized:
+            logger.info(f"\n✅ DNS is already optimized with {primary_dns} as primary")
+        elif primary_dns in ["1.1.1.1", "8.8.8.8", "9.9.9.9"]:
+            # Public DNS is primary on Hetzner — recommend Hetzner as primary for better latency
+            logger.info(f"\nℹ️  Public DNS ({primary_dns}) is primary, but Hetzner DNS would be faster")
+            logger.info("   Hetzner DNS (185.12.64.2) has lowest latency on Hetzner infrastructure")
+            needs_optimization = True
+        else:
+            logger.warning("\n⚠️  Non-optimal DNS configuration detected on Hetzner server")
             needs_optimization = True
     else:
-        # Not using recommended DNS servers
-        if any(dns in hetzner_dns for dns in current_dns):
-            logger.warning("\n⚠️  Detected Hetzner DNS servers which may cause issues with some providers")
-            needs_optimization = True
-    
+        # Not on Hetzner: Hetzner DNS is a problem (e.g. DigitalOcean)
+        if primary_dns in recommended_dns and already_optimized:
+            logger.info(f"\n✅ DNS is already optimized with {primary_dns} as primary DNS server")
+        elif primary_dns in recommended_dns and not already_optimized:
+            logger.info(f"\n✅ DNS appears to be manually optimized with {primary_dns} as primary DNS server")
+            if any(dns in hetzner_dns for dns in current_dns[:2]):
+                logger.warning("\n⚠️  Detected Hetzner DNS servers in primary/secondary positions")
+                needs_optimization = True
+        else:
+            if any(dns in hetzner_dns for dns in current_dns):
+                logger.warning("\n⚠️  Detected Hetzner DNS servers which may cause issues with some providers")
+                needs_optimization = True
+
     # Check if current DNS is slow
     if dns_info["dns_performance"]:
         current_perf = dns_info["dns_performance"].get("current", {})
         if current_perf and current_perf.get("avg_query_time_ms", 0) > 50:
             logger.warning(f"\n⚠️  Current DNS response time ({current_perf['avg_query_time_ms']}ms) is slow")
             needs_optimization = True
-    
+
     # Check if Docker DNS (127.0.0.11) is being used
     if "127.0.0.11" in current_dns:
         logger.info("\n📦 Detected Docker container environment (DNS: 127.0.0.11)")
         logger.info("For Docker containers, DNS should be configured in docker-compose.yml or docker run command")
-        
+
     if not needs_optimization and "127.0.0.11" not in current_dns:
         logger.info("\n✅ DNS configuration appears to be optimal")
         return False
-    
+
+    # Build DNS description strings for display
+    dns_descriptions = {
+        "185.12.64.2": "Hetzner (local network, lowest latency)",
+        "1.1.1.1": "Cloudflare",
+        "8.8.8.8": "Google",
+        "9.9.9.9": "Quad9",
+    }
+    dns_labels = ["Primary", "Secondary", "Tertiary"]
+
     # Ask user if they want to optimize
     logger.info("\n" + "-"*60)
     logger.info("DNS Optimization Recommended")
     logger.info("-"*60)
     logger.info("\nRecommended DNS servers for better performance:")
-    logger.info("- Primary: 1.1.1.1 (Cloudflare)")
-    logger.info("- Secondary: 8.8.8.8 (Google)")
-    logger.info("- Tertiary: 9.9.9.9 (Quad9)")
-    
+    for i, dns in enumerate(recommended_dns[:3]):
+        desc = dns_descriptions.get(dns, dns)
+        logger.info(f"- {dns_labels[i]}: {dns} ({desc})")
+
+    # Build FallbackDNS based on context
+    fallback_dns = "8.8.4.4 1.0.0.1"
+
+    # Build dynamic DNS strings for shell commands
+    dns_list = ' '.join(recommended_dns[:3])
+    dns_nameservers = '\n'.join([f"nameserver {dns}" for dns in recommended_dns[:3]])
+
     # Different optimization based on DNS management system
     if dns_info["systemd_resolved"]:
         logger.info("\nOptimization method: systemd-resolved configuration")
         optimization_commands = [
             "sudo mkdir -p /etc/systemd/resolved.conf.d",
-            '''sudo tee /etc/systemd/resolved.conf.d/dns-optimization.conf > /dev/null << EOF
+            f'''sudo tee /etc/systemd/resolved.conf.d/dns-optimization.conf > /dev/null << EOF
 [Resolve]
-DNS=1.1.1.1 8.8.8.8 9.9.9.9
-FallbackDNS=8.8.4.4 1.0.0.1
+DNS={dns_list}
+FallbackDNS={fallback_dns}
 DNSOverTLS=opportunistic
 DNSSEC=allow-downgrade
 Cache=yes
@@ -2748,11 +2840,9 @@ EOF''',
     elif dns_info["resolvconf"]:
         logger.info("\nOptimization method: resolvconf configuration")
         optimization_commands = [
-            '''sudo tee /etc/resolvconf/resolv.conf.d/head > /dev/null << EOF
+            f'''sudo tee /etc/resolvconf/resolv.conf.d/head > /dev/null << EOF
 # Optimized DNS servers - managed by getScripts.py
-nameserver 1.1.1.1
-nameserver 8.8.8.8
-nameserver 9.9.9.9
+{dns_nameservers}
 EOF''',
             "sudo resolvconf -u"
         ]
@@ -2767,35 +2857,33 @@ EOF''',
             "sudo chattr -i /etc/resolv.conf 2>/dev/null || true",
             # Check if resolv.conf is a symlink and remove it
             "sudo test -L /etc/resolv.conf && sudo rm /etc/resolv.conf || true",
-            # Create new resolv.conf with optimized DNS
-            '''sudo tee /etc/resolv.conf > /dev/null << EOF
+            # Create new resolv.conf with optimized DNS (max 3 nameservers)
+            f'''sudo tee /etc/resolv.conf > /dev/null << EOF
 # Optimized DNS configuration - managed by getScripts.py
 # Date: $(date +%Y-%m-%d)
 # To modify this file, first run: sudo chattr -i /etc/resolv.conf
-nameserver 1.1.1.1
-nameserver 8.8.8.8
-nameserver 9.9.9.9
+{dns_nameservers}
 options timeout:2 attempts:3 rotate
 EOF''',
             # Make the file immutable to prevent automatic changes
             "sudo chattr +i /etc/resolv.conf"
         ]
-    
+
     # Docker-specific instructions
     if "127.0.0.11" in current_dns:
+        docker_dns_flags = ' '.join([f"--dns {dns}" for dns in recommended_dns[:3]])
+        docker_dns_yaml = '\n'.join([f"      - {dns}" for dns in recommended_dns[:3]])
         logger.info("\n📋 For Docker containers, add this to your docker-compose.yml:")
-        logger.info("""
+        logger.info(f"""
 services:
   your-service:
     dns:
-      - 1.1.1.1
-      - 8.8.8.8
-      - 9.9.9.9
+{docker_dns_yaml}
 """)
         logger.info("\n📋 Or use these flags with docker run:")
-        logger.info("docker run --dns 1.1.1.1 --dns 8.8.8.8 --dns 9.9.9.9 ...")
+        logger.info(f"docker run {docker_dns_flags} ...")
         return False
-    
+
     # Ask for confirmation
     try:
         response = input("\nDo you want to apply DNS optimization? (y/N): ").strip().lower()
@@ -2813,28 +2901,28 @@ services:
             mark_dns_optimization_declined()
             logger.info("\nThis decision has been saved. To reconsider, run: ./getScripts.py --dns-check")
         return False
-    
+
     # Apply optimization
     logger.info("\nApplying DNS optimization...")
     try:
         for cmd in optimization_commands:
             logger.info(f"Running: {cmd[:50]}...")
             run_command(cmd, shell=True, check=True)
-        
+
         # Test new configuration
         logger.info("\nTesting new DNS configuration...")
         time.sleep(2)  # Wait for changes to take effect
-        
+
         new_dns_info = check_dns_configuration()
         if new_dns_info["dns_performance"]:
             new_perf = new_dns_info["dns_performance"].get("current", {})
             if new_perf:
                 logger.info(f"New DNS query time: {new_perf['avg_query_time_ms']}ms")
-        
+
         logger.info("\n✅ DNS optimization completed successfully!")
         logger.info("Note: For containers, remember to add DNS configuration to docker-compose.yml")
         return True
-        
+
     except Exception as e:
         logger.error(f"Error applying DNS optimization: {e}")
         logger.info("You can manually optimize DNS by editing the appropriate configuration files")
@@ -3574,53 +3662,93 @@ set -gx NO_PROXY "{no_proxy}"
 
 
 def get_dns_preference() -> List[str]:
-    """Interactive DNS server selection.
+    """Interactive DNS server selection with Hetzner awareness.
+
+    Detects Hetzner infrastructure and offers Hetzner-optimized DNS as
+    recommended option. Enforces Linux 3-nameserver limit (MAXNS).
 
     Returns:
         List[str]: Selected DNS servers, empty list if skipped,
                    or ["SKIP"] marker if user chose to skip
     """
+    on_hetzner = is_hetzner_server()
+
     print("\n" + "=" * 60)
     print("DNS Server Konfiguration")
     print("=" * 60)
-    print("\n1. Öffentliche DNS-Server optimieren (Cloudflare, Google, Quad9)")
-    print("2. Interne DNS-Server verwenden (z.B. Firmen-DNS)")
-    print("3. Keine Änderung (DNS-Konfiguration beibehalten)")
+
+    if on_hetzner:
+        print("\n🏢 Hetzner-Server erkannt!")
+        print("\n1. Hetzner-optimiert (Hetzner 185.12.64.2, Cloudflare, Quad9) [empfohlen]")
+        print("2. Öffentliche DNS-Server (Cloudflare, Google, Quad9)")
+        print("3. Interne DNS-Server verwenden (z.B. Firmen-DNS)")
+        print("4. Keine Änderung (DNS-Konfiguration beibehalten)")
+        prompt = "\nAuswahl [1/2/3/4]: "
+    else:
+        print("\n1. Öffentliche DNS-Server optimieren (Cloudflare, Google, Quad9)")
+        print("2. Interne DNS-Server verwenden (z.B. Firmen-DNS)")
+        print("3. Keine Änderung (DNS-Konfiguration beibehalten)")
+        prompt = "\nAuswahl [1/2/3]: "
 
     try:
-        choice = input("\nAuswahl [1/2/3]: ").strip()
+        choice = input(prompt).strip()
 
-        if choice == "2":
-            print("\nInterne DNS-Server eingeben:")
-            dns_servers = []
-            primary = input("Primärer DNS-Server (z.B. 192.168.1.1): ").strip()
-            if primary:
-                dns_servers.append(primary)
+        if on_hetzner:
+            if choice == "1":
+                return ["185.12.64.2", "1.1.1.1", "9.9.9.9"]
+            elif choice == "2":
+                return ["1.1.1.1", "8.8.8.8", "9.9.9.9"]
+            elif choice == "3":
+                return _get_custom_dns_servers()
             else:
-                print("Kein primärer DNS-Server angegeben, Abbruch.")
+                return ["SKIP"]
+        else:
+            if choice == "1":
+                return ["1.1.1.1", "8.8.8.8", "9.9.9.9"]
+            elif choice == "2":
+                return _get_custom_dns_servers()
+            else:
                 return ["SKIP"]
 
-            secondary = input("Sekundärer DNS-Server (optional, Enter für keinen): ").strip()
-            if secondary:
-                dns_servers.append(secondary)
-
-            tertiary = input("Tertiärer DNS-Server (optional, Enter für keinen): ").strip()
-            if tertiary:
-                dns_servers.append(tertiary)
-
-            return dns_servers
-
-        elif choice == "1":
-            return ["1.1.1.1", "8.8.8.8", "9.9.9.9"]
-        else:
-            return ["SKIP"]  # Explicit skip marker
     except (EOFError, KeyboardInterrupt):
         print("\nAbgebrochen.")
         return ["SKIP"]
 
 
+def _get_custom_dns_servers() -> List[str]:
+    """Prompt user for custom DNS servers with 3-server limit enforcement.
+
+    Returns:
+        List[str]: Custom DNS servers or ["SKIP"] if cancelled
+    """
+    print("\nInterne DNS-Server eingeben (max. 3 — Linux MAXNS Limit):")
+    dns_servers = []
+    primary = input("Primärer DNS-Server (z.B. 192.168.1.1): ").strip()
+    if primary:
+        dns_servers.append(primary)
+    else:
+        print("Kein primärer DNS-Server angegeben, Abbruch.")
+        return ["SKIP"]
+
+    secondary = input("Sekundärer DNS-Server (optional, Enter für keinen): ").strip()
+    if secondary:
+        dns_servers.append(secondary)
+
+    tertiary = input("Tertiärer DNS-Server (optional, Enter für keinen): ").strip()
+    if tertiary:
+        dns_servers.append(tertiary)
+
+    if len(dns_servers) > 3:
+        logger.warning("Linux unterstützt max. 3 Nameserver, verwende die ersten 3")
+        dns_servers = dns_servers[:3]
+
+    return dns_servers
+
+
 def apply_dns_servers(dns_servers: List[str]) -> bool:
     """Apply specified DNS servers to the system.
+
+    Enforces Linux 3-nameserver limit (MAXNS) by truncating excess entries.
 
     Args:
         dns_servers: List of DNS server IPs to configure
@@ -3630,6 +3758,11 @@ def apply_dns_servers(dns_servers: List[str]) -> bool:
     """
     if not dns_servers:
         return False
+
+    # Enforce Linux MAXNS limit of 3 nameservers
+    if len(dns_servers) > 3:
+        logger.warning(f"Truncating {len(dns_servers)} DNS servers to max 3 (Linux MAXNS limit)")
+        dns_servers = dns_servers[:3]
 
     logger.info(f"\nKonfiguriere DNS-Server: {', '.join(dns_servers)}")
 
