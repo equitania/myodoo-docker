@@ -54,8 +54,8 @@ if os.environ.get('GETSCRIPTS_DEBUG', '').lower() in ('1', 'true', 'yes'):
     logger.debug("Debug logging enabled")
 
 # Script version and date
-SCRIPT_VERSION = "8.0.2"
-SCRIPT_DATE = "30.01.2026"
+SCRIPT_VERSION = "8.0.3"
+SCRIPT_DATE = "16.02.2026"
 
 # Cache settings
 CACHE_DIR = os.path.expanduser("~/.cache/getscripts")
@@ -1109,19 +1109,22 @@ def get_latest_zoxide_version() -> Optional[str]:
         logger.error(f"Error fetching latest zoxide version: {str(e)}")
     return None
 
-def install_zoxide_if_needed() -> None:
+def install_zoxide_if_needed(target_version: Optional[str] = None) -> None:
     """Install zoxide if it's not already installed or if the version is outdated."""
     installed, current_version = is_zoxide_installed()
 
-    # Get latest version from GitHub
-    latest_version = get_latest_zoxide_version()
+    # Use target_version if provided, otherwise fetch from GitHub
+    if target_version:
+        latest_version = target_version
+    else:
+        latest_version = get_latest_zoxide_version()
     if not latest_version:
         logger.warning("Could not determine latest zoxide version, skipping update check")
         if installed:
             logger.info(f"zoxide version {current_version} is already installed.")
             return
         # Use a fallback version if we can't get the latest
-        latest_version = "0.9.7"
+        latest_version = "0.9.9"
 
     if installed:
         if current_version == latest_version:
@@ -1157,13 +1160,15 @@ def install_zoxide_if_needed() -> None:
 
     logger.info(f"Installing zoxide version {latest_version}...")
 
-    # Installation using curl and bash with suppressed output
+    # Installation using curl with proper flags and POSIX-compatible sh
     try:
-        install_cmd = "curl -sS https://raw.githubusercontent.com/ajeetdsouza/zoxide/main/install.sh | bash >/dev/null 2>&1"
-        run_command(install_cmd, shell=True, check=True)
+        install_cmd = "curl -sSfL https://raw.githubusercontent.com/ajeetdsouza/zoxide/main/install.sh | sh"
+        result = run_command(install_cmd, shell=True, check=True, capture_output=True)
         logger.info(f"zoxide {latest_version} installed successfully.")
     except Exception as e:
         logger.warning(f"zoxide installation failed (this is not critical): {str(e)}")
+        if hasattr(e, 'stderr') and e.stderr:
+            logger.warning(f"zoxide install stderr: {e.stderr}")
         logger.warning("zoxide is optional - continuing without it. You can install it manually if needed.")
         logger.warning("For Alpine Linux (musl), try: apk add zoxide")
 
