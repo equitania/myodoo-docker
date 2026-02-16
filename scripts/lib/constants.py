@@ -6,7 +6,7 @@ Constants and configuration values for getScripts.py
 import os
 
 # Script version and metadata
-SCRIPT_VERSION = "8.0.4"
+SCRIPT_VERSION = "8.0.5"
 SCRIPT_DATE = "16.02.2026"
 
 # Cache settings

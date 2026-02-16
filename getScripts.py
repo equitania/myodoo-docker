@@ -55,7 +55,7 @@ if os.environ.get('GETSCRIPTS_DEBUG', '').lower() in ('1', 'true', 'yes'):
     logger.debug("Debug logging enabled")
 
 # Script version and date
-SCRIPT_VERSION = "8.0.4"
+SCRIPT_VERSION = "8.0.5"
 SCRIPT_DATE = "16.02.2026"
 
 # Cache settings
@@ -2473,29 +2473,49 @@ def install_or_update_mcedit() -> None:
 def is_dns_already_optimized() -> bool:
     """Check if DNS has already been optimized by getScripts.py
 
+    Also validates actual DNS state: even if a marker exists, DNS is NOT
+    considered optimized if resolv.conf has >3 nameservers (MAXNS violation).
+
     Returns:
         bool: True if DNS appears to be already optimized
     """
     try:
+        marker_found = False
+
         # Check if resolvconf head file exists with our marker
         head_file = "/etc/resolvconf/resolv.conf.d/head"
         if os.path.exists(head_file):
             with open(head_file, "r") as f:
                 content = f.read()
                 if "managed by getScripts.py" in content:
-                    return True
+                    marker_found = True
 
         # Check if systemd-resolved config exists with our marker
-        resolved_config = "/etc/systemd/resolved.conf.d/dns-optimization.conf"
-        if os.path.exists(resolved_config):
-            return True
+        if not marker_found:
+            resolved_config = "/etc/systemd/resolved.conf.d/dns-optimization.conf"
+            if os.path.exists(resolved_config):
+                marker_found = True
 
         # Check if direct resolv.conf has our marker
-        if os.path.exists("/etc/resolv.conf"):
-            with open("/etc/resolv.conf", "r") as f:
-                content = f.read()
-                if "managed by getScripts.py" in content:
-                    return True
+        if not marker_found:
+            if os.path.exists("/etc/resolv.conf"):
+                with open("/etc/resolv.conf", "r") as f:
+                    content = f.read()
+                    if "managed by getScripts.py" in content:
+                        marker_found = True
+
+        if marker_found:
+            # Validate actual DNS state: MAXNS compliance (max 3 nameservers)
+            try:
+                if os.path.exists("/etc/resolv.conf"):
+                    with open("/etc/resolv.conf", "r") as f:
+                        ns_count = sum(1 for line in f if line.strip().startswith('nameserver'))
+                    if ns_count > 3:
+                        logger.debug(f"DNS marker exists but {ns_count} nameservers found (max 3), re-optimization needed")
+                        return False
+            except Exception:
+                pass
+            return True
 
         return False
     except Exception:
@@ -2554,13 +2574,18 @@ def is_hetzner_server() -> bool:
     except Exception:
         pass
 
-    # Check via /etc/resolv.conf for legacy Hetzner DNS
+    # Check via /etc/resolv.conf for Hetzner DNS (legacy AND current)
     try:
         if os.path.exists("/etc/resolv.conf"):
             with open("/etc/resolv.conf", "r") as f:
                 content = f.read()
-            if any(pattern in content for pattern in ['213.133.100', '213.133.98', '213.133.99']):
-                logger.info("🏢 Detected Hetzner server via legacy DNS configuration")
+            hetzner_dns_patterns = [
+                '213.133.100', '213.133.98', '213.133.99',  # legacy Hetzner DNS
+                '185.12.64.',                                 # current Hetzner DNS IPv4
+                '2a01:4ff:ff00::add:',                       # current Hetzner DNS IPv6
+            ]
+            if any(pattern in content for pattern in hetzner_dns_patterns):
+                logger.info("🏢 Detected Hetzner server via DNS configuration")
                 return True
     except Exception:
         pass
@@ -2744,41 +2769,47 @@ def optimize_dns_configuration(explicit_request: bool = False) -> bool:
         logger.warning(f"\n⚠️  {len(current_dns)} nameservers configured, but Linux uses max 3 (MAXNS limit)")
         needs_optimization = True
 
-    # Hetzner-aware DNS evaluation
-    if on_hetzner:
-        # On Hetzner: Hetzner DNS as primary is OPTIMAL
-        if primary_dns in hetzner_dns and already_optimized:
-            logger.info(f"\n✅ DNS is already optimized with Hetzner DNS ({primary_dns}) as primary")
-        elif primary_dns in hetzner_dns and not already_optimized:
-            logger.info(f"\n✅ Hetzner DNS ({primary_dns}) is already primary (good for Hetzner servers)")
-            # Check if secondary/tertiary are public DNS for redundancy
-            public_dns_present = any(dns in ["1.1.1.1", "8.8.8.8", "9.9.9.9"] for dns in current_dns[1:3])
-            if not public_dns_present:
-                logger.info("ℹ️  Consider adding public DNS (Cloudflare/Quad9) as fallback for redundancy")
+    # Hetzner-aware DNS evaluation (only if no optimization needed yet from MAXNS check)
+    if not needs_optimization:
+        if on_hetzner:
+            # On Hetzner: Hetzner DNS as primary is OPTIMAL
+            if primary_dns in hetzner_dns and already_optimized:
+                logger.info(f"\n✅ DNS is already optimized with Hetzner DNS ({primary_dns}) as primary")
+            elif primary_dns in hetzner_dns and not already_optimized:
+                logger.info(f"\n✅ Hetzner DNS ({primary_dns}) is already primary (good for Hetzner servers)")
+                # Check if secondary/tertiary are public DNS for redundancy
+                public_dns_present = any(dns in ["1.1.1.1", "8.8.8.8", "9.9.9.9"] for dns in current_dns[1:3])
+                if not public_dns_present:
+                    logger.info("ℹ️  Consider adding public DNS (Cloudflare/Quad9) as fallback for redundancy")
+                    needs_optimization = True
+            elif primary_dns in recommended_dns and already_optimized:
+                logger.info(f"\n✅ DNS is already optimized with {primary_dns} as primary")
+            elif primary_dns in ["1.1.1.1", "8.8.8.8", "9.9.9.9"]:
+                # Public DNS is primary on Hetzner — recommend Hetzner as primary for better latency
+                logger.info(f"\nℹ️  Public DNS ({primary_dns}) is primary, but Hetzner DNS would be faster")
+                logger.info("   Hetzner DNS (185.12.64.2) has lowest latency on Hetzner infrastructure")
                 needs_optimization = True
-        elif primary_dns in recommended_dns and already_optimized:
-            logger.info(f"\n✅ DNS is already optimized with {primary_dns} as primary")
-        elif primary_dns in ["1.1.1.1", "8.8.8.8", "9.9.9.9"]:
-            # Public DNS is primary on Hetzner — recommend Hetzner as primary for better latency
-            logger.info(f"\nℹ️  Public DNS ({primary_dns}) is primary, but Hetzner DNS would be faster")
-            logger.info("   Hetzner DNS (185.12.64.2) has lowest latency on Hetzner infrastructure")
-            needs_optimization = True
+            else:
+                logger.warning("\n⚠️  Non-optimal DNS configuration detected on Hetzner server")
+                needs_optimization = True
         else:
-            logger.warning("\n⚠️  Non-optimal DNS configuration detected on Hetzner server")
-            needs_optimization = True
+            # Not on Hetzner: Hetzner DNS is a problem (e.g. DigitalOcean)
+            if primary_dns in recommended_dns and already_optimized:
+                logger.info(f"\n✅ DNS is already optimized with {primary_dns} as primary DNS server")
+            elif primary_dns in recommended_dns and not already_optimized:
+                logger.info(f"\n✅ DNS appears to be manually optimized with {primary_dns} as primary DNS server")
+                if any(dns in hetzner_dns for dns in current_dns[:2]):
+                    logger.warning("\n⚠️  Detected Hetzner DNS servers in primary/secondary positions")
+                    needs_optimization = True
+            else:
+                if any(dns in hetzner_dns for dns in current_dns):
+                    logger.warning("\n⚠️  Detected Hetzner DNS servers which may cause issues with some providers")
+                    needs_optimization = True
     else:
-        # Not on Hetzner: Hetzner DNS is a problem (e.g. DigitalOcean)
-        if primary_dns in recommended_dns and already_optimized:
-            logger.info(f"\n✅ DNS is already optimized with {primary_dns} as primary DNS server")
-        elif primary_dns in recommended_dns and not already_optimized:
-            logger.info(f"\n✅ DNS appears to be manually optimized with {primary_dns} as primary DNS server")
-            if any(dns in hetzner_dns for dns in current_dns[:2]):
-                logger.warning("\n⚠️  Detected Hetzner DNS servers in primary/secondary positions")
-                needs_optimization = True
-        else:
-            if any(dns in hetzner_dns for dns in current_dns):
-                logger.warning("\n⚠️  Detected Hetzner DNS servers which may cause issues with some providers")
-                needs_optimization = True
+        # needs_optimization already True (e.g. MAXNS violation)
+        # Provide additional context but skip "already optimized" messages
+        if on_hetzner and primary_dns not in ["185.12.64.2"]:
+            logger.info("ℹ️  Hetzner DNS (185.12.64.2) would provide lowest latency as primary")
 
     # Check if current DNS is slow
     if dns_info["dns_performance"]:
@@ -3836,7 +3867,15 @@ def run_first_time_setup() -> bool:
     configure_proxy_settings()
 
     # DNS Configuration
-    if not is_dns_already_optimized():
+    dns_optimized = is_dns_already_optimized()
+    if dns_optimized:
+        # Double-check: validate actual MAXNS compliance
+        dns_info = check_dns_configuration()
+        if len(dns_info['resolv_conf']) > 3:
+            logger.info(f"DNS marker found, but {len(dns_info['resolv_conf'])} nameservers configured (max 3)")
+            dns_optimized = False
+
+    if not dns_optimized:
         dns_servers = get_dns_preference()
         if dns_servers and dns_servers != ["SKIP"]:
             apply_dns_servers(dns_servers)
