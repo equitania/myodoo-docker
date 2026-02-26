@@ -55,7 +55,7 @@ if os.environ.get('GETSCRIPTS_DEBUG', '').lower() in ('1', 'true', 'yes'):
     logger.debug("Debug logging enabled")
 
 # Script version and date
-SCRIPT_VERSION = "9.0.1"
+SCRIPT_VERSION = "9.0.2"
 SCRIPT_DATE = "26.02.2026"
 
 # Cache settings
@@ -1185,7 +1185,19 @@ def install_zoxide_if_needed(target_version: Optional[str] = None) -> None:
 
     logger.info(f"Installing zoxide version {latest_version}...")
 
-    # Installation using curl with proper flags and POSIX-compatible sh
+    # On musl/Alpine systems, use apk instead of the install script
+    if is_musl_system():
+        logger.info("Detected musl/Alpine system, using apk to install zoxide...")
+        try:
+            run_command("apk add --no-cache zoxide", shell=True, check=True, capture_output=True)
+            logger.info("zoxide installed successfully via apk.")
+            return
+        except Exception as e:
+            logger.warning(f"apk install failed: {e}")
+            logger.warning("zoxide is optional - continuing without it.")
+            return
+
+    # Standard installation using curl with proper flags and POSIX-compatible sh
     try:
         install_cmd = "curl -sSfL https://raw.githubusercontent.com/ajeetdsouza/zoxide/main/install.sh | sh"
         result = run_command(install_cmd, shell=True, check=True, capture_output=True)
@@ -1195,7 +1207,6 @@ def install_zoxide_if_needed(target_version: Optional[str] = None) -> None:
         if hasattr(e, 'stderr') and e.stderr:
             logger.warning(f"zoxide install stderr: {e.stderr}")
         logger.warning("zoxide is optional - continuing without it. You can install it manually if needed.")
-        logger.warning("For Alpine Linux (musl), try: apk add zoxide")
 
 def ensure_directory_exists(directory: str) -> None:
     """Ensure a directory exists, creating it if necessary."""
@@ -1304,6 +1315,27 @@ def get_os_info():
             return info.get('ID', '').strip('"'), info.get('VERSION_ID', '').strip('"')
     except:
         return "unknown", ""
+
+def is_musl_system() -> bool:
+    """Check if the system uses musl libc (e.g., Alpine Linux).
+
+    Returns:
+        bool: True if musl libc is detected, False otherwise
+    """
+    # Check /etc/os-release for Alpine
+    os_id, _ = get_os_info()
+    if os_id == "alpine":
+        return True
+    # Check for musl libc binary
+    try:
+        result = subprocess.run(
+            ["ldd", "--version"],
+            capture_output=True, text=True, timeout=5
+        )
+        output = (result.stdout + result.stderr).lower()
+        return "musl" in output
+    except Exception:
+        return False
 
 def get_pip_version():
     """Get pip version as a tuple of integers."""
@@ -3375,7 +3407,6 @@ def install_packages(package_info: Dict[str, Any]) -> None:
 
     # 1. Ensure uv is installed and up to date
     if not is_uv_installed():
-        logger.info("Installing uv...")
         if not install_uv():
             logger.warning("uv installation failed, skipping uv tool installations")
         else:
