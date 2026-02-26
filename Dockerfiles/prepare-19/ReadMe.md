@@ -1,12 +1,12 @@
-# MyOdoo Prepare-V16 Docker Image
-#### Basis-Image für Odoo 16 Container | Base Image for Odoo 16 Containers
+# ownERP Prepare-V19 Docker Image
+#### Basis-Image für Odoo 19 Container | Base Image for Odoo 19 Containers
 
 ---
 
 ## 🇩🇪 Deutsche Beschreibung
 
 ### Überblick
-Dieses Docker-Image dient als Basis für Odoo 16-Installationen in Docker-Containern. Es enthält alle notwendigen Abhängigkeiten und Werkzeuge, die für den Betrieb von Odoo 16 erforderlich sind, ohne Odoo selbst zu installieren. 
+Dieses Docker-Image dient als Basis für Odoo 19-Installationen in Docker-Containern. Es enthält alle notwendigen Abhängigkeiten und Werkzeuge, die für den Betrieb von Odoo 19 erforderlich sind, ohne Odoo selbst zu installieren. 
 
 ### Basis des Images
 - **Betriebssystem**: Debian Bookworm
@@ -38,15 +38,15 @@ Dieses Docker-Image dient als Basis für Odoo 16-Installationen in Docker-Contai
     - openai
 
 ### Anwendungsbereich
-Dieses Image wird als Grundlage für die Erstellung von produktionsreifen Odoo 16-Docker-Containern verwendet. Es enthält alle notwendigen Komponenten, damit Odoo reibungslos funktionieren kann, wobei die eigentliche Odoo-Installation in einem darauf aufbauenden Image erfolgt.
+Dieses Image wird als Grundlage für die Erstellung von produktionsreifen Odoo 19-Docker-Containern verwendet. Es enthält alle notwendigen Komponenten, damit Odoo reibungslos funktionieren kann, wobei die eigentliche Odoo-Installation in einem darauf aufbauenden Image erfolgt.
 
 ### Verwendung
 ```bash
 # Pull des Images
-docker pull myodoo/prepare-v16:TAG
+docker pull myodoo/prepare-v19:TAG
 
 # Verwendung als Basis in einem Dockerfile
-FROM myodoo/prepare-v16:TAG
+FROM myodoo/prepare-v19:TAG
 # Weitere Schritte zur Installation von Odoo...
 ```
 
@@ -58,7 +58,7 @@ Die Versionsnummer im Tag folgt dem Format `YY.MM.DD-PYTHON_VERSION` (z.B. `25.0
 ## 🇬🇧 English Description
 
 ### Overview
-This Docker image serves as a base for Odoo 16 installations in Docker containers. It includes all necessary dependencies and tools required for running Odoo 16, without installing Odoo itself.
+This Docker image serves as a base for Odoo 19 installations in Docker containers. It includes all necessary dependencies and tools required for running Odoo 19, without installing Odoo itself.
 
 ### Base of the Image
 - **Operating System**: Debian Bookworm
@@ -90,15 +90,15 @@ This Docker image serves as a base for Odoo 16 installations in Docker container
     - openai
 
 ### Scope
-This image is used as a foundation for creating production-ready Odoo 16 Docker containers. It contains all necessary components for Odoo to function smoothly, with the actual Odoo installation happening in an image built on top of this one.
+This image is used as a foundation for creating production-ready Odoo 19 Docker containers. It contains all necessary components for Odoo to function smoothly, with the actual Odoo installation happening in an image built on top of this one.
 
 ### Usage
 ```bash
 # Pull the image
-docker pull myodoo/prepare-v16:TAG
+docker pull myodoo/prepare-v19:TAG
 
 # Use as base in a Dockerfile
-FROM myodoo/prepare-v16:TAG
+FROM myodoo/prepare-v19:TAG
 # Further steps to install Odoo...
 ```
 
