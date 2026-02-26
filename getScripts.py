@@ -291,6 +291,7 @@ def is_zsh_installed() -> Tuple[bool, Optional[str]]:
 
 def is_fish_repo_configured() -> bool:
     """Check if the official Fish shell repository is already configured.
+    Checks both legacy .list format and modern DEB822 .sources format.
 
     Returns:
         bool: True if Fish repo is configured
@@ -298,19 +299,39 @@ def is_fish_repo_configured() -> bool:
     repo_list = "/etc/apt/sources.list.d/shells:fish:release:4.list"
     # Alternative name (some systems replace : with _)
     repo_list_alt = "/etc/apt/sources.list.d/shells_fish_release_4.list"
+    # DEB822 format used by modern Debian (Trixie/13+)
+    repo_sources = "/etc/apt/sources.list.d/shells:fish:release:4.sources"
+    repo_sources_alt = "/etc/apt/sources.list.d/shells_fish_release_4.sources"
     # PPA list for Ubuntu
     ppa_list = "/etc/apt/sources.list.d/fish-shell-ubuntu-release-4"
 
-    # Check for Debian-style repo
-    if os.path.exists(repo_list) or os.path.exists(repo_list_alt):
+    # Check for Debian-style repo (.list or .sources)
+    if (os.path.exists(repo_list) or os.path.exists(repo_list_alt) or
+            os.path.exists(repo_sources) or os.path.exists(repo_sources_alt)):
         return True
 
     # Check for Ubuntu PPA (glob pattern for different Ubuntu versions)
     import glob as glob_module
-    if glob_module.glob(f"{ppa_list}*.list"):
+    if glob_module.glob(f"{ppa_list}*.list") or glob_module.glob(f"{ppa_list}*.sources"):
         return True
 
     return False
+
+def cleanup_duplicate_fish_repo() -> None:
+    """Remove duplicate Fish repository entries.
+    If both .list and .sources files exist, remove the .list file
+    since .sources (DEB822 format) is the modern standard.
+    """
+    list_file = "/etc/apt/sources.list.d/shells:fish:release:4.list"
+    sources_file = "/etc/apt/sources.list.d/shells:fish:release:4.sources"
+
+    if os.path.exists(list_file) and os.path.exists(sources_file):
+        logger.info("Duplicate Fish repository detected (.list + .sources), removing .list file...")
+        try:
+            run_command(f"sudo rm -f {list_file}")
+            logger.info(f"Removed duplicate {list_file}")
+        except Exception as e:
+            logger.warning(f"Failed to remove duplicate Fish repo file: {e}")
 
 
 def install_fish_if_needed() -> Tuple[bool, bool]:
@@ -337,6 +358,9 @@ def install_fish_if_needed() -> Tuple[bool, bool]:
     if not is_root_or_has_sudo():
         logger.warning("Cannot install/upgrade Fish without sudo privileges")
         return installed, False
+
+    # Clean up duplicate repository entries (.list + .sources)
+    cleanup_duplicate_fish_repo()
 
     os_id, os_version = get_os_info()
 

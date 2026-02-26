@@ -11,7 +11,7 @@ from typing import Tuple
 
 from .logging_config import get_logger
 from .system_utils import run_command, get_os_info, is_root_or_has_sudo, ensure_directory_exists
-from .shell_detection import is_fish_installed, is_fish_repo_configured
+from .shell_detection import is_fish_installed, is_fish_repo_configured, cleanup_duplicate_fish_repo
 
 
 def install_fish_if_needed() -> Tuple[bool, bool]:
@@ -35,6 +35,9 @@ def install_fish_if_needed() -> Tuple[bool, bool]:
     if not is_root_or_has_sudo():
         logger.warning("Cannot install/upgrade Fish without sudo privileges")
         return installed, False
+
+    # Clean up duplicate repository entries (.list + .sources)
+    cleanup_duplicate_fish_repo()
 
     os_id, os_version = get_os_info()
 
