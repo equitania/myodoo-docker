@@ -55,7 +55,7 @@ if os.environ.get('GETSCRIPTS_DEBUG', '').lower() in ('1', 'true', 'yes'):
     logger.debug("Debug logging enabled")
 
 # Script version and date
-SCRIPT_VERSION = "9.0.3"
+SCRIPT_VERSION = "9.0.4"
 SCRIPT_DATE = "26.02.2026"
 
 # Cache settings
@@ -1529,15 +1529,30 @@ def is_pip_package_installed(package_name: str) -> bool:
 def is_uv_installed() -> bool:
     """Check if uv is installed.
 
+    Checks PATH first, then common installation directories
+    (~/.local/bin, ~/.cargo/bin) and adds them to PATH if found.
+
     Returns:
         bool: True if uv is installed, False otherwise
     """
+    # First try uv in current PATH
     try:
         result = subprocess.run(['uv', '--version'], capture_output=True, text=True)
-        return result.returncode == 0
-    except (FileNotFoundError, Exception) as e:
-        logger.error(f"Error checking uv installation: {e}")
-        return False
+        if result.returncode == 0:
+            return True
+    except FileNotFoundError:
+        pass
+
+    # Check common installation directories
+    for bin_dir in [os.path.expanduser("~/.local/bin"), os.path.expanduser("~/.cargo/bin")]:
+        uv_path = os.path.join(bin_dir, "uv")
+        if os.path.isfile(uv_path) and os.access(uv_path, os.X_OK):
+            logger.info(f"Found uv at {uv_path}, adding {bin_dir} to PATH")
+            os.environ["PATH"] = f"{bin_dir}:{os.environ.get('PATH', '')}"
+            return True
+
+    logger.info("uv is not installed")
+    return False
 
 def install_uv() -> bool:
     """Install uv via curl installer and run self update.
