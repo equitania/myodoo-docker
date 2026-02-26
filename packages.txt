@@ -1,6 +1,6 @@
-# PIPX packages
+# UV tool packages
 nginx-set-conf
-odoo-fast-report-mapper-equitania==0.1.24
+
 
 # PIP packages
 pip
@@ -12,6 +12,5 @@ zstd
 python-dotenv
 
 # System packages
-pipx
 zoxide
 fastfetch

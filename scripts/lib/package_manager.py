@@ -2,13 +2,13 @@
 """
 Package management utilities for getScripts.py
 
-Handles pip/pipx package management.
+Handles pip/uv tool package management.
 """
 
 import os
 import subprocess
 import requests
-from typing import Optional, Dict, Any, List
+from typing import Optional, Dict, Any
 
 from .logging_config import get_logger
 from .system_utils import run_command, is_package_installed, install_system_package
@@ -41,16 +41,16 @@ def ensure_pip() -> bool:
         return False
 
 
-def is_pipx_installed() -> bool:
+def is_uv_installed() -> bool:
     """
-    Check if pipx is installed.
+    Check if uv is installed.
 
     Returns:
-        bool: True if pipx is installed
+        bool: True if uv is installed
     """
     try:
         result = subprocess.run(
-            ["pipx", "--version"],
+            ["uv", "--version"],
             capture_output=True,
             check=False
         )
@@ -59,25 +59,39 @@ def is_pipx_installed() -> bool:
         return False
 
 
-def ensure_pipx() -> bool:
+def ensure_uv() -> bool:
     """
-    Ensure pipx is installed and available.
+    Ensure uv is installed and up to date.
+    Installs via curl if not present, then runs uv self update.
 
     Returns:
-        bool: True if pipx is available
+        bool: True if uv is available
     """
     logger = get_logger()
 
-    if is_pipx_installed():
+    if is_uv_installed():
+        # Always update uv to latest version
+        logger.info("Updating uv to latest version...")
+        try:
+            run_command("uv self update", check=True)
+        except Exception as e:
+            logger.warning(f"Failed to update uv: {e}")
         return True
 
-    logger.info("Installing pipx...")
+    logger.info("Installing uv...")
     try:
-        install_system_package("pipx")
-        run_command("pipx ensurepath", check=True)
+        run_command("curl -LsSf https://astral.sh/uv/install.sh | sh", shell=True, check=True)
+        # Ensure ~/.local/bin is in PATH for current session
+        local_bin = os.path.expanduser("~/.local/bin")
+        if local_bin not in os.environ.get("PATH", ""):
+            os.environ["PATH"] = f"{local_bin}:{os.environ.get('PATH', '')}"
+        # Also check ~/.cargo/bin (alternative uv install location)
+        cargo_bin = os.path.expanduser("~/.cargo/bin")
+        if cargo_bin not in os.environ.get("PATH", ""):
+            os.environ["PATH"] = f"{cargo_bin}:{os.environ.get('PATH', '')}"
         return True
     except Exception as e:
-        logger.error(f"Failed to install pipx: {e}")
+        logger.error(f"Failed to install uv: {e}")
         return False
 
 
@@ -158,9 +172,9 @@ def get_latest_pypi_version(package_name: str) -> Optional[str]:
     return None
 
 
-def get_installed_pipx_version(package_name: str) -> Optional[str]:
+def get_installed_uv_tool_version(package_name: str) -> Optional[str]:
     """
-    Get the installed version of a pipx package.
+    Get the installed version of a uv tool package.
 
     Args:
         package_name: Name of the package
@@ -170,26 +184,30 @@ def get_installed_pipx_version(package_name: str) -> Optional[str]:
     """
     try:
         result = subprocess.run(
-            ["pipx", "list", "--short"],
+            ["uv", "tool", "list"],
             capture_output=True,
             text=True,
             check=False
         )
         if result.returncode == 0:
             for line in result.stdout.split('\n'):
+                # uv tool list format: "package-name v1.2.3" or "package-name 1.2.3"
                 if package_name in line:
-                    # Format: "package-name 1.2.3"
                     parts = line.strip().split()
                     if len(parts) >= 2:
-                        return parts[1]
+                        version = parts[1]
+                        # Strip leading 'v' if present
+                        if version.startswith('v'):
+                            version = version[1:]
+                        return version
         return None
     except Exception:
         return None
 
 
-def install_or_update_pipx_package(package_name: str, version: Optional[str] = None) -> bool:
+def install_or_update_uv_tool(package_name: str, version: Optional[str] = None) -> bool:
     """
-    Install or update a pipx package.
+    Install or update a uv tool package.
 
     Args:
         package_name: Name of the package
@@ -200,27 +218,114 @@ def install_or_update_pipx_package(package_name: str, version: Optional[str] = N
     """
     logger = get_logger()
 
-    if not is_pipx_installed():
-        if not ensure_pipx():
+    if not is_uv_installed():
+        if not ensure_uv():
             return False
 
-    installed_version = get_installed_pipx_version(package_name)
+    installed_version = get_installed_uv_tool_version(package_name)
     pkg_spec = f"{package_name}=={version}" if version else package_name
 
     try:
         if installed_version:
             if version and installed_version != version:
-                logger.info(f"Upgrading {package_name} from {installed_version} to {version}")
-                run_command(f"pipx upgrade {package_name}", check=True)
+                logger.info(f"Reinstalling {package_name} from {installed_version} to {version}")
+                run_command(f"uv tool install --force {pkg_spec}", check=True)
+            elif not version:
+                # Upgrade to latest
+                logger.info(f"Upgrading {package_name}...")
+                try:
+                    run_command(f"uv tool upgrade {package_name}", check=True)
+                except Exception:
+                    # If upgrade fails (e.g., not installed via uv), force install
+                    logger.info(f"Upgrade failed, force installing {package_name}...")
+                    run_command(f"uv tool install --force {package_name}", check=True)
             else:
                 logger.info(f"{package_name} {installed_version} is already installed")
         else:
             logger.info(f"Installing {package_name}...")
-            run_command(f"pipx install {pkg_spec}", check=True)
+            run_command(f"uv tool install {pkg_spec}", check=True)
         return True
     except Exception as e:
         logger.error(f"Failed to install/update {package_name}: {e}")
         return False
+
+
+def upgrade_all_uv_tools() -> bool:
+    """
+    Upgrade all installed uv tools to their latest versions.
+
+    Returns:
+        bool: True if successful
+    """
+    logger = get_logger()
+
+    if not is_uv_installed():
+        logger.warning("uv is not installed, skipping tool upgrade")
+        return False
+
+    try:
+        logger.info("Upgrading all uv tools...")
+        run_command("uv tool upgrade --all", check=True)
+        return True
+    except Exception as e:
+        logger.warning(f"Failed to upgrade all uv tools: {e}")
+        return False
+
+
+def migrate_pipx_to_uv() -> bool:
+    """
+    Migrate from pipx to uv: uninstall pipx tools and remove pipx.
+    Non-critical - logs warnings on failure.
+
+    Returns:
+        bool: True if migration completed (or pipx not present)
+    """
+    logger = get_logger()
+
+    # Check if pipx is still installed
+    try:
+        result = subprocess.run(
+            ["which", "pipx"],
+            capture_output=True,
+            text=True,
+            check=False
+        )
+        if result.returncode != 0:
+            # pipx not installed, nothing to migrate
+            return True
+    except FileNotFoundError:
+        return True
+
+    logger.info("Migrating from pipx to uv: cleaning up pipx installation...")
+
+    # Uninstall all pipx packages first
+    try:
+        result = subprocess.run(
+            ["pipx", "list", "--short"],
+            capture_output=True,
+            text=True,
+            check=False
+        )
+        if result.returncode == 0 and result.stdout.strip():
+            for line in result.stdout.strip().split('\n'):
+                pkg = line.strip().split()[0] if line.strip() else None
+                if pkg:
+                    logger.info(f"Uninstalling pipx package: {pkg}")
+                    try:
+                        subprocess.run(["pipx", "uninstall", pkg], check=False, capture_output=True)
+                    except Exception as e:
+                        logger.warning(f"Failed to uninstall pipx package {pkg}: {e}")
+    except Exception as e:
+        logger.warning(f"Failed to list pipx packages: {e}")
+
+    # Remove pipx via apt
+    try:
+        run_command("sudo apt remove -y pipx", check=True)
+        logger.info("Successfully removed pipx")
+    except Exception as e:
+        logger.warning(f"Failed to remove pipx via apt: {e}")
+
+    return True
 
 
 def install_or_update_nginx_set_conf() -> bool:
@@ -230,7 +335,7 @@ def install_or_update_nginx_set_conf() -> bool:
     Returns:
         bool: True if successful
     """
-    return install_or_update_pipx_package("nginx-set-conf")
+    return install_or_update_uv_tool("nginx-set-conf")
 
 
 def install_or_update_odoo_fast_report_mapper() -> bool:
@@ -240,12 +345,13 @@ def install_or_update_odoo_fast_report_mapper() -> bool:
     Returns:
         bool: True if successful
     """
-    return install_or_update_pipx_package("odoo-fast-report-mapper")
+    return install_or_update_uv_tool("odoo-fast-report-mapper")
 
 
 def read_package_versions(packages_file: str) -> Dict[str, Any]:
     """
     Read package versions from packages.txt file.
+    Supports both "# UV tool packages" and legacy "# PIPX packages" section headers.
 
     Args:
         packages_file: Path to packages.txt
@@ -257,7 +363,7 @@ def read_package_versions(packages_file: str) -> Dict[str, Any]:
 
     package_info = {
         "pip": [],
-        "pipx": {},
+        "uv_tools": {},
         "apt": []
     }
 
@@ -267,20 +373,31 @@ def read_package_versions(packages_file: str) -> Dict[str, Any]:
             for line in f:
                 line = line.strip()
                 if not line or line.startswith('#'):
+                    # Detect section headers from comments
+                    if "UV tool packages" in line or "PIPX packages" in line:
+                        current_section = "uv_tools"
+                    elif "PIP packages" in line:
+                        current_section = "pip"
+                    elif "System packages" in line:
+                        current_section = "apt"
                     continue
 
                 if line.startswith('[') and line.endswith(']'):
-                    current_section = line[1:-1].lower()
+                    section_name = line[1:-1].lower()
+                    if section_name in ('uv_tools', 'pipx'):
+                        current_section = 'uv_tools'
+                    else:
+                        current_section = section_name
                     continue
 
                 if current_section == 'pip':
                     package_info['pip'].append(line)
-                elif current_section == 'pipx':
+                elif current_section == 'uv_tools':
                     if '==' in line:
                         name, version = line.split('==')
-                        package_info['pipx'][name.strip()] = version.strip()
+                        package_info['uv_tools'][name.strip()] = version.strip()
                     else:
-                        package_info['pipx'][line] = None
+                        package_info['uv_tools'][line] = None
                 elif current_section == 'apt':
                     package_info['apt'].append(line)
 
@@ -304,17 +421,20 @@ def install_packages(package_info: Dict[str, Any]) -> None:
         logger.info("Installing python3-venv...")
         install_system_package("python3-venv")
 
-    # Check if pipx is installed
-    if not is_pipx_installed():
-        logger.info("Installing pipx...")
-        install_system_package("pipx")
-        run_command("pipx ensurepath")
+    # 1. Ensure uv is installed and up to date
+    if not ensure_uv():
+        logger.warning("uv installation failed, skipping uv tool installations")
+    else:
+        # 2. Upgrade all existing uv tools
+        upgrade_all_uv_tools()
 
-    # Install or update nginx-set-conf
-    install_or_update_nginx_set_conf()
+        # 3. Install or update nginx-set-conf
+        install_or_update_nginx_set_conf()
 
-    # Install specific versions of packages with pipx
-    if is_pipx_installed():
-        for package, version in package_info.get("pipx", {}).items():
+        # 4. Install other uv tools from packages.txt
+        for package, version in package_info.get("uv_tools", {}).items():
             if package != "nginx-set-conf":
-                install_or_update_pipx_package(package, version)
+                install_or_update_uv_tool(package, version)
+
+        # 5. Migrate from pipx if still present
+        migrate_pipx_to_uv()
