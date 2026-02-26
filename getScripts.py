@@ -55,7 +55,7 @@ if os.environ.get('GETSCRIPTS_DEBUG', '').lower() in ('1', 'true', 'yes'):
     logger.debug("Debug logging enabled")
 
 # Script version and date
-SCRIPT_VERSION = "9.0.2"
+SCRIPT_VERSION = "9.0.3"
 SCRIPT_DATE = "26.02.2026"
 
 # Cache settings
@@ -1185,8 +1185,18 @@ def install_zoxide_if_needed(target_version: Optional[str] = None) -> None:
 
     logger.info(f"Installing zoxide version {latest_version}...")
 
-    # On musl/Alpine systems, use apk instead of the install script
-    if is_musl_system():
+    # Try system package manager first (apt for Debian/Ubuntu, apk for Alpine)
+    os_id, _ = get_os_info()
+    if os_id in ("debian", "ubuntu"):
+        logger.info("Using apt to install/update zoxide...")
+        try:
+            run_command("apt-get update -qq", shell=True, check=True, capture_output=True)
+            run_command("apt-get install -y -qq zoxide", shell=True, check=True, capture_output=True)
+            logger.info("zoxide installed/updated successfully via apt.")
+            return
+        except Exception as e:
+            logger.warning(f"apt install failed: {e}, trying curl installer as fallback...")
+    elif os_id == "alpine" or is_musl_system():
         logger.info("Detected musl/Alpine system, using apk to install zoxide...")
         try:
             run_command("apk add --no-cache zoxide", shell=True, check=True, capture_output=True)
@@ -1197,7 +1207,7 @@ def install_zoxide_if_needed(target_version: Optional[str] = None) -> None:
             logger.warning("zoxide is optional - continuing without it.")
             return
 
-    # Standard installation using curl with proper flags and POSIX-compatible sh
+    # Fallback: curl-based installation for other distributions
     try:
         install_cmd = "curl -sSfL https://raw.githubusercontent.com/ajeetdsouza/zoxide/main/install.sh | sh"
         result = run_command(install_cmd, shell=True, check=True, capture_output=True)
