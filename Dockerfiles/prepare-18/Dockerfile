@@ -1,5 +1,5 @@
 ARG PYTHON_VERSION=3.12.12
-FROM python:${PYTHON_VERSION}-bookworm as builder
+FROM python:${PYTHON_VERSION}-bookworm AS builder
 
 LABEL maintainer="info@ownerp.com"
 
@@ -47,7 +47,7 @@ RUN echo 'deb http://apt.postgresql.org/pub/repos/apt/ bookworm-pgdg main' > /et
     && rm -rf /var/lib/apt/lists/*
 
 # Install wkhtmltox for amd64
-RUN curl -k -o wkhtmltox.deb -SL https://rm.ownerp.io/staff/wkhtmltox_0.12.6.1-3.bookworm_amd64.deb \
+RUN curl -L -o wkhtmltox.deb -SL https://rm.ownerp.io/staff/wkhtmltox_0.12.6.1-3.bookworm_amd64.deb \
     && apt-get update \
     && apt-get install -y --no-install-recommends \
         libxrender1 \

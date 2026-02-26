@@ -55,7 +55,7 @@ if os.environ.get('GETSCRIPTS_DEBUG', '').lower() in ('1', 'true', 'yes'):
     logger.debug("Debug logging enabled")
 
 # Script version and date
-SCRIPT_VERSION = "9.0.0"
+SCRIPT_VERSION = "9.0.1"
 SCRIPT_DATE = "26.02.2026"
 
 # Cache settings
