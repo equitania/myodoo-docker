@@ -18,6 +18,5 @@ alias dusort='du /var --max-depth=1 | sort -nr | cut -f2 | xargs -n 1 du -hs'
 alias f2b='fail2ban-client status'
 alias prepatch='sudo screen -S sysupdate'
 
-# Fish/ZSH configuration editing
+# Fish configuration editing
 alias fishcfg='mcedit ~/.config/fish/config.fish'
-alias zshcfg='mcedit ~/.zshrc'

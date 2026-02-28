@@ -682,85 +682,6 @@ def copy_starship_configuration(_myhome: str, myodoo_docker: str) -> bool:
         return False
 
 
-def create_simplified_zshrc(_myhome: str) -> bool:
-    """Create a simplified .zshrc without Oh-My-Zsh dependency.
-
-    This serves as a fallback for users who need to use ZSH.
-    Only operates if ZSH is installed on the system.
-
-    Args:
-        _myhome: User's home directory
-
-    Returns:
-        bool: True if created successfully, False if ZSH not installed or error
-    """
-    # Check if ZSH is installed first
-    zsh_installed, _ = is_zsh_installed()
-    if not zsh_installed:
-        logger.info("ZSH not installed - skipping .zshrc creation")
-        return False
-
-    zshrc_path = os.path.join(_myhome, ".zshrc")
-
-    # Backup existing .zshrc if it has Oh-My-Zsh
-    if os.path.exists(zshrc_path):
-        try:
-            with open(zshrc_path, 'r') as f:
-                content = f.read()
-            if 'oh-my-zsh' in content.lower():
-                backup_path = f"{zshrc_path}.bak.ohmyzsh"
-                logger.info(f"Backing up Oh-My-Zsh config to {backup_path}")
-                import shutil
-                shutil.copy2(zshrc_path, backup_path)
-        except Exception as e:
-            logger.warning(f"Could not check existing .zshrc: {e}")
-
-    # Note: Using ONLY syntax that both Fish and ZSH can parse!
-    # This allows the Fish guard to work before Fish hits incompatible syntax.
-    # Key: Use && chaining instead of if/then/fi (Fish uses if/end, not if/then/fi)
-    simplified_zshrc = '''# ZSH Fallback Configuration (Fish is primary shell)
-# Version 4.3.0 | 30.01.2026
-# This is a minimal ZSH configuration without Oh-My-Zsh dependency
-#
-# IMPORTANT: If you are using Fish shell, do not source this file!
-# Fish uses: ~/.config/fish/config.fish
-
-# Guard: Silently exit if sourced from Fish shell (no warning, just return)
-test -n "$FISH_VERSION" && return 0 2>/dev/null
-
-# PATH configuration
-export PATH="$HOME/bin:$HOME/.local/bin:/usr/local/bin:$PATH"
-
-# Zoxide (if available) - using && instead of if/then/fi for Fish compatibility
-command -v zoxide > /dev/null 2>&1 && eval "$(zoxide init zsh)"
-
-# Starship prompt (if available)
-command -v starship > /dev/null 2>&1 && eval "$(starship init zsh)"
-
-# Minimal aliases
-alias ls='ls -h --color --classify'
-alias ll='ls -alh --color --classify'
-alias lg='lazygit'
-alias grep='grep --color=auto'
-alias ff='fastfetch'
-alias dk='docker'
-alias dps='docker ps -a --format "table {{.Names}}\\t{{.ID}}\\t{{.Image}}\\t{{.Status}}\\t{{.Ports}}" | sort'
-
-# Fastfetch on startup
-command -v fastfetch > /dev/null 2>&1 && fastfetch
-
-cd $HOME
-'''
-
-    try:
-        with open(zshrc_path, 'w') as f:
-            f.write(simplified_zshrc)
-        logger.info("Created simplified .zshrc (Fish is now primary shell)")
-        return True
-    except Exception as e:
-        logger.error(f"Error creating simplified .zshrc: {e}")
-        return False
-
 
 def cleanup_legacy_files(_myhome: str, myodoo_docker: str) -> int:
     """Remove legacy files listed in cleanup_legacy.txt.
@@ -1159,11 +1080,6 @@ def install_zoxide_if_needed(target_version: Optional[str] = None) -> None:
             if local_bin not in os.environ.get("PATH", ""):
                 logger.info(f"Adding {local_bin} to PATH...")
                 os.environ["PATH"] = f"{local_bin}:{os.environ.get('PATH', '')}"
-                # Add to .zshrc if it exists
-                zshrc = os.path.expanduser("~/.zshrc")
-                if os.path.exists(zshrc):
-                    with open(zshrc, "a") as f:
-                        f.write(f'\nexport PATH="{local_bin}:$PATH"\n')
             return
         else:
             # Compare versions to decide if update is needed
@@ -2250,8 +2166,6 @@ def install_or_update_7zip():
                     except:
                         pass
 
-                    # Ensure PATH is set
-                    ensure_path_in_zshrc()
 
             # Restore original working directory
             try:
@@ -2282,214 +2196,221 @@ def install_or_update_7zip():
         logger.error(f"Error installing/updating 7-Zip: {str(e)}")
         raise
 
-def check_oxker_installed() -> bool:
-    """Check if oxker is installed.
-    
+def remove_oxker() -> None:
+    """Remove oxker if installed (replaced by ctop)."""
+    local_bin = os.path.expanduser("~/.local/bin")
+    oxker_path = os.path.join(local_bin, "oxker")
+
+    # Remove from ~/.local/bin
+    if os.path.exists(oxker_path):
+        os.remove(oxker_path)
+        logger.info(f"Removed legacy oxker from {oxker_path}")
+
+    # Warn if oxker is still found elsewhere in PATH
+    try:
+        result = subprocess.run(['which', 'oxker'], capture_output=True, text=True)
+        if result.returncode == 0:
+            found_path = result.stdout.strip()
+            logger.warning(f"oxker still found at {found_path} — please remove manually")
+    except Exception:
+        pass
+
+
+def check_ctop_installed() -> bool:
+    """Check if ctop is installed.
+
     Returns:
-        bool: True if oxker is installed, False otherwise
+        bool: True if ctop is installed, False otherwise
     """
     # First check if it exists in ~/.local/bin
     try:
         local_bin = os.path.expanduser("~/.local/bin")
-        oxker_path = os.path.join(local_bin, "oxker")
-        if os.path.exists(oxker_path) and os.access(oxker_path, os.X_OK):
+        ctop_path = os.path.join(local_bin, "ctop")
+        if os.path.exists(ctop_path) and os.access(ctop_path, os.X_OK):
             return True
     except Exception as e:
-        logger.debug(f"Error checking oxker in local bin: {e}")
-    
+        logger.debug(f"Error checking ctop in local bin: {e}")
+
     # Then check if it's in the PATH
     try:
-        result = subprocess.run(['which', 'oxker'], capture_output=True, text=True)
+        result = subprocess.run(['which', 'ctop'], capture_output=True, text=True)
         if result.returncode == 0:
             return True
     except Exception as e:
-        logger.debug(f"Error checking oxker in PATH: {e}")
-        
+        logger.debug(f"Error checking ctop in PATH: {e}")
+
     return False
 
-def get_oxker_version() -> Optional[str]:
-    """Get installed oxker version.
-    
+def get_ctop_version() -> Optional[str]:
+    """Get installed ctop version.
+
     Returns:
         Optional[str]: Version string if installed, None otherwise
     """
     try:
         # First try with full path
         local_bin = os.path.expanduser("~/.local/bin")
-        oxker_path = os.path.join(local_bin, "oxker")
-        
-        if os.path.exists(oxker_path):
+        ctop_path = os.path.join(local_bin, "ctop")
+
+        if os.path.exists(ctop_path):
             try:
-                result = subprocess.run([oxker_path, '--version'], 
+                # ctop -v → "ctop version 0.8.0, build abc123 go1.23"
+                result = subprocess.run([ctop_path, '-v'],
                                      capture_output=True, text=True)
                 if result.returncode == 0:
-                    return result.stdout.strip().split(' ')[1].lstrip('v')
+                    return result.stdout.strip().split()[2].rstrip(',')
             except Exception as e:
-                logger.debug(f"Error running oxker with full path: {e}")
-        
+                logger.debug(f"Error running ctop with full path: {e}")
+
         # Then try regular PATH
         try:
-            result = subprocess.run(['oxker', '--version'], 
+            result = subprocess.run(['ctop', '-v'],
                                  capture_output=True, text=True)
             if result.returncode == 0:
-                return result.stdout.strip().split(' ')[1].lstrip('v')
+                return result.stdout.strip().split()[2].rstrip(',')
         except FileNotFoundError:
             # Not found in PATH, which is expected if not installed
             pass
         except Exception as e:
-            logger.debug(f"Error running oxker from PATH: {e}")
-            
-        # If we got here, oxker is not installed or not working
+            logger.debug(f"Error running ctop from PATH: {e}")
+
+        # If we got here, ctop is not installed or not working
         return None
     except Exception as e:
-        logger.debug(f"Error in get_oxker_version: {e}")
+        logger.debug(f"Error in get_ctop_version: {e}")
         return None
 
 @lru_cache(maxsize=128)
-def get_latest_oxker_version() -> Optional[str]:
-    """Get the latest version of oxker from GitHub releases with caching.
-    
+def get_latest_ctop_version() -> Optional[str]:
+    """Get the latest version of ctop from GitHub releases with caching.
+
     Returns:
         Optional[str]: Latest version string if available, None otherwise
     """
-    cache_key = "oxker_latest"
+    cache_key = "ctop_latest"
     cached_data = get_cached_version(cache_key)
-    
+
     if cached_data:
         return cached_data.get("version")
-    
+
     try:
-        response = requests.get("https://api.github.com/repos/mrjackwills/oxker/releases/latest")
+        response = requests.get("https://api.github.com/repos/eqms/ctop/releases/latest")
         if response.status_code == 200:
             data = response.json()
             version = data["tag_name"].lstrip('v')
-            logger.info(f"Found latest oxker version: {version}")
-            
+            logger.info(f"Found latest ctop version: {version}")
+
             # Cache the result
             cache_version_info(cache_key, {"version": version})
             return version
-        logger.error(f"Failed to get latest oxker version. Status code: {response.status_code}")
+        logger.error(f"Failed to get latest ctop version. Status code: {response.status_code}")
     except Exception as e:
-        logger.error(f"Error fetching latest oxker version: {str(e)}")
+        logger.error(f"Error fetching latest ctop version: {str(e)}")
     return None
 
-def install_or_update_oxker() -> None:
-    """Install or update oxker to the latest version."""
+def install_or_update_ctop() -> None:
+    """Install or update ctop (eqms/ctop) to the latest version."""
     try:
+        import shutil
+
+        # Remove legacy oxker first
+        remove_oxker()
+
         # Save current working directory
         original_dir = os.getcwd()
-        
+
         # Check current version if installed
-        installed = check_oxker_installed()
-        current_version = get_oxker_version() if installed else None
-        
+        installed = check_ctop_installed()
+        current_version = get_ctop_version() if installed else None
+
         if installed:
-            logger.info(f"Current oxker version: {current_version}")
+            logger.info(f"Current ctop version: {current_version}")
         else:
-            logger.info("oxker is not installed")
-        
+            logger.info("ctop is not installed")
+
         # Get latest version from GitHub
-        latest_version = get_latest_oxker_version()
+        latest_version = get_latest_ctop_version()
         if not latest_version:
-            logger.error("Could not determine latest oxker version")
+            logger.error("Could not determine latest ctop version")
             return
 
         # Check if update is needed
         if installed and current_version == latest_version:
-            logger.info(f"oxker is already at the latest version ({latest_version})")
+            logger.info(f"ctop is already at the latest version ({latest_version})")
             return
-        
+
         # Install or update
-        logger.info(f"{'Updating' if installed else 'Installing'} oxker to version {latest_version}...")
-        
-        # Determine system architecture
-        arch = platform.machine()
-        if arch == "x86_64":
-            suffix = "x86_64"
-        elif arch == "aarch64":
-            suffix = "aarch64"
-        elif arch == "armv6l":
-            suffix = "armv6"
-        else:
-            logger.error(f"Unsupported architecture for oxker: {arch}")
+        logger.info(f"{'Updating' if installed else 'Installing'} ctop to version {latest_version}...")
+
+        # Determine OS and architecture
+        os_name = platform.system().lower()  # linux or darwin
+        if os_name not in ("linux", "darwin"):
+            logger.error(f"Unsupported OS for ctop: {os_name}")
             return
-        
+
+        arch = platform.machine()
+        if arch in ("x86_64", "amd64"):
+            arch_name = "amd64"
+        elif arch in ("aarch64", "arm64"):
+            arch_name = "arm64"
+        else:
+            logger.error(f"Unsupported architecture for ctop: {arch}")
+            return
+
         # Create temporary directory for download
         with tempfile.TemporaryDirectory() as temp_dir:
-            os.chdir(temp_dir)
-            
             try:
-                # Download the latest release
-                oxker_gz = f"oxker_linux_{suffix}.tar.gz"
-                download_url = f"https://github.com/mrjackwills/oxker/releases/latest/download/{oxker_gz}"
-                
-                logger.info(f"Downloading oxker from {download_url}")
+                # Direct binary download (no tar.gz extraction needed)
+                binary_name = f"ctop-{latest_version}-{os_name}-{arch_name}"
+                download_url = f"https://github.com/eqms/ctop/releases/download/v{latest_version}/{binary_name}"
+
+                logger.info(f"Downloading ctop from {download_url}")
                 response = requests.get(download_url, stream=True)
                 response.raise_for_status()
-                
-                with open(oxker_gz, 'wb') as f:
+
+                temp_binary = os.path.join(temp_dir, "ctop")
+                with open(temp_binary, 'wb') as f:
                     for chunk in response.iter_content(chunk_size=8192):
                         f.write(chunk)
-                
-                # Extract the binary
-                run_command(f"tar xzvf {oxker_gz} oxker")
-                
-                # Install to ~/.local/bin
+
+                # Install to ~/.local/bin (using shutil.copy2 for macOS compatibility)
                 local_bin = os.path.expanduser("~/.local/bin")
                 ensure_directory_exists(local_bin)
-                run_command(f"install -Dm 755 oxker -t {local_bin}")
-                
-                # Ensure PATH is set in .zshrc
-                ensure_path_in_zshrc()
-                
+
+                dest_path = os.path.join(local_bin, "ctop")
+                shutil.copy2(temp_binary, dest_path)
+                os.chmod(dest_path, 0o755)
+
                 # Try to set PATH for current process
                 if local_bin not in os.environ.get("PATH", ""):
                     os.environ["PATH"] = f"{local_bin}:{os.environ.get('PATH', '')}"
                     logger.info(f"Added {local_bin} to PATH for current process")
-                
-                # Test if oxker is now accessible
-                run_command("hash -r", shell=True)  # Clear path cache
-                
-                # Full path to oxker executable
-                oxker_path = os.path.join(local_bin, "oxker")
-                
-                # Show file permissions
-                logger.info(f"Checking permissions for {oxker_path}")
-                run_command(f"ls -la {oxker_path}", shell=True)
-                
+
                 # Verify installation using full path
-                if os.path.exists(oxker_path):
-                    # Try running oxker with full path
+                ctop_path = os.path.join(local_bin, "ctop")
+                if os.path.exists(ctop_path):
                     try:
-                        result = subprocess.run([oxker_path, '--version'], 
+                        result = subprocess.run([ctop_path, '-v'],
                                             capture_output=True, text=True)
                         if result.returncode == 0:
-                            new_version = result.stdout.strip().split(' ')[1].lstrip('v')
-                            logger.info(f"oxker {new_version} has been successfully installed to {oxker_path}")
-                            
-                            # Make sure to return to original directory before returning
-                            try:
-                                os.chdir(original_dir)
-                            except FileNotFoundError:
-                                # If original directory is gone, go to home directory
-                                os.chdir(os.path.expanduser("~"))
+                            new_version = result.stdout.strip().split()[2].rstrip(',')
+                            logger.info(f"ctop {new_version} has been successfully installed to {ctop_path}")
                             return
                     except Exception as e:
-                        logger.error(f"Error running {oxker_path}: {str(e)}")
-                
-                logger.error(f"Failed to verify oxker installation at {oxker_path}")
-                raise RuntimeError(f"Failed to verify oxker installation at {oxker_path}")
-            
+                        logger.error(f"Error running {ctop_path}: {str(e)}")
+
+                logger.error(f"Failed to verify ctop installation at {ctop_path}")
+                raise RuntimeError(f"Failed to verify ctop installation at {ctop_path}")
+
             finally:
                 # Always try to return to original directory
                 try:
                     os.chdir(original_dir)
                 except FileNotFoundError:
-                    # If original directory is gone, go to home directory
                     os.chdir(os.path.expanduser("~"))
-        
+
     except Exception as e:
-        logger.error(f"Error installing/updating oxker: {str(e)}")
+        logger.error(f"Error installing/updating ctop: {str(e)}")
         # Make sure we're in a valid directory before raising
         try:
             os.getcwd()
@@ -3104,46 +3025,6 @@ services:
         logger.info("You can manually optimize DNS by editing the appropriate configuration files")
         return False
 
-def ensure_path_in_zshrc() -> None:
-    """Ensure ~/.local/bin is in PATH in .zshrc file.
-
-    Only operates if ZSH is installed on the system.
-    """
-    # Check if ZSH is installed first
-    zsh_installed, _ = is_zsh_installed()
-    if not zsh_installed:
-        logger.debug("ZSH not installed - skipping .zshrc PATH configuration")
-        return
-
-    try:
-        home = os.path.expanduser("~")
-        zshrc_path = os.path.join(home, ".zshrc")
-        local_bin = os.path.join(home, ".local", "bin")
-
-        # Check if .zshrc exists
-        if not os.path.exists(zshrc_path):
-            logger.info(".zshrc not found, creating it")
-            with open(zshrc_path, "w") as f:
-                f.write(f'# Created by getScripts.py\nexport PATH="{local_bin}:$PATH"\n')
-            return
-
-        # Read current .zshrc
-        with open(zshrc_path, "r") as f:
-            content = f.read()
-
-        # Check if PATH is already set correctly
-        if f'export PATH="{local_bin}:$PATH"' in content or f"export PATH={local_bin}:$PATH" in content:
-            logger.debug(f"{local_bin} is already in PATH in .zshrc")
-            return
-
-        # Add PATH to .zshrc
-        logger.info(f"Adding {local_bin} to PATH in .zshrc")
-        with open(zshrc_path, "a") as f:
-            f.write(f'\n# Added by getScripts.py\nexport PATH="{local_bin}:$PATH"\n')
-
-        logger.info(".zshrc updated, PATH will be available in new shells")
-    except Exception as e:
-        logger.error(f"Error updating .zshrc: {e}")
 
 @lru_cache(maxsize=128)
 def get_latest_pypi_version(package_name: str) -> Optional[str]:
@@ -3331,7 +3212,6 @@ def setup_environment() -> Tuple[str, str]:
     
     # Ensure .local/bin is in PATH
     ensure_directory_exists(local_bin)
-    ensure_path_in_zshrc()
     
     # Set timezone
     try:
@@ -3384,14 +3264,7 @@ def update_repository(myodoo_docker: str, server_version: str) -> None:
     run_command("find . -name '*.pyc' -type f -delete")
 
 def copy_configuration_files(_myhome: str, myodoo_docker: str) -> None:
-    """Copy configuration files from repository to home directory.
-
-    Note: As of v7.0.0, .zshrc is no longer copied from repository.
-    Fish shell is now the primary shell, and a simplified .zshrc is
-    generated by create_simplified_zshrc() for fallback purposes.
-    """
-    # Note: .zshrc copying removed in v7.0.0 - Fish is now primary shell
-    # The simplified .zshrc is created by create_simplified_zshrc()
+    """Copy configuration files from repository to home directory."""
 
     # Copy fastfetch config
     config_directory = os.path.join(_myhome, ".config", "fastfetch")
@@ -3434,8 +3307,6 @@ def install_packages(package_info: Dict[str, Any]) -> None:
     if not is_uv_installed():
         if not install_uv():
             logger.warning("uv installation failed, skipping uv tool installations")
-        else:
-            ensure_path_in_zshrc()
 
     # 2. Update uv to latest version
     if is_uv_installed():
@@ -3504,7 +3375,7 @@ def install_packages(package_info: Dict[str, Any]) -> None:
                 install_system_package(package)
     
     # Install additional tools
-    install_or_update_oxker()
+    install_or_update_ctop()
     install_or_update_mcedit()
 
 def main() -> None:
@@ -3558,42 +3429,10 @@ def main() -> None:
         if starship_installed:
             copy_starship_configuration(_myhome, myodoo_docker)
 
-        # Create simplified ZSH fallback if needed (only if ZSH is installed)
-        # Replace .zshrc if it contains oh-my-zsh, old ups alias, or doesn't exist
+        # Log ZSH detection (Fish is now the only supported shell)
         zsh_installed, _ = is_zsh_installed()
         if zsh_installed:
-            zshrc_path = os.path.join(_myhome, ".zshrc")
-            should_replace_zshrc = False
-
-            if not os.path.exists(zshrc_path):
-                should_replace_zshrc = True
-                logger.info(".zshrc not found, creating simplified version")
-            elif fish_is_fresh_install:
-                should_replace_zshrc = True
-                logger.info("Fresh Fish installation, creating simplified .zshrc")
-            else:
-                # Check if existing .zshrc needs to be replaced (has oh-my-zsh or old ups alias)
-                try:
-                    with open(zshrc_path, 'r') as f:
-                        zshrc_content = f.read()
-                    if 'oh-my-zsh' in zshrc_content.lower() or 'source ~/.zshrc' in zshrc_content:
-                        should_replace_zshrc = True
-                        logger.info("Existing .zshrc contains Oh-My-Zsh or legacy ups alias, replacing...")
-                except Exception as e:
-                    logger.warning(f"Could not read .zshrc: {e}")
-
-            if should_replace_zshrc:
-                create_simplified_zshrc(_myhome)
-            else:
-                logger.info("Keeping existing .zshrc (already simplified)")
-        else:
-            logger.info("ZSH not installed - skipping .zshrc configuration")
-
-        # =====================================================================
-        # LEGACY ZSH CONFIGURATION (Deprecated)
-        # =====================================================================
-        # Note: We no longer copy the full .zshrc with Oh-My-Zsh
-        # The simplified .zshrc is created above (only on fresh install)
+            logger.info("ZSH detected — Fish is now the primary shell, ZSH configuration skipped")
 
         # Copy scripts (without update_docker_myodoo.py - deprecated)
         copy_scripts(_myhome, myodoo_docker)
@@ -3654,14 +3493,6 @@ def main() -> None:
                         run_command(f"fish -c 'zoxide init fish | source'", shell=True)
                     except Exception:
                         pass
-                # Also initialize for ZSH fallback (only if ZSH is installed)
-                import shutil as shutil_check
-                zsh_path = shutil_check.which('zsh')
-                if zsh_path:
-                    try:
-                        run_command(f"{zsh_path} -c 'source <({zoxide_path} init zsh)'", shell=True)
-                    except Exception:
-                        pass
 
         except Exception as e:
             logger.error(f"Error setting up shell environment: {e}")
@@ -3683,8 +3514,6 @@ def main() -> None:
         if fish_installed:
             logger.info("Fish shell is now configured. Start it with: fish")
             logger.info("Or log out and back in if you changed your default shell.")
-        else:
-            logger.info("For ZSH changes to take effect, run: source ~/.zshrc")
         logger.info("")
 
     except Exception as e:

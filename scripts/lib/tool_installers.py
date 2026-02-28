@@ -2,7 +2,7 @@
 """
 Tool installation utilities for getScripts.py
 
-Handles installation of 7zip, zoxide, starship, fastfetch, oxker.
+Handles installation of 7zip, zoxide, starship, fastfetch, ctop.
 """
 
 import os
@@ -316,16 +316,16 @@ def install_update_7zip() -> bool:
     return False
 
 
-def check_oxker_installed() -> bool:
+def check_ctop_installed() -> bool:
     """
-    Check if oxker is installed.
+    Check if ctop (eqms/ctop) is installed.
 
     Returns:
-        bool: True if oxker is installed
+        bool: True if ctop is installed
     """
     try:
         result = subprocess.run(
-            ["oxker", "--version"],
+            ["ctop", "-v"],
             stdout=subprocess.PIPE,
             stderr=subprocess.PIPE,
             check=False
@@ -335,70 +335,98 @@ def check_oxker_installed() -> bool:
         return False
 
 
-def get_oxker_version() -> Optional[str]:
+def get_ctop_version() -> Optional[str]:
     """
-    Get oxker version.
+    Get ctop version.
 
     Returns:
         Optional[str]: Version string if installed
     """
     try:
         result = subprocess.run(
-            ["oxker", "--version"],
+            ["ctop", "-v"],
             stdout=subprocess.PIPE,
             stderr=subprocess.PIPE,
             text=True,
             check=False
         )
         if result.returncode == 0:
-            # Output: "oxker 0.7.1"
+            # Output: "ctop version 0.8.0, build abc123 go1.23"
             parts = result.stdout.strip().split()
-            if len(parts) >= 2:
-                return parts[1]
+            if len(parts) >= 3:
+                return parts[2].rstrip(',')
         return None
     except FileNotFoundError:
         return None
 
 
-def install_oxker() -> bool:
+def install_ctop() -> bool:
     """
-    Install oxker (Docker TUI).
+    Install ctop (Docker TUI) from eqms/ctop.
 
     Returns:
         bool: True if installation successful
     """
+    import shutil
+    import platform as plat
+
     logger = get_logger()
 
-    if check_oxker_installed():
-        version = get_oxker_version()
-        logger.info(f"Oxker {version} is already installed")
+    if check_ctop_installed():
+        version = get_ctop_version()
+        logger.info(f"ctop {version} is already installed")
         return True
 
-    logger.info("Installing oxker...")
+    logger.info("Installing ctop...")
     try:
         home_dir = os.path.expanduser("~")
         local_bin = os.path.join(home_dir, ".local", "bin")
         os.makedirs(local_bin, exist_ok=True)
 
-        arch = get_system_architecture()
-        if arch == "x86_64":
-            arch_suffix = "x86_64"
-        elif arch in ("aarch64", "arm64"):
-            arch_suffix = "aarch64"
-        else:
-            logger.warning(f"Unsupported architecture for oxker: {arch}")
+        os_name = plat.system().lower()  # linux or darwin
+        if os_name not in ("linux", "darwin"):
+            logger.warning(f"Unsupported OS for ctop: {os_name}")
             return False
 
-        run_command(
-            f"curl -sL https://github.com/mrjackwills/oxker/releases/latest/download/oxker_linux_{arch_suffix}.tar.gz | tar xz -C {local_bin}",
-            shell=True, check=True
-        )
+        arch = get_system_architecture()
+        if arch in ("x86_64", "amd64"):
+            arch_name = "amd64"
+        elif arch in ("aarch64", "arm64"):
+            arch_name = "arm64"
+        else:
+            logger.warning(f"Unsupported architecture for ctop: {arch}")
+            return False
 
-        if check_oxker_installed():
-            version = get_oxker_version()
-            logger.info(f"Oxker {version} installed successfully")
+        # Get latest version from GitHub API
+        import requests
+        resp = requests.get("https://api.github.com/repos/eqms/ctop/releases/latest")
+        if resp.status_code != 200:
+            logger.error(f"Failed to get latest ctop version: HTTP {resp.status_code}")
+            return False
+        version = resp.json()["tag_name"].lstrip('v')
+
+        # Direct binary download (no tar.gz)
+        binary_name = f"ctop-{version}-{os_name}-{arch_name}"
+        download_url = f"https://github.com/eqms/ctop/releases/download/v{version}/{binary_name}"
+
+        import tempfile
+        with tempfile.NamedTemporaryFile(delete=False) as tmp:
+            tmp_path = tmp.name
+            run_command(
+                f"curl -sL -o {tmp_path} {download_url}",
+                shell=True, check=True
+            )
+
+        dest_path = os.path.join(local_bin, "ctop")
+        shutil.copy2(tmp_path, dest_path)
+        os.chmod(dest_path, 0o755)
+        os.unlink(tmp_path)
+
+        if check_ctop_installed():
+            version = get_ctop_version()
+            logger.info(f"ctop {version} installed successfully")
             return True
     except Exception as e:
-        logger.error(f"Failed to install oxker: {e}")
+        logger.error(f"Failed to install ctop: {e}")
 
     return False

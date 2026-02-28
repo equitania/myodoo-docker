@@ -60,7 +60,7 @@ cp myodoo-docker/getScripts.py /root/
 
 #### 2. Shell-Konfiguration (NEU ab Version 7.0)
 
-**Fish Shell** ist die primäre Shell mit Starship Prompt. ZSH bleibt als Fallback verfügbar.
+**Fish Shell** ist die primäre Shell mit Starship Prompt.
 
 ```
 fish/
@@ -96,7 +96,7 @@ fish/
 
 #### 5. Shell-Aliasse
 
-Die Fish/ZSH-Konfiguration enthält nützliche Aliasse für die tägliche Arbeit:
+Die Fish-Konfiguration enthält nützliche Aliasse für die tägliche Arbeit:
 
 ##### Grundlegende Aliasse
 - `ls` - verbesserte Verzeichnisanzeige
@@ -144,7 +144,7 @@ Die Fish/ZSH-Konfiguration enthält nützliche Aliasse für die tägliche Arbeit
 - `dkrmi` - Alle Images entfernen (mit Bestätigung)
 - `dkrmv` - Alle Docker-Volumes entfernen (mit Bestätigung)
 - `dkprs` - Docker-System bereinigen
-- `ox` - Shortcut für oxker
+- `ct` - Shortcut für ctop
 
 #### 6. DNS-Optimierung
 
@@ -176,21 +176,6 @@ cd $HOME && rm -rf myodoo-docker && rm -rf nginx-conf && \
   git clone -b 2026 https://github.com/equitania/myodoo-docker.git && \
   cp myodoo-docker/getScripts.py $HOME && \
   $HOME/getScripts.py && source ~/.config/fish/config.fish
-```
-
-### Migration von ZSH zu Fish
-
-Bei bestehenden Installationen:
-1. `getScripts.py` ausführen - installiert Fish automatisch
-2. Bei der Frage "Fish als Standard-Shell?" mit "j" bestätigen
-3. Alte .zshrc bleibt als Fallback erhalten
-
-```bash
-# Manueller Wechsel zu Fish
-chsh -s /usr/bin/fish
-
-# Zurück zu ZSH falls nötig
-chsh -s /usr/bin/zsh
 ```
 
 ---
@@ -251,7 +236,7 @@ cp myodoo-docker/getScripts.py /root/
 
 #### 2. Shell Configuration (NEW in Version 7.0)
 
-**Fish Shell** is the primary shell with Starship Prompt. ZSH remains available as fallback.
+**Fish Shell** is the primary shell with Starship Prompt.
 
 ```
 fish/
@@ -287,7 +272,7 @@ fish/
 
 #### 5. Shell Aliases
 
-The Fish/ZSH configuration includes useful aliases for daily work:
+The Fish configuration includes useful aliases for daily work:
 
 ##### Basic Aliases
 - `ls` - enhanced directory listing
@@ -335,7 +320,7 @@ The Fish/ZSH configuration includes useful aliases for daily work:
 - `dkrmi` - remove all images (with confirmation)
 - `dkrmv` - remove all docker volumes (with confirmation)
 - `dkprs` - clean docker system
-- `ox` - shortcut for oxker
+- `ct` - shortcut for ctop
 
 #### 6. DNS Optimization
 
@@ -367,21 +352,6 @@ cd $HOME && rm -rf myodoo-docker && rm -rf nginx-conf && \
   git clone -b 2026 https://github.com/equitania/myodoo-docker.git && \
   cp myodoo-docker/getScripts.py $HOME && \
   $HOME/getScripts.py && source ~/.config/fish/config.fish
-```
-
-### Migration from ZSH to Fish
-
-For existing installations:
-1. Run `getScripts.py` - installs Fish automatically
-2. Answer "y" when asked "Set Fish as default shell?"
-3. Old .zshrc remains as fallback
-
-```bash
-# Manual switch to Fish
-chsh -s /usr/bin/fish
-
-# Back to ZSH if needed
-chsh -s /usr/bin/zsh
 ```
 
 ---

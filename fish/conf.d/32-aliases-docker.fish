@@ -25,8 +25,8 @@ alias dkprf='docker system prune -a'
 alias dkprfa='docker system prune -a --volumes'
 alias dkprfs='docker system prune -f'
 
-# Oxker TUI
-alias ox='oxker'
+# ctop Docker TUI
+alias ct='ctop'
 
 # Docker exec shortcuts
 alias exec-live='docker exec -ti live-odoo env COLUMNS=$COLUMNS LINES=$LINES TERM=$TERM bash -l'

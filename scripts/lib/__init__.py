@@ -22,5 +22,4 @@ __all__ = [
     'proxy_config',
     'first_run',
     'repository',
-    'zsh_config',
 ]
