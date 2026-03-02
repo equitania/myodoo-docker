@@ -850,17 +850,26 @@ Beispiele:
         sys.exit(1)
 
     # Load .env (python-dotenv optional)
+    # Primary: /root/.config/myodoo-docker/.env
+    # Fallback: scripts/.env (legacy, same directory as this script)
     script_dir = Path(__file__).resolve().parent
-    env_path = script_dir / ".env"
-    if env_path.exists():
-        if load_dotenv is not None:
-            load_dotenv(env_path)
-            info(f".env geladen: {env_path}")
-        else:
-            warn("python-dotenv nicht installiert - .env wird ignoriert")
-            warn("Installation: pip install python-dotenv")
-    else:
-        warn(f".env nicht gefunden: {env_path}")
+    env_candidates = [
+        Path("/root/.config/myodoo-docker/.env"),
+        script_dir / ".env",
+    ]
+    env_loaded = False
+    for env_path in env_candidates:
+        if env_path.exists():
+            if load_dotenv is not None:
+                load_dotenv(env_path)
+                info(f".env geladen: {env_path}")
+                env_loaded = True
+            else:
+                warn("python-dotenv nicht installiert - .env wird ignoriert")
+                warn("Installation: pip install python-dotenv")
+            break
+    if not env_loaded and load_dotenv is not None:
+        warn("Keine .env gefunden. Erwartet: /root/.config/myodoo-docker/.env")
 
     # Prerequisites check
     prereq_warnings = check_prerequisites()

@@ -148,9 +148,20 @@ def cleanup_backups(cleanup_path, cutoff_timestamp):
 
 def get_encryption_settings():
     """
-    Gets encryption settings from .env file
+    Gets encryption settings from .env file.
+    Primary: /root/.config/myodoo-docker/.env
+    Fallback: .env in script directory (legacy)
     """
-    load_dotenv()
+    env_candidates = [
+        os.path.join("/root/.config/myodoo-docker", ".env"),
+        os.path.join(os.path.dirname(os.path.abspath(__file__)), ".env"),
+    ]
+    for env_path in env_candidates:
+        if os.path.exists(env_path):
+            load_dotenv(env_path)
+            break
+    else:
+        load_dotenv()  # fallback: search CWD
     enabled = os.getenv('BACKUP_ENCRYPTION_ENABLED', 'false').lower() == 'true'
     password = os.getenv('BACKUP_PASSWORD', '')
     
