@@ -743,27 +743,32 @@ def audit_nginx(config, apply=False, force=False):
             fail(f"{key}: nicht gefunden")
             Stats.fail_count += 1
 
-    # Security-Headers in vhosts prüfen
+    # Security-Headers prüfen (nginx.conf + conf.d/*.conf + includes)
     sub("Security-Headers (Empfehlungen)")
-    vhost_dir = Path("/etc/nginx/conf.d/")
     headers = cfg.get("security_headers", {})
 
+    # Collect all nginx configuration content
+    all_content = nginx_conf
+    vhost_dir = Path("/etc/nginx/conf.d/")
     if vhost_dir.exists():
-        vhost_files = list(vhost_dir.glob("*.conf"))
-        if not vhost_files:
-            warn("Keine vhost-Konfigurationen in /etc/nginx/conf.d/")
-        else:
-            all_content = ""
-            for f in vhost_files:
+        for f in vhost_dir.glob("*.conf"):
+            all_content += f.read_text()
+    # Also check common include directories
+    for include_dir in [Path("/etc/nginx/snippets/"), Path("/etc/nginx/nginxconfig.io/")]:
+        if include_dir.exists():
+            for f in include_dir.glob("*.conf"):
                 all_content += f.read_text()
 
-            for header_name, header_value in headers.items():
-                if header_name.lower() in all_content.lower():
-                    ok(f"Header '{header_name}' gefunden")
-                    Stats.ok_count += 1
-                else:
-                    warn(f"Header '{header_name}' NICHT gefunden")
-                    Stats.warn_count += 1
+    if not all_content.strip():
+        warn("Keine Nginx-Konfiguration gefunden")
+    else:
+        for header_name, header_value in headers.items():
+            if header_name.lower() in all_content.lower():
+                ok(f"Header '{header_name}' gefunden")
+                Stats.ok_count += 1
+            else:
+                warn(f"Header '{header_name}' NICHT gefunden")
+                Stats.warn_count += 1
 
     # Nginx bindet nicht auf 0.0.0.0?
     sub("Nginx Listen-Adressen")
