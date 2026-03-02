@@ -853,10 +853,22 @@ Beispiele:
     # Primary: /root/.config/myodoo-docker/.env
     # Fallback: scripts/.env (legacy, same directory as this script)
     script_dir = Path(__file__).resolve().parent
-    env_candidates = [
-        Path("/root/.config/myodoo-docker/.env"),
-        script_dir / ".env",
-    ]
+    central_dir = Path("/root/.config/myodoo-docker")
+    central_env = central_dir / ".env"
+    example_env = script_dir / ".env.example"
+
+    # Ensure central config directory exists and seed .env.example
+    if not central_dir.exists():
+        central_dir.mkdir(parents=True, mode=0o700)
+        info(f"Verzeichnis erstellt: {central_dir}")
+    if example_env.exists() and not (central_dir / ".env.example").exists():
+        shutil.copy2(example_env, central_dir / ".env.example")
+        info(f".env.example kopiert nach {central_dir}")
+    if not central_env.exists():
+        warn(f"Keine .env gefunden in {central_dir}")
+        warn(f"Vorlage anpassen: cp {central_dir / '.env.example'} {central_env}")
+
+    env_candidates = [central_env, script_dir / ".env"]
     env_loaded = False
     for env_path in env_candidates:
         if env_path.exists():
