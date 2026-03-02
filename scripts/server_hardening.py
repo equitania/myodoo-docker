@@ -506,15 +506,28 @@ def audit_ssh(config, apply=False, force=False):
         fail("/etc/ssh/sshd_config nicht gefunden")
         return
 
+    # Read main config + all drop-in files (sshd_config.d/*.conf)
     content = sshd_config.read_text()
+    dropin_dir = Path("/etc/ssh/sshd_config.d")
+    dropin_content = ""
+    if dropin_dir.is_dir():
+        for dropin in sorted(dropin_dir.glob("*.conf")):
+            dropin_content += dropin.read_text() + "\n"
+
+    # Effective config: drop-ins override main config (first match wins in sshd)
+    # For checking, we search drop-ins first, then main config
+    effective_content = dropin_content + content
+
     settings = cfg.get("settings", {})
     changes_needed = []
 
     sub("SSH-Einstellungen prüfen")
+    if dropin_content:
+        info(f"Drop-in Verzeichnis: {dropin_dir} ({len(list(dropin_dir.glob('*.conf')))} Dateien)")
 
     # Port prüfen
     port = cfg.get("port", 22)
-    port_match = re.search(r"^\s*Port\s+(\d+)", content, re.MULTILINE)
+    port_match = re.search(r"^\s*Port\s+(\d+)", effective_content, re.MULTILINE)
     current_port = int(port_match.group(1)) if port_match else 22
     if current_port == port:
         ok(f"Port: {port}")
@@ -529,7 +542,7 @@ def audit_ssh(config, apply=False, force=False):
         expected_str = str(expected)
         # Suche nach aktiver Einstellung (nicht auskommentiert)
         pattern = rf"^\s*{key}\s+(.+)"
-        match = re.search(pattern, content, re.MULTILINE)
+        match = re.search(pattern, effective_content, re.MULTILINE)
 
         if match:
             current = match.group(1).strip()
@@ -775,13 +788,17 @@ def audit_nginx(config, apply=False, force=False):
     ss_output = run("ss -tlnp | grep nginx")
     if ss_output:
         for line in ss_output.splitlines():
-            match = re.search(r"([\d.]+|\*):(\d+)", line)
+            # Match IPv4 (1.2.3.4:80, 0.0.0.0:80, *:80) and IPv6 ([::1]:80, [::]:80)
+            match = re.search(r"(?:\[([^\]]+)\]|(\d+\.\d+\.\d+\.\d+|\*)):(\d+)", line)
             if match:
-                addr = match.group(1)
-                port = match.group(2)
-                if addr in ("0.0.0.0", "*"):
-                    warn(f"Nginx auf 0.0.0.0:{port} - besser auf spezifische IP binden")
+                addr = match.group(1) or match.group(2)  # group(1)=IPv6, group(2)=IPv4
+                port = match.group(3)
+                if addr in ("0.0.0.0", "*", "::", "0.0.0.0%lo"):
+                    warn(f"Nginx auf {addr}:{port} - besser auf spezifische IP binden")
                     Stats.warn_count += 1
+                elif addr in ("::1", "127.0.0.1"):
+                    ok(f"Nginx auf [{addr}]:{port} - nur lokal")
+                    Stats.ok_count += 1
                 else:
                     ok(f"Nginx auf {addr}:{port}")
                     Stats.ok_count += 1
@@ -798,16 +815,17 @@ def audit_open_ports(config, apply=False, force=False):
         return
 
     for line in ss_output.splitlines()[1:]:  # Header überspringen
-        match = re.search(r"([\d.]+|\*|\[::\]):(\d+)\s+", line)
+        # Match IPv4 (1.2.3.4:80, 0.0.0.0:80, *:80) and IPv6 ([::1]:80, [::]:80)
+        match = re.search(r"(?:\[([^\]]+)\]|(\d+\.\d+\.\d+\.\d+|\*)):(\d+)", line)
         if match:
-            addr = match.group(1)
-            port = match.group(2)
+            addr = match.group(1) or match.group(2)  # group(1)=IPv6, group(2)=IPv4
+            port = match.group(3)
 
             # Prozess
             proc_match = re.search(r'users:\(\("([^"]+)"', line)
             proc = proc_match.group(1) if proc_match else "unbekannt"
 
-            if addr in ("0.0.0.0", "*", "[::]"):
+            if addr in ("0.0.0.0", "*", "::", "0.0.0.0%lo"):
                 if port in ("80", "443"):
                     ok(f"0.0.0.0:{port} ({proc}) - öffentlich erwartet")
                 elif port == str(config.get("ssh", {}).get("port", 22)):
@@ -815,8 +833,15 @@ def audit_open_ports(config, apply=False, force=False):
                 else:
                     warn(f"0.0.0.0:{port} ({proc}) - prüfen ob nötig")
                     Stats.warn_count += 1
-            else:
+            elif addr in ("::1", "127.0.0.1"):
                 ok(f"{addr}:{port} ({proc}) - nur lokal")
+                Stats.ok_count += 1
+            else:
+                # Specific IP binding (e.g. public IP for nginx)
+                if port in ("80", "443"):
+                    ok(f"{addr}:{port} ({proc}) - öffentlich erwartet")
+                else:
+                    ok(f"{addr}:{port} ({proc}) - spezifische IP")
                 Stats.ok_count += 1
 
 
