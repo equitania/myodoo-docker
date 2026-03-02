@@ -61,3 +61,7 @@ odoo-ce.zip
 
 .serena/cache
 .claude/
+
+# Environment files with secrets
+*.env
+!*.env.example

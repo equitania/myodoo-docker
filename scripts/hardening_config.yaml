@@ -1,0 +1,195 @@
+# =============================================================
+# Server-Härtung Konfiguration
+# =============================================================
+# Alle Einstellungen werden von server_hardening.py gelesen.
+# Anpassungen hier vornehmen, nicht im Skript.
+# =============================================================
+
+# --- UFW Firewall ---
+ufw:
+  enabled: true
+  defaults:
+    incoming: deny
+    outgoing: allow
+    routed: deny
+    logging: low
+  ipv6: true
+
+  public_ports:
+    - port: 80
+      proto: tcp
+      comment: "HTTP - Nginx"
+    - port: 443
+      proto: any
+      comment: "HTTPS - Nginx (inkl. HTTP/3 QUIC)"
+
+  restricted_ports:
+    - port: ${SSH_PORT}
+      proto: any
+      comment: "SSH Custom Port"
+      allowed_ips:
+        - ip: "${ALLOWED_IP_1}"
+          comment: "${ALLOWED_IP_1_COMMENT}"
+        - ip: "${ALLOWED_IP_2}"
+          comment: "${ALLOWED_IP_2_COMMENT}"
+        - ip: "${ALLOWED_IP_3}"
+          comment: "${ALLOWED_IP_3_COMMENT}"
+        - ip: "${ALLOWED_IP_4}"
+          comment: "${ALLOWED_IP_4_COMMENT}"
+        - ip: "${ALLOWED_IP_5}"
+          comment: "${ALLOWED_IP_5_COMMENT}"
+
+# --- Fail2Ban ---
+fail2ban:
+  enabled: true
+  banaction: ufw
+
+  ignoreip:
+    - "127.0.0.1/8"
+    - "::1"
+    - "${ALLOWED_IP_1}"
+    - "${ALLOWED_IP_2}"
+    - "${ALLOWED_IP_3}"
+    - "${ALLOWED_IP_4}"
+    - "${ALLOWED_IP_5}"
+
+  defaults:
+    bantime: 3600
+    findtime: 600
+    maxretry: 3
+
+  jails:
+    sshd:
+      enabled: true
+      port: ${SSH_PORT}
+      backend: systemd
+      journalmatch: "_SYSTEMD_UNIT=ssh.service + _COMM=sshd"
+      mode: aggressive
+      maxretry: 3
+      bantime: 86400
+
+    nginx-http-auth:
+      enabled: true
+      port: "http,https"
+      logpath: "/var/log/fail2ban_nginx-http-auth.log"
+      maxretry: 3
+
+    nginx-limit-req:
+      enabled: true
+      port: "http,https"
+      logpath: "/var/log/fail2ban_nginx-limit-req.log"
+      maxretry: 5
+
+    nginx-botsearch:
+      enabled: true
+      port: "http,https"
+      logpath: "/var/log/fail2ban_nginx-botsearch.log"
+      maxretry: 3
+
+    nginx-bad-request:
+      enabled: true
+      port: "http,https"
+      logpath: "/var/log/fail2ban_nginx-bad-request.log"
+      maxretry: 3
+
+  recidive:
+    enabled: true
+    bantime: 604800
+    findtime: 86400
+    maxretry: 3
+
+# --- SSH-Härtung ---
+# Passwort-Login bleibt aktiv (1Password-Workflow)
+ssh:
+  enabled: true
+  port: ${SSH_PORT}
+  settings:
+    PermitRootLogin: "yes"
+    PasswordAuthentication: "yes"
+    PubkeyAuthentication: "yes"
+    KbdInteractiveAuthentication: "no"
+    MaxAuthTries: 3
+    MaxSessions: 5
+    ClientAliveInterval: 300
+    ClientAliveCountMax: 2
+    X11Forwarding: "no"
+    AllowTcpForwarding: "no"
+    AllowAgentForwarding: "no"
+    PermitEmptyPasswords: "no"
+    UsePAM: "yes"
+    PrintMotd: "no"
+    AcceptEnv: "LANG LC_*"
+    Subsystem: "sftp /usr/lib/openssh/sftp-server"
+    LoginGraceTime: 30
+    StrictModes: "yes"
+    HostbasedAuthentication: "no"
+    IgnoreRhosts: "yes"
+    LogLevel: "VERBOSE"
+
+# --- Kernel-Parameter (sysctl) ---
+sysctl:
+  enabled: true
+  parameters:
+    # IP-Spoofing-Schutz (aktuell 0 - KRITISCH)
+    net.ipv4.conf.all.rp_filter: 1
+    net.ipv4.conf.default.rp_filter: 1
+
+    # SYN-Flood-Schutz (bereits aktiv)
+    net.ipv4.tcp_syncookies: 1
+    net.ipv4.tcp_max_syn_backlog: 2048
+    net.ipv4.tcp_synack_retries: 2
+    net.ipv4.tcp_syn_retries: 5
+
+    # ICMP-Redirects (bereits deaktiviert)
+    net.ipv4.conf.all.accept_redirects: 0
+    net.ipv4.conf.default.accept_redirects: 0
+    net.ipv4.conf.all.send_redirects: 0
+    net.ipv4.conf.default.send_redirects: 0
+    net.ipv6.conf.all.accept_redirects: 0
+    net.ipv6.conf.default.accept_redirects: 0
+
+    # Source-Routing deaktivieren
+    net.ipv4.conf.all.accept_source_route: 0
+    net.ipv4.conf.default.accept_source_route: 0
+    net.ipv6.conf.all.accept_source_route: 0
+    net.ipv6.conf.default.accept_source_route: 0
+
+    # Smurf-Attacken
+    net.ipv4.icmp_echo_ignore_broadcasts: 1
+    net.ipv4.icmp_ignore_bogus_error_responses: 1
+
+    # Martians loggen
+    net.ipv4.conf.all.log_martians: 1
+    net.ipv4.conf.default.log_martians: 1
+
+    # Kernel-Sicherheit
+    kernel.kptr_restrict: 2
+    kernel.dmesg_restrict: 1
+    kernel.randomize_va_space: 2
+
+# --- Docker-Härtung ---
+docker:
+  enabled: true
+  daemon_json:
+    ip: "127.0.0.1"
+    no-new-privileges: true
+    log-driver: "json-file"
+    log-opts:
+      max-size: "10m"
+      max-file: "3"
+    live-restore: true
+    userland-proxy: false
+
+# --- Nginx-Härtung (nur Audit) ---
+nginx:
+  enabled: true
+  expected_settings:
+    server_tokens: "off"
+    client_max_body_size: "16M"
+    ssl_protocols: "TLSv1.2 TLSv1.3"
+  security_headers:
+    X-Frame-Options: "SAMEORIGIN"
+    X-Content-Type-Options: "nosniff"
+    X-XSS-Protection: "1; mode=block"
+    Referrer-Policy: "strict-origin-when-cross-origin"
+    Strict-Transport-Security: "max-age=63072000; includeSubDomains; preload"
