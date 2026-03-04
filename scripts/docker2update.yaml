@@ -1,5 +1,5 @@
 # Docker Container Update Configuration
-# Date: 20.01.2026
+# Date: 04.03.2026
 #
 # SECURITY WARNING: This is a TEMPLATE file!
 # Replace all placeholder passwords before production use!
@@ -44,7 +44,7 @@ containers:
     
   - active: false
     type: "F"
-    delay_time: 30
+    delay_time: 10
     container_name: "test-odoo"
     database_name: "test_db"
     port: "127.0.0.1:13000"

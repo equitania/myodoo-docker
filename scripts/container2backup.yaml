@@ -1,5 +1,5 @@
 # Backup configuration for Odoo databases
-# Date: 19.04.2025
+# Date: 04.03.2026
 
 # Default settings
 defaults:
@@ -36,25 +36,25 @@ databases:
   - name: live_db
     sql_container: live-db
     data_container: live-odoo
-    retention_days: 14
+    retention_days: 7
     only_sql_dump: false  # Optional: If true, only the SQL dump is backed up, filestore is skipped
     fast_report:  # Optional fast-report configuration per database
       enabled: true
-      path: /opt/fast-report/live
+      path: /opt/fast-report/fr-live
 
   - name: test_db
     sql_container: test-db
     data_container: test-odoo
-    retention_days: 14
+    retention_days: 7
     only_sql_dump: true  # Example: For this database, only back up the SQL dump, skip filestore
     fast_report:
       enabled: true
-      path: /opt/fast-report/test 
+      path: /opt/fast-report/fr-test 
 
 # Rsync configuration
 rsync:
   enabled: true
   commands:
-    - "rsync -avz /opt/backups/docker/ user@remote-server:/backup/docker/"
-    - "rsync -avz /opt/backups/nginx/ user@remote-server:/backup/nginx/"
-    - "rsync -avz --delete /opt/backups/docker-builds/ user@remote-server:/backup/docker-builds/" 
+    #- "rsync -avz /opt/backups/docker/ user@remote-server:/backup/docker/"
+    #- "rsync -avz /opt/backups/nginx/ user@remote-server:/backup/nginx/"
+    #- "rsync -avz --delete /opt/backups/docker-builds/ user@remote-server:/backup/docker-builds/" 
