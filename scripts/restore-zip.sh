@@ -1,5 +1,5 @@
 #!/bin/bash
-# Version 1.1.0 - Stand 02.02.2023
+# Version 1.2.0 - Stand 05.03.2026
 # Mit diesem Skript wird ein Restore einer Odoo Datenbank auf Basis von Docker durchgeführt
 # Das FileStore wird in den Odoo Container und die Datenbank in den PostgreSQL Container eingespielt
 # With this script you can restore a Odoo db in postgresql on base of Docker
@@ -161,11 +161,18 @@ then
         mkdir -p "$filestorepath"
     fi
     # Restore Filesystem
-    if [ "$mykind" == "1" ]
+    # Supports both Odoo-native format (filestore/) and legacy script format (db_name/)
+    if [ -d "$mybackuppath/filestore" ]
+    then
+        # Odoo-native format or new container2backup format: directory is named "filestore"
+        mv "$mybackuppath/filestore" "$mybackuppath/$mydb"
+        cp -r "$mybackuppath/$mydb" $filestorepath
+    elif [ "$mykind" == "1" ]
     then
         mv "$mybackuppath/filestore" "$mybackuppath/$mydb"
         cp -r "$mybackuppath/$mydb" $filestorepath
     else
+        # Legacy container2backup format: directory is named after original database
         mv "$mybackuppath/$myorgdb" "$mybackuppath/$mydb"
         cp -r "$mybackuppath/$mydb" $filestorepath
     fi

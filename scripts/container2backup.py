@@ -3,8 +3,8 @@
 # ==============================================================================
 # Title:            container2backup.py
 # Description:      Script to backup Odoo database including FileStore under Docker
-# Version:          4.3.1
-# Date:             20.10.2025
+# Version:          4.4.0
+# Date:             05.03.2026
 # Author:           Equitania Software GmbH
 # ==============================================================================
 # Feature Overview:
@@ -254,13 +254,13 @@ def create_backup(db_name, db_user, sql_container, data_container, backup_path, 
                 print(f"Warning: Filestore for {db_name} not found in container")
                 print(check_proc.stderr.decode())
             else:
-                # Extract filestore to temp directory - directly using db_name without filestore prefix
-                filestore_dir = os.path.join(temp_dir, db_name)
+                # Extract filestore to temp directory with Odoo-standard name "filestore"
+                filestore_dir = os.path.join(temp_dir, "filestore")
                 os.makedirs(filestore_dir)
-                
-                # GEÄNDERT: Verwenden eines direkten Pipes, um Speicher zu sparen
+
+                # Extract filestore contents directly into "filestore" directory (Odoo-native format)
                 print(f"Extracting filestore for {db_name} using streaming")
-                extract_cmd = f"docker exec {data_container} tar c -C /opt/odoo/data/filestore {db_name} | tar x -C {temp_dir}"
+                extract_cmd = f"docker exec {data_container} tar c -C /opt/odoo/data/filestore/{db_name} . | tar x -C {filestore_dir}"
                 
                 extract_result = subprocess.run(
                     extract_cmd,
@@ -655,8 +655,8 @@ if __name__ == "__main__":
     # Display version information
     print("===================================================")
     print("Odoo Docker Backup System")
-    print("Version: 4.3.1")
-    print("Date: 20.10.2025")
+    print("Version: 4.4.0")
+    print("Date: 05.03.2026")
     print("===================================================")
     
     # Display system information
