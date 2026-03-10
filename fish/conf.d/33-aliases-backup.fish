@@ -1,11 +1,12 @@
 # Backup and Update Aliases
-# Version 1.0.0 | 28.01.2026
+# Version 1.0.1 | 05.03.2026
 
 # Backup operations
 alias dobk='$HOME/container2backup.py'
 alias edbk='mcedit $HOME/container2backup.yaml'
 alias llbk='ll /opt/backups/docker'
 alias cpbk='cp /opt/backups/docker/'
+alias cdbk='cd /opt/backups/docker'
 
 # Update operations
 alias doup='$HOME/update_docker_odoo.py'
