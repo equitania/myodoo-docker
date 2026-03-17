@@ -832,7 +832,9 @@ if __name__ == "__main__":
             rsync_commands = rsync_config.get('commands', [])
             for cmd in rsync_commands:
                 print(f"Running: {cmd}")
-                subprocess.run(cmd, shell=True, check=False)
+                # Use shlex.split to safely parse command string into argument list
+                import shlex
+                subprocess.run(shlex.split(cmd), check=False)
             
     except yaml.YAMLError as e:
         print(f"Error reading YAML configuration: {str(e)}")

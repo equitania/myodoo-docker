@@ -7,6 +7,7 @@ Handles proxy configuration for customer networks.
 
 import os
 import re
+import subprocess
 from typing import Optional, Dict
 
 from .logging_config import get_logger
@@ -221,7 +222,7 @@ def _apply_proxy_to_environment(config: Dict[str, str]) -> bool:
 
         new_content = '\n'.join(line for line in lines if line.strip())
 
-        run_command(f"echo '{new_content}' | sudo tee {env_file}", shell=True, check=True)
+        subprocess.run(["sudo", "tee", env_file], input=new_content.encode(), check=True, stdout=subprocess.DEVNULL)
         logger.info("System environment proxy configuration applied")
         return True
     except Exception as e:
@@ -244,7 +245,7 @@ Environment="NO_PROXY={config['no_proxy']}"
 
     try:
         run_command(f"sudo mkdir -p {docker_dir}", check=True)
-        run_command(f"echo '{content}' | sudo tee {proxy_conf}", shell=True, check=True)
+        subprocess.run(["sudo", "tee", proxy_conf], input=content.encode(), check=True, stdout=subprocess.DEVNULL)
         run_command("sudo systemctl daemon-reload", check=True)
         logger.info("Docker proxy configuration applied")
         logger.info("Note: Docker service restart required for changes to take effect")

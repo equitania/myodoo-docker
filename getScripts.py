@@ -438,9 +438,9 @@ def install_fish_if_needed() -> Tuple[bool, bool]:
 
                 # Add repository
                 repo_list_content = f"deb {repo_url} /"
-                run_command(
-                    f"echo '{repo_list_content}' | sudo tee /etc/apt/sources.list.d/shells:fish:release:4.list",
-                    shell=True, check=True
+                subprocess.run(
+                    ["sudo", "tee", "/etc/apt/sources.list.d/shells:fish:release:4.list"],
+                    input=repo_list_content.encode(), check=True, stdout=subprocess.DEVNULL
                 )
 
                 # Import GPG key
@@ -801,7 +801,7 @@ def prompt_shell_change(_myhome: str) -> bool:
                     shells = f.read()
                 if fish_path not in shells:
                     logger.info(f"Adding {fish_path} to /etc/shells")
-                    run_command(f"echo '{fish_path}' | sudo tee -a /etc/shells", shell=True)
+                    subprocess.run(["sudo", "tee", "-a", "/etc/shells"], input=f"{fish_path}\n".encode(), stdout=subprocess.DEVNULL)
 
                 # Change shell
                 logger.info(f"Changing default shell to {fish_path}")
@@ -3677,7 +3677,7 @@ set -gx NO_PROXY "{no_proxy}"
 
             new_content = '\n'.join(line for line in lines if line.strip())
 
-            run_command(f"echo '{new_content}' | sudo tee {env_file}", shell=True, check=True)
+            subprocess.run(["sudo", "tee", env_file], input=new_content.encode(), check=True, stdout=subprocess.DEVNULL)
             logger.info("System environment proxy configuration applied")
         except Exception as e:
             logger.warning(f"Could not apply system-wide proxy: {e}")
@@ -3809,7 +3809,7 @@ Cache=yes
 CacheFromLocalhost=yes
 """
             run_command("sudo mkdir -p /etc/systemd/resolved.conf.d", check=True)
-            run_command(f"echo '{config_content}' | sudo tee /etc/systemd/resolved.conf.d/dns-optimization.conf > /dev/null", shell=True, check=True)
+            subprocess.run(["sudo", "tee", "/etc/systemd/resolved.conf.d/dns-optimization.conf"], input=config_content.encode(), check=True, stdout=subprocess.DEVNULL)
             run_command("sudo systemctl restart systemd-resolved", check=True)
 
         elif dns_info["resolvconf"]:
@@ -3817,7 +3817,7 @@ CacheFromLocalhost=yes
             config_content = f"""# DNS servers - managed by getScripts.py
 {dns_nameservers}
 """
-            run_command(f"echo '{config_content}' | sudo tee /etc/resolvconf/resolv.conf.d/head > /dev/null", shell=True, check=True)
+            subprocess.run(["sudo", "tee", "/etc/resolvconf/resolv.conf.d/head"], input=config_content.encode(), check=True, stdout=subprocess.DEVNULL)
             run_command("sudo resolvconf -u", check=True)
 
         else:
@@ -3831,7 +3831,7 @@ options timeout:2 attempts:3 rotate
             run_command("sudo cp /etc/resolv.conf /etc/resolv.conf.backup.$(date +%Y%m%d_%H%M%S)", shell=True, check=True)
             run_command("sudo chattr -i /etc/resolv.conf 2>/dev/null || true", shell=True, check=True)
             run_command("sudo test -L /etc/resolv.conf && sudo rm /etc/resolv.conf || true", shell=True, check=True)
-            run_command(f"echo '{config_content}' | sudo tee /etc/resolv.conf > /dev/null", shell=True, check=True)
+            subprocess.run(["sudo", "tee", "/etc/resolv.conf"], input=config_content.encode(), check=True, stdout=subprocess.DEVNULL)
             run_command("sudo chattr +i /etc/resolv.conf", check=True)
 
         # Mark as optimized

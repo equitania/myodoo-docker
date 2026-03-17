@@ -1,7 +1,7 @@
 FROM myodoo/prepare-v16:25.02.24-3.11.11
 LABEL maintainer=info@ownerp.com
 # Mit diesem Skript überprüft das passende Dockerimage gemäß des Releasefiles
-# Date 28.02.2025
+# Date 17.03.2026 - Added HEALTHCHECK directive
 
 # create the odoo user
 RUN adduser --home=/opt/odoo --disabled-password --gecos "" --shell=/bin/bash odoo
@@ -25,6 +25,10 @@ RUN cd /opt/odoo/ && \
 USER 0
 WORKDIR /app
 VOLUME ["/opt/odoo/var", "/opt/odoo/etc", "/opt/odoo/data"]
+# Healthcheck: Verify Odoo responds on /web/health
+HEALTHCHECK --interval=60s --timeout=10s --start-period=60s --retries=3 \
+    CMD wget -q --spider http://localhost:8069/web/health || exit 1
+
 # Set the default entrypoint (non overridable) to run when starting the container
 ENTRYPOINT ["/app/bin/boot"]
 CMD ["help"]

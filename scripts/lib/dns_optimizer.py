@@ -318,7 +318,7 @@ FallbackDNS=9.9.9.9 149.112.112.112
 DNSStubListener=yes
 """
     try:
-        run_command(f"echo '{config_content}' | sudo tee /etc/systemd/resolved.conf.d/dns.conf", shell=True, check=True)
+        subprocess.run(["sudo", "tee", "/etc/systemd/resolved.conf.d/dns.conf"], input=config_content.encode(), check=True, stdout=subprocess.DEVNULL)
         run_command("sudo systemctl restart systemd-resolved", check=True)
         logger.info("systemd-resolved configuration updated")
         return True
@@ -336,7 +336,7 @@ def _optimize_resolvconf(dns_servers: List[str]) -> bool:
 {nameservers}
 """
     try:
-        run_command(f"echo '{config_content}' | sudo tee /etc/resolvconf/resolv.conf.d/head", shell=True, check=True)
+        subprocess.run(["sudo", "tee", "/etc/resolvconf/resolv.conf.d/head"], input=config_content.encode(), check=True, stdout=subprocess.DEVNULL)
         run_command("sudo resolvconf -u", check=True)
         logger.info("resolvconf configuration updated")
         return True
@@ -359,7 +359,7 @@ options edns0 trust-ad
         run_command("sudo cp /etc/resolv.conf /etc/resolv.conf.bak", check=True)
 
         # Write new configuration
-        run_command(f"echo '{config_content}' | sudo tee /etc/resolv.conf", shell=True, check=True)
+        subprocess.run(["sudo", "tee", "/etc/resolv.conf"], input=config_content.encode(), check=True, stdout=subprocess.DEVNULL)
 
         # Make immutable to prevent overwrite
         run_command("sudo chattr +i /etc/resolv.conf", check=True)

@@ -1,13 +1,13 @@
 #!/bin/bash
-# Version 1.2.0 - Stand 05.03.2026
+# Version 1.3.0 - Stand 17.03.2026
 # Mit diesem Skript wird ein Restore einer Odoo Datenbank auf Basis von Docker durchgeführt
 # Das FileStore wird in den Odoo Container und die Datenbank in den PostgreSQL Container eingespielt
 # With this script you can restore a Odoo db in postgresql on base of Docker
-# The filestore will restore in the Odoo container and the db in the posgres container 
+# The filestore will restore in the Odoo container and the db in the posgres container
 ###############################################################################################################################
 # ./restore-zip.sh
 #  -backup_kind(../web/database/manager (1) or automatic backups scripts (2))
-#  -runsql (v10,v12,v13,14,v15,16)
+#  -runsql (v10,v12,v13,14,v15,v16)
 #  -orginal-dbname
 #  -dbname
 #  -drop database(Y/n)
@@ -15,42 +15,53 @@
 #  -OdooVolumeName
 #  -PostgreSQLContainer
 #  -Postgresql-Password
-# 
+#
 # f.e. live-db
 # ./restore-zip.sh 2 v10/v12/v13 orgdbname newdbname live-myodoo_dockerbackup.zip live-myodoo vol-odoo-live live-db password
 # f.e. test-db
 # ./restore-zip.sh 2 v10/v12/v13 orgdbname newdbname test-myodoo_dockerbackup.zip test-myodoo vol-odoo-test test-db password
 ###############################################################################################################################
 
-mybackuppath=$mybasepath"/opt/backups/docker/"
+set -euo pipefail
 
-mykind=$1
-myrunsql=$2
-myorgdb=$3
-mydb=$4
-mybackupzip=$5
-myodoocontainer=$6
-myodoovol=$7
-mydbcontainer=$8
-mypgpassword=$9
+mybackuppath="${mybasepath:-}/opt/backups/docker/"
 
-#mypgpassword="REMOVED_PASSWORD" # password for postgresql
+mykind="${1:-}"
+myrunsql="${2:-}"
+myorgdb="${3:-}"
+mydb="${4:-}"
+mybackupzip="${5:-}"
+myodoocontainer="${6:-}"
+myodoovol="${7:-}"
+mydbcontainer="${8:-}"
+mypgpassword="${9:-}"
+
 mydbuser="ownerp"         # user for postgresql
-mydbserver=$mydbcontainer # mostly the same like live-db or test-db
+mydbserver="$mydbcontainer" # mostly the same like live-db or test-db
 
-echo "Your backup path is: "$mybackuppath
+# Input validation: only allow safe characters in names
+validate_name() {
+    local value="$1"
+    local label="$2"
+    if [[ -n "$value" ]] && ! [[ "$value" =~ ^[a-zA-Z0-9._-]+$ ]]; then
+        echo "ERROR: Invalid characters in $label: $value"
+        echo "Only alphanumeric characters, dots, underscores and hyphens are allowed."
+        exit 1
+    fi
+}
+
+echo "Your backup path is: $mybackuppath"
 echo "So your zip file should store there!"
-echo "DB kind ../web/database/manager (1) or automatic backups scripts (2): "$mykind
-echo "DB original name: "$myorgdb
-echo "DB name: "$mydb
-echo "DB Zipfile: "$mybackupzip
-echo "Name of Odoo Container: "$myodoocontainer
-echo "Name of Odoo Volume: "$myodoovol
-echo "Name of Postgres Container: "$mydbcontainer
-echo "Name of Database Server: "$mydbserver
-echo "Name of Database User: "$mydbuser
-echo "Database password: "$mypgpassword
-echo "Run SQL for Odoo version: "$myrunsql
+echo "DB kind ../web/database/manager (1) or automatic backups scripts (2): $mykind"
+echo "DB original name: $myorgdb"
+echo "DB name: $mydb"
+echo "DB Zipfile: $mybackupzip"
+echo "Name of Odoo Container: $myodoocontainer"
+echo "Name of Odoo Volume: $myodoovol"
+echo "Name of Postgres Container: $mydbcontainer"
+echo "Name of Database Server: $mydbserver"
+echo "Name of Database User: $mydbuser"
+echo "Run SQL for Odoo version: $myrunsql"
 
 if [ "$mykind" == "" ]
 then
@@ -106,7 +117,17 @@ then
     read mydbuser
 fi
 
-if [ "$mystart" == "" ]
+# Validate all inputs after collection
+validate_name "$mydb" "database name"
+validate_name "$myorgdb" "original database name"
+validate_name "$myodoocontainer" "Odoo container"
+validate_name "$myodoovol" "Odoo volume"
+validate_name "$mydbcontainer" "Postgres container"
+validate_name "$mydbuser" "database user"
+validate_name "$mydbserver" "database server"
+
+mystart=""
+if [ "${mystart:-}" == "" ]
 then
     echo "Start with import (Y/n):"
     read mystart
@@ -120,7 +141,7 @@ else
     echo "**             Starting restore now             **"
     echo "**************************************************"
     echo "docker stop $myodoocontainer"
-    docker stop $myodoocontainer
+    docker stop "$myodoocontainer"
 fi
 
 
@@ -128,11 +149,11 @@ if [ "$mydb" != "" ]
 then
     echo "Drop old database..."
     sleep 3
-    docker exec -i $mydbcontainer psql -U $mydbuser -d postgres -c "drop database "$mydb";"
+    docker exec -i "$mydbcontainer" psql -U "$mydbuser" -d postgres -c "DROP DATABASE IF EXISTS \"$mydb\";"
     echo "Drop is done."
     echo "Unzip $mybackuppath/$mybackupzip.."
-    cd $mybackuppath
-    unzip $mybackuppath/$mybackupzip
+    cd "$mybackuppath"
+    unzip "$mybackuppath/$mybackupzip"
     mybackup="dump.sql"
     if [ -f "$mybackup" ]
     then
@@ -141,15 +162,15 @@ then
     else
 	   echo "$mybackup based on Docker. "
 	   isDocker="Y"
-	   cd $myorgdb/$myorgdb
+	   cd "$myorgdb/$myorgdb"
 	   mybackuppath="$mybackuppath/$myorgdb"
 	   echo "$mybackuppath"
     fi
     echo "Create DB $mydb with $mybackup file.."
-    docker exec -i $mydbcontainer psql -U $mydbuser -d postgres -c "CREATE DATABASE "$mydb" OWNER $mydbuser TEMPLATE template0;"
+    docker exec -i "$mydbcontainer" psql -U "$mydbuser" -d postgres -c "CREATE DATABASE \"$mydb\" OWNER \"$mydbuser\" TEMPLATE template0;"
     echo "Restore DB $mydb"
     sleep 3
-    cat $mybackuppath/$mybackup | docker exec -i $mydbcontainer psql -U $mydbuser  -d $mydb
+    cat "$mybackuppath/$mybackup" | docker exec -i "$mydbcontainer" psql -U "$mydbuser" -d "$mydb"
     # filestore
     filestorepath="/var/lib/docker/volumes/$myodoovol/_data/filestore/"
     echo "Restore to: $filestorepath"
@@ -166,15 +187,15 @@ then
     then
         # Odoo-native format or new container2backup format: directory is named "filestore"
         mv "$mybackuppath/filestore" "$mybackuppath/$mydb"
-        cp -r "$mybackuppath/$mydb" $filestorepath
+        cp -r "$mybackuppath/$mydb" "$filestorepath"
     elif [ "$mykind" == "1" ]
     then
         mv "$mybackuppath/filestore" "$mybackuppath/$mydb"
-        cp -r "$mybackuppath/$mydb" $filestorepath
+        cp -r "$mybackuppath/$mydb" "$filestorepath"
     else
         # Legacy container2backup format: directory is named after original database
         mv "$mybackuppath/$myorgdb" "$mybackuppath/$mydb"
-        cp -r "$mybackuppath/$mydb" $filestorepath
+        cp -r "$mybackuppath/$mydb" "$filestorepath"
     fi
     # Delete dump.sql
     if [ -f "$mybackuppath/dump.sql" ]
@@ -198,55 +219,45 @@ then
         echo "Do you want to sql statements in $mydb [v10/v12/v13/v14/v15/v16]:"
         read myrunsql
     fi
-    echo "Starting Docker Container "$myodoocontainer 
-    docker start $myodoocontainer
+    echo "Starting Docker Container $myodoocontainer"
+    docker start "$myodoocontainer"
     sleep 3
-    cd $HOME
-    if [ "$myrunsql" == "v10" ] || [ "$myrunsql" == "v12" ] || [ "$myrunsql" == "v13" || [ "$myrunsql" == "v14" || [ "$myrunsql" == "v15" || [ "$myrunsql" == "v16" ]
+    cd "$HOME"
+
+    # Helper function to execute SQL via docker exec
+    run_sql() {
+        local sql="$1"
+        echo "$sql"
+        docker exec -i "$mydbcontainer" env PGPASSWORD="$mypgpassword" psql -d "$mydb" -U "$mydbuser" -h "$mydbserver" -c "$sql"
+    }
+
+    if [[ "$myrunsql" == "v10" ]] || [[ "$myrunsql" == "v12" ]] || [[ "$myrunsql" == "v13" ]] || [[ "$myrunsql" == "v14" ]] || [[ "$myrunsql" == "v15" ]] || [[ "$myrunsql" == "v16" ]]
     then
-        echo "UPDATE ir_cron SET active = FALSE;"
-        docker exec -i $mydbcontainer env PGPASSWORD=$mypgpassword psql -d $mydb -U $mydbuser -h $mydbserver -c $'UPDATE ir_cron SET active = FALSE;'
-        echo "DELETE FROM ir_mail_server;"
-        docker exec -i $mydbcontainer env PGPASSWORD=$mypgpassword psql -d $mydb -U $mydbuser -h $mydbserver -c $'DELETE FROM ir_mail_server;'
-        echo "DELETE FROM fetchmail_server;"
-        docker exec -i $mydbcontainer env PGPASSWORD=$mypgpassword psql -d $mydb -U $mydbuser -h $mydbserver -c $'DELETE FROM fetchmail_server;'
+        run_sql 'UPDATE ir_cron SET active = FALSE;'
+        run_sql 'DELETE FROM ir_mail_server;'
+        run_sql 'DELETE FROM fetchmail_server;'
         if [ "$myrunsql" == "v10" ]
         then
-            echo "DELETE FROM ir_values where model='eq.cloud.settings';"
-            docker exec -i $mydbcontainer env PGPASSWORD=$mypgpassword psql -d $mydb -U $mydbuser -h $mydbserver -c "DELETE FROM ir_values where model='eq.cloud.settings';"
-            echo "DELETE FROM eq_cloud_settings;"
-            docker exec -i $mydbcontainer env PGPASSWORD=$mypgpassword psql -d $mydb -U $mydbuser -h $mydbserver -c $'DELETE FROM eq_cloud_settings;'
-            echo "UPDATE res_users SET eq_office_username = NULL;"
-            docker exec -i $mydbcontainer env PGPASSWORD=$mypgpassword psql -d $mydb -U $mydbuser -h $mydbserver -c $'UPDATE res_users SET eq_office_username = NULL;'
-            echo "UPDATE res_users SET eq_office_password = NULL;"
-            docker exec -i $mydbcontainer env PGPASSWORD=$mypgpassword psql -d $mydb -U $mydbuser -h $mydbserver -c $'UPDATE res_users SET eq_office_password = NULL;'
+            run_sql "DELETE FROM ir_values where model='eq.cloud.settings';"
+            run_sql 'DELETE FROM eq_cloud_settings;'
+            run_sql 'UPDATE res_users SET eq_office_username = NULL;'
+            run_sql 'UPDATE res_users SET eq_office_password = NULL;'
         elif [ "$myrunsql" == "v12" ]
         then
-            echo "update res_config_settings set eq_ignore_ssl = false, eq_cloud_url = null, eq_cloud_username = null, eq_cloud_password = null, eq_is_log_attachment_enabled = false, eq_is_log_enabled = false, eq_is_cloud_connector_enabled = false, eq_is_delete_allowed = false;"
-            docker exec -i $mydbcontainer env PGPASSWORD=$mypgpassword psql -d $mydb -U $mydbuser -h $mydbserver -c $'update res_config_settings set eq_ignore_ssl = false, eq_cloud_url = NULL, eq_cloud_username = NULL, eq_cloud_password = NULL, eq_is_log_attachment_enabled = false, eq_is_log_enabled = false, eq_is_cloud_connector_enabled = false, eq_is_delete_allowed = false;'
-            echo "delete from ir_config_parameter where key like 'eq_cloud_base%' or key like 'eq_cloud_nextcloud%';"
-            docker exec -i $mydbcontainer env PGPASSWORD=$mypgpassword psql -d $mydb -U $mydbuser -h $mydbserver -c $"delete from ir_config_parameter where key like 'eq_cloud_base%' or key like 'eq_cloud_nextcloud%';"
-            echo "UPDATE res_users SET eq_client_id = NULL;"
-            docker exec -i $mydbcontainer env PGPASSWORD=$mypgpassword psql -d $mydb -U $mydbuser -h $mydbserver -c $'UPDATE res_users set eq_client_id = NULL;'
-            echo "UPDATE res_users SET  eq_client_secret = NULL;"
-            docker exec -i $mydbcontainer env PGPASSWORD=$mypgpassword psql -d $mydb -U $mydbuser -h $mydbserver -c $'UPDATE res_users SET eq_client_secret = NULL;'
-        elif [ "$myrunsql" == "v13" || [ "$myrunsql" == "v14" || [ "$myrunsql" == "v15" || [ "$myrunsql" == "v16" ]
+            run_sql 'UPDATE res_config_settings SET eq_ignore_ssl = false, eq_cloud_url = NULL, eq_cloud_username = NULL, eq_cloud_password = NULL, eq_is_log_attachment_enabled = false, eq_is_log_enabled = false, eq_is_cloud_connector_enabled = false, eq_is_delete_allowed = false;'
+            run_sql "DELETE FROM ir_config_parameter WHERE key LIKE 'eq_cloud_base%' OR key LIKE 'eq_cloud_nextcloud%';"
+            run_sql 'UPDATE res_users SET eq_client_id = NULL;'
+            run_sql 'UPDATE res_users SET eq_client_secret = NULL;'
+        elif [[ "$myrunsql" == "v13" ]] || [[ "$myrunsql" == "v14" ]] || [[ "$myrunsql" == "v15" ]] || [[ "$myrunsql" == "v16" ]]
         then
-            echo "update res_config_settings set eq_ignore_ssl = false, eq_cloud_url = null, eq_cloud_username = null, eq_cloud_password = null, eq_is_log_attachment_enabled = false, eq_is_log_enabled = false, eq_is_cloud_connector_enabled = false, eq_is_delete_allowed = false;"
-            docker exec -i $mydbcontainer env PGPASSWORD=$mypgpassword psql -d $mydb -U $mydbuser -h $mydbserver -c $'update res_config_settings set eq_ignore_ssl = false, eq_cloud_url = NULL, eq_cloud_username = NULL, eq_cloud_password = NULL, eq_is_log_attachment_enabled = false, eq_is_log_enabled = false, eq_is_cloud_connector_enabled = false, eq_is_delete_allowed = false;'
-            echo "delete from ir_config_parameter where key like 'eq_cloud_base%' or key like 'eq_cloud_nextcloud%';"
-            docker exec -i $mydbcontainer env PGPASSWORD=$mypgpassword psql -d $mydb -U $mydbuser -h $mydbserver -c $"delete from ir_config_parameter where key like 'eq_cloud_base%' or key like 'eq_cloud_nextcloud%';"
-            echo "UPDATE res_users SET eq_client_id = NULL;"
-            docker exec -i $mydbcontainer env PGPASSWORD=$mypgpassword psql -d $mydb -U $mydbuser -h $mydbserver -c $'UPDATE res_users set eq_client_id = NULL;'
-            echo "UPDATE res_users SET  eq_client_secret = NULL;"
-            docker exec -i $mydbcontainer env PGPASSWORD=$mypgpassword psql -d $mydb -U $mydbuser -h $mydbserver -c $'UPDATE res_users SET eq_client_secret = NULL;'
-            echo "UPDATE res_users SET  eq_tenant_id = NULL;"
-            docker exec -i $mydbcontainer env PGPASSWORD=$mypgpassword psql -d $mydb -U $mydbuser -h $mydbserver -c $'UPDATE res_users SET eq_tenant_id = NULL;'
+            run_sql 'UPDATE res_config_settings SET eq_ignore_ssl = false, eq_cloud_url = NULL, eq_cloud_username = NULL, eq_cloud_password = NULL, eq_is_log_attachment_enabled = false, eq_is_log_enabled = false, eq_is_cloud_connector_enabled = false, eq_is_delete_allowed = false;'
+            run_sql "DELETE FROM ir_config_parameter WHERE key LIKE 'eq_cloud_base%' OR key LIKE 'eq_cloud_nextcloud%';"
+            run_sql 'UPDATE res_users SET eq_client_id = NULL;'
+            run_sql 'UPDATE res_users SET eq_client_secret = NULL;'
+            run_sql 'UPDATE res_users SET eq_tenant_id = NULL;'
         fi
-        echo "UPDATE eq_es_config SET eq_web_search_es_url = NULL;"
-        docker exec -i $mydbcontainer env PGPASSWORD=$mypgpassword psql -d $mydb -U $mydbuser -h $mydbserver -c $'UPDATE eq_es_config SET eq_web_search_es_url = NULL;'
-        echo "DELETE FROM res_company_ldap;"
-        docker exec -i $mydbcontainer env PGPASSWORD=$mypgpassword psql -d $mydb -U $mydbuser -h $mydbserver -c $'DELETE FROM res_company_ldap;'
+        run_sql 'UPDATE eq_es_config SET eq_web_search_es_url = NULL;'
+        run_sql 'DELETE FROM res_company_ldap;'
         echo "SQL statement are done."
         echo "****************************************************************"
         echo "Don't worry about error like"
@@ -260,5 +271,5 @@ then
       echo "No restore."
 fi # end
 
-cd $HOME
+cd "$HOME"
 echo "Finished!"
