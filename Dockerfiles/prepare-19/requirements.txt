@@ -10,7 +10,7 @@ cbor2==5.6.2 ; python_version >= '3.12'
 chardet==4.0.0 ; python_version < '3.11'  # (Jammy)
 chardet==5.2.0 ; python_version >= '3.11'
 cryptography==3.4.8; python_version < '3.12'  # incompatibility between pyopenssl 19.0.0 and cryptography>=37.0.0
-cryptography==46.0.0 ; python_version >= '3.12'  # upgraded for pyopenssl 26.0.0 (CVE-2026-27459)
+cryptography==46.0.7 ; python_version >= '3.12'  # upgraded for pyopenssl 26.0.0 (CVE-2026-27459)
 docutils==0.17 ; python_version < '3.11'  # (Jammy)
 docutils==0.20.1 ; python_version >= '3.11'
 freezegun==1.1.0 ; python_version < '3.11'  # (Jammy)
