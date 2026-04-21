@@ -116,7 +116,7 @@ def get_cached_version(key: str) -> Optional[Dict[str, Any]]:
 
         logger.debug(f"Using cached data for {key}")
         return cached_data
-    except (json.JSONDecodeError, OSError) as e:
+    except (json.JSONDecodeError, OSError, UnicodeDecodeError) as e:
         logger.error(f"Error reading cache for {key}: {e}")
         if os.path.exists(cache_file):
             os.remove(cache_file)
