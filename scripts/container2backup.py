@@ -3,8 +3,8 @@
 # ==============================================================================
 # Title:            container2backup.py
 # Description:      Script to backup Odoo database including FileStore under Docker
-# Version:          4.4.0
-# Date:             05.03.2026
+# Version:          4.5.0
+# Date:             21.04.2026
 # Author:           Equitania Software GmbH
 # ==============================================================================
 # Feature Overview:
@@ -38,6 +38,7 @@ import io
 import csv
 import datetime, time
 import os.path
+import re
 import subprocess
 from os.path import expanduser
 import yaml  # Add this import at the top
@@ -46,6 +47,23 @@ import tempfile
 import shutil
 import platform
 import argparse  # Add argparse for command line parameters
+
+# Whitelist for database names and Docker container names. Both propagate
+# into filesystem paths and subprocess argv, so restrict to shell-inert chars.
+# Rationale: db_name flows into docker exec paths; container names flow into
+# docker CLI arguments. PostgreSQL identifiers and Docker names both match.
+_IDENT_RE = re.compile(r'^[A-Za-z0-9_.\-]+$')
+
+
+def _validate_identifier(value, field_name):
+    """Raise ValueError if value contains characters that would be unsafe in
+    a filesystem path or Docker argument.
+    """
+    if not isinstance(value, str) or not _IDENT_RE.match(value):
+        raise ValueError(
+            f"Invalid {field_name} {value!r}: must match [A-Za-z0-9_.-]+"
+        )
+    return value
 
 def check_compression_tools():
     """
@@ -258,24 +276,36 @@ def create_backup(db_name, db_user, sql_container, data_container, backup_path, 
                 filestore_dir = os.path.join(temp_dir, "filestore")
                 os.makedirs(filestore_dir)
 
-                # Extract filestore contents directly into "filestore" directory (Odoo-native format)
+                # Extract filestore contents directly into "filestore" directory (Odoo-native format).
+                # Uses a Python-side pipe (docker exec stdout -> local tar stdin) instead of
+                # a shell pipeline to keep container/db names out of the shell.
                 print(f"Extracting filestore for {db_name} using streaming")
-                extract_cmd = f"docker exec {data_container} tar c -C /opt/odoo/data/filestore/{db_name} . | tar x -C {filestore_dir}"
-                
-                extract_result = subprocess.run(
-                    extract_cmd,
-                    shell=True,
+                src_path = f"/opt/odoo/data/filestore/{db_name}"
+                producer = subprocess.Popen(
+                    ['docker', 'exec', data_container, 'tar', 'c', '-C', src_path, '.'],
                     stdout=subprocess.PIPE,
                     stderr=subprocess.PIPE,
-                    check=False
                 )
-                
-                if extract_result.returncode != 0:
+                consumer = subprocess.Popen(
+                    ['tar', 'x', '-C', filestore_dir],
+                    stdin=producer.stdout,
+                    stdout=subprocess.PIPE,
+                    stderr=subprocess.PIPE,
+                )
+                # Allow producer to receive SIGPIPE if consumer exits early.
+                if producer.stdout is not None:
+                    producer.stdout.close()
+                _, consumer_err = consumer.communicate()
+                _, producer_err = producer.communicate()
+
+                if producer.returncode != 0 or consumer.returncode != 0:
                     print(f"Error extracting filestore for {db_name}")
-                    if extract_result.stderr:
-                        extract_error = extract_result.stderr.decode()
+                    extract_error = (
+                        (producer_err or b'').decode(errors='replace')
+                        + (consumer_err or b'').decode(errors='replace')
+                    )
+                    if extract_error:
                         print(f"Extract error: {extract_error}")
-                        # Prüfen, ob es sich um ein Speicherproblem handelt
                         if "Killed" in extract_error or "Cannot allocate memory" in extract_error:
                             print("The process was killed due to memory constraints.")
                             print("Consider running the backup with nohup or in a screen/tmux session with lower priority.")
@@ -540,19 +570,21 @@ def compress_directory(source_dir, output_file_base, config, only_sql_dump=False
                 return None
                 
             output_file = f"{output_file_base}.zip"
-            
+
             # In SQL-only mode, only include dump.sql file
             if only_sql_dump:
-                zip_cmd = f"cd '{source_dir}' && zip -{compression_level} '{output_file}' dump.sql"
-                print(f"Zip command for SQL-only mode: {zip_cmd}")
+                zip_args = ['zip', f'-{compression_level}', output_file, 'dump.sql']
+                print(f"Zip command for SQL-only mode: {zip_args}")
             else:
-                # Standard zip command
-                # Wir wechseln ins Quellverzeichnis selbst und zippen alles mit einem Punkt (.)
-                zip_cmd = f"cd '{source_dir}' && zip -r -{compression_level} '{output_file}' ."
-                print(f"Zip command for full backup: {zip_cmd}")
-            
+                # Standard zip: cwd=source_dir, zip everything with '.'
+                zip_args = ['zip', '-r', f'-{compression_level}', output_file, '.']
+                print(f"Zip command for full backup: {zip_args}")
+
             print(f"Creating ZIP archive: {output_file}")
-            result = subprocess.run(zip_cmd, shell=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+            result = subprocess.run(
+                zip_args, cwd=source_dir,
+                stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+            )
         
         elif compression_format == 'gzip':
             if not tools['gzip']:
@@ -563,41 +595,46 @@ def compress_directory(source_dir, output_file_base, config, only_sql_dump=False
             # SQL-only mode handled differently for gzip
             if only_sql_dump:
                 output_file = f"{output_file_base}.sql.gz"
-                gzip_cmd = f"gzip -{compression_level} -c '{os.path.join(source_dir, 'dump.sql')}' > '{output_file}'"
-                print(f"Gzip command for SQL-only mode: {gzip_cmd}")
+                dump_sql = os.path.join(source_dir, 'dump.sql')
                 print(f"Creating gzipped SQL file: {output_file}")
-                result = subprocess.run(gzip_cmd, shell=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+                with open(output_file, 'wb') as out_fh:
+                    result = subprocess.run(
+                        ['gzip', f'-{compression_level}', '-c', dump_sql],
+                        stdout=out_fh, stderr=subprocess.PIPE,
+                    )
             else:
                 # gzip requires tar to archive directory first
                 output_file = f"{output_file_base}.tar.gz"
-                
-                # Separate Befehle für tar und gzip mit korrekter Kompressionsstufe
-                # Für neuere tar-Versionen, die gzip-Kompression unterstützen
-                if platform.system() == 'Darwin':  # macOS hat eine ältere tar-Version
-                    # Auf macOS verwenden wir einen zweistufigen Prozess
+                parent_dir = os.path.dirname(source_dir)
+                base_name = os.path.basename(source_dir)
+
+                if platform.system() == 'Darwin':
+                    # macOS tar has no -z support in older builds: two-stage tar + gzip
                     temp_tar = f"{output_file_base}.tar"
-                    tar_cmd = f"tar -cf '{temp_tar}' -C '{os.path.dirname(source_dir)}' '{os.path.basename(source_dir)}'"
                     print(f"Creating tar archive: {temp_tar}")
-                    print(f"Tar command: {tar_cmd}")
-                    tar_result = subprocess.run(tar_cmd, shell=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
-                    
+                    tar_result = subprocess.run(
+                        ['tar', '-cf', temp_tar, '-C', parent_dir, base_name],
+                        stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+                    )
+
                     if tar_result.returncode == 0:
-                        # Komprimieren mit gzip
-                        gzip_cmd = f"gzip -{compression_level} -f '{temp_tar}'"
                         print(f"Compressing with gzip (level {compression_level}): {output_file}")
-                        print(f"Gzip command: {gzip_cmd}")
-                        result = subprocess.run(gzip_cmd, shell=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+                        result = subprocess.run(
+                            ['gzip', f'-{compression_level}', '-f', temp_tar],
+                            stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+                        )
                     else:
                         print(f"Error creating tar archive: {temp_tar}")
                         if tar_result.stderr:
-                            print(f"Error details: {tar_result.stderr.decode() if hasattr(tar_result.stderr, 'decode') else tar_result.stderr}")
+                            print(f"Error details: {tar_result.stderr.decode(errors='replace')}")
                         return None
                 else:
-                    # Auf Linux-Systemen können wir direkt tar mit gzip-Kompression verwenden
-                    tar_cmd = f"tar -czf '{output_file}' -C '{os.path.dirname(source_dir)}' '{os.path.basename(source_dir)}'"
+                    # Linux tar supports direct gzip compression
                     print(f"Creating tar.gz archive: {output_file}")
-                    print(f"Tar command: {tar_cmd}")
-                    result = subprocess.run(tar_cmd, shell=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+                    result = subprocess.run(
+                        ['tar', '-czf', output_file, '-C', parent_dir, base_name],
+                        stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+                    )
             
         elif compression_format == 'zstd':
             if not tools['zstd']:
@@ -608,19 +645,41 @@ def compress_directory(source_dir, output_file_base, config, only_sql_dump=False
             # SQL-only mode handled differently for zstd
             if only_sql_dump:
                 output_file = f"{output_file_base}.sql.zst"
-                zstd_cmd = f"zstd -{compression_level} -c '{os.path.join(source_dir, 'dump.sql')}' > '{output_file}'"
-                print(f"Zstd command for SQL-only mode: {zstd_cmd}")
+                dump_sql = os.path.join(source_dir, 'dump.sql')
                 print(f"Creating zstd compressed SQL file: {output_file}")
-                result = subprocess.run(zstd_cmd, shell=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+                with open(output_file, 'wb') as out_fh:
+                    result = subprocess.run(
+                        ['zstd', f'-{compression_level}', '-c', dump_sql],
+                        stdout=out_fh, stderr=subprocess.PIPE,
+                    )
             else:
-                # zstd requires tar to archive directory first
+                # zstd: tar | zstd via Python-side pipe (no shell)
                 output_file = f"{output_file_base}.tar.zst"
-                
-                # Create tar archive and pipe to zstd
-                tar_zstd_cmd = f"tar -C '{os.path.dirname(source_dir)}' -cf - '{os.path.basename(source_dir)}' | zstd -{compression_level} -o '{output_file}'"
-                print(f"Tar+zstd command: {tar_zstd_cmd}")
+                parent_dir = os.path.dirname(source_dir)
+                base_name = os.path.basename(source_dir)
                 print(f"Creating tar.zst archive: {output_file}")
-                result = subprocess.run(tar_zstd_cmd, shell=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+
+                producer = subprocess.Popen(
+                    ['tar', '-C', parent_dir, '-cf', '-', base_name],
+                    stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+                )
+                consumer = subprocess.Popen(
+                    ['zstd', f'-{compression_level}', '-o', output_file],
+                    stdin=producer.stdout,
+                    stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+                )
+                if producer.stdout is not None:
+                    producer.stdout.close()
+                _, consumer_err = consumer.communicate()
+                _, producer_err = producer.communicate()
+
+                # Synthesize a result object matching the shape used below.
+                class _Result:
+                    pass
+                result = _Result()
+                result.returncode = producer.returncode or consumer.returncode
+                result.stderr = (producer_err or b'') + (consumer_err or b'')
+                result.stdout = b''
         
         else:
             print(f"Error: Unsupported compression format: {compression_format}")
@@ -747,10 +806,22 @@ if __name__ == "__main__":
         
         # Process each database
         for db in config.get('databases', []):
-            db_name = db['name']
-            db_user = db.get('db_user', default_db_user)
-            sql_container = db['sql_container']
-            data_container = db['data_container']
+            # Validate identifiers before any subprocess/filesystem use.
+            # Invalid config entries are skipped rather than aborting the run.
+            try:
+                db_name = _validate_identifier(db['name'], 'database name')
+                db_user = _validate_identifier(
+                    db.get('db_user', default_db_user), 'db_user'
+                )
+                sql_container = _validate_identifier(
+                    db['sql_container'], 'sql_container'
+                )
+                data_container = _validate_identifier(
+                    db['data_container'], 'data_container'
+                )
+            except ValueError as exc:
+                print(f"Skipping invalid database entry: {exc}")
+                continue
             retention_days = db.get('retention_days', default_retention)
             
             # Get only_sql_dump setting for this database (default to False if not specified)

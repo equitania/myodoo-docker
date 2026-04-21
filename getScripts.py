@@ -35,7 +35,7 @@ import socket
 import tempfile
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from datetime import datetime, timedelta
-import pickle
+import json
 
 # Configure logging - always log to home directory to avoid polluting system dirs
 _log_file = os.path.join(os.path.expanduser("~"), "getscripts.log")
@@ -55,12 +55,13 @@ if os.environ.get('GETSCRIPTS_DEBUG', '').lower() in ('1', 'true', 'yes'):
     logger.debug("Debug logging enabled")
 
 # Script version and date
-SCRIPT_VERSION = "9.0.6"
-SCRIPT_DATE = "02.03.2026"
+SCRIPT_VERSION = "9.0.7"
+SCRIPT_DATE = "21.04.2026"
 
 # Cache settings
 CACHE_DIR = os.path.expanduser("~/.cache/getscripts")
 CACHE_EXPIRY_HOURS = 24  # Cache version info for 24 hours
+_CACHE_KEY_RE = re.compile(r'^[A-Za-z0-9._\-]+$')
 
 # Global cache for version information
 version_cache: Dict[str, Dict[str, Any]] = {}
@@ -70,42 +71,52 @@ def ensure_cache_dir() -> None:
     os.makedirs(CACHE_DIR, exist_ok=True)
 
 def get_cache_file_path(key: str) -> str:
-    """Get the cache file path for a given key."""
+    """Get the cache file path for a given key.
+
+    Raises:
+        ValueError: If the key could escape CACHE_DIR (path-traversal defense).
+    """
+    if not _CACHE_KEY_RE.match(key):
+        raise ValueError(f"Invalid cache key: {key!r}")
     return os.path.join(CACHE_DIR, f"{key}.cache")
 
 def get_cached_version(key: str) -> Optional[Dict[str, Any]]:
     """Get cached version information.
-    
+
     Args:
         key: Cache key
-        
+
     Returns:
         Optional[Dict[str, Any]]: Cached data if valid, None otherwise
     """
     # Check if caching is disabled
     if getattr(get_cached_version, 'disabled', False):
         return None
-        
+
     ensure_cache_dir()
-    cache_file = get_cache_file_path(key)
-    
+    try:
+        cache_file = get_cache_file_path(key)
+    except ValueError as e:
+        logger.error(f"Refusing to read cache: {e}")
+        return None
+
     if not os.path.exists(cache_file):
         return None
-    
+
     try:
-        with open(cache_file, 'rb') as f:
-            cached_data = pickle.load(f)
-            
+        with open(cache_file, 'r', encoding='utf-8') as f:
+            cached_data = json.load(f)
+
         # Check if cache is expired
         cache_time = datetime.fromtimestamp(os.path.getmtime(cache_file))
         if datetime.now() - cache_time > timedelta(hours=CACHE_EXPIRY_HOURS):
             logger.debug(f"Cache for {key} is expired")
             os.remove(cache_file)
             return None
-            
+
         logger.debug(f"Using cached data for {key}")
         return cached_data
-    except Exception as e:
+    except (json.JSONDecodeError, OSError) as e:
         logger.error(f"Error reading cache for {key}: {e}")
         if os.path.exists(cache_file):
             os.remove(cache_file)
@@ -113,19 +124,23 @@ def get_cached_version(key: str) -> Optional[Dict[str, Any]]:
 
 def cache_version_info(key: str, data: Dict[str, Any]) -> None:
     """Cache version information.
-    
+
     Args:
         key: Cache key
-        data: Data to cache
+        data: Data to cache (must be JSON-serializable)
     """
     ensure_cache_dir()
-    cache_file = get_cache_file_path(key)
-    
     try:
-        with open(cache_file, 'wb') as f:
-            pickle.dump(data, f)
+        cache_file = get_cache_file_path(key)
+    except ValueError as e:
+        logger.error(f"Refusing to write cache: {e}")
+        return
+
+    try:
+        with open(cache_file, 'w', encoding='utf-8') as f:
+            json.dump(data, f)
         logger.debug(f"Cached data for {key}")
-    except Exception as e:
+    except (TypeError, OSError) as e:
         logger.error(f"Error caching data for {key}: {e}")
 
 def clear_cache() -> None:

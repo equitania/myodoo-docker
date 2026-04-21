@@ -2,17 +2,22 @@
 """
 Cache management for getScripts.py
 
-Provides pickle-based caching for version information and other data.
+JSON-based caching for version information. Keys are restricted to
+alphanumerics, underscore, and hyphen to prevent path traversal via
+crafted cache keys.
 """
 
+import json
 import os
-import pickle
+import re
 import shutil
 from datetime import datetime, timedelta
 from typing import Any, Dict, Optional
 
 from .constants import CACHE_DIR, CACHE_EXPIRY_HOURS
 from .logging_config import get_logger
+
+_CACHE_KEY_RE = re.compile(r'^[A-Za-z0-9._\-]+$')
 
 
 def ensure_cache_dir() -> None:
@@ -25,11 +30,16 @@ def get_cache_file_path(key: str) -> str:
     Get the cache file path for a given key.
 
     Args:
-        key: Cache key identifier
+        key: Cache key identifier (must match [A-Za-z0-9_-]+)
 
     Returns:
         str: Full path to cache file
+
+    Raises:
+        ValueError: If the key contains characters that could escape CACHE_DIR.
     """
+    if not _CACHE_KEY_RE.match(key):
+        raise ValueError(f"Invalid cache key: {key!r}")
     return os.path.join(CACHE_DIR, f"{key}.cache")
 
 
@@ -50,14 +60,18 @@ def get_cached_version(key: str, disabled: bool = False) -> Optional[Dict[str, A
         return None
 
     ensure_cache_dir()
-    cache_file = get_cache_file_path(key)
+    try:
+        cache_file = get_cache_file_path(key)
+    except ValueError as e:
+        logger.error(f"Refusing to read cache: {e}")
+        return None
 
     if not os.path.exists(cache_file):
         return None
 
     try:
-        with open(cache_file, 'rb') as f:
-            cached_data = pickle.load(f)
+        with open(cache_file, 'r', encoding='utf-8') as f:
+            cached_data = json.load(f)
 
         # Check if cache is expired
         cache_time = datetime.fromtimestamp(os.path.getmtime(cache_file))
@@ -68,7 +82,7 @@ def get_cached_version(key: str, disabled: bool = False) -> Optional[Dict[str, A
 
         logger.debug(f"Using cached data for {key}")
         return cached_data
-    except Exception as e:
+    except (json.JSONDecodeError, OSError) as e:
         logger.error(f"Error reading cache for {key}: {e}")
         if os.path.exists(cache_file):
             os.remove(cache_file)
@@ -81,17 +95,21 @@ def cache_version_info(key: str, data: Dict[str, Any]) -> None:
 
     Args:
         key: Cache key
-        data: Data to cache
+        data: Data to cache (must be JSON-serializable)
     """
     logger = get_logger()
     ensure_cache_dir()
-    cache_file = get_cache_file_path(key)
+    try:
+        cache_file = get_cache_file_path(key)
+    except ValueError as e:
+        logger.error(f"Refusing to write cache: {e}")
+        return
 
     try:
-        with open(cache_file, 'wb') as f:
-            pickle.dump(data, f)
+        with open(cache_file, 'w', encoding='utf-8') as f:
+            json.dump(data, f)
         logger.debug(f"Cached data for {key}")
-    except Exception as e:
+    except (TypeError, OSError) as e:
         logger.error(f"Error caching data for {key}: {e}")
 
 
