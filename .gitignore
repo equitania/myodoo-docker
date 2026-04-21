@@ -65,3 +65,4 @@ odoo-ce.zip
 # Environment files with secrets
 *.env
 !*.env.example
+scripts/__pycache__/
