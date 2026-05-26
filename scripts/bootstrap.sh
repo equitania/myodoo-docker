@@ -1,18 +1,21 @@
 #!/bin/bash
 # bootstrap.sh — Out-of-the-box initializer for freshly installed Debian servers
-# Version 1.1.0 — 26.05.2026
+# Version 1.2.0 — 26.05.2026
 #
 # Prepares a clean Debian host so the myodoo-docker tooling can run:
 #   1. Self-installs to /opt (so it stays available out-of-the-box)
 #   2. Installs base packages (ca-certificates, curl, gnupg, git)
 #   3. Installs Docker CE from the official Docker repository (deb822 format)
 #   4. Installs nginx from the official nginx.org repository (reverse proxy)
-#   5. Installs fail2ban (baseline SSH brute-force protection)
-#   6. Installs unattended-upgrades (automatic security updates)
-#   7. Clones the myodoo-docker repository and runs getScripts.py
+#   5. Installs UFW (firewall — installed but NOT enabled, see below)
+#   6. Installs fail2ban (baseline SSH brute-force protection)
+#   7. Installs unattended-upgrades (automatic security updates)
+#   8. Clones the myodoo-docker repository and runs getScripts.py
 #
-# Security note: steps 5-6 provide a safe baseline immediately. Full hardening
-# (custom SSH port, UFW IP-allowlists, sysctl, auditd, ...) is applied later via
+# Security note: steps 5-7 provide a safe baseline immediately. UFW is installed
+# but deliberately left DISABLED — enabling it with a default-deny policy before
+# the SSH port + allowed IPs are known would lock you out. Full hardening (UFW
+# enable + rules, custom SSH port, sysctl, auditd, ...) is applied later via
 # `server_hardening.py --apply` once /root/.config/myodoo-docker/.env is filled in.
 #
 # Designed to be idempotent: safe to re-run. Existing installs are detected and
@@ -31,6 +34,7 @@
 #   REPO_URL=...              Repository URL
 #   INSTALL_NGINX=1           Install host nginx (set 0 to skip)
 #   INSTALL_DOCKER=1          Install Docker CE   (set 0 to skip)
+#   INSTALL_UFW=1             Install UFW firewall, disabled (set 0 to skip)
 #   INSTALL_FAIL2BAN=1        Install fail2ban baseline (set 0 to skip)
 #   INSTALL_UNATTENDED=1      Install unattended-upgrades (set 0 to skip)
 #   RUN_GETSCRIPTS=1          Run getScripts.py at the end (set 0 to skip)
@@ -44,7 +48,7 @@ set -Eeuo pipefail
 # Configuration
 # ──────────────────────────────────────────
 
-SCRIPT_VERSION="1.1.0"
+SCRIPT_VERSION="1.2.0"
 SCRIPT_DATE="26.05.2026"
 
 REPO_URL="${REPO_URL:-https://github.com/equitania/myodoo-docker.git}"
@@ -52,6 +56,7 @@ REPO_BRANCH="${REPO_BRANCH:-2026}"
 
 INSTALL_DOCKER="${INSTALL_DOCKER:-1}"
 INSTALL_NGINX="${INSTALL_NGINX:-1}"
+INSTALL_UFW="${INSTALL_UFW:-1}"
 INSTALL_FAIL2BAN="${INSTALL_FAIL2BAN:-1}"
 INSTALL_UNATTENDED="${INSTALL_UNATTENDED:-1}"
 RUN_GETSCRIPTS="${RUN_GETSCRIPTS:-1}"
@@ -270,6 +275,25 @@ install_nginx() {
     log "nginx installed: $(nginx -v 2>&1 || echo 'n/a')"
 }
 
+install_ufw() {
+    [ "${INSTALL_UFW}" = "1" ] || { log "UFW install disabled — skipping."; return 0; }
+
+    section "Installing UFW firewall (installed, left DISABLED)"
+
+    $SUDO apt-get install -y ufw
+
+    # IMPORTANT: do NOT enable UFW here. Enabling with a default-deny incoming
+    # policy before SSH is allowed would lock out the current session. UFW is
+    # enabled (with the correct SSH port + allowed IPs) later by:
+    #   server_hardening.py --apply --module ufw
+    if command -v ufw >/dev/null 2>&1; then
+        local ufw_state
+        ufw_state="$($SUDO ufw status 2>/dev/null | head -n1 || true)"
+        log "UFW installed (${ufw_state:-status unknown}). Left DISABLED on purpose —"
+        log "  enable it via: server_hardening.py --apply --module ufw"
+    fi
+}
+
 install_fail2ban() {
     [ "${INSTALL_FAIL2BAN}" = "1" ] || { log "fail2ban install disabled — skipping."; return 0; }
 
@@ -368,6 +392,7 @@ print_summary() {
     echo "  • Bootstrap script parked at : ${INSTALL_PATH}"
     [ "${INSTALL_DOCKER}" = "1" ]    && echo "  • Docker                     : $(docker --version 2>/dev/null || echo 'see logs')"
     [ "${INSTALL_NGINX}" = "1" ]     && echo "  • nginx                      : $(nginx -v 2>&1 || echo 'see logs')"
+    [ "${INSTALL_UFW}" = "1" ]       && echo "  • UFW                        : installed, DISABLED (enable via server_hardening.py)"
     [ "${INSTALL_FAIL2BAN}" = "1" ]  && echo "  • fail2ban                   : baseline sshd jail active"
     [ "${INSTALL_UNATTENDED}" = "1" ] && echo "  • unattended-upgrades        : automatic security updates enabled"
     echo "  • Repository                 : ${TARGET_HOME}/myodoo-docker (branch ${REPO_BRANCH})"
@@ -397,6 +422,7 @@ main() {
     install_base_packages
     install_docker
     install_nginx
+    install_ufw
     install_fail2ban
     install_unattended_upgrades
     clone_repo_and_run_getscripts
