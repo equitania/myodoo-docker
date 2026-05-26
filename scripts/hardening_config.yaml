@@ -238,3 +238,12 @@ auditd:
 # Änderungen mit 'aide --update' neu aufbauen.
 aide:
   enabled: true
+  # Directories excluded from integrity scanning. /var/lib/docker (overlay2
+  # layers + container volumes) is huge and ephemeral on a Docker host — hashing
+  # it makes init take 30+ min and floods the daily check with noise. Backup
+  # dirs change daily and are equally pointless to hash. Adjust per host.
+  exclude:
+    - /var/lib/docker
+    - /var/lib/aide
+    - /home/backup
+    - /opt/backups

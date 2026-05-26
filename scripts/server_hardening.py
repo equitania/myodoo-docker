@@ -2,7 +2,7 @@
 """
 Server-Härtungs-Skript
 =======================
-Version: 1.3.1 / Date: 26.05.2026
+Version: 1.4.0 / Date: 26.05.2026
 
 Prüft und härtet: UFW, Fail2Ban, SSH, Kernel, Kernel-Module, Docker,
 Auto-Updates, auditd, AIDE, Nginx
@@ -1052,7 +1052,22 @@ def audit_aide(config, apply=False, force=False):
         Stats.warn_count += 1
 
     if apply and not db.exists() and shutil.which("aide"):
-        sub("AIDE initialisieren")
+        sub("AIDE konfigurieren + initialisieren")
+
+        # Exclude high-volume / ephemeral dirs BEFORE init. Without this, AIDE
+        # hashes all of /var/lib/docker (overlay2 layers + volumes) on a Docker
+        # host — init then takes 30+ min (or hits our timeout) and the daily
+        # check is pure noise.
+        excludes = [p for p in cfg.get("exclude", [])
+                    if re.match(r"^/[\w./-]*$", str(p))]
+        conf_d = Path("/etc/aide/aide.conf.d")
+        if excludes and conf_d.is_dir():
+            lines = ["# Managed by server_hardening.py - integrity scan excludes"]
+            lines += [f"!{p}" for p in excludes]
+            (conf_d / "99-hardening-excludes").write_text("\n".join(lines) + "\n")
+            run("update-aide.conf 2>&1")
+            ok(f"Excludes gesetzt: {', '.join(excludes)}")
+
         warn("AIDE-Initialisierung kann mehrere Minuten dauern...")
         run("aideinit -y -f 2>&1", timeout=1800)
         new_db = Path("/var/lib/aide/aide.db.new")
@@ -1080,6 +1095,14 @@ def audit_nginx(config, apply=False, force=False):
         info("Nginx nicht installiert - überspringe")
         return
 
+    # Audit-only, advisory module. When nginx isn't actively serving, missing
+    # directives are an inactive state, not a real error — skip rather than
+    # inflate the failure count.
+    if (run("systemctl is-active nginx 2>/dev/null") or "").strip() != "active":
+        info("Nginx installiert, aber nicht aktiv - Audit übersprungen "
+             "(inaktiver Zustand, kein Fehler)")
+        return
+
     nginx_conf = run("cat /etc/nginx/nginx.conf 2>/dev/null") or ""
 
     sub("Nginx Grundeinstellungen")
@@ -1096,8 +1119,9 @@ def audit_nginx(config, apply=False, force=False):
                 warn(f"{key}: {current} (empfohlen: {value})")
                 Stats.warn_count += 1
         else:
-            fail(f"{key}: nicht gefunden")
-            Stats.fail_count += 1
+            # Advisory recommendation, not a hard error.
+            warn(f"{key}: nicht gefunden (empfohlen: {value})")
+            Stats.warn_count += 1
 
     # Security-Headers prüfen (nginx.conf + conf.d/*.conf + includes)
     sub("Security-Headers (Empfehlungen)")
@@ -1338,7 +1362,7 @@ Beispiele:
         sys.exit(1)
 
     print(f"\n{C.BOLD}{'='*60}")
-    print(f"  Server-Härtung v1.3.1 {'(APPLY)' if args.apply else '(AUDIT)'}")
+    print(f"  Server-Härtung v1.4.0 {'(APPLY)' if args.apply else '(AUDIT)'}")
     print(f"  {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
     print(f"{'='*60}{C.END}")
 
