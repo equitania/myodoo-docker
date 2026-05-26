@@ -1,13 +1,19 @@
 #!/bin/bash
 # bootstrap.sh — Out-of-the-box initializer for freshly installed Debian servers
-# Version 1.0.0 — 26.05.2026
+# Version 1.1.0 — 26.05.2026
 #
 # Prepares a clean Debian host so the myodoo-docker tooling can run:
 #   1. Self-installs to /opt (so it stays available out-of-the-box)
 #   2. Installs base packages (ca-certificates, curl, gnupg, git)
 #   3. Installs Docker CE from the official Docker repository (deb822 format)
 #   4. Installs nginx from the official nginx.org repository (reverse proxy)
-#   5. Clones the myodoo-docker repository and runs getScripts.py
+#   5. Installs fail2ban (baseline SSH brute-force protection)
+#   6. Installs unattended-upgrades (automatic security updates)
+#   7. Clones the myodoo-docker repository and runs getScripts.py
+#
+# Security note: steps 5-6 provide a safe baseline immediately. Full hardening
+# (custom SSH port, UFW IP-allowlists, sysctl, auditd, ...) is applied later via
+# `server_hardening.py --apply` once /root/.config/myodoo-docker/.env is filled in.
 #
 # Designed to be idempotent: safe to re-run. Existing installs are detected and
 # skipped; no destructive operations (no `rm -rf`).
@@ -25,6 +31,8 @@
 #   REPO_URL=...              Repository URL
 #   INSTALL_NGINX=1           Install host nginx (set 0 to skip)
 #   INSTALL_DOCKER=1          Install Docker CE   (set 0 to skip)
+#   INSTALL_FAIL2BAN=1        Install fail2ban baseline (set 0 to skip)
+#   INSTALL_UNATTENDED=1      Install unattended-upgrades (set 0 to skip)
 #   RUN_GETSCRIPTS=1          Run getScripts.py at the end (set 0 to skip)
 #   SELF_INSTALL=1            Copy this script to /opt (set 0 to skip)
 ##############################################################################
@@ -36,7 +44,7 @@ set -Eeuo pipefail
 # Configuration
 # ──────────────────────────────────────────
 
-SCRIPT_VERSION="1.0.0"
+SCRIPT_VERSION="1.1.0"
 SCRIPT_DATE="26.05.2026"
 
 REPO_URL="${REPO_URL:-https://github.com/equitania/myodoo-docker.git}"
@@ -44,6 +52,8 @@ REPO_BRANCH="${REPO_BRANCH:-2026}"
 
 INSTALL_DOCKER="${INSTALL_DOCKER:-1}"
 INSTALL_NGINX="${INSTALL_NGINX:-1}"
+INSTALL_FAIL2BAN="${INSTALL_FAIL2BAN:-1}"
+INSTALL_UNATTENDED="${INSTALL_UNATTENDED:-1}"
 RUN_GETSCRIPTS="${RUN_GETSCRIPTS:-1}"
 SELF_INSTALL="${SELF_INSTALL:-1}"
 
@@ -260,6 +270,72 @@ install_nginx() {
     log "nginx installed: $(nginx -v 2>&1 || echo 'n/a')"
 }
 
+install_fail2ban() {
+    [ "${INSTALL_FAIL2BAN}" = "1" ] || { log "fail2ban install disabled — skipping."; return 0; }
+
+    section "Installing fail2ban (baseline SSH protection)"
+
+    # python3-systemd is required for the systemd journal backend used below.
+    $SUDO apt-get install -y fail2ban python3-systemd
+
+    # Write a SAFE baseline jail.local ONLY when none exists yet, so we never
+    # clobber the authoritative config that server_hardening.py writes later.
+    # Baseline uses port 'ssh' (fresh server still on 22) and the Debian default
+    # banaction (nftables) so it works before UFW is configured.
+    local jail_local="/etc/fail2ban/jail.local"
+    if [ -e "${jail_local}" ]; then
+        log "${jail_local} already exists — leaving it untouched (managed elsewhere)."
+    else
+        log "Writing baseline ${jail_local}..."
+        write_file "${jail_local}" <<'EOF'
+# Managed by bootstrap.sh (baseline) — replaced by server_hardening.py --apply
+[DEFAULT]
+ignoreip = 127.0.0.1/8 ::1
+bantime  = 3600
+findtime = 600
+maxretry = 5
+
+[sshd]
+enabled  = true
+port     = ssh
+backend  = systemd
+maxretry = 5
+bantime  = 86400
+EOF
+    fi
+
+    if command -v systemctl >/dev/null 2>&1; then
+        $SUDO systemctl enable --now fail2ban
+        log "fail2ban service enabled and started."
+    fi
+
+    log "fail2ban baseline active. Full config later via: server_hardening.py --apply"
+}
+
+install_unattended_upgrades() {
+    [ "${INSTALL_UNATTENDED}" = "1" ] || { log "unattended-upgrades disabled — skipping."; return 0; }
+
+    section "Installing unattended-upgrades (automatic security updates)"
+
+    $SUDO apt-get install -y unattended-upgrades apt-listchanges
+
+    # Enable periodic update + unattended upgrade runs. Origins default to the
+    # Debian security suite (no extra config needed for security-only updates).
+    write_file /etc/apt/apt.conf.d/20auto-upgrades <<'EOF'
+APT::Periodic::Update-Package-Lists "1";
+APT::Periodic::Unattended-Upgrade "1";
+APT::Periodic::Download-Upgradeable-Packages "1";
+APT::Periodic::AutocleanInterval "7";
+EOF
+
+    if command -v systemctl >/dev/null 2>&1; then
+        $SUDO systemctl enable --now unattended-upgrades 2>/dev/null \
+            || warn "Could not enable unattended-upgrades service (timer may still run)."
+    fi
+
+    log "unattended-upgrades configured for automatic security updates."
+}
+
 clone_repo_and_run_getscripts() {
     [ "${RUN_GETSCRIPTS}" = "1" ] || { log "getScripts.py step disabled — skipping."; return 0; }
 
@@ -290,14 +366,19 @@ print_summary() {
     echo "${C_GREEN}System prepared successfully.${C_NC}"
     echo ""
     echo "  • Bootstrap script parked at : ${INSTALL_PATH}"
-    [ "${INSTALL_DOCKER}" = "1" ] && echo "  • Docker                     : $(docker --version 2>/dev/null || echo 'see logs')"
-    [ "${INSTALL_NGINX}" = "1" ]  && echo "  • nginx                      : $(nginx -v 2>&1 || echo 'see logs')"
+    [ "${INSTALL_DOCKER}" = "1" ]    && echo "  • Docker                     : $(docker --version 2>/dev/null || echo 'see logs')"
+    [ "${INSTALL_NGINX}" = "1" ]     && echo "  • nginx                      : $(nginx -v 2>&1 || echo 'see logs')"
+    [ "${INSTALL_FAIL2BAN}" = "1" ]  && echo "  • fail2ban                   : baseline sshd jail active"
+    [ "${INSTALL_UNATTENDED}" = "1" ] && echo "  • unattended-upgrades        : automatic security updates enabled"
     echo "  • Repository                 : ${TARGET_HOME}/myodoo-docker (branch ${REPO_BRANCH})"
     echo ""
     echo "${C_YELLOW}Next steps:${C_NC}"
     echo "  • Start the Fish shell:  exec fish"
     echo "    (Do NOT 'source' the Fish config from bash — it uses Fish syntax.)"
     echo "  • getScripts.py has configured Fish and offered to set it as your default shell."
+    echo "  • Apply full hardening: fill /root/.config/myodoo-docker/.env, then run"
+    echo "    'sudo python3 ${TARGET_HOME}/myodoo-docker/scripts/server_hardening.py' (audit),"
+    echo "    then add --apply.  See --help for what each module changes."
     echo "  • Re-run this bootstrap any time with: ${INSTALL_PATH}"
     echo ""
 }
@@ -316,6 +397,8 @@ main() {
     install_base_packages
     install_docker
     install_nginx
+    install_fail2ban
+    install_unattended_upgrades
     clone_repo_and_run_getscripts
     print_summary
 }
