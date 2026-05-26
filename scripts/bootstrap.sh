@@ -1,6 +1,6 @@
 #!/bin/bash
 # bootstrap.sh — Out-of-the-box initializer for fresh Debian/Ubuntu servers
-# Version 1.3.0 — 26.05.2026
+# Version 1.3.1 — 26.05.2026
 #
 # Supported: Debian 12 (bookworm) / 13 (trixie); Ubuntu 20.04/22.04/24.04/26.04
 # (focal/jammy/noble/resolute). OS + codename are auto-detected from os-release;
@@ -53,7 +53,7 @@ set -Eeuo pipefail
 # Configuration
 # ──────────────────────────────────────────
 
-SCRIPT_VERSION="1.3.0"
+SCRIPT_VERSION="1.3.1"
 SCRIPT_DATE="26.05.2026"
 
 REPO_URL="${REPO_URL:-https://github.com/equitania/myodoo-docker.git}"
@@ -202,6 +202,22 @@ repo_serves_codename() {
 apt_update() {
     log "Running apt-get update..."
     $SUDO apt-get update -qq
+}
+
+# Resolve a pre-existing Docker apt conflict BEFORE the first apt-get update.
+# A failed earlier run (or a manual mix) can leave BOTH the legacy one-line
+# docker.list (Signed-By=docker.gpg) AND a deb822 docker.sources (docker.asc)
+# on disk → 'E: Conflicting values set for option Signed-By' breaks every
+# apt-get update. The legacy .list is what the working Docker was installed
+# with, so drop the deb822 file we (previously) added and keep the .list.
+reconcile_docker_repo() {
+    local sources="/etc/apt/sources.list.d/docker.sources"
+    local legacy="/etc/apt/sources.list.d/docker.list"
+    if [ -f "${sources}" ] && [ -f "${legacy}" ]; then
+        warn "Both docker.sources and docker.list present (Signed-By conflict)."
+        warn "Removing docker.sources, keeping the pre-existing docker.list."
+        $SUDO rm -f "${sources}"
+    fi
 }
 
 install_base_packages() {
@@ -466,6 +482,7 @@ main() {
     resolve_target_user
     self_install
     detect_os
+    reconcile_docker_repo
     install_base_packages
     install_docker
     install_nginx
