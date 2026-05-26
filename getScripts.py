@@ -55,8 +55,13 @@ if os.environ.get('GETSCRIPTS_DEBUG', '').lower() in ('1', 'true', 'yes'):
     logger.debug("Debug logging enabled")
 
 # Script version and date
-SCRIPT_VERSION = "9.0.7"
-SCRIPT_DATE = "21.04.2026"
+SCRIPT_VERSION = "9.0.8"
+SCRIPT_DATE = "26.05.2026"
+
+# Pinned fallback 7-Zip version used when the GitHub API is unreachable.
+# GitHub keeps release assets permanently, so this fallback cannot 404
+# (unlike www.7-zip.org/a/, which only serves the current release).
+FALLBACK_7ZIP_VERSION = "26.01"
 
 # Cache settings
 CACHE_DIR = os.path.expanduser("~/.cache/getscripts")
@@ -2067,6 +2072,36 @@ def check_7zip_version() -> bool:
         logger.error(f"Error checking 7-Zip version: {str(e)}")
         return False
 
+@lru_cache(maxsize=128)
+def get_latest_7zip_version() -> Tuple[Optional[str], Optional[List[Dict]]]:
+    """Get latest 7-Zip version + assets from the official ip7z/7zip GitHub mirror.
+
+    7-Zip's own server (www.7-zip.org/a/) only keeps the current release, so old
+    pinned URLs return 404. The GitHub mirror keeps all release assets permanently.
+
+    Returns:
+        Tuple[Optional[str], Optional[List[Dict]]]: (version, assets) on success,
+        (None, None) otherwise.
+    """
+    cache_key = "7zip_latest"
+    cached_data = get_cached_version(cache_key)
+    if cached_data:
+        return cached_data.get("version"), cached_data.get("assets")
+
+    try:
+        response = requests.get("https://api.github.com/repos/ip7z/7zip/releases/latest", timeout=15)
+        if response.status_code == 200:
+            data = response.json()
+            version = data["tag_name"].lstrip("v")  # e.g. "26.01"
+            assets = data.get("assets", [])
+            logger.info(f"Found latest 7-Zip version: {version}")
+            cache_version_info(cache_key, {"version": version, "assets": assets})
+            return version, assets
+        logger.error(f"Failed to get latest 7-Zip version. Status code: {response.status_code}")
+    except Exception as e:
+        logger.error(f"Error fetching latest 7-Zip version: {str(e)}")
+    return None, None
+
 def install_or_update_7zip():
     """Install or update 7-Zip package with official version that provides 7zz command"""
     try:
@@ -2124,15 +2159,34 @@ def install_or_update_7zip():
             else:
                 logger.info("7zip package not available in repository, installing from official source...")
 
+            # Resolve the download URL dynamically from the official ip7z/7zip
+            # GitHub mirror. Exact suffix matching avoids confusing linux-x64 with
+            # linux-x86 and linux-arm64 with linux-arm.
             arch = platform.machine()
-            if arch == "x86_64":
-                download_url = "https://www.7-zip.org/a/7z2408-linux-x64.tar.xz"
-                filename = "7z2408-linux-x64.tar.xz"
-            elif arch == "aarch64":
-                download_url = "https://www.7-zip.org/a/7z2408-linux-arm64.tar.xz"
-                filename = "7z2408-linux-arm64.tar.xz"
-            else:
+            arch_suffix = {
+                "x86_64": "-linux-x64.tar.xz",
+                "aarch64": "-linux-arm64.tar.xz",
+            }.get(arch)
+            if not arch_suffix:
                 raise RuntimeError(f"Unsupported architecture for 7-Zip: {arch}")
+
+            download_url = None
+            filename = None
+            version, assets = get_latest_7zip_version()
+            if assets:
+                for asset in assets:
+                    if asset.get("name", "").endswith(arch_suffix):
+                        download_url = asset["browser_download_url"]
+                        filename = asset["name"]
+                        break
+
+            # Fallback: construct a permanent GitHub asset URL from the pinned
+            # version when the API is unreachable or no matching asset was found.
+            if not download_url:
+                ver = version or FALLBACK_7ZIP_VERSION
+                filename = f"7z{ver.replace('.', '')}{arch_suffix}"
+                download_url = f"https://github.com/ip7z/7zip/releases/download/{ver}/{filename}"
+                logger.warning(f"Using fallback 7-Zip download URL: {download_url}")
 
             # Download and install - save original working directory
             original_cwd = os.getcwd()
