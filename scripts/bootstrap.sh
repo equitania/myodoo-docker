@@ -1,8 +1,13 @@
 #!/bin/bash
-# bootstrap.sh — Out-of-the-box initializer for freshly installed Debian servers
-# Version 1.2.0 — 26.05.2026
+# bootstrap.sh — Out-of-the-box initializer for fresh Debian/Ubuntu servers
+# Version 1.3.0 — 26.05.2026
 #
-# Prepares a clean Debian host so the myodoo-docker tooling can run:
+# Supported: Debian 12 (bookworm) / 13 (trixie); Ubuntu 20.04/22.04/24.04/26.04
+# (focal/jammy/noble/resolute). OS + codename are auto-detected from os-release;
+# Docker and nginx.org repos exist for all of these. Repos for a codename an
+# upstream does not (yet) serve are skipped / fall back to the distro package.
+#
+# Prepares a clean host so the myodoo-docker tooling can run:
 #   1. Self-installs to /opt (so it stays available out-of-the-box)
 #   2. Installs base packages (ca-certificates, curl, gnupg, git)
 #   3. Installs Docker CE from the official Docker repository (deb822 format)
@@ -48,7 +53,7 @@ set -Eeuo pipefail
 # Configuration
 # ──────────────────────────────────────────
 
-SCRIPT_VERSION="1.2.0"
+SCRIPT_VERSION="1.3.0"
 SCRIPT_DATE="26.05.2026"
 
 REPO_URL="${REPO_URL:-https://github.com/equitania/myodoo-docker.git}"
@@ -179,11 +184,19 @@ detect_os() {
     OS_CODENAME="${VERSION_CODENAME:-}"
     ARCH="$(dpkg --print-architecture)"
 
-    if [ "${OS_ID}" != "debian" ]; then
-        warn "Detected '${OS_ID}', not 'debian'. Continuing, but this script targets Debian."
-    fi
-    [ -n "${OS_CODENAME}" ] || die "Could not determine Debian codename (VERSION_CODENAME)."
+    case "${OS_ID}" in
+        debian|ubuntu) : ;;  # supported — Docker & nginx.org serve both
+        *) warn "Detected '${OS_ID}', not debian/ubuntu. Continuing, but only debian/ubuntu are supported." ;;
+    esac
+    [ -n "${OS_CODENAME}" ] || die "Could not determine OS codename (VERSION_CODENAME)."
     log "OS: ${OS_ID} ${OS_CODENAME} (${ARCH})"
+}
+
+# Return 0 if the given apt repo base URL serves a Release file for the current
+# codename — used to skip/fallback gracefully on codenames an upstream lacks.
+repo_serves_codename() {
+    local base_url="$1"
+    curl -fsSL -o /dev/null "${base_url}/dists/${OS_CODENAME}/Release" 2>/dev/null
 }
 
 apt_update() {
@@ -203,19 +216,41 @@ install_docker() {
 
     section "Installing Docker CE (official repository)"
 
+    # If Docker is already installed, do NOT touch the apt repo/keyring. Existing
+    # hosts often use the legacy one-line docker.list with Signed-By=docker.gpg;
+    # adding our deb822 docker.sources with docker.asc on top triggers
+    # 'E: Conflicting values set for option Signed-By' and breaks apt update.
+    # Just make sure the service is enabled and move on.
     if command -v docker >/dev/null 2>&1; then
-        log "Docker already present: $(docker --version). Ensuring repo + service only."
+        log "Docker already present: $(docker --version). Leaving apt repo untouched."
+        if command -v systemctl >/dev/null 2>&1; then
+            $SUDO systemctl enable --now docker 2>/dev/null || true
+        fi
+        return 0
+    fi
+
+    local docker_base="https://download.docker.com/linux/${OS_ID}"
+    if ! repo_serves_codename "${docker_base}"; then
+        warn "Docker has no repo for ${OS_ID}/${OS_CODENAME} (yet) — skipping Docker install."
+        return 0
+    fi
+
+    # Remove a stale legacy one-line repo to avoid a dual-definition conflict
+    # with the deb822 file we are about to write.
+    if [ -f /etc/apt/sources.list.d/docker.list ]; then
+        warn "Removing stale /etc/apt/sources.list.d/docker.list (replaced by docker.sources)."
+        $SUDO rm -f /etc/apt/sources.list.d/docker.list
     fi
 
     # Add Docker's official GPG key (deb822 keyring).
     $SUDO install -m 0755 -d /etc/apt/keyrings
-    $SUDO curl -fsSL "https://download.docker.com/linux/${OS_ID}/gpg" -o /etc/apt/keyrings/docker.asc
+    $SUDO curl -fsSL "${docker_base}/gpg" -o /etc/apt/keyrings/docker.asc
     $SUDO chmod a+r /etc/apt/keyrings/docker.asc
 
-    # Add the repository in deb822 format (Debian 13 / trixie style).
+    # Add the repository in deb822 format.
     write_file /etc/apt/sources.list.d/docker.sources <<EOF
 Types: deb
-URIs: https://download.docker.com/linux/${OS_ID}
+URIs: ${docker_base}
 Suites: ${OS_CODENAME}
 Components: stable
 Architectures: ${ARCH}
@@ -247,22 +282,34 @@ install_nginx() {
 
     section "Installing nginx (official nginx.org repository)"
 
+    # Like Docker: if nginx is already installed, leave the apt repo alone to
+    # avoid a Signed-By conflict with a pre-existing nginx.list. Just ensure the
+    # service is up.
     if command -v nginx >/dev/null 2>&1; then
-        log "nginx already present: $(nginx -v 2>&1). Ensuring repo only."
+        log "nginx already present: $(nginx -v 2>&1). Leaving apt repo untouched."
+        if command -v systemctl >/dev/null 2>&1; then
+            $SUDO systemctl enable --now nginx 2>/dev/null || true
+        fi
+        return 0
     fi
 
-    $SUDO apt-get install -y gnupg2 ca-certificates lsb-release debian-archive-keyring
+    local nginx_base="https://nginx.org/packages/${OS_ID}"
+    if repo_serves_codename "${nginx_base}"; then
+        # Import the nginx signing key into a dedicated keyring (gpg comes from
+        # the base 'gnupg' package installed earlier).
+        local tmp_key
+        tmp_key="$(mktemp)"
+        curl -fsSL https://nginx.org/keys/nginx_signing.key | gpg --dearmor --yes -o "${tmp_key}"
+        $SUDO install -m 0644 "${tmp_key}" /usr/share/keyrings/nginx-archive-keyring.gpg
+        rm -f "${tmp_key}"
 
-    # Import the nginx signing key into a dedicated keyring.
-    local tmp_key
-    tmp_key="$(mktemp)"
-    curl -fsSL https://nginx.org/keys/nginx_signing.key | gpg --dearmor --yes -o "${tmp_key}"
-    $SUDO install -m 0644 "${tmp_key}" /usr/share/keyrings/nginx-archive-keyring.gpg
-    rm -f "${tmp_key}"
-
-    # Add the stable nginx repository for the detected Debian codename.
-    echo "deb [signed-by=/usr/share/keyrings/nginx-archive-keyring.gpg] https://nginx.org/packages/debian ${OS_CODENAME} nginx" \
-        | write_file /etc/apt/sources.list.d/nginx.list
+        echo "deb [signed-by=/usr/share/keyrings/nginx-archive-keyring.gpg] ${nginx_base} ${OS_CODENAME} nginx" \
+            | write_file /etc/apt/sources.list.d/nginx.list
+        log "Using official nginx.org repo (${OS_ID}/${OS_CODENAME})."
+    else
+        warn "nginx.org has no repo for ${OS_ID}/${OS_CODENAME} — falling back to the distro nginx package."
+        $SUDO rm -f /etc/apt/sources.list.d/nginx.list
+    fi
 
     apt_update
     $SUDO apt-get install -y nginx
