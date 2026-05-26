@@ -2,7 +2,7 @@
 """
 Server-Härtungs-Skript
 =======================
-Version: 1.2.0 / Date: 26.05.2026
+Version: 1.2.1 / Date: 26.05.2026
 
 Prüft und härtet: UFW, Fail2Ban, SSH, Kernel, Kernel-Module, Docker,
 Auto-Updates, auditd, AIDE, Nginx
@@ -109,11 +109,12 @@ def resolve_env_vars(obj):
 
     def _resolve_str(s):
         def _replacer(m):
-            val = os.environ.get(m.group(1))
-            # Defined-but-empty (e.g. an unused ALLOWED_IP_N slot) resolves to ""
-            # so it is filtered out downstream; only a TRULY undefined variable
-            # keeps the placeholder, which validate_config then flags as an error.
-            return val if val is not None else m.group(0)
+            # Missing OR empty optional vars (e.g. unused ALLOWED_IP_N slots)
+            # resolve to "" so they are filtered out downstream — the 5 IP slots
+            # are optional by design (0-5 may be filled). Required values like
+            # SSH_PORT that end up empty are caught by validate_config's
+            # type/range checks instead of leaving a dangling placeholder.
+            return os.environ.get(m.group(1), "")
         result = pattern.sub(_replacer, s)
         # Auto-cast to int if the result is purely numeric
         if result.isdigit():
@@ -1189,10 +1190,9 @@ WIE SICH DIE .env AUSWIRKT
   Sonderfälle:
     - .env fehlt / python-dotenv fehlt  -> Warnung; es werden nur bereits in der
       Shell exportierte Variablen gesehen.
-    - ungelöste ${...}-Platzhalter      -> Validierungsfehler => ABBRUCH (kein Apply).
-    - leere ALLOWED_IP_*-Slots          -> werden herausgefiltert: die zugehörige
-      UFW-Regel / ignoreip-Zeile entfällt. ACHTUNG: leerer Slot = KEIN IP-Schutz
-      für diesen Eintrag.
+    - fehlende ODER leere ALLOWED_IP_*  -> werden zu "" aufgelöst und herausgefiltert;
+      0-5 IPs sind erlaubt. ACHTUNG: leerer Slot = KEIN IP-Schutz für diesen Eintrag.
+    - fehlendes/ungültiges SSH_PORT     -> Validierungsfehler => ABBRUCH (kein Apply).
 
 SICHERHEITSHINWEISE
   - SSH-Reload erfolgt NUR nach erfolgreichem 'sshd -t' (kein Lockout durch Tippfehler).
@@ -1289,7 +1289,7 @@ Beispiele:
     config.setdefault("fail2ban", {})["ignoreip"] = [ip for ip in f2b_ignoreip if ip]
 
     print(f"\n{C.BOLD}{'='*60}")
-    print(f"  Server-Härtung v1.2.0 {'(APPLY)' if args.apply else '(AUDIT)'}")
+    print(f"  Server-Härtung v1.2.1 {'(APPLY)' if args.apply else '(AUDIT)'}")
     print(f"  {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
     print(f"{'='*60}{C.END}")
 
