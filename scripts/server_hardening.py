@@ -2,9 +2,10 @@
 """
 Server-Härtungs-Skript
 =======================
-Version: 1.1.0 / Date: 02.03.2026
+Version: 1.2.0 / Date: 26.05.2026
 
-Prüft und härtet: UFW, Fail2Ban, SSH, Kernel, Docker, Nginx
+Prüft und härtet: UFW, Fail2Ban, SSH, Kernel, Kernel-Module, Docker,
+Auto-Updates, auditd, AIDE, Nginx
 Sensitive values (IPs, ports) are loaded from .env via ${ENV_VAR} substitution.
 
 Aufruf:
@@ -108,7 +109,11 @@ def resolve_env_vars(obj):
 
     def _resolve_str(s):
         def _replacer(m):
-            return os.environ.get(m.group(1)) or m.group(0)
+            val = os.environ.get(m.group(1))
+            # Defined-but-empty (e.g. an unused ALLOWED_IP_N slot) resolves to ""
+            # so it is filtered out downstream; only a TRULY undefined variable
+            # keeps the placeholder, which validate_config then flags as an error.
+            return val if val is not None else m.group(0)
         result = pattern.sub(_replacer, s)
         # Auto-cast to int if the result is purely numeric
         if result.isdigit():
@@ -160,6 +165,9 @@ def validate_config(config):
     for ip_val in config.get("fail2ban", {}).get("ignoreip", []):
         if not isinstance(ip_val, str):
             continue
+        # Skip empty (unused) entries — filtered out before use in main()
+        if not ip_val:
+            continue
         # Skip loopback entries
         if ip_val.startswith("127.") or ip_val == "::1":
             continue
@@ -174,6 +182,21 @@ def validate_config(config):
         val = config.get("ufw", {}).get("defaults", {}).get(key)
         if val and val not in valid_policies:
             errors.append(f"ufw.defaults.{key} invalid: {val!r} (must be one of {valid_policies})")
+
+    # Defense-in-depth: ports are already int-validated and IPs are parsed via
+    # ipaddress, so neither can carry shell metacharacters. The remaining values
+    # that reach a shell=True command are the UFW proto and the sysctl key/value
+    # pairs (`sysctl -w {key}={value}`) — validate those explicitly.
+    shell_meta = re.compile(r"[;&|`$<>(){}\[\]\\\n\r]")
+    valid_protos = {"tcp", "udp", "any"}
+    ufw_cfg = config.get("ufw", {})
+    for rp in ufw_cfg.get("restricted_ports", []) + ufw_cfg.get("public_ports", []):
+        proto = rp.get("proto")
+        if proto is not None and proto not in valid_protos:
+            errors.append(f"ufw proto invalid: {proto!r} (must be one of {valid_protos})")
+    for key, value in config.get("sysctl", {}).get("parameters", {}).items():
+        if shell_meta.search(str(key)) or shell_meta.search(str(value)):
+            errors.append(f"sysctl entry contains unsafe characters: {key}={value!r}")
 
     # Check for unresolved ${...} placeholders
     def _check_unresolved(obj, path=""):
@@ -378,7 +401,8 @@ def audit_fail2ban(config, apply=False, force=False):
         fail("Fail2Ban nicht installiert")
         if apply:
             info("Installiere Fail2Ban...")
-            run("apt-get update -qq && apt-get install -y -qq fail2ban")
+            # python3-systemd is required for the 'backend = systemd' jails below.
+            run("apt-get update -qq && apt-get install -y -qq fail2ban python3-systemd")
         else:
             return
 
@@ -456,8 +480,18 @@ def audit_fail2ban(config, apply=False, force=False):
 
         # Jails
         for jail_name, jail_cfg in expected_jails.items():
+            # A jail pointing at a non-existent logpath makes fail2ban fail to
+            # start. Disable such jails (commonly the nginx-* jails before the
+            # nginx log pipeline exists) instead of breaking the whole service.
+            jail_enabled = jail_cfg.get("enabled", True)
+            logpath = jail_cfg.get("logpath")
+            if jail_enabled and logpath and not os.path.exists(logpath):
+                warn(f"Jail '{jail_name}': Logpath {logpath} fehlt — wird deaktiviert")
+                Stats.warn_count += 1
+                jail_enabled = False
+
             lines.append(f"[{jail_name}]")
-            lines.append(f"enabled  = {str(jail_cfg.get('enabled', True)).lower()}")
+            lines.append(f"enabled  = {str(jail_enabled).lower()}")
             if "port" in jail_cfg:
                 lines.append(f"port     = {jail_cfg['port']}")
             if "backend" in jail_cfg:
@@ -560,9 +594,9 @@ def audit_ssh(config, apply=False, force=False):
 
     if apply and changes_needed:
         sub("SSH-Konfiguration anpassen")
-        backup_file(sshd_config)
-        content = sshd_config.read_text()
 
+        # Build the candidate config in memory.
+        content = sshd_config.read_text()
         for key, value in changes_needed:
             pattern = rf"^\s*#?\s*{key}\s+.*"
             replacement = f"{key} {value}"
@@ -572,16 +606,24 @@ def audit_ssh(config, apply=False, force=False):
                 content += f"\n{replacement}"
             info(f"Setze: {key} {value}")
 
-        sshd_config.write_text(content)
-        Stats.fix_count += len(changes_needed)
+        # Lockout-safe: validate a TEMP file first (same directory for an atomic
+        # replace) and only swap in the new sshd_config after `sshd -t` passes.
+        # On failure the live config stays untouched — no risk of a broken file
+        # on disk and no chance of being locked out by a botched reload.
+        tmp_path = sshd_config.with_name(".sshd_config.hardening_tmp")
+        tmp_path.write_text(content)
+        os.chmod(tmp_path, 0o600)
 
-        # Syntax prüfen
-        result = run("sshd -t 2>&1")
+        result = run(f"sshd -t -f {tmp_path} 2>&1")
         if result:
             fail(f"SSH-Config Syntaxfehler: {result}")
-            warn("SSH wird NICHT neugestartet!")
+            warn("Original-Config bleibt UNVERÄNDERT, SSH NICHT neugestartet!")
+            tmp_path.unlink(missing_ok=True)
         else:
             ok("SSH-Config Syntax OK")
+            backup_file(sshd_config)
+            os.replace(tmp_path, sshd_config)  # atomic
+            Stats.fix_count += len(changes_needed)
             info("SSH wird neugestartet...")
             run("systemctl reload sshd")
 
@@ -660,12 +702,15 @@ def audit_docker(config, apply=False, force=False):
     expected = cfg.get("daemon_json", {})
 
     sub("daemon.json prüfen")
+    parse_failed = False
     if daemon_json_path.exists():
         try:
             current = json.loads(daemon_json_path.read_text())
         except json.JSONDecodeError:
             fail("daemon.json ist kein gültiges JSON")
+            Stats.fail_count += 1
             current = {}
+            parse_failed = True
     else:
         warn("daemon.json existiert nicht")
         current = {}
@@ -714,15 +759,268 @@ def audit_docker(config, apply=False, force=False):
                 Stats.ok_count += 1
 
     if apply and changes_needed:
-        sub("daemon.json schreiben")
-        backup_file(daemon_json_path)
+        if parse_failed:
+            # Existing file is present but unparseable. Merging into {} would
+            # silently wipe every existing setting — refuse and let the admin fix it.
+            backup_file(daemon_json_path)
+            fail("daemon.json ist defekt — Apply übersprungen (Backup angelegt). "
+                 "Bitte manuell reparieren, dann erneut ausführen.")
+        else:
+            sub("daemon.json schreiben")
+            if daemon_json_path.exists():
+                backup_file(daemon_json_path)
 
-        merged = {**current, **expected}
-        daemon_json_path.write_text(json.dumps(merged, indent=2) + "\n")
-        ok("daemon.json geschrieben")
+            merged = {**current, **expected}
+            daemon_json_path.write_text(json.dumps(merged, indent=2) + "\n")
+            ok("daemon.json geschrieben")
+            Stats.fix_count += 1
+            warn("Docker-Neustart erforderlich: systemctl restart docker")
+            warn("ACHTUNG: Stoppt alle Container! Manuell ausführen.")
+
+
+# ─── MODUL: Kernel-Module ────────────────────────────────────
+_MODULE_NAME_RE = re.compile(r"^[a-z0-9_-]+$")
+
+
+def audit_kernel_modules(config, apply=False, force=False):
+    header("MODUL: Kernel-Modul-Blacklist")
+    cfg = config.get("kernel_modules", {})
+    if not cfg.get("enabled", True):
+        info("Kernel-Modul-Modul deaktiviert")
+        return
+
+    # Only allow safe module names (defense-in-depth: names reach modprobe).
+    blacklist = [m for m in cfg.get("blacklist", []) if _MODULE_NAME_RE.match(str(m))]
+    if not blacklist:
+        info("Keine (gültigen) Module konfiguriert")
+        return
+
+    blacklist_file = Path("/etc/modprobe.d/hardening-blacklist.conf")
+
+    sub("Geladene Module prüfen")
+    loaded = run("lsmod") or ""
+    loaded_names = {line.split()[0] for line in loaded.splitlines()[1:] if line.split()}
+
+    changes_needed = False
+    for mod in blacklist:
+        if mod in loaded_names:
+            fail(f"Modul '{mod}' ist GELADEN")
+            Stats.fail_count += 1
+            changes_needed = True
+        else:
+            ok(f"Modul '{mod}' nicht geladen")
+            Stats.ok_count += 1
+
+    file_text = blacklist_file.read_text() if blacklist_file.exists() else ""
+    file_complete = blacklist_file.exists() and all(
+        f"install {mod} /bin/true" in file_text for mod in blacklist
+    )
+    if file_complete:
+        ok(f"{blacklist_file} vollständig")
+        Stats.ok_count += 1
+    else:
+        warn(f"{blacklist_file} fehlt oder unvollständig")
+        Stats.warn_count += 1
+        changes_needed = True
+
+    if apply and changes_needed:
+        sub("Blacklist schreiben")
+        if blacklist_file.exists():
+            backup_file(blacklist_file)
+        lines = [
+            "# Server-Härtung - Kernel-Modul-Blacklist",
+            f"# Generiert: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}",
+            "",
+        ]
+        for mod in blacklist:
+            lines.append(f"install {mod} /bin/true")
+            lines.append(f"blacklist {mod}")
+        blacklist_file.write_text("\n".join(lines) + "\n")
+        ok(f"Geschrieben: {blacklist_file}")
         Stats.fix_count += 1
-        warn("Docker-Neustart erforderlich: systemctl restart docker")
-        warn("ACHTUNG: Stoppt alle Container! Manuell ausführen.")
+
+        for mod in blacklist:
+            if mod in loaded_names:
+                if run(f"modprobe -r {mod} 2>&1"):
+                    warn(f"Modul '{mod}' konnte nicht entladen werden (in Benutzung?) — Reboot nötig")
+                else:
+                    info(f"Modul '{mod}' entladen")
+
+
+# ─── MODUL: Automatische Updates ─────────────────────────────
+def audit_auto_updates(config, apply=False, force=False):
+    header("MODUL: Automatische Security-Updates")
+    cfg = config.get("auto_updates", {})
+    if not cfg.get("enabled", True):
+        info("Auto-Update-Modul deaktiviert")
+        return
+
+    sub("unattended-upgrades prüfen")
+    installed = Path("/usr/bin/unattended-upgrade").exists() or shutil.which("unattended-upgrade") is not None
+    if installed:
+        ok("unattended-upgrades installiert")
+        Stats.ok_count += 1
+    else:
+        fail("unattended-upgrades NICHT installiert")
+        Stats.fail_count += 1
+        if apply:
+            info("Installiere unattended-upgrades...")
+            run("apt-get update -qq && apt-get install -y -qq unattended-upgrades apt-listchanges")
+
+    auto_file = Path("/etc/apt/apt.conf.d/20auto-upgrades")
+    periodic_ok = auto_file.exists() and 'Unattended-Upgrade "1"' in auto_file.read_text()
+    if periodic_ok:
+        ok("Periodische Upgrades aktiviert")
+        Stats.ok_count += 1
+    else:
+        fail("Periodische Upgrades NICHT aktiviert")
+        Stats.fail_count += 1
+
+    if apply:
+        sub("Konfiguration schreiben")
+        if auto_file.exists():
+            backup_file(auto_file)
+        auto_file.write_text(
+            'APT::Periodic::Update-Package-Lists "1";\n'
+            'APT::Periodic::Unattended-Upgrade "1";\n'
+            'APT::Periodic::Download-Upgradeable-Packages "1";\n'
+            'APT::Periodic::AutocleanInterval "7";\n'
+        )
+        ok(f"Geschrieben: {auto_file}")
+
+        # Auto-reboot overrides in a dedicated drop-in (later file wins in APT;
+        # idempotent full rewrite of our own file).
+        auto_reboot = bool(cfg.get("auto_reboot", False))
+        reboot_time = str(cfg.get("reboot_time", "03:30"))
+        if not re.match(r"^\d{1,2}:\d{2}$", reboot_time):
+            warn(f"Ungültige reboot_time {reboot_time!r} — verwende 03:30")
+            reboot_time = "03:30"
+        reboot_val = "true" if auto_reboot else "false"
+        override = Path("/etc/apt/apt.conf.d/52unattended-upgrades-hardening")
+        override.write_text(
+            "// Managed by server_hardening.py\n"
+            f'Unattended-Upgrade::Automatic-Reboot "{reboot_val}";\n'
+            f'Unattended-Upgrade::Automatic-Reboot-Time "{reboot_time}";\n'
+        )
+        ok(f"Auto-Reboot: {reboot_val} (Zeit: {reboot_time})")
+        run("systemctl enable --now unattended-upgrades 2>&1")
+        Stats.fix_count += 1
+
+
+# ─── MODUL: auditd ───────────────────────────────────────────
+AUDITD_RULES = """# Managed by server_hardening.py - baseline audit ruleset
+-D
+-b 8192
+-f 1
+
+# Account / identity changes
+-w /etc/passwd -p wa -k identity
+-w /etc/group -p wa -k identity
+-w /etc/shadow -p wa -k identity
+-w /etc/gshadow -p wa -k identity
+-w /etc/sudoers -p wa -k scope
+-w /etc/sudoers.d/ -p wa -k scope
+
+# SSH daemon configuration
+-w /etc/ssh/sshd_config -p wa -k sshd
+
+# Login / authentication records
+-w /var/log/lastlog -p wa -k logins
+-w /var/log/faillog -p wa -k logins
+
+# System time changes
+-a always,exit -F arch=b64 -S adjtimex,settimeofday -k time-change
+-w /etc/localtime -p wa -k time-change
+
+# Kernel module (un)loading
+-w /sbin/insmod -p x -k modules
+-w /sbin/rmmod -p x -k modules
+-w /sbin/modprobe -p x -k modules
+-a always,exit -F arch=b64 -S init_module,delete_module -k modules
+"""
+
+
+def audit_auditd(config, apply=False, force=False):
+    header("MODUL: auditd (Audit-Daemon)")
+    cfg = config.get("auditd", {})
+    if not cfg.get("enabled", True):
+        info("auditd-Modul deaktiviert")
+        return
+
+    sub("auditd prüfen")
+    if shutil.which("auditctl"):
+        ok("auditd installiert")
+        Stats.ok_count += 1
+    else:
+        fail("auditd NICHT installiert")
+        Stats.fail_count += 1
+        if apply:
+            info("Installiere auditd...")
+            run("apt-get update -qq && apt-get install -y -qq auditd audispd-plugins")
+
+    rules_file = Path("/etc/audit/rules.d/hardening.rules")
+    if rules_file.exists():
+        ok(f"{rules_file} vorhanden")
+        Stats.ok_count += 1
+    else:
+        warn(f"{rules_file} fehlt")
+        Stats.warn_count += 1
+
+    if apply:
+        sub("Audit-Regeln schreiben")
+        rules_file.parent.mkdir(parents=True, exist_ok=True)
+        if rules_file.exists():
+            backup_file(rules_file)
+        rules_file.write_text(AUDITD_RULES)
+        ok(f"Geschrieben: {rules_file}")
+        run("augenrules --load 2>&1")
+        run("systemctl enable --now auditd 2>&1")
+        Stats.fix_count += 1
+        warn("Einige Syscall-Regeln greifen ggf. erst nach einem Reboot.")
+
+
+# ─── MODUL: AIDE ─────────────────────────────────────────────
+def audit_aide(config, apply=False, force=False):
+    header("MODUL: AIDE (File-Integrity)")
+    cfg = config.get("aide", {})
+    if not cfg.get("enabled", True):
+        info("AIDE-Modul deaktiviert")
+        return
+
+    sub("AIDE prüfen")
+    if shutil.which("aide"):
+        ok("AIDE installiert")
+        Stats.ok_count += 1
+    else:
+        fail("AIDE NICHT installiert")
+        Stats.fail_count += 1
+        if apply:
+            info("Installiere AIDE...")
+            run("apt-get update -qq && apt-get install -y -qq aide aide-common")
+
+    db = Path("/var/lib/aide/aide.db")
+    if db.exists():
+        ok("AIDE-Datenbank vorhanden")
+        Stats.ok_count += 1
+    else:
+        warn("AIDE-Datenbank nicht initialisiert")
+        Stats.warn_count += 1
+
+    if apply and not db.exists() and shutil.which("aide"):
+        sub("AIDE initialisieren")
+        warn("AIDE-Initialisierung kann mehrere Minuten dauern...")
+        run("aideinit -y -f 2>&1", timeout=1800)
+        new_db = Path("/var/lib/aide/aide.db.new")
+        if new_db.exists():
+            shutil.move(str(new_db), str(db))
+            ok("AIDE-Datenbank initialisiert")
+            Stats.fix_count += 1
+        elif db.exists():
+            ok("AIDE-Datenbank initialisiert")
+            Stats.fix_count += 1
+        else:
+            fail("AIDE-Initialisierung fehlgeschlagen")
+    info("Täglicher Check via /etc/cron.daily/aide (Paket aide-common).")
 
 
 # ─── MODUL: Nginx ────────────────────────────────────────────
@@ -848,14 +1146,65 @@ def audit_open_ports(config, apply=False, force=False):
 # ─── HAUPTPROGRAMM ───────────────────────────────────────────
 def main():
     parser = argparse.ArgumentParser(
-        description="Server-Härtungs-Skript",
+        description="Server-Härtungs-Skript — prüft (Audit) und härtet (--apply) einen "
+                    "Debian-Server. Alle Werte stammen aus hardening_config.yaml; "
+                    "sensible Werte (IPs, SSH-Port) aus einer .env-Datei.",
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog="""
+AUDIT vs. APPLY
+  Ohne --apply  : reiner Dry-Run, es wird NICHTS verändert (nur geprüft/berichtet).
+  Mit  --apply  : Dateien werden geändert. Vor jeder Änderung wird ein Backup
+                  angelegt: <datei>.backup_YYYYMMDD_HHMMSS
+
+WAS JEDES MODUL ÄNDERT (Datei, die mit --apply geschrieben wird)
+  ufw            UFW-Firewall: Default-Policies + Regeln (public/restricted Ports).
+  fail2ban       /etc/fail2ban/jail.local (Vollersetzung) + Service-Neustart.
+                 Jails mit fehlendem logpath werden automatisch deaktiviert.
+  ssh            /etc/ssh/sshd_config — lockout-sicher: Kandidat wird per
+                 'sshd -t' geprüft und erst dann ATOMAR ersetzt + reload.
+  sysctl         /etc/sysctl.d/99-hardening.conf (+ sofort via 'sysctl -w').
+  kernel_modules /etc/modprobe.d/hardening-blacklist.conf (selten genutzte
+                 Netzprotokolle/Dateisysteme); lädt sie nicht mehr.
+  docker         /etc/docker/daemon.json (Merge, KEIN Auto-Neustart!).
+                 Defektes daemon.json => Apply wird übersprungen (kein Datenverlust).
+  auto_updates   unattended-upgrades + /etc/apt/apt.conf.d/{20auto-upgrades,
+                 52unattended-upgrades-hardening} (Auto-Reboot-Fenster).
+  auditd         /etc/audit/rules.d/hardening.rules + Service (auditd).
+  aide           Installiert AIDE + initialisiert /var/lib/aide/aide.db (dauert lange).
+  nginx          NUR Audit (schreibt nichts).
+  ports          NUR Audit: listet offene Ports via 'ss -tlnp'.
+
+WIE SICH DIE .env AUSWIRKT
+  Fundorte (in dieser Reihenfolge):
+    1. /root/.config/myodoo-docker/.env   (primär)
+    2. <skriptverzeichnis>/.env            (Legacy-Fallback)
+  Beim ersten Lauf wird .env.example ins zentrale Verzeichnis (Modus 0700) kopiert.
+
+  Verwendete Variablen: SSH_PORT, ALLOWED_IP_1..5 (+ _COMMENT).
+  Sie füllen die ${...}-Platzhalter in hardening_config.yaml und bestimmen damit:
+    - den SSH-Port           (Modul ssh + sshd-Jail)
+    - die erlaubten Quell-IPs (UFW restricted_ports)
+    - die fail2ban ignoreip-Liste
+
+  Sonderfälle:
+    - .env fehlt / python-dotenv fehlt  -> Warnung; es werden nur bereits in der
+      Shell exportierte Variablen gesehen.
+    - ungelöste ${...}-Platzhalter      -> Validierungsfehler => ABBRUCH (kein Apply).
+    - leere ALLOWED_IP_*-Slots          -> werden herausgefiltert: die zugehörige
+      UFW-Regel / ignoreip-Zeile entfällt. ACHTUNG: leerer Slot = KEIN IP-Schutz
+      für diesen Eintrag.
+
+SICHERHEITSHINWEISE
+  - SSH-Reload erfolgt NUR nach erfolgreichem 'sshd -t' (kein Lockout durch Tippfehler).
+  - Docker wird NIE automatisch neugestartet (würde alle Container stoppen).
+  - Empfohlene Apply-Reihenfolge: erst unkritische Module, 'ssh' zuletzt mit einer
+    zweiten offenen SSH-Sitzung als Sicherheitsnetz.
+
 Beispiele:
-  sudo python3 server_hardening.py                          # Audit
-  sudo python3 server_hardening.py --apply                  # Alles härten
-  sudo python3 server_hardening.py --apply --module ufw     # Nur UFW
-  sudo python3 server_hardening.py --module ssh sysctl      # Nur SSH + Kernel prüfen
+  sudo python3 server_hardening.py                              # Audit (alles)
+  sudo python3 server_hardening.py --apply                      # Alles härten
+  sudo python3 server_hardening.py --apply -m sysctl kernel_modules auto_updates
+  sudo python3 server_hardening.py --apply -m ssh               # SSH zuletzt
         """
     )
     parser.add_argument("-c", "--config", default="hardening_config.yaml",
@@ -865,7 +1214,8 @@ Beispiele:
     parser.add_argument("-f", "--force", action="store_true",
                         help="Keine Rückfragen")
     parser.add_argument("-m", "--module", nargs="+",
-                        choices=["ufw", "fail2ban", "ssh", "sysctl", "docker", "nginx", "ports"],
+                        choices=["ufw", "fail2ban", "ssh", "sysctl", "kernel_modules",
+                                 "docker", "auto_updates", "auditd", "aide", "nginx", "ports"],
                         help="Nur bestimmte Module ausführen")
     args = parser.parse_args()
 
@@ -939,7 +1289,7 @@ Beispiele:
     config.setdefault("fail2ban", {})["ignoreip"] = [ip for ip in f2b_ignoreip if ip]
 
     print(f"\n{C.BOLD}{'='*60}")
-    print(f"  Server-Härtung v1.1.0 {'(APPLY)' if args.apply else '(AUDIT)'}")
+    print(f"  Server-Härtung v1.2.0 {'(APPLY)' if args.apply else '(AUDIT)'}")
     print(f"  {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
     print(f"{'='*60}{C.END}")
 
@@ -948,13 +1298,17 @@ Beispiele:
         info("Mit --apply ausführen um zu härten\n")
 
     modules = {
-        "ufw":      audit_ufw,
-        "fail2ban": audit_fail2ban,
-        "ssh":      audit_ssh,
-        "sysctl":   audit_sysctl,
-        "docker":   audit_docker,
-        "nginx":    audit_nginx,
-        "ports":    audit_open_ports,
+        "ufw":            audit_ufw,
+        "fail2ban":       audit_fail2ban,
+        "ssh":            audit_ssh,
+        "sysctl":         audit_sysctl,
+        "kernel_modules": audit_kernel_modules,
+        "docker":         audit_docker,
+        "auto_updates":   audit_auto_updates,
+        "auditd":         audit_auditd,
+        "aide":           audit_aide,
+        "nginx":          audit_nginx,
+        "ports":          audit_open_ports,
     }
 
     selected = args.module or list(modules.keys())

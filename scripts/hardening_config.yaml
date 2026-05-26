@@ -167,12 +167,32 @@ sysctl:
     kernel.dmesg_restrict: 1
     kernel.randomize_va_space: 2
 
+    # ptrace-Restriktion (nur Kind-Prozesse dürfen ge-ptrace-t werden)
+    kernel.yama.ptrace_scope: 1
+
+    # Härtung gegen Symlink/Hardlink/FIFO-TOCTOU-Angriffe
+    fs.protected_hardlinks: 1
+    fs.protected_symlinks: 1
+    fs.protected_fifos: 1
+    fs.protected_regular: 2
+
+    # Keine SUID-Core-Dumps
+    fs.suid_dumpable: 0
+
+    # BPF-Härtung (kein unprivilegierter BPF, JIT-Hardening)
+    # HINWEIS: net.ipv4.ip_forward wird BEWUSST NICHT gesetzt (Docker benötigt 1).
+    kernel.unprivileged_bpf_disabled: 1
+    net.core.bpf_jit_harden: 2
+
 # --- Docker-Härtung ---
 docker:
   enabled: true
   daemon_json:
     ip: "127.0.0.1"
     no-new-privileges: true
+    # Inter-container communication on the DEFAULT bridge only. Compose-managed
+    # stacks use their own user-defined networks and are unaffected (CIS 2.1).
+    icc: false
     log-driver: "json-file"
     log-opts:
       max-size: "10m"
@@ -193,3 +213,40 @@ nginx:
     X-XSS-Protection: "1; mode=block"
     Referrer-Policy: "strict-origin-when-cross-origin"
     Strict-Transport-Security: "max-age=63072000; includeSubDomains; preload"
+
+# --- Kernel-Modul-Blacklist ---
+# Lädt selten genutzte Netzprotokolle und ungenutzte Dateisysteme nicht (CIS).
+# squashfs/usb-storage bewusst NICHT gelistet (snap / Hardware).
+kernel_modules:
+  enabled: true
+  blacklist:
+    # Seltene Netzprotokolle (Angriffsfläche reduzieren)
+    - dccp
+    - sctp
+    - rds
+    - tipc
+    # Ungenutzte Dateisysteme
+    - cramfs
+    - freevxfs
+    - jffs2
+    - hfs
+    - hfsplus
+    - udf
+
+# --- Automatische Security-Updates ---
+auto_updates:
+  enabled: true
+  # Automatischer Reboot, falls ein Update ihn erfordert (z. B. Kernel).
+  auto_reboot: true
+  reboot_time: "03:30"
+
+# --- auditd (Audit-Daemon) ---
+# Installiert auditd + Baseline-Regelset. Manche Regeln greifen erst nach Reboot.
+auditd:
+  enabled: true
+
+# --- AIDE (File-Integrity-Monitoring) ---
+# Installiert AIDE + initialisiert DB. Init dauert lange; DB nach legitimen
+# Änderungen mit 'aide --update' neu aufbauen.
+aide:
+  enabled: true
