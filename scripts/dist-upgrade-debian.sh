@@ -90,6 +90,14 @@ fi
 
 [ "$TARGET_CODENAME" != "$CURRENT_CODENAME" ] || die "Target equals current codename ('$CURRENT_CODENAME') — nothing to do."
 
+# Both codenames are interpolated into a sed expression below. Restrict them to
+# plain lowercase tokens so a crafted value can never break out of the s/// (a
+# stray '/' could otherwise smuggle sed commands like 'e <cmd>'). Defense in
+# depth — the script is already root-only.
+for cn in "$CURRENT_CODENAME" "$TARGET_CODENAME"; do
+    [[ "$cn" =~ ^[a-z][a-z0-9]*$ ]] || die "Invalid codename '${cn}' (expected lowercase letters/digits)."
+done
+
 section "Debian major upgrade v${SCRIPT_VERSION}: ${CURRENT_CODENAME} → ${TARGET_CODENAME}"
 warn "This is a MAJOR OS upgrade. Run it inside screen/tmux and have a snapshot ready."
 warn "Existing conffiles are kept on conflict; review *.dpkg-dist files afterwards."

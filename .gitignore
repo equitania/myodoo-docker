@@ -66,4 +66,4 @@ odoo-ce.zip
 *.env
 !*.env.example
 scripts/__pycache__/
-rd mit bootstrap nicht installiertscripts/.env
+scripts/.env
