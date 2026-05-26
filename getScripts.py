@@ -55,7 +55,7 @@ if os.environ.get('GETSCRIPTS_DEBUG', '').lower() in ('1', 'true', 'yes'):
     logger.debug("Debug logging enabled")
 
 # Script version and date
-SCRIPT_VERSION = "9.0.8"
+SCRIPT_VERSION = "9.0.9"
 SCRIPT_DATE = "26.05.2026"
 
 # Pinned fallback 7-Zip version used when the GitHub API is unreachable.
@@ -1940,6 +1940,19 @@ def upgrade_pip() -> None:
     except Exception as e:
         logger.error(f"Error upgrading pip: {str(e)}")
 
+def _extract_7zip_version_line(output: str) -> str:
+    """Return the first output line that contains a version-like token.
+
+    Newer 7-Zip releases (e.g. 26.01) emit a leading blank line for
+    `7zz --help`, so parsing line 0 unconditionally yields an empty string.
+    Scanning for the first line containing a `\\d+.\\d+` token is robust
+    against that and future formatting changes.
+    """
+    for line in output.splitlines():
+        if re.search(r'\d+\.\d+', line):
+            return line.strip()
+    return ""
+
 def get_7zip_version() -> Optional[tuple]:
     """Get installed 7-Zip version as tuple (major, minor, patch).
 
@@ -1967,7 +1980,7 @@ def get_7zip_version() -> Optional[tuple]:
                                   capture_output=True, text=True, timeout=10)
             if result.returncode == 0:
                 # 7zz output format: "7-Zip (z) [64] 24.08 : Copyright (c) 1999-2024 Igor Pavlov"
-                version_line = result.stdout.split('\n')[0].strip()
+                version_line = _extract_7zip_version_line(result.stdout)
                 version_match = re.search(r'(\d+)\.(\d+)', version_line)
                 if version_match:
                     major = int(version_match.group(1))
@@ -2040,7 +2053,7 @@ def check_7zip_version() -> bool:
             result = subprocess.run([seven_zz_path, '--help'], capture_output=True, text=True, timeout=10)
             if result.returncode == 0:
                 # 7zz output format: "7-Zip (z) [64] 24.08 : Copyright (c) 1999-2024 Igor Pavlov"
-                version_line = result.stdout.split('\n')[0].strip()
+                version_line = _extract_7zip_version_line(result.stdout)
                 version_match = re.search(r'(\d+)\.(\d+)', version_line)
                 if version_match:
                     major = int(version_match.group(1))
@@ -2136,7 +2149,7 @@ def install_or_update_7zip():
                         # Show installed version
                         try:
                             result = subprocess.run(['7zz', '--help'], capture_output=True, text=True)
-                            version_line = result.stdout.split('\n')[0].strip()
+                            version_line = _extract_7zip_version_line(result.stdout)
                             logger.info(f"Installed: {version_line}")
                         except:
                             pass
@@ -2256,7 +2269,7 @@ def install_or_update_7zip():
             try:
                 result = subprocess.run([install_path, '--help'], capture_output=True, text=True, timeout=10)
                 if result.returncode == 0:
-                    version_line = result.stdout.split('\n')[0].strip()
+                    version_line = _extract_7zip_version_line(result.stdout)
                     logger.info(f"Installed: {version_line}")
             except:
                 pass
@@ -3566,9 +3579,17 @@ def main() -> None:
         except Exception as e:
             logger.error(f"Error setting up shell environment: {e}")
 
-        # Ask user about changing default shell to Fish (only on fresh install)
-        if fish_installed and fish_is_fresh_install:
+        # Offer to set Fish as the default shell whenever it isn't already.
+        # NOT gated on fresh-install: a prior partial run (e.g. aborted mid-setup)
+        # can leave Fish installed without ever prompting, so the user would never
+        # be asked again. prompt_shell_change() itself skips when Fish is already
+        # the default. Require an interactive TTY so non-interactive/CI runs that
+        # cannot answer input() do not break.
+        if fish_installed and sys.stdin.isatty():
             prompt_shell_change(_myhome)
+        elif fish_installed and not fish_is_fresh_install:
+            logger.info("Fish is installed. Run this script in an interactive "
+                        "terminal to set Fish as your default shell, or run: chsh -s (which fish)")
 
         # Return to original directory
         try:
