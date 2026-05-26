@@ -172,6 +172,13 @@ sysctl:
     kernel.unprivileged_bpf_disabled: 1
     net.core.bpf_jit_harden: 2
 
+# --- Sysctl-Reapply nach Docker ---
+# Docker setzt beim dockerd-Start einige net.*-sysctls zurück (v. a.
+# log_martians). Ein docker.service-Drop-in (ExecStartPost) wendet die Härtungs-
+# sysctls danach erneut an — bei Boot und 'systemctl restart docker'.
+sysctl_persist:
+  enabled: true
+
 # --- Docker-Härtung ---
 docker:
   enabled: true

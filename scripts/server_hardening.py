@@ -2,7 +2,7 @@
 """
 Server-Härtungs-Skript
 =======================
-Version: 1.4.1 / Date: 26.05.2026
+Version: 1.5.0 / Date: 26.05.2026
 
 Prüft und härtet: UFW, Fail2Ban, SSH, Kernel, Kernel-Module, Docker,
 Auto-Updates, auditd, AIDE, Nginx
@@ -823,6 +823,52 @@ def audit_docker(config, apply=False, force=False):
             warn("ACHTUNG: Stoppt alle Container! Manuell ausführen.")
 
 
+# ─── MODUL: Sysctl-Reapply nach Docker ───────────────────────
+def audit_sysctl_persist(config, apply=False, force=False):
+    header("MODUL: Sysctl-Reapply nach Docker")
+    cfg = config.get("sysctl_persist", {})
+    if not cfg.get("enabled", True):
+        info("Sysctl-Reapply-Modul deaktiviert")
+        return
+
+    # Docker resets a few net.* sysctls (notably net.ipv4.conf.*.log_martians)
+    # when it (re)creates its bridge/iptables on daemon start. A docker.service
+    # drop-in re-applies our hardening sysctls AFTER dockerd starts — covering
+    # both boot and 'systemctl restart docker'. No Docker → nothing resets them.
+    if not shutil.which("docker"):
+        info("Docker nicht installiert — kein Reapply nötig")
+        return
+
+    dropin = Path("/etc/systemd/system/docker.service.d/hardening-sysctl.conf")
+    desired = (
+        "# Managed by server_hardening.py\n"
+        "# Docker resets some net.* sysctls (e.g. log_martians) on daemon start;\n"
+        "# re-apply the hardening values afterwards. The leading '-' makes a sysctl\n"
+        "# failure non-fatal so it can never block Docker from starting.\n"
+        "[Service]\n"
+        "ExecStartPost=-/usr/sbin/sysctl -p /etc/sysctl.d/99-hardening.conf\n"
+    )
+
+    sub("Docker-Drop-in prüfen")
+    if dropin.exists() and dropin.read_text() == desired:
+        ok(f"{dropin} vorhanden")
+        Stats.ok_count += 1
+    else:
+        fail(f"{dropin} fehlt/abweichend")
+        Stats.fail_count += 1
+        if apply:
+            dropin.parent.mkdir(parents=True, exist_ok=True)
+            if dropin.exists():
+                backup_file(dropin)
+            dropin.write_text(desired)
+            run("systemctl daemon-reload 2>&1")
+            # Re-assert the current runtime values immediately (don't wait for the
+            # next Docker restart). We deliberately do NOT restart Docker here.
+            run("sysctl -p /etc/sysctl.d/99-hardening.conf 2>&1")
+            ok("Drop-in geschrieben + sysctl neu angewandt")
+            Stats.fix_count += 1
+
+
 # ─── MODUL: Kernel-Module ────────────────────────────────────
 _MODULE_NAME_RE = re.compile(r"^[a-z0-9_-]+$")
 
@@ -1246,6 +1292,8 @@ WAS JEDES MODUL ÄNDERT (Datei, die mit --apply geschrieben wird)
   ssh            /etc/ssh/sshd_config — lockout-sicher: Kandidat wird per
                  'sshd -t' geprüft und erst dann ATOMAR ersetzt + reload.
   sysctl         /etc/sysctl.d/99-hardening.conf (+ sofort via 'sysctl -w').
+  sysctl_persist docker.service drop-in (ExecStartPost) das die sysctls nach
+                 jedem dockerd-Start neu anwendet (Docker setzt log_martians zurück).
   kernel_modules /etc/modprobe.d/hardening-blacklist.conf (selten genutzte
                  Netzprotokolle/Dateisysteme); lädt sie nicht mehr.
   docker         /etc/docker/daemon.json (Merge, KEIN Auto-Neustart!).
@@ -1299,8 +1347,9 @@ Beispiele:
     parser.add_argument("-f", "--force", action="store_true",
                         help="Keine Rückfragen")
     parser.add_argument("-m", "--module", nargs="+",
-                        choices=["ufw", "fail2ban", "ssh", "sysctl", "kernel_modules",
-                                 "docker", "auto_updates", "auditd", "aide", "nginx", "ports"],
+                        choices=["ufw", "fail2ban", "ssh", "sysctl", "sysctl_persist",
+                                 "kernel_modules", "docker", "auto_updates", "auditd",
+                                 "aide", "nginx", "ports"],
                         help="Nur bestimmte Module ausführen")
     args = parser.parse_args()
 
@@ -1376,7 +1425,7 @@ Beispiele:
         sys.exit(1)
 
     print(f"\n{C.BOLD}{'='*60}")
-    print(f"  Server-Härtung v1.4.1 {'(APPLY)' if args.apply else '(AUDIT)'}")
+    print(f"  Server-Härtung v1.5.0 {'(APPLY)' if args.apply else '(AUDIT)'}")
     print(f"  {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
     print(f"{'='*60}{C.END}")
 
@@ -1389,6 +1438,7 @@ Beispiele:
         "fail2ban":       audit_fail2ban,
         "ssh":            audit_ssh,
         "sysctl":         audit_sysctl,
+        "sysctl_persist": audit_sysctl_persist,
         "kernel_modules": audit_kernel_modules,
         "docker":         audit_docker,
         "auto_updates":   audit_auto_updates,
