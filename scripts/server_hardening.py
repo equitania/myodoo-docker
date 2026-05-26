@@ -2,7 +2,7 @@
 """
 Server-Härtungs-Skript
 =======================
-Version: 1.3.0 / Date: 26.05.2026
+Version: 1.3.1 / Date: 26.05.2026
 
 Prüft und härtet: UFW, Fail2Ban, SSH, Kernel, Kernel-Module, Docker,
 Auto-Updates, auditd, AIDE, Nginx
@@ -108,16 +108,20 @@ def resolve_env_vars(obj):
     pattern = re.compile(r"\$\{([^}]+)\}")
 
     def _resolve_str(s):
+        had_placeholder = "${" in s
         def _replacer(m):
             # Missing OR empty optional vars (e.g. unused ALLOWED_IP_N slots)
-            # resolve to "" so they are filtered out downstream — the 5 IP slots
-            # are optional by design (0-5 may be filled). Required values like
-            # SSH_PORT that end up empty are caught by validate_config's
-            # type/range checks instead of leaving a dangling placeholder.
+            # resolve to "" so they are filtered out downstream — the IP slots
+            # are optional by design. Required values like SSH_PORT that end up
+            # empty are caught by validate_config's type/range checks instead of
+            # leaving a dangling placeholder.
             return os.environ.get(m.group(1), "")
         result = pattern.sub(_replacer, s)
-        # Auto-cast to int if the result is purely numeric
-        if result.isdigit():
+        # Auto-cast to int ONLY for substituted placeholders (e.g. ${SSH_PORT}),
+        # never for literal quoted values like "3". Casting literals would turn
+        # Docker daemon.json log-opts ("max-file": "3") into an int, and since
+        # log-opts is map[string]string the daemon would refuse to start.
+        if had_placeholder and result.isdigit():
             return int(result)
         return result
 
@@ -1334,7 +1338,7 @@ Beispiele:
         sys.exit(1)
 
     print(f"\n{C.BOLD}{'='*60}")
-    print(f"  Server-Härtung v1.3.0 {'(APPLY)' if args.apply else '(AUDIT)'}")
+    print(f"  Server-Härtung v1.3.1 {'(APPLY)' if args.apply else '(AUDIT)'}")
     print(f"  {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
     print(f"{'='*60}{C.END}")
 
