@@ -2,7 +2,7 @@
 """
 Server-Härtungs-Skript
 =======================
-Version: 1.4.0 / Date: 26.05.2026
+Version: 1.4.1 / Date: 26.05.2026
 
 Prüft und härtet: UFW, Fail2Ban, SSH, Kernel, Kernel-Module, Docker,
 Auto-Updates, auditd, AIDE, Nginx
@@ -1051,35 +1051,49 @@ def audit_aide(config, apply=False, force=False):
         warn("AIDE-Datenbank nicht initialisiert")
         Stats.warn_count += 1
 
-    if apply and not db.exists() and shutil.which("aide"):
-        sub("AIDE konfigurieren + initialisieren")
-
-        # Exclude high-volume / ephemeral dirs BEFORE init. Without this, AIDE
-        # hashes all of /var/lib/docker (overlay2 layers + volumes) on a Docker
-        # host — init then takes 30+ min (or hits our timeout) and the daily
-        # check is pure noise.
+    if apply and shutil.which("aide"):
+        # Keep the exclude drop-in current INDEPENDENT of db existence. Tying it
+        # to "not db.exists()" meant an already-bloated db (that scanned
+        # /var/lib/docker) could never be remediated by re-running. Without the
+        # excludes, AIDE hashes all overlay2 layers/volumes → 30+ min init,
+        # millions of db entries, and a daily check that is pure noise.
+        sub("AIDE konfigurieren")
         excludes = [p for p in cfg.get("exclude", [])
                     if re.match(r"^/[\w./-]*$", str(p))]
+        excludes_changed = False
         conf_d = Path("/etc/aide/aide.conf.d")
         if excludes and conf_d.is_dir():
-            lines = ["# Managed by server_hardening.py - integrity scan excludes"]
-            lines += [f"!{p}" for p in excludes]
-            (conf_d / "99-hardening-excludes").write_text("\n".join(lines) + "\n")
-            run("update-aide.conf 2>&1")
-            ok(f"Excludes gesetzt: {', '.join(excludes)}")
+            exclude_file = conf_d / "99-hardening-excludes"
+            desired = ("# Managed by server_hardening.py - integrity scan excludes\n"
+                       + "\n".join(f"!{p}" for p in excludes) + "\n")
+            if not exclude_file.exists() or exclude_file.read_text() != desired:
+                exclude_file.write_text(desired)
+                run("update-aide.conf 2>&1")
+                ok(f"Excludes gesetzt: {', '.join(excludes)}")
+                excludes_changed = True
+            else:
+                ok("Excludes bereits aktuell")
 
-        warn("AIDE-Initialisierung kann mehrere Minuten dauern...")
-        run("aideinit -y -f 2>&1", timeout=1800)
-        new_db = Path("/var/lib/aide/aide.db.new")
-        if new_db.exists():
-            shutil.move(str(new_db), str(db))
-            ok("AIDE-Datenbank initialisiert")
-            Stats.fix_count += 1
-        elif db.exists():
-            ok("AIDE-Datenbank initialisiert")
-            Stats.fix_count += 1
-        else:
-            fail("AIDE-Initialisierung fehlgeschlagen")
+        # (Re)build the database when it is missing OR the excludes just changed
+        # (e.g. an old db that still includes /var/lib/docker). aideinit writes
+        # aide.db.new which we then promote to aide.db.
+        if not db.exists() or excludes_changed:
+            sub("AIDE-Datenbank (neu) initialisieren")
+            if db.exists():
+                warn("Excludes geändert — Datenbank wird neu aufgebaut (alte wird ersetzt)...")
+            else:
+                warn("AIDE-Initialisierung kann mehrere Minuten dauern...")
+            run("aideinit -y -f 2>&1", timeout=1800)
+            new_db = Path("/var/lib/aide/aide.db.new")
+            if new_db.exists():
+                shutil.move(str(new_db), str(db))
+                ok("AIDE-Datenbank initialisiert")
+                Stats.fix_count += 1
+            elif db.exists():
+                ok("AIDE-Datenbank aktualisiert")
+                Stats.fix_count += 1
+            else:
+                fail("AIDE-Initialisierung fehlgeschlagen")
     info("Täglicher Check via /etc/cron.daily/aide (Paket aide-common).")
 
 
@@ -1362,7 +1376,7 @@ Beispiele:
         sys.exit(1)
 
     print(f"\n{C.BOLD}{'='*60}")
-    print(f"  Server-Härtung v1.4.0 {'(APPLY)' if args.apply else '(AUDIT)'}")
+    print(f"  Server-Härtung v1.4.1 {'(APPLY)' if args.apply else '(AUDIT)'}")
     print(f"  {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
     print(f"{'='*60}{C.END}")
 
