@@ -2,7 +2,7 @@
 """
 Server-Härtungs-Skript
 =======================
-Version: 1.2.1 / Date: 26.05.2026
+Version: 1.3.0 / Date: 26.05.2026
 
 Prüft und härtet: UFW, Fail2Ban, SSH, Kernel, Kernel-Module, Docker,
 Auto-Updates, auditd, AIDE, Nginx
@@ -128,6 +128,46 @@ def resolve_env_vars(obj):
     if isinstance(obj, dict):
         return {k: resolve_env_vars(v) for k, v in obj.items()}
     return obj
+
+
+def inject_allowed_ips(config):
+    """Populate the admin-IP allowlist dynamically from ALLOWED_IP_<n> env vars.
+
+    Any number of ALLOWED_IP_1, ALLOWED_IP_2, ... (each with an optional
+    ALLOWED_IP_<n>_COMMENT) is supported — there is no fixed slot count, and
+    gaps are tolerated. Empty/missing entries are ignored. The collected IPs are:
+      - applied to every ufw.restricted_ports entry that has no static allowed_ips
+      - appended to fail2ban.ignoreip (after the base loopback entries, de-duped)
+
+    Returns the ordered list of {ip, comment} dicts.
+    """
+    pat = re.compile(r"^ALLOWED_IP_(\d+)$")
+    entries = []
+    for key, val in os.environ.items():
+        m = pat.match(key)
+        if not m:
+            continue
+        ip = (val or "").strip()
+        if not ip:
+            continue
+        n = int(m.group(1))
+        comment = (os.environ.get(f"ALLOWED_IP_{n}_COMMENT", "") or "").strip()
+        entries.append((n, ip, comment))
+    entries.sort(key=lambda e: e[0])
+    allowed = [{"ip": ip, "comment": comment} for _, ip, comment in entries]
+
+    # UFW: fill restricted_ports that do not define a static allowed_ips list.
+    for rp in config.get("ufw", {}).get("restricted_ports", []):
+        if not rp.get("allowed_ips"):
+            rp["allowed_ips"] = [dict(a) for a in allowed]
+
+    # fail2ban: base ignoreip entries + dynamic admin IPs (de-duplicated, order kept).
+    f2b = config.setdefault("fail2ban", {})
+    base = [ip for ip in f2b.get("ignoreip", []) if ip]
+    seen = set()
+    f2b["ignoreip"] = [x for x in base + [a["ip"] for a in allowed]
+                       if not (x in seen or seen.add(x))]
+    return allowed
 
 
 def validate_config(config):
@@ -1181,17 +1221,20 @@ WIE SICH DIE .env AUSWIRKT
     2. <skriptverzeichnis>/.env            (Legacy-Fallback)
   Beim ersten Lauf wird .env.example ins zentrale Verzeichnis (Modus 0700) kopiert.
 
-  Verwendete Variablen: SSH_PORT, ALLOWED_IP_1..5 (+ _COMMENT).
-  Sie füllen die ${...}-Platzhalter in hardening_config.yaml und bestimmen damit:
-    - den SSH-Port           (Modul ssh + sshd-Jail)
-    - die erlaubten Quell-IPs (UFW restricted_ports)
-    - die fail2ban ignoreip-Liste
+  Verwendete Variablen:
+    SSH_PORT (Pflicht)        -> füllt ${SSH_PORT} (Modul ssh + sshd-Jail).
+    ALLOWED_IP_<n> (dynamisch)-> beliebig viele: ALLOWED_IP_1, ALLOWED_IP_2, ...
+                                 (+ optional ALLOWED_IP_<n>_COMMENT). Werden zur
+                                 Laufzeit eingelesen und bestimmen:
+                                   - die erlaubten Quell-IPs (UFW restricted_ports)
+                                   - die fail2ban ignoreip-Liste
+                                 KEIN fester Slot-Zähler; eine 6. IP = ALLOWED_IP_6.
 
   Sonderfälle:
     - .env fehlt / python-dotenv fehlt  -> Warnung; es werden nur bereits in der
       Shell exportierte Variablen gesehen.
-    - fehlende ODER leere ALLOWED_IP_*  -> werden zu "" aufgelöst und herausgefiltert;
-      0-5 IPs sind erlaubt. ACHTUNG: leerer Slot = KEIN IP-Schutz für diesen Eintrag.
+    - nicht gesetzte/leere ALLOWED_IP_<n> -> werden ignoriert (Lücken erlaubt);
+      0..N IPs möglich. ACHTUNG: keine IP gesetzt = KEINE IP-Beschränkung.
     - fehlendes/ungültiges SSH_PORT     -> Validierungsfehler => ABBRUCH (kein Apply).
 
 SICHERHEITSHINWEISE
@@ -1269,8 +1312,18 @@ Beispiele:
         config_path = script_dir / config_path
     config = yaml.safe_load(config_path.read_text())
 
-    # Resolve ${ENV_VAR} placeholders
+    # Resolve ${ENV_VAR} placeholders (e.g. ${SSH_PORT})
     config = resolve_env_vars(config)
+
+    # Build the admin-IP allowlist dynamically from ALLOWED_IP_<n> env vars
+    # (any count) and inject it BEFORE validation so those IPs get validated too.
+    allowed_ips = inject_allowed_ips(config)
+    if allowed_ips:
+        info(f"Allowlist: {len(allowed_ips)} IP(s) aus .env erkannt "
+             f"({', '.join(a['ip'] for a in allowed_ips)})")
+    else:
+        warn("Keine ALLOWED_IP_<n> in .env gefunden — eine aktivierte UFW würde den "
+             "SSH-Port für NIEMANDEN öffnen (Lockout-Gefahr)!")
 
     # Validate config
     validation_errors = validate_config(config)
@@ -1280,16 +1333,8 @@ Beispiele:
             fail(err)
         sys.exit(1)
 
-    # Filter empty IPs from allowed_ips lists
-    for rp in config.get("ufw", {}).get("restricted_ports", []):
-        rp["allowed_ips"] = [e for e in rp.get("allowed_ips", []) if e.get("ip")]
-
-    # Filter empty IPs from fail2ban ignoreip
-    f2b_ignoreip = config.get("fail2ban", {}).get("ignoreip", [])
-    config.setdefault("fail2ban", {})["ignoreip"] = [ip for ip in f2b_ignoreip if ip]
-
     print(f"\n{C.BOLD}{'='*60}")
-    print(f"  Server-Härtung v1.2.1 {'(APPLY)' if args.apply else '(AUDIT)'}")
+    print(f"  Server-Härtung v1.3.0 {'(APPLY)' if args.apply else '(AUDIT)'}")
     print(f"  {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
     print(f"{'='*60}{C.END}")
 

@@ -27,17 +27,9 @@ ufw:
     - port: ${SSH_PORT}
       proto: any
       comment: "SSH Custom Port"
-      allowed_ips:
-        - ip: "${ALLOWED_IP_1}"
-          comment: "${ALLOWED_IP_1_COMMENT}"
-        - ip: "${ALLOWED_IP_2}"
-          comment: "${ALLOWED_IP_2_COMMENT}"
-        - ip: "${ALLOWED_IP_3}"
-          comment: "${ALLOWED_IP_3_COMMENT}"
-        - ip: "${ALLOWED_IP_4}"
-          comment: "${ALLOWED_IP_4_COMMENT}"
-        - ip: "${ALLOWED_IP_5}"
-          comment: "${ALLOWED_IP_5_COMMENT}"
+      # allowed_ips are built dynamically from ALLOWED_IP_<n> in the .env file
+      # (any count, gaps tolerated). Leave this empty — do NOT hardcode IPs here.
+      allowed_ips: []
 
 # --- Fail2Ban ---
 fail2ban:
@@ -45,13 +37,9 @@ fail2ban:
   banaction: ufw
 
   ignoreip:
+    # Base entries; all ALLOWED_IP_<n> from the .env are appended automatically.
     - "127.0.0.1/8"
     - "::1"
-    - "${ALLOWED_IP_1}"
-    - "${ALLOWED_IP_2}"
-    - "${ALLOWED_IP_3}"
-    - "${ALLOWED_IP_4}"
-    - "${ALLOWED_IP_5}"
 
   defaults:
     bantime: 3600
