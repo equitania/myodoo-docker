@@ -41,7 +41,7 @@ CRON_SRC="${SELF_DIR}/myodoo-maintenance.cron"
 LOGROTATE_SRC="${SELF_DIR}/myodoo-maintenance.logrotate"
 
 # Scripts referenced by the cron entries (for an existence sanity-check).
-MANAGED_SCRIPTS=(container2backup.py ssl-renew.sh cleanup-weblogs.py)
+MANAGED_SCRIPTS=(container2backup.py ssl-renew.sh cleanup-weblogs.py nginx-cert-guard.py)
 
 SEPARATOR="────────────────────────────────────────────────────────"
 if [ -t 1 ]; then

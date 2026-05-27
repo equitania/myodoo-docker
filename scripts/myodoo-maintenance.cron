@@ -16,8 +16,16 @@ PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
 0 2  * * * root /root/container2backup.py </dev/null >> /var/log/container2backup.log 2>&1
 0 14 * * * root /root/container2backup.py </dev/null >> /var/log/container2backup.log 2>&1
 
+# Proactive DNS early-warning, DAILY at 23:50 — just BEFORE the cert renewal.
+# Detects customer (sub)domains that no longer point at this server and, after
+# GUARD_FAIL_THRESHOLD confirmed runs, quarantines the affected vhost (--apply)
+# so it can't break the whole nginx at the next renewal. Warn-only without --apply.
+50 23 * * * root /root/nginx-cert-guard.py --check --apply >> /var/log/nginx-cert-guard.log 2>&1
+
 # Renew Let's Encrypt certs DAILY at 00:00. nginx is only bounced when a cert is
 # actually due (certbot pre/post-hooks) — no weekly downtime when nothing renews.
+# nginx is brought back up via nginx-cert-guard.py so one broken vhost can't take
+# the whole server down (see ssl-renew.sh v1.2.0).
 0 0  * * * root /root/ssl-renew.sh >> /var/log/ssl-renew.log 2>&1
 
 # DSGVO: rotate nginx access/error logs and purge backups older than 7 days, 03:00.
