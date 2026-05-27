@@ -1,5 +1,5 @@
 # System Update Function
-# Version 1.1.0 | 26.05.2026
+# Version 1.2.0 | 27.05.2026
 # Comprehensive system update and cleanup
 
 function syspatch --description "Comprehensive system update and cleanup"
@@ -28,7 +28,15 @@ function syspatch --description "Comprehensive system update and cleanup"
     if command -sq aide
         echo ""
         echo "🔐 Rebuilding AIDE baseline (post-update)..."
-        sudo aide --update
+        # AIDE 0.18+ (Debian trixie) ships no compiled-in default config, so a
+        # bare `aide --update` fails with "missing configuration". On Debian the
+        # active config is assembled from /etc/aide/aide.conf.d into
+        # aide.conf.autogen by update-aide.conf — regenerate it, then pass it
+        # explicitly via --config (falling back to /etc/aide/aide.conf).
+        test -x /usr/sbin/update-aide.conf; and sudo /usr/sbin/update-aide.conf
+        set -l aide_conf /var/lib/aide/aide.conf.autogen
+        sudo test -f $aide_conf; or set aide_conf /etc/aide/aide.conf
+        sudo aide --config $aide_conf --update
         if sudo test -f /var/lib/aide/aide.db.new
             sudo cp /var/lib/aide/aide.db.new /var/lib/aide/aide.db
             echo "   AIDE baseline updated."
