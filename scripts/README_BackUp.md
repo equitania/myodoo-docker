@@ -393,21 +393,36 @@ Diese Option ist besonders nützlich, wenn das Skript per Cron zu unterschiedlic
 
 ### Automatisierung mit Cron
 
-Sie können das Backup-Skript über einen Cron-Job automatisieren:
+**Empfohlen:** Nutzen Sie das Helfer-Skript `setup-maintenance-cron.sh`. Es installiert die
+Wartungs-Jobs deklarativ als `/etc/cron.d/myodoo-maintenance` (versioniert im Repo) plus eine
+passende logrotate-Konfiguration — idempotent und sauber wieder entfernbar.
 
-1. Öffnen Sie die Crontab-Datei:
-   ```bash
-   crontab -e
-   ```
+```bash
+# Backup (02:00 + 14:00), Cert-Erneuerung und DSGVO-Weblog-Bereinigung einrichten
+sudo /root/setup-maintenance-cron.sh
 
-2. Beispiele für Cron-Jobs:
-   ```bash
-   # Vollständiges Backup täglich um 2 Uhr morgens
-   0 2 * * * /pfad/zu/container2backup.py 2>&1 | tee -a /var/log/container2backup.log
-   
-   # Nur SQL-Dump täglich um 14 Uhr
-   0 14 * * * /pfad/zu/container2backup.py --sql-only 2>&1 | tee -a /var/log/container2backup.log
-   ```
+# Wieder entfernen
+sudo /root/setup-maintenance-cron.sh --remove
+```
+
+Der installierte Job (Version 4.5.x) sieht so aus:
+
+```cron
+# /etc/cron.d/myodoo-maintenance — von setup-maintenance-cron.sh verwaltet
+0 2  * * * root /root/container2backup.py </dev/null >> /var/log/container2backup.log 2>&1
+0 14 * * * root /root/container2backup.py </dev/null >> /var/log/container2backup.log 2>&1
+```
+
+Wichtig zur Umleitung:
+
+- `>> datei 2>&1` hängt **stdout UND stderr** an die Logdatei an. So landen auch Fehler
+  (Tracebacks) im Log — anders als bei `| tee datei`, das stderr verwirft.
+- `</dev/null` gibt dem Skript einen leeren stdin. container2backup.py erkennt einen
+  fehlenden TTY und bricht bei Pfadproblemen sauber ab, statt an einer Rückfrage zu hängen.
+- Die Logdateien werden über `/etc/logrotate.d/myodoo-maintenance` wöchentlich rotiert.
+
+Wer lieber eine benutzergebundene Crontab pflegt (`crontab -e`), sollte dieselbe Umleitung
+verwenden (`>> … 2>&1`, `</dev/null`) — nicht `| tee`.
 
 ---
 
@@ -800,20 +815,35 @@ This option is particularly useful when the script is executed by cron at differ
 
 ### Automation with Cron
 
-You can automate the backup script via a cron job:
+**Recommended:** use the helper script `setup-maintenance-cron.sh`. It installs the
+maintenance jobs declaratively as `/etc/cron.d/myodoo-maintenance` (versioned in the repo)
+plus a matching logrotate config — idempotent and cleanly removable.
 
-1. Open the crontab file:
-   ```bash
-   crontab -e
-   ```
+```bash
+# Install backup (02:00 + 14:00), cert renewal and DSGVO weblog cleanup
+sudo /root/setup-maintenance-cron.sh
 
-2. Examples for cron jobs:
-   ```bash
-   # Full backup daily at 2 AM
-   0 2 * * * /path/to/container2backup.py 2>&1 | tee -a /var/log/container2backup.log
-   
-   # SQL dump only daily at 2 PM
-   0 14 * * * /path/to/container2backup.py --sql-only 2>&1 | tee -a /var/log/container2backup.log
-   ```
+# Uninstall
+sudo /root/setup-maintenance-cron.sh --remove
+```
+
+The installed job (version 4.5.x) looks like this:
+
+```cron
+# /etc/cron.d/myodoo-maintenance — managed by setup-maintenance-cron.sh
+0 2  * * * root /root/container2backup.py </dev/null >> /var/log/container2backup.log 2>&1
+0 14 * * * root /root/container2backup.py </dev/null >> /var/log/container2backup.log 2>&1
+```
+
+Notes on redirection:
+
+- `>> file 2>&1` appends **both stdout AND stderr** to the log, so failures (tracebacks)
+  actually land in the log — unlike `| tee file`, which drops stderr.
+- `</dev/null` gives the script an empty stdin. container2backup.py detects the missing TTY
+  and aborts cleanly on path issues instead of hanging on a confirmation prompt.
+- The log files are rotated weekly via `/etc/logrotate.d/myodoo-maintenance`.
+
+If you prefer a per-user crontab (`crontab -e`), use the same redirection
+(`>> … 2>&1`, `</dev/null`) — not `| tee`.
 
 
