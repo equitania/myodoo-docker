@@ -1,0 +1,24 @@
+# /etc/cron.d/myodoo-maintenance — Managed by setup-maintenance-cron.sh (do not edit)
+#
+# Deployed by: scripts/setup-maintenance-cron.sh
+# Scripts are expected in /root (deployed there by getScripts.py). If they live
+# elsewhere, run the installer with SCRIPT_DIR=/path setup-maintenance-cron.sh.
+#
+# NOTE on redirection: `>> file 2>&1` appends BOTH stdout and stderr, so failures
+# (tracebacks, certbot errors) actually land in the log — unlike `| tee file`,
+# which silently drops stderr. `</dev/null` feeds the backup an empty stdin so a
+# path-validation prompt can never hang the job. Rotation: /etc/logrotate.d/myodoo-maintenance.
+
+MAILTO=root
+PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
+
+# Backup twice daily (02:00 + 14:00) — RPO ~12h. Requires /root/container2backup.yaml.
+0 2  * * * root /root/container2backup.py </dev/null >> /var/log/container2backup.log 2>&1
+0 14 * * * root /root/container2backup.py </dev/null >> /var/log/container2backup.log 2>&1
+
+# Renew Let's Encrypt certs DAILY at 00:00. nginx is only bounced when a cert is
+# actually due (certbot pre/post-hooks) — no weekly downtime when nothing renews.
+0 0  * * * root /root/ssl-renew.sh >> /var/log/ssl-renew.log 2>&1
+
+# DSGVO: rotate nginx access/error logs and purge backups older than 7 days, 03:00.
+0 3  * * * root /root/cleanup-weblogs.py >> /var/log/cleanup-weblogs.log 2>&1

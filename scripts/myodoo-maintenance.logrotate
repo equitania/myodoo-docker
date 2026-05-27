@@ -1,0 +1,16 @@
+# /etc/logrotate.d/myodoo-maintenance — Managed by setup-maintenance-cron.sh (do not edit)
+#
+# Rotates the maintenance job logs written by the /etc/cron.d/myodoo-maintenance
+# entries. These logs use append (>>), so without rotation they would grow
+# unbounded; weekly rotation with 12 generations keeps ~3 months of history for
+# audit/backup-evidence purposes. The logs themselves hold no personal data.
+
+/var/log/container2backup.log /var/log/ssl-renew.log /var/log/cleanup-weblogs.log {
+    weekly
+    rotate 12
+    compress
+    delaycompress
+    missingok
+    notifempty
+    su root root
+}

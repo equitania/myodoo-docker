@@ -3,8 +3,8 @@
 # ==============================================================================
 # Title:            container2backup.py
 # Description:      Script to backup Odoo database including FileStore under Docker
-# Version:          4.5.0
-# Date:             21.04.2026
+# Version:          4.5.1
+# Date:             27.05.2026
 # Author:           Equitania Software GmbH
 # ==============================================================================
 # Feature Overview:
@@ -35,6 +35,7 @@
 
 import os
 import io
+import sys
 import csv
 import datetime, time
 import os.path
@@ -789,11 +790,18 @@ if __name__ == "__main__":
             print("WARNING: The following issues were found:")
             for issue in path_issues:
                 print(f"- {issue}")
-            
-            # Optional: Ask for confirmation to continue
-            response = input("Do you want to continue anyway? (y/N): ")
-            if response.lower() != 'y':
-                print("Backup aborted.")
+
+            # Only prompt when attached to a terminal. Under cron stdin is not a
+            # TTY, so input() would raise EOFError (or hang); abort cleanly instead
+            # — consistent with the interactive default (Enter = N = abort).
+            if sys.stdin.isatty():
+                response = input("Do you want to continue anyway? (y/N): ")
+                if response.lower() != 'y':
+                    print("Backup aborted.")
+                    exit(1)
+            else:
+                print("Non-interactive run with path issues — aborting backup "
+                      "(run interactively to override).")
                 exit(1)
         
         # Get default settings

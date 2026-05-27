@@ -12,12 +12,13 @@
 #   2. Installs base packages (ca-certificates, curl, gnupg, git)
 #   3. Installs Docker CE from the official Docker repository (deb822 format)
 #   4. Installs nginx from the official nginx.org repository (reverse proxy)
-#   5. Installs UFW (firewall — installed but NOT enabled, see below)
-#   6. Installs fail2ban (baseline SSH brute-force protection)
-#   7. Installs unattended-upgrades (automatic security updates)
-#   8. Clones the myodoo-docker repository and runs getScripts.py
+#   5. Installs certbot (Let's Encrypt client; renewal via ssl-renew.sh standalone)
+#   6. Installs UFW (firewall — installed but NOT enabled, see below)
+#   7. Installs fail2ban (baseline SSH brute-force protection)
+#   8. Installs unattended-upgrades (automatic security updates)
+#   9. Clones the myodoo-docker repository and runs getScripts.py
 #
-# Security note: steps 5-7 provide a safe baseline immediately. UFW is installed
+# Security note: steps 6-8 provide a safe baseline immediately. UFW is installed
 # but deliberately left DISABLED — enabling it with a default-deny policy before
 # the SSH port + allowed IPs are known would lock you out. Full hardening (UFW
 # enable + rules, custom SSH port, sysctl, auditd, ...) is applied later via
@@ -38,6 +39,7 @@
 #   REPO_BRANCH=2026          Branch of myodoo-docker to clone
 #   REPO_URL=...              Repository URL
 #   INSTALL_NGINX=1           Install host nginx (set 0 to skip)
+#   INSTALL_CERTBOT=1         Install certbot Let's Encrypt client (set 0 to skip)
 #   INSTALL_DOCKER=1          Install Docker CE   (set 0 to skip)
 #   INSTALL_UFW=1             Install UFW firewall, disabled (set 0 to skip)
 #   INSTALL_FAIL2BAN=1        Install fail2ban baseline (set 0 to skip)
@@ -53,14 +55,15 @@ set -Eeuo pipefail
 # Configuration
 # ──────────────────────────────────────────
 
-SCRIPT_VERSION="1.3.1"
-SCRIPT_DATE="26.05.2026"
+SCRIPT_VERSION="1.4.1"
+SCRIPT_DATE="27.05.2026"
 
 REPO_URL="${REPO_URL:-https://github.com/equitania/myodoo-docker.git}"
 REPO_BRANCH="${REPO_BRANCH:-2026}"
 
 INSTALL_DOCKER="${INSTALL_DOCKER:-1}"
 INSTALL_NGINX="${INSTALL_NGINX:-1}"
+INSTALL_CERTBOT="${INSTALL_CERTBOT:-1}"
 INSTALL_UFW="${INSTALL_UFW:-1}"
 INSTALL_FAIL2BAN="${INSTALL_FAIL2BAN:-1}"
 INSTALL_UNATTENDED="${INSTALL_UNATTENDED:-1}"
@@ -338,6 +341,27 @@ install_nginx() {
     log "nginx installed: $(nginx -v 2>&1 || echo 'n/a')"
 }
 
+install_certbot() {
+    [ "${INSTALL_CERTBOT}" = "1" ] || { log "certbot install disabled — skipping."; return 0; }
+
+    section "Installing certbot (Let's Encrypt client)"
+
+    if command -v certbot >/dev/null 2>&1; then
+        log "certbot already present: $(certbot --version 2>&1 || echo 'n/a'). Skipping install."
+        return 0
+    fi
+
+    # The distro 'certbot' package lands at /usr/bin/certbot, which the project's
+    # ssl-renew.sh already looks for. Renewal here is STANDALONE (ssl-renew.sh
+    # stops nginx, runs `certbot renew`, restarts nginx), so the nginx plugin is
+    # intentionally NOT installed — it would only add an unused authenticator.
+    $SUDO apt-get install -y certbot
+
+    log "certbot installed: $(certbot --version 2>&1 || echo 'n/a')"
+    log "  Issue certs with: certbot certonly --standalone -d <domain> (stop nginx first)."
+    log "  Automatic renewal is handled by scripts/ssl-renew.sh (cron, standalone mode)."
+}
+
 install_ufw() {
     [ "${INSTALL_UFW}" = "1" ] || { log "UFW install disabled — skipping."; return 0; }
 
@@ -455,6 +479,7 @@ print_summary() {
     echo "  • Bootstrap script parked at : ${INSTALL_PATH}"
     [ "${INSTALL_DOCKER}" = "1" ]    && echo "  • Docker                     : $(docker --version 2>/dev/null || echo 'see logs')"
     [ "${INSTALL_NGINX}" = "1" ]     && echo "  • nginx                      : $(nginx -v 2>&1 || echo 'see logs')"
+    [ "${INSTALL_CERTBOT}" = "1" ]   && echo "  • certbot                    : $(certbot --version 2>&1 || echo 'see logs') (renew via ssl-renew.sh)"
     [ "${INSTALL_UFW}" = "1" ]       && echo "  • UFW                        : installed, DISABLED (enable via server_hardening.py)"
     [ "${INSTALL_FAIL2BAN}" = "1" ]  && echo "  • fail2ban                   : baseline sshd jail active"
     [ "${INSTALL_UNATTENDED}" = "1" ] && echo "  • unattended-upgrades        : automatic security updates enabled"
@@ -467,6 +492,8 @@ print_summary() {
     echo "  • Apply full hardening: fill /root/.config/myodoo-docker/.env, then run"
     echo "    'sudo python3 ${TARGET_HOME}/myodoo-docker/scripts/server_hardening.py' (audit),"
     echo "    then add --apply.  See --help for what each module changes."
+    echo "  • Set up maintenance cron (after configuring container2backup.yaml):"
+    echo "    'sudo ${TARGET_HOME}/setup-maintenance-cron.sh' (backup + cert renewal + DSGVO weblog purge)."
     echo "  • Re-run this bootstrap any time with: ${INSTALL_PATH}"
     echo ""
 }
@@ -486,6 +513,7 @@ main() {
     install_base_packages
     install_docker
     install_nginx
+    install_certbot
     install_ufw
     install_fail2ban
     install_unattended_upgrades

@@ -3367,6 +3367,9 @@ def copy_scripts(_myhome: str, myodoo_docker: str) -> None:
         "container2backup_zstd.py",
         "restore-zip.sh",
         "ssl-renew.sh",
+        "setup-maintenance-cron.sh",
+        "myodoo-maintenance.cron",
+        "myodoo-maintenance.logrotate",
         "getScripts.py"
     ]
     
