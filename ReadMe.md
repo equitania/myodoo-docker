@@ -86,6 +86,8 @@ Die Tools sind auf einen klaren Ablauf abgestimmt:
 - **cleanup-weblogs.py** (v2.x) — DSGVO-konforme nginx-Log-Rotation: rotiert `/var/log/nginx/*.log` und löscht `.bak` älter als 7 Tage (Access-Logs enthalten personenbezogene IP-Adressen)
 - **nightly-cleanup.sh** — speicherbasierter Container-Neustart bei Überschreiten einer Schwelle → [scripts/NIGHTLY_CLEANUP.md](scripts/NIGHTLY_CLEANUP.md)
 - **setup-maintenance-cron.sh** — installiert die Wartungs-Cron-Jobs deklarativ als `/etc/cron.d/myodoo-maintenance` plus passende logrotate-Konfiguration (idempotent, `--remove` zum Entfernen)
+- **nginx-cert-guard.py** — verhindert den nginx-Totalausfall, wenn eine Kunden-(Sub-)Domain nicht mehr auf den Server zeigt. `--reconcile` bringt nginx beim Renewal **immer** hoch und isoliert dabei nur die kaputte vhost (statt dass ein einzelnes fehlendes Zertifikat den ganzen Server lahmlegt); `--check` erkennt weg-zeigende Domains proaktiv per DNS und deaktiviert sie nach mehreren bestätigten Fehlläufen + Alarm-Mail. Mit Massenfehler-Schutz (kein Blind-Abschalten). Reaktivierung via `--restore <domain>`
+- **deploy-nginx-base.sh** — rollt die von jeder vhost benötigten nginx-Basisdateien aus (`nginxconfig.io/security.conf`, `general.conf`, `html/custom_50x.html`) nach `/etc/nginx` und tauscht die `nginx.conf` abgesichert aus (Backup + `nginx -t` + automatischer Rollback bei Fehler). **Vor** dem Erstellen von vhosts ausführen, damit `include nginxconfig.io/...` nie fehlschlägt. Idempotent; `--no-main-conf`, `--dry-run`
 
 #### 3. Shell-Konfiguration (ab Version 7.0)
 
@@ -116,7 +118,7 @@ fish/
 - Mehrschichtige Serverhärtung über `server_hardening.py`: UFW-Firewall, fail2ban, SSH-Härtung (`sshd_config`), Kernel-Parameter (`sysctl`), Kernel-Modul-Blacklist, Docker-daemon-Härtung, auditd und AIDE (File-Integrity)
 - Automatische Sicherheitsupdates (unattended-upgrades)
 - Verschlüsselte Backups (AES-256, 7z)
-- Automatische SSL-Zertifikatserneuerung
+- Automatische SSL-Zertifikatserneuerung (mit nginx-Ausfallschutz via `nginx-cert-guard.py`)
 - DSGVO-konforme Weblog-Bereinigung (7 Tage Aufbewahrung)
 - DNS-Optimierung für bessere Performance
 
@@ -276,6 +278,8 @@ The tools follow a clear sequence:
 - **cleanup-weblogs.py** (v2.x) — DSGVO-compliant nginx log rotation: rotates `/var/log/nginx/*.log` and deletes `.bak` older than 7 days (access logs contain personal IP data)
 - **nightly-cleanup.sh** — memory-based container restart above a threshold → [scripts/NIGHTLY_CLEANUP.md](scripts/NIGHTLY_CLEANUP.md)
 - **setup-maintenance-cron.sh** — installs the maintenance cron jobs declaratively as `/etc/cron.d/myodoo-maintenance` plus a matching logrotate config (idempotent, `--remove` to uninstall)
+- **nginx-cert-guard.py** — prevents a full nginx outage when a customer's (sub)domain stops pointing at the server. `--reconcile` always brings nginx up at renewal, isolating only the broken vhost (instead of one missing certificate taking the whole server down); `--check` proactively detects drifted domains via DNS and disables them after several confirmed failing runs plus an alert email. Includes a mass-failure guard (no blind shutdown). Re-enable with `--restore <domain>`
+- **deploy-nginx-base.sh** — rolls out the base nginx files every vhost needs (`nginxconfig.io/security.conf`, `general.conf`, `html/custom_50x.html`) to `/etc/nginx`, and replaces `nginx.conf` safely (backup + `nginx -t` + automatic rollback on failure). Run it **before** creating vhosts so `include nginxconfig.io/...` never fails. Idempotent; `--no-main-conf`, `--dry-run`
 
 #### 3. Shell Configuration (since Version 7.0)
 
@@ -306,7 +310,7 @@ fish/
 - Layered server hardening via `server_hardening.py`: UFW firewall, fail2ban, SSH hardening (`sshd_config`), kernel parameters (`sysctl`), kernel module blacklist, Docker daemon hardening, auditd and AIDE (file integrity)
 - Automatic security updates (unattended-upgrades)
 - Encrypted backups (AES-256, 7z)
-- Automatic SSL certificate renewal
+- Automatic SSL certificate renewal (with nginx outage protection via `nginx-cert-guard.py`)
 - DSGVO/GDPR-compliant weblog cleanup (7-day retention)
 - DNS optimization for better performance
 

@@ -55,7 +55,7 @@ set -Eeuo pipefail
 # Configuration
 # ──────────────────────────────────────────
 
-SCRIPT_VERSION="1.4.1"
+SCRIPT_VERSION="1.4.2"
 SCRIPT_DATE="27.05.2026"
 
 REPO_URL="${REPO_URL:-https://github.com/equitania/myodoo-docker.git}"
@@ -494,6 +494,8 @@ print_summary() {
     echo "    then add --apply.  See --help for what each module changes."
     echo "  • Set up maintenance cron (after configuring container2backup.yaml):"
     echo "    'sudo ${TARGET_HOME}/setup-maintenance-cron.sh' (backup + cert renewal + DSGVO weblog purge)."
+    echo "  • Deploy the nginx base files BEFORE creating vhosts (so 'include nginxconfig.io/...'"
+    echo "    never fails): 'sudo ${TARGET_HOME}/deploy-nginx-base.sh'."
     echo "  • Re-run this bootstrap any time with: ${INSTALL_PATH}"
     echo ""
 }
