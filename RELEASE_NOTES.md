@@ -1,5 +1,10 @@
 # Release Notes
 
+## Maintenance Cron Follow-up (28.05.2026)
+
+### Changed
+- setup-maintenance-cron.sh v1.1.0: After installing `/etc/cron.d/myodoo-maintenance` the script now scans root's user-crontab (`crontab -l -u root`) for legacy entries referencing the managed scripts (`container2backup.py`, `ssl-renew.sh`, `cleanup-weblogs.py`, `nginx-cert-guard.py`) and warns about them — these would otherwise run **in addition** to the cron.d jobs (e.g. backups firing twice a day). Read-only: the script never edits the user crontab (it may contain unrelated operator entries); removal is left to the operator via `sudo crontab -e -u root`. README_BackUp.md updated accordingly.
+
 ## nginx Base Rollout & Config Hygiene (27.05.2026)
 
 ### Added

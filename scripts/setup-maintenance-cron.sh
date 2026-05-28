@@ -1,6 +1,6 @@
 #!/bin/bash
 # setup-maintenance-cron.sh — Install the myodoo maintenance cron jobs + logrotate
-# Version 1.0.0 — 27.05.2026
+# Version 1.1.0 — 28.05.2026
 #
 # Installs a declarative /etc/cron.d/ drop-in (versioned in this repo) instead of
 # hand-edited per-user crontabs, plus a matching logrotate config. Idempotent:
@@ -22,12 +22,17 @@
 # NOTE: This does NOT validate that container2backup.yaml exists or that TLS certs
 # are issued — those are instance-specific. The backup job exits cleanly until a
 # config is present; ssl-renew is a no-op until certs exist.
+#
+# Post-install also scans root's user-crontab (`crontab -l -u root`) for legacy
+# entries referencing the now-managed scripts and warns about them — these would
+# duplicate the cron.d jobs (e.g. backups running twice). The script never edits
+# the user crontab; removal is left to the operator via `sudo crontab -e -u root`.
 ##############################################################################
 
 set -Eeuo pipefail
 
-SCRIPT_VERSION="1.0.0"
-SCRIPT_DATE="27.05.2026"
+SCRIPT_VERSION="1.1.0"
+SCRIPT_DATE="28.05.2026"
 
 # Where the maintenance scripts live (getScripts.py copies them to /root).
 SCRIPT_DIR="${SCRIPT_DIR:-/root}"
@@ -134,6 +139,48 @@ install_files() {
     fi
 }
 
+# Read-only scan of root's user-crontab for legacy entries that would duplicate
+# the jobs we just installed in /etc/cron.d/. Never writes — the user-crontab is
+# off-limits for automated edits (it may contain unrelated operator entries).
+detect_user_crontab_overlap() {
+    command -v crontab >/dev/null 2>&1 || return 0
+
+    # `crontab -l` exits 1 with "no crontab for <user>" when none exists. Swallow
+    # both stderr and the non-zero exit; an empty stdin to the loop means "clean".
+    local crontab_dump
+    crontab_dump="$($SUDO crontab -l -u root 2>/dev/null || true)"
+    [ -n "$crontab_dump" ] || return 0
+
+    # Match by script basename so non-default SCRIPT_DIR installs are still
+    # caught (e.g. legacy /root/... entries after the operator moved to /opt).
+    local overlaps=()
+    local line
+    while IFS= read -r line; do
+        # Skip empty lines and comments — they cannot schedule a job.
+        [ -z "${line// /}" ] && continue
+        case "$line" in \#*) continue ;; esac
+        for s in "${MANAGED_SCRIPTS[@]}"; do
+            if [[ "$line" == *"$s"* ]]; then
+                overlaps+=("$line")
+                break
+            fi
+        done
+    done <<< "$crontab_dump"
+
+    [ "${#overlaps[@]}" -eq 0 ] && return 0
+
+    warn "Legacy entries in root's user-crontab reference scripts we now manage in ${CRON_DEST}:"
+    local entry
+    for entry in "${overlaps[@]}"; do
+        echo "    ${C_YELLOW}>${C_NC} ${entry}" >&2
+    done
+    echo "" >&2
+    echo "  ${C_YELLOW}These will run IN ADDITION to the cron.d jobs (e.g. duplicate backups).${C_NC}" >&2
+    echo "  Remove them with:  ${C_GREEN}sudo crontab -e -u root${C_NC}" >&2
+    echo "  (this script never edits the user crontab — it may contain unrelated entries)." >&2
+    echo "" >&2
+}
+
 print_next_steps() {
     section "Maintenance cron installed"
     echo "${C_GREEN}Cron jobs are active via ${CRON_DEST}.${C_NC}"
@@ -148,7 +195,7 @@ print_next_steps() {
 
 main() {
     case "${1:-}" in
-        --help|-h) sed -n '2,33p' "$0"; exit 0 ;;
+        --help|-h) sed -n '2,29p' "$0"; exit 0 ;;
         --remove)  resolve_privilege; remove_files; exit 0 ;;
         "")        : ;;
         *)         die "Unknown option: $1 (use --remove or --help)" ;;
@@ -157,6 +204,7 @@ main() {
     resolve_privilege
     install_files
     print_next_steps
+    detect_user_crontab_overlap
 }
 
 main "$@"

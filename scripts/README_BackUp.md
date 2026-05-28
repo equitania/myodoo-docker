@@ -424,6 +424,13 @@ Wichtig zur Umleitung:
 Wer lieber eine benutzergebundene Crontab pflegt (`crontab -e`), sollte dieselbe Umleitung
 verwenden (`>> … 2>&1`, `</dev/null`) — nicht `| tee`.
 
+**Alt-Einträge in der User-Crontab:** Wer das Skript auf einem Server mit existierenden
+Crontab-Einträgen für `container2backup.py`, `ssl-renew.sh`, `cleanup-weblogs.py` oder
+`nginx-cert-guard.py` ausführt, bekommt nach der Installation eine Warnung mit den
+betroffenen Zeilen — diese würden parallel zum cron.d-Job laufen (z. B. Backup doppelt).
+Das Skript editiert die User-Crontab **nie automatisch** (sie kann unverwandte Einträge
+enthalten); entfernen lassen sich die Doppler mit `sudo crontab -e -u root`.
+
 ---
 
 <a id="english-version"></a>
@@ -845,5 +852,12 @@ Notes on redirection:
 
 If you prefer a per-user crontab (`crontab -e`), use the same redirection
 (`>> … 2>&1`, `</dev/null`) — not `| tee`.
+
+**Legacy entries in the user crontab:** when run on a server that already had crontab
+entries for `container2backup.py`, `ssl-renew.sh`, `cleanup-weblogs.py`, or
+`nginx-cert-guard.py`, the installer prints a warning listing the offending lines —
+those would run alongside the cron.d job (e.g. duplicate backups). The script **never
+edits the user crontab automatically** (it may contain unrelated operator entries);
+remove the duplicates with `sudo crontab -e -u root`.
 
 
