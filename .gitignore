@@ -65,5 +65,10 @@ odoo-ce.zip
 # Environment files with secrets
 *.env
 !*.env.example
-scripts/__pycache__/
 scripts/.env
+
+# Python caches (recursive)
+__pycache__/
+.pytest_cache/
+.ruff_cache/
+.mypy_cache/
