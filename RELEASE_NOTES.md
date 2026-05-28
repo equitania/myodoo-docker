@@ -1,5 +1,10 @@
 # Release Notes
 
+## nginx OCSP Stapling Removal (28.05.2026)
+
+### Changed
+- nginx/nginx.conf v1.4: Disabled `ssl_stapling` / `ssl_stapling_verify` (with explanatory comment). Let's Encrypt retired OCSP in May 2025; renewed LE certificates no longer carry an OCSP responder URL, so `nginx -t` started logging one warning per certificate at every startup/reload and stapling did nothing useful. Re-enable only if switching to a CA that still issues OCSP-bearing certificates. To apply on a server: `ups` + `sudo /root/deploy-nginx-base.sh` (which will back up the prior nginx.conf before installing the new one).
+
 ## Maintenance Cron Follow-up (28.05.2026)
 
 ### Changed
