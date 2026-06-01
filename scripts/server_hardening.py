@@ -2,7 +2,7 @@
 """
 Server-Härtungs-Skript
 =======================
-Version: 1.5.0 / Date: 26.05.2026
+Version: 1.6.0 / Date: 01.06.2026
 
 Prüft und härtet: UFW, Fail2Ban, SSH, Kernel, Kernel-Module, Docker,
 Auto-Updates, auditd, AIDE, Nginx
@@ -1230,6 +1230,39 @@ def audit_nginx(config, apply=False, force=False):
                     ok(f"Nginx auf {addr}:{port}")
                     Stats.ok_count += 1
 
+    # HTTP/3 (QUIC) needs UDP/443 open in the firewall — not just TCP/443.
+    # nginx-set-conf can emit HTTP/3 vhosts (--enable_http3); if one is deployed
+    # but UFW only allows TCP/443, QUIC is silently unreachable. Cross-check the
+    # two here (advisory only — the UFW module owns opening 443; the YAML default
+    # uses proto: any, which opens both TCP and UDP).
+    sub("HTTP/3 / QUIC ↔ Firewall")
+    http3_active = bool(
+        re.search(r"listen\s+\S*443\s+quic", all_content)
+        or re.search(r"^\s*http3\s+on\s*;", all_content, re.MULTILINE)
+    )
+    if not http3_active:
+        info("Kein HTTP/3-Vhost erkannt — UDP/443-Prüfung übersprungen")
+    elif not shutil.which("ufw"):
+        warn("HTTP/3-Vhost erkannt, aber UFW nicht installiert — UDP/443-Status unbekannt")
+        Stats.warn_count += 1
+    else:
+        ufw_status = run("ufw status") or ""
+        # `ufw allow 443` (proto any) opens BOTH protocols and shows as a bare
+        # "443 ALLOW ..." rule; an explicit UDP rule shows as "443/udp ALLOW ...".
+        udp443_open = bool(
+            re.search(r"^443\s+ALLOW", ufw_status, re.MULTILINE)
+            or re.search(r"^443/udp\s+ALLOW", ufw_status, re.MULTILINE)
+        )
+        if "Status: active" not in ufw_status:
+            info("HTTP/3-Vhost erkannt, UFW inaktiv — keine Firewall-Beschränkung")
+        elif udp443_open:
+            ok("HTTP/3-Vhost(s) erkannt, UDP/443 in UFW offen")
+            Stats.ok_count += 1
+        else:
+            warn("HTTP/3 aktiv, aber UDP/443 in UFW NICHT offen — QUIC unerreichbar")
+            warn("  Beheben mit: ufw allow 443/udp  (oder proto: any in hardening_config.yaml)")
+            Stats.warn_count += 1
+
 
 # ─── MODUL: Offene Ports ─────────────────────────────────────
 def audit_open_ports(config, apply=False, force=False):
@@ -1387,7 +1420,7 @@ Beispiele:
                 env_loaded = True
             else:
                 warn("python-dotenv nicht installiert - .env wird ignoriert")
-                warn("Installation: pip install python-dotenv")
+                warn("Installation: sudo apt install -y python3-dotenv")
             break
     if not env_loaded and load_dotenv is not None:
         warn("Keine .env gefunden. Erwartet: /root/.config/myodoo-docker/.env")

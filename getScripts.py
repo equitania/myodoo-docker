@@ -55,8 +55,63 @@ if os.environ.get('GETSCRIPTS_DEBUG', '').lower() in ('1', 'true', 'yes'):
     logger.debug("Debug logging enabled")
 
 # Script version and date
-SCRIPT_VERSION = "9.0.9"
-SCRIPT_DATE = "26.05.2026"
+SCRIPT_VERSION = "9.1.0"
+SCRIPT_DATE = "01.06.2026"
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Install report
+# ─────────────────────────────────────────────────────────────────────────────
+# Records the outcome of key tool installs so a visible summary can be printed
+# at the end of the run. Logger errors go to stderr and easily scroll past in a
+# long provisioning run — this surfaces failures (e.g. nginx-set-conf not
+# installing) where the operator will actually see them.
+# Status values: "installed", "updated", "ok", "skipped", "failed".
+_install_report: List[Tuple[str, str, str]] = []
+
+
+def record_install(name: str, status: str, detail: str = "") -> None:
+    """Record a tool install outcome for the end-of-run summary."""
+    _install_report.append((name, status, detail))
+
+
+def print_install_report() -> None:
+    """Print a visible summary of recorded install outcomes to the console.
+
+    Highlights failures so they are not lost in the scrollback. Colors are used
+    only on a TTY.
+    """
+    if not _install_report:
+        return
+
+    use_color = sys.stdout.isatty()
+    green = "\033[0;32m" if use_color else ""
+    red = "\033[0;31m" if use_color else ""
+    yellow = "\033[1;33m" if use_color else ""
+    reset = "\033[0m" if use_color else ""
+
+    symbols = {
+        "installed": (green, "✓"),
+        "updated": (green, "✓"),
+        "ok": (green, "✓"),
+        "skipped": (yellow, "•"),
+        "failed": (red, "✗"),
+    }
+
+    print("")
+    print("=" * 60)
+    print("Install summary")
+    print("=" * 60)
+    failed = 0
+    for name, status, detail in _install_report:
+        color, sym = symbols.get(status, ("", "-"))
+        if status == "failed":
+            failed += 1
+        suffix = f" — {detail}" if detail else ""
+        print(f"  {color}{sym}{reset} {name}: {status}{suffix}")
+    print("=" * 60)
+    if failed:
+        print(f"{red}{failed} item(s) FAILED — see above and ~/getscripts.log.{reset}")
+    print("")
 
 # Pinned fallback 7-Zip version used when the GitHub API is unreachable.
 # GitHub keeps release assets permanently, so this fallback cannot 404
@@ -1610,8 +1665,10 @@ def read_package_versions(filename: str = "packages.txt") -> dict:
     packages = {
         "uv_tools": {},
         "pip": [
-            "python-dotenv",
-            # ... other pip packages ...
+            # NOTE: python-dotenv is intentionally NOT here. It is installed via
+            # apt (python3-dotenv, see packages.txt # System packages) because
+            # modern Debian/Ubuntu mark system python3 externally-managed
+            # (PEP 668) and `pip install` as root fails.
         ],
         "system": []
     }
@@ -3170,45 +3227,85 @@ def get_installed_uv_tool_version(package_name: str) -> Optional[str]:
         return None
 
 def install_or_update_nginx_set_conf() -> None:
-    """Install or update nginx-set-conf to the latest version using uv tool."""
+    """Install or update nginx-set-conf to the latest version using uv tool.
+
+    Every exit path records its outcome via record_install() so the end-of-run
+    summary makes failures visible — previously failures only hit the logger and
+    scrolled past unnoticed, leaving the tool silently uninstalled.
+    """
     package_name = "nginx-set-conf"
+
+    # Hard guard: without uv there is nothing to install with. Make it loud.
+    if not is_uv_installed():
+        logger.error(
+            f"Cannot install {package_name}: uv is not available. "
+            f"Install uv first (see install_uv) and re-run."
+        )
+        record_install(package_name, "failed", "uv not available")
+        return
 
     try:
         # Check if already installed with uv tool
         current_version = get_installed_uv_tool_version(package_name)
 
-        # Get latest version from PyPI
+        # Get latest version from PyPI (best-effort — used only for the up-to-date
+        # short-circuit and log messages). A failed PyPI lookup must NOT abort the
+        # install when the tool isn't present yet: uv resolves the latest version
+        # itself, so we still attempt the install.
         latest_version = get_latest_pypi_version(package_name)
-        if not latest_version:
-            logger.error(f"Could not determine latest {package_name} version")
-            return
 
-        # Check if update is needed
-        if current_version and current_version == latest_version:
+        if not latest_version:
+            if current_version:
+                logger.warning(
+                    f"Could not determine latest {package_name} version from PyPI; "
+                    f"{package_name} is installed ({current_version}), keeping it."
+                )
+                record_install(package_name, "ok", f"v{current_version} (PyPI check skipped)")
+                return
+            logger.warning(
+                f"Could not determine latest {package_name} version from PyPI; "
+                f"attempting install of the latest available version anyway."
+            )
+
+        # Already up to date?
+        if current_version and latest_version and current_version == latest_version:
             logger.info(f"{package_name} is already at the latest version ({latest_version})")
+            record_install(package_name, "ok", f"v{current_version}")
             return
 
         # Install/update with uv tool
+        target = f"version {latest_version}" if latest_version else "latest version"
         if current_version:
-            logger.info(f"Upgrading {package_name} from {current_version} to {latest_version}")
+            logger.info(f"Upgrading {package_name} from {current_version} to {target}")
         else:
-            logger.info(f"Installing {package_name} version {latest_version}")
+            logger.info(f"Installing {package_name} {target}")
 
         result = run_command(f"uv tool install {package_name}", capture_output=True)
 
-        # If installation fails, use force flag
+        # If installation fails, retry once with --force.
         if result.returncode != 0:
-            logger.info(f"Retrying with --force flag")
-            run_command(f"uv tool install --force {package_name}")
+            logger.warning(
+                f"uv tool install {package_name} failed (rc={result.returncode}); "
+                f"retrying with --force"
+            )
+            result = run_command(f"uv tool install --force {package_name}", capture_output=True)
 
         # Verify installation
         new_version = get_installed_uv_tool_version(package_name)
         if new_version:
-            logger.info(f"Successfully installed {package_name} version {new_version}")
+            status = "updated" if current_version else "installed"
+            logger.info(f"Successfully {status} {package_name} version {new_version}")
+            record_install(package_name, status, f"v{new_version}")
         else:
-            logger.error(f"Failed to verify {package_name} installation")
+            logger.error(
+                f"Failed to install/verify {package_name} "
+                f"(rc={getattr(result, 'returncode', 'n/a')}). "
+                f"Check that uv's tool bin dir is on PATH."
+            )
+            record_install(package_name, "failed", "install/verify failed")
     except Exception as e:
         logger.error(f"Error installing/updating {package_name}: {str(e)}")
+        record_install(package_name, "failed", str(e))
 
 def check_versions_parallel(packages: List[Tuple[str, str]]) -> Dict[str, Dict[str, Any]]:
     """Check package versions in parallel.
@@ -3411,6 +3508,9 @@ def install_packages(package_info: Dict[str, Any]) -> None:
             logger.warning(f"Failed to upgrade uv tools: {e}")
 
     # 4. Install or update nginx-set-conf
+    # Called unconditionally on purpose: the function guards on is_uv_installed()
+    # itself and records a visible "failed — uv not available" entry rather than
+    # being silently skipped when uv is missing.
     install_or_update_nginx_set_conf()
 
     # 5. Install specific versions of packages with uv tool
@@ -3601,6 +3701,9 @@ def main() -> None:
             os.chdir(original_dir)
         except FileNotFoundError:
             os.chdir(_myhome)
+
+        # Visible install summary (surfaces failures that only hit the logger).
+        print_install_report()
 
         logger.info("")
         logger.info("=" * 60)

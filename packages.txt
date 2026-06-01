@@ -9,8 +9,13 @@ setuptools
 distro-info
 odoorpc-toolbox
 zstd
-python-dotenv
 
 # System packages
+# python3-yaml + python3-dotenv: imported by the root-run scripts
+# (server_hardening.py, nginx-cert-guard.py, container2backup.py). Installed via
+# apt, NOT pip — modern Debian/Ubuntu mark system python3 externally-managed
+# (PEP 668), so `pip install` as root fails.
+python3-yaml
+python3-dotenv
 zoxide
 fastfetch

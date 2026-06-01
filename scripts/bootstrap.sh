@@ -1,6 +1,6 @@
 #!/bin/bash
 # bootstrap.sh — Out-of-the-box initializer for fresh Debian/Ubuntu servers
-# Version 1.3.1 — 26.05.2026
+# Version 1.5.0 — 01.06.2026
 #
 # Supported: Debian 12 (bookworm) / 13 (trixie); Ubuntu 20.04/22.04/24.04/26.04
 # (focal/jammy/noble/resolute). OS + codename are auto-detected from os-release;
@@ -16,7 +16,9 @@
 #   6. Installs UFW (firewall — installed but NOT enabled, see below)
 #   7. Installs fail2ban (baseline SSH brute-force protection)
 #   8. Installs unattended-upgrades (automatic security updates)
-#   9. Clones the myodoo-docker repository and runs getScripts.py
+#   9. Installs Python module deps the project's root-run scripts import
+#      (python3-yaml, python3-dotenv) — via apt, NOT pip (PEP 668 compliant)
+#  10. Clones the myodoo-docker repository and runs getScripts.py
 #
 # Security note: steps 6-8 provide a safe baseline immediately. UFW is installed
 # but deliberately left DISABLED — enabling it with a default-deny policy before
@@ -44,6 +46,7 @@
 #   INSTALL_UFW=1             Install UFW firewall, disabled (set 0 to skip)
 #   INSTALL_FAIL2BAN=1        Install fail2ban baseline (set 0 to skip)
 #   INSTALL_UNATTENDED=1      Install unattended-upgrades (set 0 to skip)
+#   INSTALL_PYTHON_DEPS=1     Install python3-yaml + python3-dotenv (set 0 to skip)
 #   RUN_GETSCRIPTS=1          Run getScripts.py at the end (set 0 to skip)
 #   SELF_INSTALL=1            Copy this script to /opt (set 0 to skip)
 ##############################################################################
@@ -55,8 +58,8 @@ set -Eeuo pipefail
 # Configuration
 # ──────────────────────────────────────────
 
-SCRIPT_VERSION="1.4.2"
-SCRIPT_DATE="27.05.2026"
+SCRIPT_VERSION="1.5.0"
+SCRIPT_DATE="01.06.2026"
 
 REPO_URL="${REPO_URL:-https://github.com/equitania/myodoo-docker.git}"
 REPO_BRANCH="${REPO_BRANCH:-2026}"
@@ -67,6 +70,7 @@ INSTALL_CERTBOT="${INSTALL_CERTBOT:-1}"
 INSTALL_UFW="${INSTALL_UFW:-1}"
 INSTALL_FAIL2BAN="${INSTALL_FAIL2BAN:-1}"
 INSTALL_UNATTENDED="${INSTALL_UNATTENDED:-1}"
+INSTALL_PYTHON_DEPS="${INSTALL_PYTHON_DEPS:-1}"
 RUN_GETSCRIPTS="${RUN_GETSCRIPTS:-1}"
 SELF_INSTALL="${SELF_INSTALL:-1}"
 
@@ -447,6 +451,30 @@ EOF
     log "unattended-upgrades configured for automatic security updates."
 }
 
+install_python_deps() {
+    [ "${INSTALL_PYTHON_DEPS}" = "1" ] || { log "Python deps install disabled — skipping."; return 0; }
+
+    section "Installing Python module deps (python3-yaml, python3-dotenv)"
+
+    # The project's root-run scripts import these third-party modules:
+    #   server_hardening.py  -> yaml, dotenv
+    #   nginx-cert-guard.py  -> dotenv
+    #   container2backup.py  -> yaml, dotenv
+    # Install them via apt (system python3), NOT pip: modern Debian/Ubuntu mark
+    # the system interpreter externally-managed (PEP 668), so `pip install` as
+    # root fails. apt is the supported, conflict-free path. Without dotenv the
+    # hardening script silently ignores /root/.config/myodoo-docker/.env and
+    # builds wrong UFW/SSH rules.
+    $SUDO apt-get install -y python3-yaml python3-dotenv
+
+    # Verify the modules import in the system interpreter that runs the scripts.
+    if python3 -c "import yaml, dotenv" 2>/dev/null; then
+        log "Python deps OK: yaml + dotenv importable by system python3."
+    else
+        warn "python3-yaml / python3-dotenv installed but import check failed — verify python3."
+    fi
+}
+
 clone_repo_and_run_getscripts() {
     [ "${RUN_GETSCRIPTS}" = "1" ] || { log "getScripts.py step disabled — skipping."; return 0; }
 
@@ -483,6 +511,7 @@ print_summary() {
     [ "${INSTALL_UFW}" = "1" ]       && echo "  • UFW                        : installed, DISABLED (enable via server_hardening.py)"
     [ "${INSTALL_FAIL2BAN}" = "1" ]  && echo "  • fail2ban                   : baseline sshd jail active"
     [ "${INSTALL_UNATTENDED}" = "1" ] && echo "  • unattended-upgrades        : automatic security updates enabled"
+    [ "${INSTALL_PYTHON_DEPS}" = "1" ] && echo "  • Python module deps         : python3-yaml + python3-dotenv (apt)"
     echo "  • Repository                 : ${TARGET_HOME}/myodoo-docker (branch ${REPO_BRANCH})"
     echo ""
     echo "${C_YELLOW}Next steps:${C_NC}"
@@ -519,6 +548,7 @@ main() {
     install_ufw
     install_fail2ban
     install_unattended_upgrades
+    install_python_deps
     clone_repo_and_run_getscripts
     print_summary
 }
