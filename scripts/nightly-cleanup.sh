@@ -1,6 +1,6 @@
 #!/bin/bash
 # nightly-cleanup.sh — Memory-based Docker container restart with before/after reporting
-# Version 1.0.0 — 17.03.2026
+# Version 1.1.0 — 11.06.2026
 #
 # Only restarts containers that exceed the configured memory threshold.
 # Restart order: FastReport (independent) | Odoo stop → Postgres restart → pg_isready → Odoo start
@@ -31,7 +31,8 @@ DRY_RUN="${DRY_RUN:-0}"
 
 # Container name patterns (grep -iE patterns)
 ODOO_PATTERN="${ODOO_PATTERN:-odoo}"
-POSTGRES_PATTERN="${POSTGRES_PATTERN:-postgres|psql|pg-|db-|-db}"
+# Anchored db patterns: bare "db-|-db" also matched e.g. "redis-db-cache"
+POSTGRES_PATTERN="${POSTGRES_PATTERN:-postgres|psql|pg-|^db-|-db\$}"
 FASTREPORT_PATTERN="${FASTREPORT_PATTERN:-fastreport|fast-report|report}"
 
 # Timeouts

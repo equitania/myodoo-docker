@@ -1,6 +1,6 @@
 #!/bin/bash
 # ssl-renew.sh — Renew Let's Encrypt certificates (standalone, nginx-aware)
-# Version 1.2.0 — 27.05.2026
+# Version 1.3.0 — 11.06.2026
 #
 # Runs `certbot renew` and bounces nginx ONLY when a certificate is actually due:
 # certbot's --pre-hook/--post-hook fire only when at least one cert is renewed,
@@ -81,6 +81,12 @@ if ! systemctl is-active --quiet nginx; then
         python3 "${GUARD}" --reconcile --start || systemctl start nginx
     else
         systemctl start nginx
+    fi
+    # Last escalation level: if even the fallback failed, exit loudly so the
+    # cron mail / log makes the outage visible instead of exiting 0.
+    if ! systemctl is-active --quiet nginx; then
+        echo "ERROR: nginx could NOT be started — manual intervention required!" >&2
+        exit 2
     fi
 fi
 

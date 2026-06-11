@@ -4,8 +4,8 @@
 # Title:            nginx-cert-guard.py
 # Description:      Keep nginx up when a single customer vhost breaks, and warn
 #                   early when a (sub)domain stops pointing at this server.
-# Version:          1.0.0
-# Date:             27.05.2026
+# Version:          1.1.0
+# Date:             11.06.2026
 # Author:           Equitania Software GmbH
 # ==============================================================================
 # Why this exists:
@@ -229,6 +229,11 @@ def unresolvable_listen_host(conf_path):
         host = token.rsplit(":", 1)[0] if ":" in token else ""
         if not host or host in ("[::]", "*"):
             continue
+        # IPv6 literals are bracketed ([::1]:443) - strip for parsing, else
+        # a healthy local IPv6 listener would be flagged as unresolvable
+        host = host.strip("[]")
+        if not host:
+            continue
         # Skip plain IP literals (those always "resolve").
         try:
             ipaddress.ip_address(host)
@@ -446,10 +451,10 @@ def mode_reconcile(args):
         send_alert("MASS FAILURE — manual intervention required", body)
         return 2
 
-    disabled = []  # (domain, reason)
+    disabled = []  # (quarantined_path, domain, reason)
     for path, reason in candidates:
-        disable_vhost(path, dry_run=False)
-        disabled.append((domain_of(path), reason))
+        qpath = disable_vhost(path, dry_run=False)
+        disabled.append((qpath, domain_of(qpath), reason))
 
     ok, out = nginx_test()
 
@@ -459,17 +464,20 @@ def mode_reconcile(args):
         if not remaining:
             break
         victim = remaining[-1]
-        disable_vhost(victim, dry_run=False)
-        disabled.append((domain_of(victim), "nginx -t failure (isolated iteratively)"))
+        qpath = disable_vhost(victim, dry_run=False)
+        disabled.append((qpath, domain_of(qpath), "nginx -t failure (isolated iteratively)"))
         ok, out = nginx_test()
 
     # Still broken (incl. having hit the safety limit) → roll back, escalate.
     if not ok:
         logger.error("Could not reach a clean config within the safety limit — "
                      "rolling back this run's changes.")
+        # Match by exact path - matching by domain could restore vhosts that
+        # were quarantined manually before this run (duplicate server_name).
+        rollback_paths = {qp for qp, _, _ in disabled}
         for path in quarantined_vhosts(conf_dir):
             # Only roll back files we just disabled this run.
-            if domain_of(path) in {d for d, _ in disabled}:
+            if path in rollback_paths:
                 restore_vhost(path, dry_run=False)
         body = (f"nginx could not be brought up safely. Rolled back {len(disabled)} "
                 f"change(s) to avoid a partial outage. Manual intervention required.\n\n"
@@ -480,7 +488,7 @@ def mode_reconcile(args):
     # Success.
     if args.start:
         nginx_start_or_reload()
-    report = "\n".join(f"  {dom}: {reason}" for dom, reason in disabled)
+    report = "\n".join(f"  {dom}: {reason}" for _, dom, reason in disabled)
     logger.info("nginx is valid again. Quarantined %d vhost(s):\n%s",
                 len(disabled), report)
     if disabled:

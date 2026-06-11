@@ -2,7 +2,7 @@
 """
 Server-Härtungs-Skript
 =======================
-Version: 1.6.0 / Date: 01.06.2026
+Version: 1.7.0 / Date: 11.06.2026
 
 Prüft und härtet: UFW, Fail2Ban, SSH, Kernel, Kernel-Module, Docker,
 Auto-Updates, auditd, AIDE, Nginx
@@ -18,6 +18,8 @@ Aufruf:
 import subprocess
 import sys
 import os
+
+SCRIPT_VERSION = "1.7.0"
 import re
 import json
 import shutil
@@ -639,6 +641,18 @@ def audit_ssh(config, apply=False, force=False):
 
     if apply and changes_needed:
         sub("SSH-Konfiguration anpassen")
+
+        # Lockout guard: changing the SSH port without a matching UFW rule
+        # means an enabled firewall blocks the new port for everyone.
+        new_port = dict(changes_needed).get("Port")
+        if new_port:
+            ufw_cfg = config.get("ufw", {})
+            ufw_ports = {str(rp.get("port")) for rp in
+                         ufw_cfg.get("restricted_ports", []) + ufw_cfg.get("public_ports", [])}
+            if str(new_port) not in ufw_ports:
+                warn(f"SSH-Port {new_port} ist in keiner UFW-Regel (restricted_ports/"
+                     f"public_ports) konfiguriert — bei aktivierter UFW droht ein LOCKOUT! "
+                     f"UFW-Modul vor dem nächsten Login prüfen.")
 
         # Build the candidate config in memory.
         content = sshd_config.read_text()
@@ -1435,6 +1449,9 @@ Beispiele:
     if not config_path.is_absolute():
         config_path = script_dir / config_path
     config = yaml.safe_load(config_path.read_text())
+    if not isinstance(config, dict):
+        sys.exit(f"Fehler: {config_path} muss ein YAML-Mapping sein "
+                 f"(gefunden: {type(config).__name__})")
 
     # Resolve ${ENV_VAR} placeholders (e.g. ${SSH_PORT})
     config = resolve_env_vars(config)
@@ -1458,7 +1475,7 @@ Beispiele:
         sys.exit(1)
 
     print(f"\n{C.BOLD}{'='*60}")
-    print(f"  Server-Härtung v1.5.0 {'(APPLY)' if args.apply else '(AUDIT)'}")
+    print(f"  Server-Härtung v{SCRIPT_VERSION} {'(APPLY)' if args.apply else '(AUDIT)'}")
     print(f"  {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
     print(f"{'='*60}{C.END}")
 

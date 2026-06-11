@@ -239,7 +239,7 @@ setup_locale() {
     section "Ensuring UTF-8 locale (en_US.UTF-8)"
     # Minimal cloud images (e.g. IONOS) ship without generated locales while
     # SSH forwards LANG/LC_ALL=en_US.UTF-8 — perl/apt then warn on every call.
-    if locale -a 2>/dev/null | grep -qi '^en_US\.utf-\?8$'; then
+    if locale -a 2>/dev/null | grep -qiE '^en_US\.utf-?8$'; then
         log "Locale en_US.UTF-8 already available — skipping."
         return 0
     fi
