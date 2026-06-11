@@ -1,9 +1,12 @@
 #!/bin/bash
-# Version 1.4.0 - Stand 11.06.2026
+# Version 2.0.0 - Stand 11.06.2026
 # Mit diesem Skript wird ein Restore einer Odoo Datenbank auf Basis von Docker durchgeführt
 # Das FileStore wird in den Odoo Container und die Datenbank in den PostgreSQL Container eingespielt
 # With this script you can restore a Odoo db in postgresql on base of Docker
 # The filestore will restore in the Odoo container and the db in the posgres container
+#
+# v2.0.0: Supports all container2backup.py formats with automatic detection:
+#   .zip | .7z | .7z.gpg (GPG-encrypted, prompts for passphrase) | .tar.gz | .tar.zst
 ###############################################################################################################################
 # ./restore-zip.sh
 #  -backup_kind(../web/database/manager (1) or automatic backups scripts (2))
@@ -25,6 +28,7 @@
 set -euo pipefail
 
 mybackuppath="${mybasepath:-}/opt/backups/docker/"
+mybackuproot="$mybackuppath"   # immutable reference for the cleanup guard
 
 mykind="${1:-}"
 myrunsql="${2:-}"
@@ -46,6 +50,17 @@ validate_name() {
     if [[ -n "$value" ]] && ! [[ "$value" =~ ^[a-zA-Z0-9._-]+$ ]]; then
         echo "ERROR: Invalid characters in $label: $value"
         echo "Only alphanumeric characters, dots, underscores and hyphens are allowed."
+        exit 1
+    fi
+}
+
+# Required values: an empty name would later expand rm -rf targets to the
+# backup root - refuse to continue instead.
+require_value() {
+    local value="$1"
+    local label="$2"
+    if [ -z "$value" ]; then
+        echo "ERROR: $label must not be empty."
         exit 1
     fi
 }
@@ -126,6 +141,15 @@ validate_name "$mydbcontainer" "Postgres container"
 validate_name "$mydbuser" "database user"
 validate_name "$mydbserver" "database server"
 
+require_value "$mydb" "database name"
+require_value "$mybackupzip" "backup file"
+require_value "$myodoocontainer" "Odoo container"
+require_value "$myodoovol" "Odoo volume"
+require_value "$mydbcontainer" "Postgres container"
+if [ "$mykind" == "2" ]; then
+    require_value "$myorgdb" "original database name"
+fi
+
 mystart=""
 if [ "${mystart:-}" == "" ]
 then
@@ -151,9 +175,45 @@ then
     sleep 3
     docker exec -i "$mydbcontainer" psql -U "$mydbuser" -d postgres -c "DROP DATABASE IF EXISTS \"$mydb\";"
     echo "Drop is done."
-    echo "Unzip $mybackuppath/$mybackupzip.."
+    echo "Extracting $mybackuppath/$mybackupzip ..."
     cd "$mybackuppath"
-    unzip "$mybackuppath/$mybackupzip"
+    myarchive="$mybackuppath/$mybackupzip"
+    if [ ! -f "$myarchive" ]; then
+        echo "ERROR: backup file not found: $myarchive"
+        exit 1
+    fi
+    # Format detection: handles every format container2backup.py produces
+    case "$mybackupzip" in
+        *.7z.gpg)
+            command -v gpg >/dev/null 2>&1 || { echo "ERROR: gpg not installed (apt-get install gnupg)"; exit 1; }
+            command -v 7zz >/dev/null 2>&1 || { echo "ERROR: 7zz not installed"; exit 1; }
+            mydecrypted="${myarchive%.gpg}"
+            echo "GPG-encrypted backup - decrypting (passphrase prompt follows)..."
+            gpg --output "$mydecrypted" --decrypt "$myarchive"
+            7zz x -y "$mydecrypted"
+            rm -f "$mydecrypted"
+            ;;
+        *.7z)
+            command -v 7zz >/dev/null 2>&1 || { echo "ERROR: 7zz not installed"; exit 1; }
+            # 7zz prompts for the password itself if the archive is encrypted
+            7zz x -y "$myarchive"
+            ;;
+        *.tar.gz|*.tgz)
+            tar -xzf "$myarchive"
+            ;;
+        *.tar.zst)
+            command -v zstd >/dev/null 2>&1 || { echo "ERROR: zstd not installed (apt-get install zstd)"; exit 1; }
+            tar --use-compress-program=unzstd -xf "$myarchive"
+            ;;
+        *.zip)
+            unzip -o "$myarchive"
+            ;;
+        *)
+            echo "ERROR: Unsupported backup format: $mybackupzip"
+            echo "Supported: .zip, .7z, .7z.gpg, .tar.gz, .tar.zst"
+            exit 1
+            ;;
+    esac
     mybackup="dump.sql"
     if [ -f "$mybackup" ]
     then
@@ -212,7 +272,14 @@ then
     then
         rm -rf "$mybackuppath/$mydb"
     else
-        rm -rf "$mybackuppath"
+        # Guard: only remove the extracted subdirectory, never the backup
+        # root itself (mybackuppath is only reassigned in the isDocker branch)
+        if [ "$mybackuppath" != "$mybackuproot" ]; then
+            rm -rf "$mybackuppath"
+        else
+            echo "Skipping cleanup: extraction left files directly in $mybackuproot - remove them manually if needed."
+            rm -rf "${mybackuproot:?}/${mydb:?}"
+        fi
     fi
     if [ "$myrunsql" == "" ]
     then
