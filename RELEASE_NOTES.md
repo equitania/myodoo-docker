@@ -1,5 +1,14 @@
 # Release Notes
 
+## Live Version Checks & Fail2Ban Audit Polish (11.06.2026)
+
+### Changed
+- getScripts.py v9.5.0: all GitHub/PyPI latest-version lookups (ctop, fastfetch, zoxide, bat, 7zip, pypi_*) now query the live API first; the 24h cache is only used as a fallback when the API is unreachable. Previously `ups` was blind to releases published within a day (e.g. ctop 0.8.7 was ignored while 0.8.6 was still cached). Resilience preserved, freshness restored; GitHub calls without a timeout now use `timeout=15`.
+- server_hardening.py v1.8.0: Fail2Ban UFW bans (banaction=ufw, rules commented `by Fail2Ban`) are now reported as **info** with banned IP and jail name instead of "Unbekannte Regel" warnings — the per-ban noise was hiding real configuration drift. All other unexpected UFW rules keep warning as before.
+
+### Fixed
+- hardening_config: the four nginx Fail2Ban jails pointed at `/var/log/fail2ban_nginx-*.log` — files nothing ever writes. `--apply` therefore auto-disabled them on every run while the audit kept counting them as errors (unfixable loop). They now parse the real host-nginx logs (`error.log` / `access.log` for bad-request). security_headers: dropped deprecated `X-XSS-Protection` (removed from security.conf v1.3), added `Content-Security-Policy` + `Permissions-Policy` so the audit matches the deployed header policy.
+
 ## nightly-cleanup in Standard-Cron (11.06.2026)
 
 ### Changed
