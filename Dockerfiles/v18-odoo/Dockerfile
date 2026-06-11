@@ -1,4 +1,4 @@
-FROM myodoo/prepare-v16:25.02.24-3.11.11
+FROM myodoo/prepare-v18:26.05.19-3.13.13
 LABEL maintainer=info@ownerp.com
 # Mit diesem Skript überprüft das passende Dockerimage gemäß des Releasefiles
 # Date 17.03.2026 - Added HEALTHCHECK directive

@@ -26,7 +26,7 @@ greenlet==3.0.3 ; sys_platform != 'win32' and python_version >= '3.12'  # (Noble
 idna==2.10 ; python_version < '3.12'  # requests 2.25.1 depends on idna<3 and >=2.5
 idna==3.6 ; python_version >= '3.12'
 Jinja2==3.0.3 ; python_version <= '3.10'
-Jinja2==3.1.2 ; python_version > '3.10'
+Jinja2==3.1.6 ; python_version > '3.10'  # CVE-2024-56201 + CVE-2024-56326 sandbox escape (fixed in 3.1.5)
 libsass==0.20.1 ; python_version < '3.11'
 libsass==0.22.0 ; python_version >= '3.11'  # (Noble) Mostly to have a wheel package
 lxml==4.8.0 ; python_version <= '3.10'
@@ -44,7 +44,7 @@ openpyxl==3.1.2 ; python_version >= '3.12'
 passlib==1.7.4 # min version = 1.7.2 (Focal with security backports)
 Pillow==9.0.1 ; python_version <= '3.10'
 Pillow==9.4.0 ; python_version > '3.10' and python_version < '3.12'
-Pillow==10.2.0 ; python_version >= '3.12'  # (Noble) Mostly to have a wheel package
+Pillow==10.4.0 ; python_version >= '3.12'  # CVE-2024-28219 buffer overflow (fixed in 10.3.0)
 polib==1.1.1
 psutil==5.9.0 ; python_version <= '3.10' 
 psutil==5.9.4 ; python_version > '3.10' and python_version < '3.12' 
@@ -72,16 +72,16 @@ reportlab==3.6.8 ; python_version <= '3.10'
 reportlab==3.6.12 ; python_version > '3.10' and python_version < '3.12'
 reportlab==4.1.0 ; python_version >= '3.12' # (Noble) Mostly to have a wheel package
 requests==2.25.1 ;  python_version < '3.11' # versions < 2.25 aren't compatible w/ urllib3 1.26. Bullseye = 2.25.1. min version = 2.22.0 (Focal)
-requests==2.31.0 ; python_version >= '3.11' # (Noble)
+requests==2.32.5 ; python_version >= '3.11' # CVE-2024-35195 (proxy auth leak) + CVE-2024-47081 (netrc leak)
 rjsmin==1.1.0 ; python_version < '3.11'  # (jammy)
 rjsmin==1.2.0 ; python_version >= '3.11'
 rl-renderPM==4.0.3 ; sys_platform == 'win32' and python_version >= '3.12'  # Needed by reportlab 4.1.0 but included in deb package
-urllib3==1.26.5 ; python_version < '3.12' # indirect / min version = 1.25.8 (Focal with security backports)
-urllib3==2.0.7  ; python_version >= '3.12'  # (Noble) Compatibility with cryptography
+urllib3==1.26.20 ; python_version < '3.12' # CVE-2023-43804/45803 + CVE-2024-37891
+urllib3==2.5.0  ; python_version >= '3.12'  # CVE-2024-37891 + CVE-2025-50181/50182
 vobject==0.9.6.1
 Werkzeug==2.0.2 ; python_version <= '3.10' 
 Werkzeug==2.2.2 ; python_version > '3.10' and python_version < '3.12'
-Werkzeug==3.0.1 ; python_version >= '3.12'  # (Noble) Avoid deprecation warnings
+Werkzeug==3.0.6 ; python_version >= '3.12'  # CVE-2024-49767 multipart ReDoS
 xlrd==1.2.0 ; python_version < '3.12'  # (jammy)
 xlrd==2.0.1 ; python_version >= '3.12'
 XlsxWriter==3.0.2 ; python_version < '3.12'  # (jammy)
@@ -93,31 +93,31 @@ rlPyCairo
 
 # custom libs
 openpyxl
-pycryptodome==3.9.0
+pycryptodome==3.23.0
 nextcloud-api-wrapper
 phonenumbers
 python-slugify
 parse-accept-language
-bleach==6.2.0
-holidays==0.10.1
+bleach==6.4.0  # project inactive (Mozilla) - consider migrating consumers to nh3
+holidays==0.69
 #odoorpc-toolbox
 python-gitlab
-pypandoc==1.6.4
-python-docx==0.8.11
+pypandoc==1.17
+python-docx==1.2.0
 PyYAML
 pyotp
 paramiko
 python-barcode
 #GitPython
-pandas==1.5.1
-numpy==1.26.3
+pandas==2.2.3
+numpy==1.26.4
 deepl
 unidecode
-pdfminer.six==20211012
-oauthlib==1.0.3
+pdfminer.six==20260107
+oauthlib==3.3.1  # was 1.0.3 (2015) - CVE-2022-36087 DoS
 dicttoxml==1.7.16
-xmltodict==0.13.0
+xmltodict==0.15.1
 openai
 xmlschema
-msal==1.31.1
+msal==1.37.0
 openupgradelib

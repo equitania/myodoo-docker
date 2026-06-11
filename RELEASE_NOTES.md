@@ -1,5 +1,19 @@
 # Release Notes
 
+## Security Hardening & IONOS Compatibility (11.06.2026)
+
+### Fixed
+- getScripts.py v9.2.0: Fish OBS repo setup no longer requires gnupg (minimal images like IONOS Debian 13 ship without it). The signing key is written as ASCII-armored `.asc`; a failed key download no longer leaves apt broken system-wide (rollback + self-healing of half-configured repos + fallback to the Debian fish package).
+- bootstrap.sh v1.6.0: Generates the `en_US.UTF-8` locale on minimal images (IONOS) — eliminates the perl/apt `setlocale` warnings on every command.
+- Dockerfiles/v18-odoo: `FROM` pointed at `myodoo/prepare-v16:25.02.24-3.11.11` (copy-paste error). Now `myodoo/prepare-v18:26.05.19-3.13.13`; v19 raised to `myodoo/prepare-v19:26.05.19-3.13.13`.
+
+### Security (project audit follow-up)
+- getScripts.py v9.3.0 + scripts/lib: starship, zoxide and uv are no longer installed via `curl … | sh` pipes running unreviewed remote code as root — they now use official GitHub release binaries/.deb packages (same pattern as ctop/fastfetch/7zz). Fisher bootstrap is pinned to the latest tagged release instead of the moving main branch. Fish OBS repo URL switched to https (existing http `.list` files are migrated on the next run).
+- container2backup.py v4.6.0: Encrypted backups now use GPG (AES-256, passphrase via fd) producing `.7z.gpg` — the former `7zz -p<password>` exposed the backup password in the process list. Decrypt: `gpg -d backup.7z.gpg > backup.7z`. Falls back to 7z AES (with a loud warning) when gnupg is missing. The `rsync.commands` YAML list now only accepts the rsync binary (no generic root command runner).
+- update_docker_odoo.py v5.2.0: New per-container option `db_password_via_env: true` passes the DB password via `PGPASSWORD` environment (docker `-e` forwarding) instead of `--db_password=` in argv (visible in `ps`). Requires images built from 11.06.2026 (boot scripts now whitelist PGPASSWORD across `su`); default remains the legacy argv mode for older images.
+- restore-zip.sh v1.4.0: `PGPASSWORD` is forwarded via the environment instead of appearing in the `docker exec` argv.
+- requirements: CVE-affected pins raised in prepare-18/prepare-19 (Jinja2 3.1.6, Werkzeug 3.0.6, Pillow 10.4.0/11.3.0, requests 2.32.5, urllib3 1.26.20/2.5.0) and custom libs modernized (pycryptodome 3.23.0, oauthlib 3.3.1, bleach 6.4.0, pandas 2.2.3, numpy 1.26.4, holidays 0.69, xmltodict 0.15.1, pypandoc 1.17, python-docx 1.2.0, pdfminer.six 20260107, msal 1.37.0). Root requirements.txt: requests>=2.32.0, PyYAML>=6.0.2.
+
 ## nginx OCSP Stapling Removal (28.05.2026)
 
 ### Changed
