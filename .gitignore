@@ -66,6 +66,8 @@ odoo-ce.zip
 *.env
 !*.env.example
 scripts/.env
+# Credential files must never be committed (only .example templates)
+config/backup_credentials.yaml
 
 # Python caches (recursive)
 __pycache__/
