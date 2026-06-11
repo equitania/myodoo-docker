@@ -55,7 +55,7 @@ if os.environ.get('GETSCRIPTS_DEBUG', '').lower() in ('1', 'true', 'yes'):
     logger.debug("Debug logging enabled")
 
 # Script version and date
-SCRIPT_VERSION = "9.3.1"
+SCRIPT_VERSION = "9.4.0"
 SCRIPT_DATE = "11.06.2026"
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -3574,6 +3574,7 @@ def copy_scripts(_myhome: str, myodoo_docker: str) -> None:
         "restore-zip.sh",
         "ssl-renew.sh",
         "nginx-cert-guard.py",
+        "nightly-cleanup.sh",
         "deploy-nginx-base.sh",
         "setup-maintenance-cron.sh",
         "myodoo-maintenance.cron",

@@ -30,3 +30,9 @@ PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
 
 # DSGVO: rotate nginx access/error logs and purge backups older than 7 days, 03:00.
 0 3  * * * root /root/cleanup-weblogs.py >> /var/log/cleanup-weblogs.log 2>&1
+
+# Nightly memory hygiene 04:30: restart Odoo/Postgres/FastReport containers in
+# dependency order + journald vacuum (see scripts/NIGHTLY_CLEANUP.md). Scheduled
+# well after the 02:00 backup so a container restart can never hit a running
+# backup. The script logs itself to the file; the redirect catches the rest.
+30 4 * * * root /root/nightly-cleanup.sh >> /var/log/nightly-cleanup.log 2>&1

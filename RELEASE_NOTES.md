@@ -1,5 +1,10 @@
 # Release Notes
 
+## nightly-cleanup in Standard-Cron (11.06.2026)
+
+### Changed
+- nightly-cleanup.sh is now part of the standard maintenance setup: deployed to `/root` by getScripts.py (v9.4.0) and scheduled daily at **04:30** in `/etc/cron.d/myodoo-maintenance` (setup-maintenance-cron.sh v1.2.0) — deliberately after the 02:00 backup window so a container restart can never hit a running backup. Log rotation was already in place. The installer now also warns when the legacy standalone `/etc/cron.d/nightly-cleanup` (old manual instructions, 03:00) is present, which would cause duplicate runs. NIGHTLY_CLEANUP.md (DE+EN) rewritten for the standard path; the manual `/usr/local/bin` install remains documented as an alternative.
+
 ## Script Review Follow-up (11.06.2026)
 
 ### Added

@@ -1,6 +1,6 @@
 #!/bin/bash
 # setup-maintenance-cron.sh — Install the myodoo maintenance cron jobs + logrotate
-# Version 1.1.0 — 28.05.2026
+# Version 1.2.0 — 11.06.2026
 #
 # Installs a declarative /etc/cron.d/ drop-in (versioned in this repo) instead of
 # hand-edited per-user crontabs, plus a matching logrotate config. Idempotent:
@@ -10,6 +10,7 @@
 #   - container2backup.py   02:00 + 14:00   (DB + filestore backup, RPO ~12h)
 #   - ssl-renew.sh          00:00 daily     (Let's Encrypt renewal, no-op if nothing due)
 #   - cleanup-weblogs.py    03:00 daily     (DSGVO: rotate/purge nginx logs >7 days)
+#   - nightly-cleanup.sh    04:30 daily     (container restart cycle + journald vacuum)
 #
 # The cron entries reference the scripts in ${SCRIPT_DIR} (default /root, where
 # getScripts.py deploys them). Override with SCRIPT_DIR=/path if they live elsewhere.
@@ -31,8 +32,8 @@
 
 set -Eeuo pipefail
 
-SCRIPT_VERSION="1.1.0"
-SCRIPT_DATE="28.05.2026"
+SCRIPT_VERSION="1.2.0"
+SCRIPT_DATE="11.06.2026"
 
 # Where the maintenance scripts live (getScripts.py copies them to /root).
 SCRIPT_DIR="${SCRIPT_DIR:-/root}"
@@ -46,7 +47,7 @@ CRON_SRC="${SELF_DIR}/myodoo-maintenance.cron"
 LOGROTATE_SRC="${SELF_DIR}/myodoo-maintenance.logrotate"
 
 # Scripts referenced by the cron entries (for an existence sanity-check).
-MANAGED_SCRIPTS=(container2backup.py ssl-renew.sh cleanup-weblogs.py nginx-cert-guard.py)
+MANAGED_SCRIPTS=(container2backup.py ssl-renew.sh cleanup-weblogs.py nginx-cert-guard.py nightly-cleanup.sh)
 
 SEPARATOR="────────────────────────────────────────────────────────"
 if [ -t 1 ]; then
@@ -123,6 +124,14 @@ install_files() {
     rm -f "$tmp_cron"
     log "Installed: ${CRON_DEST} (0644 root:root)"
 
+    # Legacy standalone cron from the old NIGHTLY_CLEANUP.md instructions —
+    # would run IN ADDITION to the managed 04:30 job (and at 03:00, close to
+    # the backup window). Warn only; never delete files we did not install.
+    if [ -f /etc/cron.d/nightly-cleanup ]; then
+        warn "Legacy /etc/cron.d/nightly-cleanup found — nightly-cleanup.sh now runs at 04:30 via ${CRON_DEST}."
+        warn "Remove the legacy file to avoid duplicate runs: sudo rm /etc/cron.d/nightly-cleanup"
+    fi
+
     # Install logrotate config.
     $SUDO install -m 0644 -o root -g root "$LOGROTATE_SRC" "$LOGROTATE_DEST"
     log "Installed: ${LOGROTATE_DEST}"
@@ -188,7 +197,8 @@ print_next_steps() {
     echo "${C_YELLOW}Reminders:${C_NC}"
     echo "  • Backup needs ${SCRIPT_DIR}/container2backup.yaml — until then it exits cleanly."
     echo "  • ssl-renew is a no-op until Let's Encrypt certs are issued (certbot certonly)."
-    echo "  • Logs: /var/log/{container2backup,ssl-renew,cleanup-weblogs}.log (rotated weekly)."
+    echo "  • nightly-cleanup restarts containers at 04:30 — tune ODOO_PATTERN etc. via env if needed."
+    echo "  • Logs: /var/log/{container2backup,ssl-renew,cleanup-weblogs,nightly-cleanup}.log (rotated weekly)."
     echo "  • Uninstall any time with: $0 --remove"
     echo ""
 }
