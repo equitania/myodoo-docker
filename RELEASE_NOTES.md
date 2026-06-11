@@ -1,5 +1,24 @@
 # Release Notes
 
+## Script Review Follow-up (11.06.2026)
+
+### Added
+- restore-zip.sh v2.0.0: Multi-format restore with automatic detection — supports every format container2backup.py produces: `.zip`, `.7z`, `.7z.gpg` (GPG decrypt with passphrase prompt), `.tar.gz`, `.tar.zst`. Previously only `.zip` was supported although `7z` is the backup default. New guards: required inputs are rejected when empty (an empty DB name could previously expand `rm -rf` to the backup root), and the cleanup step can no longer delete `/opt/backups/docker/` itself.
+
+### Fixed
+- nginx-cert-guard.py v1.1.0: bracketed IPv6 listeners (`[::1]:443`) are no longer misreported as unresolvable (would have quarantined healthy vhosts); rollback now matches quarantined files by exact path instead of `server_name` (a duplicate server_name could restore vhosts quarantined manually before the run); quarantine report now reads the domain from the renamed file (was read from the no-longer-existing pre-rename path).
+- server_hardening.py v1.7.0: banner printed v1.5.0 while the header said v1.6.0 (now a single `SCRIPT_VERSION` constant); defective/empty YAML config now exits with a clear message instead of an `AttributeError` traceback; changing the SSH port now warns loudly when the new port is missing from the UFW rules (lockout guard).
+- ssl-renew.sh v1.3.0: if even the final nginx fallback start fails, the script now exits 2 with a clear error instead of exiting 0 with nginx down.
+- nightly-cleanup.sh v1.1.0: `POSTGRES_PATTERN` anchors the `db` tokens (`^db-`, `-db$`) — bare `-db`/`db-` also matched containers like `redis-db-cache`; `/var/log/nightly-cleanup.log` added to myodoo-maintenance.logrotate (grew unbounded).
+- getScripts.py v9.3.1: removed ghost entry `container2backup_zstd.py` from `copy_scripts()` (file no longer exists).
+
+### Removed (orphaned)
+- `config/backup_config.yaml`, `config/backup_credentials.yaml`(+`.example`): leftovers of a pre-`.env` architecture, read by no script; the credentials file was tracked despite its own "NEVER commit" notice (placeholder only, no leak). `.gitignore` now blocks `config/backup_credentials.yaml` permanently.
+- `scripts/docker-clean-logs.sh`: unversioned 4-liner with unquoted `rm $(...)`; the `cleandlog` alias never used it (truncates log files directly).
+
+### Docs
+- README_BackUp.md, ReadMe.md, .env.example: encryption sections rewritten for GPG/`.7z.gpg` (incl. `gpg -d` restore steps and gnupg dependency), version references refreshed, `db_password_via_env` documented, `pip3 install` replaced with PEP-668-compliant apt packages.
+
 ## Security Hardening & IONOS Compatibility (11.06.2026)
 
 ### Fixed

@@ -25,9 +25,11 @@ Dieses Backup-System sichert Odoo-Datenbanken, Docker-Container und zusätzliche
 
 1. Installieren Sie die benötigten Pakete:
    ```bash
-   sudo apt-get install 7zip zstd
-   pip3 install python-dotenv pyyaml
+   sudo apt-get install 7zip zstd gnupg
+   sudo apt-get install python3-dotenv python3-yaml
    ```
+   > **Hinweis:** `gnupg` wird für die empfohlene GPG-Verschlüsselung benötigt (s. u.).
+   > `python3-dotenv`/`python3-yaml` sind die PEP-668-konformen Pakete (kein `pip3` in externen Umgebungen).
 
 2. Kopieren Sie das Skript in ein Verzeichnis Ihrer Wahl (z.B. `/opt/scripts/`).
 
@@ -90,6 +92,9 @@ rsync:
   commands:
     - "rsync -avz /opt/backups/docker/ user@remote-server:/backup/docker/"
 ```
+> **Sicherheitshinweis (seit v4.6.0):** rsync-Kommandos aus der YAML werden ohne Shell ausgeführt.
+> Nur Kommandos, die mit dem `rsync`-Binary beginnen, werden akzeptiert — alle anderen werden
+> mit einer SECURITY-Warnung übersprungen.
 
 ### Konfiguration für SQL-Dump-Only Backups
 
@@ -120,7 +125,9 @@ defaults:
 #### Unterstützte Kompressionsformate
 
 - **7z**: Beste Kompression und einziges Format mit Verschlüsselung
-  - Bietet AES-256 Verschlüsselung
+  - Verschlüsselung erfolgt per **GPG** (`gpg --symmetric --cipher-algo AES256`) nach der 7z-Erstellung
+  - Verschlüsselte Backups erhalten die Endung `.7z.gpg`; die Passphrase wird nie in der Prozessliste sichtbar
+  - Fallback auf 7z-interne AES-Verschlüsselung (Datei endet auf `.7z`), wenn `gnupg` nicht installiert ist — dabei ist das Passwort in der Prozessliste sichtbar; eine Warnung wird ausgegeben
   - Benötigt neuere 7-Zip-Version mit dem 7zz-Befehl
   - **Wichtig**: Das alte 7z-Kommando wird nicht mehr unterstützt
 
@@ -166,6 +173,7 @@ Datenbankbackups befinden sich im Unterverzeichnis `docker` und enthalten die fo
 
 **Dateinamensformat:** (abhängig vom Kompressionsformat)
 - 7z: `{db_name}_{container}_dockerbackup_{timestamp}.7z`
+- 7z (GPG-verschlüsselt): `{db_name}_{container}_dockerbackup_{timestamp}.7z.gpg`
 - ZIP: `{db_name}_{container}_dockerbackup_{timestamp}.zip`
 - GZIP: `{db_name}_{container}_dockerbackup_{timestamp}.tar.gz`
 - ZSTD: `{db_name}_{container}_dockerbackup_{timestamp}.tar.zst`
@@ -186,6 +194,7 @@ FastReport-Backups werden separat erstellt und im gleichen `docker`-Verzeichnis 
 
 **Dateinamensformat:** (abhängig vom Kompressionsformat)
 - 7z: `{db_name}_FastReport_{timestamp}.7z`
+- 7z (GPG-verschlüsselt): `{db_name}_FastReport_{timestamp}.7z.gpg`
 - ZIP: `{db_name}_FastReport_{timestamp}.zip`
 - GZIP: `{db_name}_FastReport_{timestamp}.tar.gz`
 - ZSTD: `{db_name}_FastReport_{timestamp}.tar.zst`
@@ -222,10 +231,18 @@ Die Verschlüsselung ist optional und kann über eine `.env`-Datei aktiviert wer
    BACKUP_PASSWORD=IhrSicheresPasswort
    ```
 
-2. **Wichtig**: Verschlüsselung wird nur mit dem 7z-Format unterstützt, welches das 7zz-Kommando benötigt.
+2. **Wichtig**: Verschlüsselung wird nur mit dem 7z-Format unterstützt.
    - Verschlüsselung wird nur angewendet, wenn das Format in der Konfiguration auf "7z" gesetzt ist
    - Wenn ein anderes Format (zip, gzip, zstd) gewählt wurde, wird die Verschlüsselung ignoriert
    - Das Format in der Konfiguration hat Priorität über die Verschlüsselungseinstellung
+
+3. **Verschlüsselungsverfahren (ab v4.6.0):**
+   - **Primär (empfohlen):** GPG-Verschlüsselung nach der 7z-Erstellung (`gpg --symmetric --cipher-algo AES256`).
+     Die Passphrase wird sicher via File-Descriptor übergeben — nie in der Prozessliste sichtbar.
+     Ausgabedatei: `<name>.7z.gpg`. Voraussetzung: `gnupg` installiert (`sudo apt-get install gnupg`).
+   - **Fallback:** Wenn `gnupg` nicht installiert ist, wird 7z-interne AES-Verschlüsselung verwendet
+     (`7zz ... -p...`). Das Passwort ist dabei in der Prozessliste sichtbar (`ps aux`). Es wird eine
+     deutliche Warnung ausgegeben. Ausgabedatei: `<name>.7z`.
 
 ## Backup-Prozess
 
@@ -261,8 +278,18 @@ Bevor Sie ein Backup extrahieren, können Sie den Inhalt anzeigen:
 
 # Mit absolutem Pfad
 7zz l /opt/backups/docker/datenbank_container_dockerbackup_timestamp.7z
+```
 
-# Mit Passwort (falls verschlüsselt)
+#### GPG-verschlüsseltes 7z-Format (.7z.gpg) — seit v4.6.0 empfohlen
+```bash
+# Erst entschlüsseln, dann Inhalt anzeigen
+gpg -d pfad/zur/backup.7z.gpg > /tmp/backup.7z
+7zz l /tmp/backup.7z
+```
+
+#### 7z-Format mit 7z-interner Verschlüsselung (Fallback, .7z)
+```bash
+# Mit Passwort (falls mit 7z-internem AES verschlüsselt — Fallback wenn gnupg fehlt)
 7zz l -p"IhrPasswort" pfad/zur/backup.7z
 ```
 
@@ -306,8 +333,20 @@ So extrahieren Sie die Backups in einen Zielordner:
 
 # Mit absolutem Pfad
 7zz x /opt/backups/docker/datenbank_container_dockerbackup_timestamp.7z -o/pfad/zum/zielordner
+```
 
-# Mit Passwort (falls verschlüsselt)
+#### GPG-verschlüsseltes 7z-Format (.7z.gpg) — seit v4.6.0 empfohlen
+```bash
+# Schritt 0: GPG-Entschlüsselung (Passphrase wird interaktiv abgefragt)
+gpg -d pfad/zur/backup.7z.gpg > /tmp/backup_decrypted.7z
+
+# Schritt 1: Extraktion (KEIN -p nötig — 7z-Archiv ist unverschlüsselt)
+7zz x /tmp/backup_decrypted.7z -ozielordner
+```
+
+#### 7z-Format mit 7z-interner Verschlüsselung (Fallback, .7z)
+```bash
+# Mit Passwort (nur bei altem Fallback-Verhalten ohne gnupg)
 7zz x pfad/zur/backup.7z -ozielordner -p"IhrPasswort"
 ```
 
@@ -350,11 +389,15 @@ Bei der Wiederherstellung einer Odoo-Datenbank müssen Sie beachten:
 2. Wiederherstellung des SQL-Dumps
 3. Kopieren des Filestore zum korrekten Zielort
 
-Beispiel (für 7z-Format):
+Beispiel (für GPG-verschlüsseltes 7z-Format — empfohlener Weg seit v4.6.0):
 ```bash
-# 1. Backup extrahieren
+# 0. GPG-Entschlüsselung (bei .7z.gpg — restore-zip.sh (v2.x) erkennt das Format automatisch)
+gpg -d /opt/backups/docker/datenbank_container_dockerbackup_timestamp.7z.gpg \
+    > /tmp/backup_decrypted.7z
+
+# 1. Backup extrahieren (KEIN -p — Archiv ist nach GPG-Decrypt unverschlüsselt)
 mkdir -p /tmp/odoo_restore
-7zz x /opt/backups/docker/datenbank_container_dockerbackup_timestamp.7z -o/tmp/odoo_restore
+7zz x /tmp/backup_decrypted.7z -o/tmp/odoo_restore
 
 # 2. SQL-Dump wiederherstellen
 docker exec -i container_name psql -U db_user -d datenbank_name < /tmp/odoo_restore/dump.sql
@@ -363,8 +406,12 @@ docker exec -i container_name psql -U db_user -d datenbank_name < /tmp/odoo_rest
 docker cp /tmp/odoo_restore/datenbank_name container_name:/opt/odoo/data/filestore/
 
 # 4. Aufräumen
+rm -f /tmp/backup_decrypted.7z
 rm -rf /tmp/odoo_restore
 ```
+
+> **Hinweis:** `restore-zip.sh` (v2.x) erkennt das Backup-Format automatisch (`.zip`, `.7z`,
+> `.7z.gpg`, `.tar.gz`, `.tar.zst`) und führt den passenden Restore-Ablauf aus.
 
 ## Aufräumen alter Backups
 
@@ -405,7 +452,7 @@ sudo /root/setup-maintenance-cron.sh
 sudo /root/setup-maintenance-cron.sh --remove
 ```
 
-Der installierte Job (Version 4.5.x) sieht so aus:
+Der installierte Job (Version 4.6.x) sieht so aus:
 
 ```cron
 # /etc/cron.d/myodoo-maintenance — von setup-maintenance-cron.sh verwaltet
@@ -454,9 +501,11 @@ This backup system secures Odoo databases, Docker containers, and additional ser
 
 1. Install the required packages:
    ```bash
-   sudo apt-get install 7zip zstd
-   pip3 install python-dotenv pyyaml
+   sudo apt-get install 7zip zstd gnupg
+   sudo apt-get install python3-dotenv python3-yaml
    ```
+   > **Note:** `gnupg` is required for the recommended GPG encryption (see below).
+   > `python3-dotenv`/`python3-yaml` are the PEP-668-compliant packages (no `pip3` in externally-managed environments).
 
 2. Copy the script to a directory of your choice (e.g., `/opt/scripts/`).
 
@@ -519,6 +568,9 @@ rsync:
   commands:
     - "rsync -avz /opt/backups/docker/ user@remote-server:/backup/docker/"
 ```
+> **Security note (since v4.6.0):** rsync commands from the YAML are executed without a shell.
+> Only commands starting with the `rsync` binary are accepted — all others are skipped with a
+> SECURITY warning.
 
 ### Configuration for SQL Dump Only Backups
 
@@ -549,7 +601,9 @@ defaults:
 #### Supported Compression Formats
 
 - **7z**: Best compression and the only format with encryption
-  - Provides AES-256 encryption
+  - Encryption uses **GPG** (`gpg --symmetric --cipher-algo AES256`) applied after 7z archiving
+  - Encrypted backups get the extension `.7z.gpg`; the passphrase is never visible in the process list
+  - Falls back to 7z-internal AES encryption (file ends in `.7z`) when `gnupg` is not installed — passphrase is then visible in the process list; a warning is printed
   - Requires newer 7-Zip version with the 7zz command
   - **Important**: The old 7z command is no longer supported
 
@@ -595,6 +649,7 @@ Database backups are located in the `docker` subdirectory and contain the follow
 
 **Filename format:** (depends on compression format)
 - 7z: `{db_name}_{container}_dockerbackup_{timestamp}.7z`
+- 7z (GPG-encrypted): `{db_name}_{container}_dockerbackup_{timestamp}.7z.gpg`
 - ZIP: `{db_name}_{container}_dockerbackup_{timestamp}.zip`
 - GZIP: `{db_name}_{container}_dockerbackup_{timestamp}.tar.gz`
 - ZSTD: `{db_name}_{container}_dockerbackup_{timestamp}.tar.zst`
@@ -615,6 +670,7 @@ FastReport backups are created separately and stored in the same `docker` direct
 
 **Filename format:** (depends on compression format)
 - 7z: `{db_name}_FastReport_{timestamp}.7z`
+- 7z (GPG-encrypted): `{db_name}_FastReport_{timestamp}.7z.gpg`
 - ZIP: `{db_name}_FastReport_{timestamp}.zip`
 - GZIP: `{db_name}_FastReport_{timestamp}.tar.gz`
 - ZSTD: `{db_name}_FastReport_{timestamp}.tar.zst`
@@ -651,10 +707,18 @@ Encryption is optional and can be activated via a `.env` file:
    BACKUP_PASSWORD=YourSecurePassword
    ```
 
-2. **Important**: Encryption is only supported with the 7z format, which requires the 7zz command.
+2. **Important**: Encryption is only supported with the 7z format.
    - Encryption will only be applied if the format in the configuration is set to "7z"
    - If another format (zip, gzip, zstd) is chosen, encryption will be ignored
    - The format in the configuration takes precedence over the encryption setting
+
+3. **Encryption method (since v4.6.0):**
+   - **Primary (recommended):** GPG encryption after 7z archiving (`gpg --symmetric --cipher-algo AES256`).
+     The passphrase is passed securely via file descriptor — never visible in the process list.
+     Output file: `<name>.7z.gpg`. Requires: `gnupg` installed (`sudo apt-get install gnupg`).
+   - **Fallback:** If `gnupg` is not installed, 7z-internal AES encryption is used
+     (`7zz ... -p...`). The passphrase is then visible in the process list (`ps aux`). A clear
+     warning is printed. Output file: `<name>.7z`.
 
 ## Backup Process
 
@@ -690,8 +754,18 @@ Before extracting a backup, you can preview its contents:
 
 # With absolute path
 7zz l /opt/backups/docker/database_container_dockerbackup_timestamp.7z
+```
 
-# With password (if encrypted)
+#### GPG-encrypted 7z Format (.7z.gpg) — recommended since v4.6.0
+```bash
+# Decrypt first, then list contents
+gpg -d path/to/backup.7z.gpg > /tmp/backup.7z
+7zz l /tmp/backup.7z
+```
+
+#### 7z Format with 7z-internal encryption (fallback, .7z)
+```bash
+# With password (only when using legacy fallback without gnupg)
 7zz l -p"YourPassword" path/to/backup.7z
 ```
 
@@ -735,8 +809,20 @@ To extract backups to a target directory:
 
 # With absolute path
 7zz x /opt/backups/docker/database_container_dockerbackup_timestamp.7z -o/path/to/target_directory
+```
 
-# With password (if encrypted)
+#### GPG-encrypted 7z Format (.7z.gpg) — recommended since v4.6.0
+```bash
+# Step 0: GPG decryption (passphrase prompted interactively)
+gpg -d path/to/backup.7z.gpg > /tmp/backup_decrypted.7z
+
+# Step 1: Extract (NO -p needed — the 7z archive is unencrypted after GPG decrypt)
+7zz x /tmp/backup_decrypted.7z -otarget_directory
+```
+
+#### 7z Format with 7z-internal encryption (fallback, .7z)
+```bash
+# With password (only when using legacy fallback without gnupg)
 7zz x path/to/backup.7z -otarget_directory -p"YourPassword"
 ```
 
@@ -779,11 +865,15 @@ When restoring an Odoo database backup, you need to:
 2. Restore the SQL dump
 3. Copy the filestore to the correct location
 
-Example (for 7z format):
+Example (for GPG-encrypted 7z format — recommended since v4.6.0):
 ```bash
-# 1. Extract backup
+# 0. GPG decryption (for .7z.gpg — restore-zip.sh (v2.x) detects the format automatically)
+gpg -d /opt/backups/docker/database_container_dockerbackup_timestamp.7z.gpg \
+    > /tmp/backup_decrypted.7z
+
+# 1. Extract backup (NO -p — archive is unencrypted after GPG decrypt)
 mkdir -p /tmp/odoo_restore
-7zz x /opt/backups/docker/database_container_dockerbackup_timestamp.7z -o/tmp/odoo_restore
+7zz x /tmp/backup_decrypted.7z -o/tmp/odoo_restore
 
 # 2. Restore SQL dump
 docker exec -i container_name psql -U db_user -d database_name < /tmp/odoo_restore/dump.sql
@@ -792,8 +882,12 @@ docker exec -i container_name psql -U db_user -d database_name < /tmp/odoo_resto
 docker cp /tmp/odoo_restore/database_name container_name:/opt/odoo/data/filestore/
 
 # 4. Clean up
+rm -f /tmp/backup_decrypted.7z
 rm -rf /tmp/odoo_restore
 ```
+
+> **Note:** `restore-zip.sh` (v2.x) detects the backup format automatically (`.zip`, `.7z`,
+> `.7z.gpg`, `.tar.gz`, `.tar.zst`) and runs the appropriate restore procedure.
 
 ## Cleaning up Old Backups
 
@@ -834,7 +928,7 @@ sudo /root/setup-maintenance-cron.sh
 sudo /root/setup-maintenance-cron.sh --remove
 ```
 
-The installed job (version 4.5.x) looks like this:
+The installed job (version 4.6.x) looks like this:
 
 ```cron
 # /etc/cron.d/myodoo-maintenance — managed by setup-maintenance-cron.sh

@@ -43,9 +43,10 @@ Die Tools sind auf einen klaren Ablauf abgestimmt:
 
 #### 1. Provisionierung & Härtung
 
-- **bootstrap.sh** (v1.4.x)
+- **bootstrap.sh** (v1.6.x)
   - Out-of-the-box-Initialisierung für frische **Debian 12/13** und **Ubuntu 20.04/22.04/24.04/26.04**
   - Installiert Docker CE (offizielles Repo), nginx (nginx.org), certbot, UFW (installiert, aber bewusst DEAKTIVIERT), fail2ban-Baseline, unattended-upgrades
+  - Generiert `en_US.UTF-8`-Locale auf Minimal-Images (z. B. IONOS), bei denen SSH mit `LANG=en_US.UTF-8` verbindet, die Locale aber nicht installiert ist (perl/apt-Warnungen)
   - Self-Install nach `/opt`, idempotent, jede Stufe per Umgebungsvariable abschaltbar (`INSTALL_DOCKER`, `INSTALL_NGINX`, `INSTALL_CERTBOT`, `INSTALL_UFW`, `INSTALL_FAIL2BAN`, `INSTALL_UNATTENDED`)
 
 - **server_hardening.py** (v1.5.x)
@@ -66,9 +67,9 @@ Die Tools sind auf einen klaren Ablauf abgestimmt:
   - Aktualisiert bestehende Installationen, verteilt die Verwaltungsskripte nach `/root`
   - DNS-Konfigurationsprüfung und -optimierung (erkennt u. a. Hetzner-DNS-Probleme mit DigitalOcean)
 
-- **container2backup.py** (v4.5.x)
+- **container2backup.py** (v4.6.x)
   - Automatisches Backup-System für Odoo-Datenbanken (SQL + Filestore + zusätzliche Pfade)
-  - Konfiguration über YAML; Kompression 7z/zip/gzip/zstd; optional AES-256 (nur 7z)
+  - Konfiguration über YAML; Kompression 7z/zip/gzip/zstd; optional GPG-Verschlüsselung (`.7z.gpg`, Primär) mit Fallback auf 7z-internes AES (nur wenn `gnupg` fehlt)
   - Automatische Bereinigung alter Backups; cron-sicher (bricht bei Pfadproblemen non-interaktiv sauber ab)
   ```yaml
   # Beispiel container2backup.yaml
@@ -81,8 +82,8 @@ Die Tools sind auf einen klaren Ablauf abgestimmt:
   ```
   → Ausführliche Doku: [scripts/README_BackUp.md](scripts/README_BackUp.md)
 
-- **restore-zip.sh** — Wiederherstellung aus den von container2backup.py erzeugten Backups
-- **update_docker_odoo.py** — automatisierte Aktualisierung von Docker-Containern inkl. Neustart-Management
+- **restore-zip.sh** (v2.x) — Wiederherstellung aus den von container2backup.py erzeugten Backups; erkennt das Format automatisch (`.zip`, `.7z`, `.7z.gpg`, `.tar.gz`, `.tar.zst`)
+- **update_docker_odoo.py** (v5.2.x) — automatisierte Aktualisierung von Docker-Containern inkl. Neustart-Management; neue Option `db_password_via_env: true` pro Container in `docker2update.yaml` übergibt das DB-Passwort via `PGPASSWORD`-Umgebungsvariable statt als `--db_password=...` in argv (verhindert Sichtbarkeit in `ps aux`); Standard: `false` (Legacy-Modus für ältere Images)
 - **cleanup-weblogs.py** (v2.x) — DSGVO-konforme nginx-Log-Rotation: rotiert `/var/log/nginx/*.log` und löscht `.bak` älter als 7 Tage (Access-Logs enthalten personenbezogene IP-Adressen)
 - **nightly-cleanup.sh** — speicherbasierter Container-Neustart bei Überschreiten einer Schwelle → [scripts/NIGHTLY_CLEANUP.md](scripts/NIGHTLY_CLEANUP.md)
 - **setup-maintenance-cron.sh** — installiert die Wartungs-Cron-Jobs deklarativ als `/etc/cron.d/myodoo-maintenance` plus passende logrotate-Konfiguration (idempotent, `--remove` zum Entfernen)
@@ -235,9 +236,10 @@ The tools follow a clear sequence:
 
 #### 1. Provisioning & Hardening
 
-- **bootstrap.sh** (v1.4.x)
+- **bootstrap.sh** (v1.6.x)
   - Out-of-the-box initializer for fresh **Debian 12/13** and **Ubuntu 20.04/22.04/24.04/26.04**
   - Installs Docker CE (official repo), nginx (nginx.org), certbot, UFW (installed but deliberately DISABLED), fail2ban baseline, unattended-upgrades
+  - Generates the `en_US.UTF-8` locale on minimal cloud images (e.g. IONOS) where SSH connects with `LANG=en_US.UTF-8` but the locale is not installed (eliminates perl/apt warnings)
   - Self-installs to `/opt`, idempotent, every stage toggleable via env var (`INSTALL_DOCKER`, `INSTALL_NGINX`, `INSTALL_CERTBOT`, `INSTALL_UFW`, `INSTALL_FAIL2BAN`, `INSTALL_UNATTENDED`)
 
 - **server_hardening.py** (v1.5.x)
@@ -258,9 +260,9 @@ The tools follow a clear sequence:
   - Updates existing installations, deploys the management scripts to `/root`
   - DNS configuration check and optimization (detects e.g. Hetzner DNS issues with DigitalOcean)
 
-- **container2backup.py** (v4.5.x)
+- **container2backup.py** (v4.6.x)
   - Automatic backup system for Odoo databases (SQL + filestore + additional paths)
-  - YAML configuration; 7z/zip/gzip/zstd compression; optional AES-256 (7z only)
+  - YAML configuration; 7z/zip/gzip/zstd compression; optional GPG encryption (`.7z.gpg`, primary) with fallback to 7z-internal AES (only if `gnupg` is absent)
   - Automatic cleanup of old backups; cron-safe (aborts cleanly and non-interactively on path issues)
   ```yaml
   # Example container2backup.yaml
@@ -273,8 +275,8 @@ The tools follow a clear sequence:
   ```
   → Detailed docs: [scripts/README_BackUp.md](scripts/README_BackUp.md)
 
-- **restore-zip.sh** — restore from the backups produced by container2backup.py
-- **update_docker_odoo.py** — automated Docker container updates incl. restart management
+- **restore-zip.sh** (v2.x) — restore from the backups produced by container2backup.py; auto-detects the format (`.zip`, `.7z`, `.7z.gpg`, `.tar.gz`, `.tar.zst`)
+- **update_docker_odoo.py** (v5.2.x) — automated Docker container updates incl. restart management; new per-container option `db_password_via_env: true` in `docker2update.yaml` passes the DB password via `PGPASSWORD` environment variable instead of `--db_password=...` in argv (prevents exposure in `ps aux`); default: `false` (legacy mode for older images)
 - **cleanup-weblogs.py** (v2.x) — DSGVO-compliant nginx log rotation: rotates `/var/log/nginx/*.log` and deletes `.bak` older than 7 days (access logs contain personal IP data)
 - **nightly-cleanup.sh** — memory-based container restart above a threshold → [scripts/NIGHTLY_CLEANUP.md](scripts/NIGHTLY_CLEANUP.md)
 - **setup-maintenance-cron.sh** — installs the maintenance cron jobs declaratively as `/etc/cron.d/myodoo-maintenance` plus a matching logrotate config (idempotent, `--remove` to uninstall)
