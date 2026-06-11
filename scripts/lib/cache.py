@@ -43,13 +43,16 @@ def get_cache_file_path(key: str) -> str:
     return os.path.join(CACHE_DIR, f"{key}.cache")
 
 
-def get_cached_version(key: str, disabled: bool = False) -> Optional[Dict[str, Any]]:
+def get_cached_version(key: str, disabled: bool = False, allow_stale: bool = False) -> Optional[Dict[str, Any]]:
     """
     Get cached version information.
 
     Args:
         key: Cache key
         disabled: If True, always return None (cache disabled)
+        allow_stale: Return the cached data even when it is older than
+            CACHE_EXPIRY_HOURS - used as fallback when the live API query
+            fails (a stale version beats aborting the install)
 
     Returns:
         Optional[Dict[str, Any]]: Cached data if valid, None otherwise
@@ -75,7 +78,7 @@ def get_cached_version(key: str, disabled: bool = False) -> Optional[Dict[str, A
 
         # Check if cache is expired
         cache_time = datetime.fromtimestamp(os.path.getmtime(cache_file))
-        if datetime.now() - cache_time > timedelta(hours=CACHE_EXPIRY_HOURS):
+        if not allow_stale and datetime.now() - cache_time > timedelta(hours=CACHE_EXPIRY_HOURS):
             logger.debug(f"Cache for {key} is expired")
             os.remove(cache_file)
             return None

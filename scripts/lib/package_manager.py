@@ -165,11 +165,6 @@ def get_latest_pypi_version(package_name: str) -> Optional[str]:
     logger = get_logger()
 
     cache_key = f"pypi_{package_name}"
-    cached_data = get_cached_version(cache_key)
-
-    if cached_data:
-        return cached_data.get("version")
-
     try:
         url = f"https://pypi.org/pypi/{package_name}/json"
         logger.info(f"Checking latest version of {package_name} from PyPI")
@@ -179,11 +174,18 @@ def get_latest_pypi_version(package_name: str) -> Optional[str]:
             latest_version = data["info"]["version"]
             logger.info(f"Latest {package_name} version on PyPI: {latest_version}")
 
+            # Cache the result (fallback for future runs when PyPI is down)
             cache_version_info(cache_key, {"version": latest_version})
             return latest_version
         logger.error(f"Failed to get latest {package_name} version. Status code: {response.status_code}")
     except Exception as e:
         logger.error(f"Error fetching latest {package_name} version from PyPI: {str(e)}")
+
+    # Fallback: cached value (even stale) so a PyPI outage never blocks the run
+    cached_data = get_cached_version(cache_key, allow_stale=True)
+    if cached_data:
+        logger.warning(f"PyPI not reachable - using cached {package_name} version {cached_data.get('version')}")
+        return cached_data.get("version")
     return None
 
 

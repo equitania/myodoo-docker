@@ -55,7 +55,7 @@ if os.environ.get('GETSCRIPTS_DEBUG', '').lower() in ('1', 'true', 'yes'):
     logger.debug("Debug logging enabled")
 
 # Script version and date
-SCRIPT_VERSION = "9.4.0"
+SCRIPT_VERSION = "9.5.0"
 SCRIPT_DATE = "11.06.2026"
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -140,11 +140,14 @@ def get_cache_file_path(key: str) -> str:
         raise ValueError(f"Invalid cache key: {key!r}")
     return os.path.join(CACHE_DIR, f"{key}.cache")
 
-def get_cached_version(key: str) -> Optional[Dict[str, Any]]:
+def get_cached_version(key: str, allow_stale: bool = False) -> Optional[Dict[str, Any]]:
     """Get cached version information.
 
     Args:
         key: Cache key
+        allow_stale: Return the cached data even when it is older than
+            CACHE_EXPIRY_HOURS - used as fallback when the live API query
+            fails (a stale version beats aborting the install).
 
     Returns:
         Optional[Dict[str, Any]]: Cached data if valid, None otherwise
@@ -169,7 +172,7 @@ def get_cached_version(key: str) -> Optional[Dict[str, Any]]:
 
         # Check if cache is expired
         cache_time = datetime.fromtimestamp(os.path.getmtime(cache_file))
-        if datetime.now() - cache_time > timedelta(hours=CACHE_EXPIRY_HOURS):
+        if not allow_stale and datetime.now() - cache_time > timedelta(hours=CACHE_EXPIRY_HOURS):
             logger.debug(f"Cache for {key} is expired")
             os.remove(cache_file)
             return None
@@ -1094,25 +1097,26 @@ def get_latest_fastfetch_version() -> Tuple[Optional[str], Optional[List[Dict]]]
         Tuple[Optional[str], Optional[List[Dict]]]: Version and assets if available
     """
     cache_key = "fastfetch_latest"
-    cached_data = get_cached_version(cache_key)
-    
-    if cached_data:
-        return cached_data.get("version"), cached_data.get("assets")
-    
     try:
-        response = requests.get("https://api.github.com/repos/fastfetch-cli/fastfetch/releases/latest")
+        response = requests.get("https://api.github.com/repos/fastfetch-cli/fastfetch/releases/latest", timeout=15)
         if response.status_code == 200:
             data = response.json()
             version = data["tag_name"].lstrip('v')
             assets = data["assets"]
             logger.info(f"Found latest FastFetch version: {version}")
-            
-            # Cache the result
+
+            # Cache the result (fallback for future runs when GitHub is down)
             cache_version_info(cache_key, {"version": version, "assets": assets})
             return version, assets
         logger.error(f"Failed to get latest fastfetch version. Status code: {response.status_code}")
     except Exception as e:
         logger.error(f"Error fetching latest fastfetch version: {str(e)}")
+
+    # Fallback: cached value (even stale) so a GitHub outage never blocks the run
+    cached_data = get_cached_version(cache_key, allow_stale=True)
+    if cached_data:
+        logger.warning(f"GitHub not reachable - using cached FastFetch version {cached_data.get('version')}")
+        return cached_data.get("version"), cached_data.get("assets")
     return None, None
 
 def get_fastfetch_download_url(_version: str, os_id: str, assets: Optional[List[Dict]] = None) -> Optional[str]:
@@ -1198,24 +1202,25 @@ def get_latest_zoxide_version() -> Optional[str]:
         Optional[str]: Version string if available
     """
     cache_key = "zoxide_latest"
-    cached_data = get_cached_version(cache_key)
-
-    if cached_data:
-        return cached_data.get("version")
-
     try:
-        response = requests.get("https://api.github.com/repos/ajeetdsouza/zoxide/releases/latest")
+        response = requests.get("https://api.github.com/repos/ajeetdsouza/zoxide/releases/latest", timeout=15)
         if response.status_code == 200:
             data = response.json()
             version = data["tag_name"].lstrip('v')
             logger.info(f"Found latest zoxide version: {version}")
 
-            # Cache the result
+            # Cache the result (fallback for future runs when GitHub is down)
             cache_version_info(cache_key, {"version": version})
             return version
         logger.error(f"Failed to get latest zoxide version. Status code: {response.status_code}")
     except Exception as e:
         logger.error(f"Error fetching latest zoxide version: {str(e)}")
+
+    # Fallback: cached value (even stale) so a GitHub outage never blocks the run
+    cached_data = get_cached_version(cache_key, allow_stale=True)
+    if cached_data:
+        logger.warning(f"GitHub not reachable - using cached zoxide version {cached_data.get('version')}")
+        return cached_data.get("version")
     return None
 
 def install_zoxide_if_needed(target_version: Optional[str] = None) -> None:
@@ -1948,24 +1953,25 @@ def get_latest_bat_version() -> Optional[str]:
         Optional[str]: Latest version string if available, None otherwise
     """
     cache_key = "bat_latest"
-    cached_data = get_cached_version(cache_key)
-    
-    if cached_data:
-        return cached_data.get("version")
-    
     try:
-        response = requests.get("https://api.github.com/repos/sharkdp/bat/releases/latest")
+        response = requests.get("https://api.github.com/repos/sharkdp/bat/releases/latest", timeout=15)
         if response.status_code == 200:
             data = response.json()
             version = data["tag_name"].lstrip('v')
             logger.info(f"Found latest bat version: {version}")
-            
-            # Cache the result
+
+            # Cache the result (fallback for future runs when GitHub is down)
             cache_version_info(cache_key, {"version": version})
             return version
         logger.error(f"Failed to get latest bat version. Status code: {response.status_code}")
     except Exception as e:
         logger.error(f"Error fetching latest bat version: {str(e)}")
+
+    # Fallback: cached value (even stale) so a GitHub outage never blocks the run
+    cached_data = get_cached_version(cache_key, allow_stale=True)
+    if cached_data:
+        logger.warning(f"GitHub not reachable - using cached bat version {cached_data.get('version')}")
+        return cached_data.get("version")
     return None
 
 def install_or_update_bat():
@@ -2265,10 +2271,6 @@ def get_latest_7zip_version() -> Tuple[Optional[str], Optional[List[Dict]]]:
         (None, None) otherwise.
     """
     cache_key = "7zip_latest"
-    cached_data = get_cached_version(cache_key)
-    if cached_data:
-        return cached_data.get("version"), cached_data.get("assets")
-
     try:
         response = requests.get("https://api.github.com/repos/ip7z/7zip/releases/latest", timeout=15)
         if response.status_code == 200:
@@ -2281,6 +2283,12 @@ def get_latest_7zip_version() -> Tuple[Optional[str], Optional[List[Dict]]]:
         logger.error(f"Failed to get latest 7-Zip version. Status code: {response.status_code}")
     except Exception as e:
         logger.error(f"Error fetching latest 7-Zip version: {str(e)}")
+
+    # Fallback: cached value (even stale) so a GitHub outage never blocks the run
+    cached_data = get_cached_version(cache_key, allow_stale=True)
+    if cached_data:
+        logger.warning(f"GitHub not reachable - using cached 7-Zip version {cached_data.get('version')}")
+        return cached_data.get("version"), cached_data.get("assets")
     return None, None
 
 def install_or_update_7zip():
@@ -2538,24 +2546,25 @@ def get_latest_ctop_version() -> Optional[str]:
         Optional[str]: Latest version string if available, None otherwise
     """
     cache_key = "ctop_latest"
-    cached_data = get_cached_version(cache_key)
-
-    if cached_data:
-        return cached_data.get("version")
-
     try:
-        response = requests.get("https://api.github.com/repos/eqms/ctop/releases/latest")
+        response = requests.get("https://api.github.com/repos/eqms/ctop/releases/latest", timeout=15)
         if response.status_code == 200:
             data = response.json()
             version = data["tag_name"].lstrip('v')
             logger.info(f"Found latest ctop version: {version}")
 
-            # Cache the result
+            # Cache the result (fallback for future runs when GitHub is down)
             cache_version_info(cache_key, {"version": version})
             return version
         logger.error(f"Failed to get latest ctop version. Status code: {response.status_code}")
     except Exception as e:
         logger.error(f"Error fetching latest ctop version: {str(e)}")
+
+    # Fallback: cached value (even stale) so a GitHub outage never blocks the run
+    cached_data = get_cached_version(cache_key, allow_stale=True)
+    if cached_data:
+        logger.warning(f"GitHub not reachable - using cached ctop version {cached_data.get('version')}")
+        return cached_data.get("version")
     return None
 
 def install_or_update_ctop() -> None:
@@ -3287,11 +3296,6 @@ def get_latest_pypi_version(package_name: str) -> Optional[str]:
         Optional[str]: Latest version string if available, None otherwise
     """
     cache_key = f"pypi_{package_name}"
-    cached_data = get_cached_version(cache_key)
-    
-    if cached_data:
-        return cached_data.get("version")
-    
     try:
         url = f"https://pypi.org/pypi/{package_name}/json"
         logger.info(f"Checking latest version of {package_name} from PyPI")
@@ -3300,13 +3304,19 @@ def get_latest_pypi_version(package_name: str) -> Optional[str]:
             data = response.json()
             latest_version = data["info"]["version"]
             logger.info(f"Latest {package_name} version on PyPI: {latest_version}")
-            
-            # Cache the result
+
+            # Cache the result (fallback for future runs when PyPI is down)
             cache_version_info(cache_key, {"version": latest_version})
             return latest_version
         logger.error(f"Failed to get latest {package_name} version. Status code: {response.status_code}")
     except Exception as e:
         logger.error(f"Error fetching latest {package_name} version from PyPI: {str(e)}")
+
+    # Fallback: cached value (even stale) so a PyPI outage never blocks the run
+    cached_data = get_cached_version(cache_key, allow_stale=True)
+    if cached_data:
+        logger.warning(f"PyPI not reachable - using cached {package_name} version {cached_data.get('version')}")
+        return cached_data.get("version")
     return None
 
 def get_installed_uv_tool_version(package_name: str) -> Optional[str]:
