@@ -2,7 +2,7 @@
 """
 Server-Härtungs-Skript
 =======================
-Version: 1.7.0 / Date: 11.06.2026
+Version: 1.8.0 / Date: 11.06.2026
 
 Prüft und härtet: UFW, Fail2Ban, SSH, Kernel, Kernel-Module, Docker,
 Auto-Updates, auditd, AIDE, Nginx
@@ -19,7 +19,7 @@ import subprocess
 import sys
 import os
 
-SCRIPT_VERSION = "1.7.0"
+SCRIPT_VERSION = "1.8.0"
 import re
 import json
 import shutil
@@ -402,8 +402,15 @@ def audit_ufw(config, apply=False, force=False):
     # Unerwartete Regeln finden
     sub("Unerwartete Regeln")
     unexpected = []
+    f2b_bans = []
     for rule in ufw_rules:
         if "(v6)" in rule:
+            continue
+        # Fail2Ban manages its own REJECT rules (banaction = ufw). Those are
+        # expected dynamic bans that expire on their own - report them as
+        # info, not as configuration drift.
+        if "by Fail2Ban" in rule:
+            f2b_bans.append(rule)
             continue
         found = False
         for exp in expected_rules:
@@ -419,6 +426,16 @@ def audit_ufw(config, apply=False, force=False):
                     break
         if not found:
             unexpected.append(rule)
+
+    if f2b_bans:
+        info(f"Fail2Ban-Banns aktiv ({len(f2b_bans)}) — erwartete dynamische Regeln "
+             f"(banaction=ufw), verfallen nach Ablauf der bantime automatisch:")
+        for rule in f2b_bans:
+            m = re.search(r"REJECT(?:\s+IN)?\s+(\S+).*?against\s+(\S+)", rule)
+            if m:
+                info(f"  gebannt: {m.group(1)} (Jail: {m.group(2)})")
+            else:
+                info(f"  {rule}")
 
     if unexpected:
         for rule in unexpected:
