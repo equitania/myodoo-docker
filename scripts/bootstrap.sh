@@ -1,6 +1,6 @@
 #!/bin/bash
 # bootstrap.sh — Out-of-the-box initializer for fresh Debian/Ubuntu servers
-# Version 1.5.0 — 01.06.2026
+# Version 1.6.0 — 11.06.2026
 #
 # Supported: Debian 12 (bookworm) / 13 (trixie); Ubuntu 20.04/22.04/24.04/26.04
 # (focal/jammy/noble/resolute). OS + codename are auto-detected from os-release;
@@ -10,6 +10,7 @@
 # Prepares a clean host so the myodoo-docker tooling can run:
 #   1. Self-installs to /opt (so it stays available out-of-the-box)
 #   2. Installs base packages (ca-certificates, curl, gnupg, git)
+#      and ensures the en_US.UTF-8 locale is generated (minimal images)
 #   3. Installs Docker CE from the official Docker repository (deb822 format)
 #   4. Installs nginx from the official nginx.org repository (reverse proxy)
 #   5. Installs certbot (Let's Encrypt client; renewal via ssl-renew.sh standalone)
@@ -58,7 +59,7 @@ set -Eeuo pipefail
 # Configuration
 # ──────────────────────────────────────────
 
-SCRIPT_VERSION="1.5.0"
+SCRIPT_VERSION="1.6.0"
 SCRIPT_DATE="01.06.2026"
 
 REPO_URL="${REPO_URL:-https://github.com/equitania/myodoo-docker.git}"
@@ -232,6 +233,25 @@ install_base_packages() {
     apt_update
     $SUDO apt-get install -y ca-certificates curl gnupg git
     log "Base packages installed. git: $(git --version 2>/dev/null || echo 'n/a')"
+}
+
+setup_locale() {
+    section "Ensuring UTF-8 locale (en_US.UTF-8)"
+    # Minimal cloud images (e.g. IONOS) ship without generated locales while
+    # SSH forwards LANG/LC_ALL=en_US.UTF-8 — perl/apt then warn on every call.
+    if locale -a 2>/dev/null | grep -qi '^en_US\.utf-\?8$'; then
+        log "Locale en_US.UTF-8 already available — skipping."
+        return 0
+    fi
+    $SUDO apt-get install -y locales
+    if [ -f /etc/locale.gen ]; then
+        $SUDO sed -i 's/^# *en_US\.UTF-8 UTF-8/en_US.UTF-8 UTF-8/' /etc/locale.gen
+        grep -q '^en_US\.UTF-8 UTF-8' /etc/locale.gen || \
+            echo "en_US.UTF-8 UTF-8" | $SUDO tee -a /etc/locale.gen > /dev/null
+    fi
+    $SUDO locale-gen
+    $SUDO update-locale LANG=en_US.UTF-8
+    log "Locale en_US.UTF-8 generated and set as default."
 }
 
 install_docker() {
@@ -542,6 +562,7 @@ main() {
     detect_os
     reconcile_docker_repo
     install_base_packages
+    setup_locale
     install_docker
     install_nginx
     install_certbot

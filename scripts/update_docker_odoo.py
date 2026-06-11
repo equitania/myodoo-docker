@@ -1,8 +1,8 @@
 #!/usr/bin/python3
 # -*- coding: utf-8 -*-
 # This script performs an update of an Odoo database in a Docker container
-# Version 5.1.6
-# Date 15.07.2025
+# Version 5.2.0
+# Date 11.06.2026
 ##############################################################################
 #
 #    Shell Script for Odoo, Open Source Management Solution
@@ -229,6 +229,8 @@ Configuration File Format (YAML):
       docker_image_name: "odoo/live"              # Image name to build
       db_user: "user"                             # Database username
       db_password: "password"                     # Database password
+      db_password_via_env: true                   # Pass password via PGPASSWORD env, not argv
+                                                  # (hidden from ps; needs image >= 11.06.2026)
       db_host: "db-host"                          # Database hostname/IP
       volume: "--network net -v /path:/data"      # Docker volume config (DNS auto-optimized)
       odoo_version: "16"                          # Odoo version for scripts
@@ -557,6 +559,20 @@ def process_container(container):
     db_user = container['db_user']
     db_password = container['db_password']
     db_host = container['db_host']
+
+    # Pass the DB password via environment (docker run -e PGPASSWORD) instead
+    # of argv when enabled - argv is visible to every local user via ps.
+    # Requires an image whose boot script whitelists PGPASSWORD across su
+    # (myodoo images built from 11.06.2026 on). Default: legacy argv mode so
+    # existing images keep working.
+    password_via_env = bool(container.get('db_password_via_env', False))
+    if password_via_env:
+        os.environ['PGPASSWORD'] = db_password
+        db_auth_args = f"--db_user={db_user} --db_host={db_host}"
+        env_forward = "-e PGPASSWORD "
+    else:
+        db_auth_args = f"--db_user={db_user} --db_password={db_password} --db_host={db_host}"
+        env_forward = ""
     volume = expand_path(container.get('volume', ""))  # Expand env vars in volume
     version = container['odoo_version']
     translation = container['translate']
@@ -722,7 +738,7 @@ def process_container(container):
         # Full update
         if logger.level <= logging.INFO:
             logger.info(f"Performing full update of {container_name}...")
-        update_command = f"docker run -it --rm -p {port}:8069 -p {poll_port}:8072 --name={container_name} {volume} {image} update --database={db_name} --db_user={db_user} --db_password={db_password} --db_host={db_host}{load_translation}"
+        update_command = f"docker run -it --rm {env_forward}-p {port}:8069 -p {poll_port}:8072 --name={container_name} {volume} {image} update --database={db_name} {db_auth_args}{load_translation}"
         
         # Only show full command in verbose mode
         if logger.level <= logging.DEBUG:
@@ -753,7 +769,7 @@ def process_container(container):
     elif update_type == "N":
         # Neutralize and update
         logger.info(f"Neutralizing database in {container_name}...")
-        neutralize_command = f"docker run -it --rm -p {port}:8069 -p {poll_port}:8072 --name={container_name} {volume} {image} neutralize --database={db_name} --db_user={db_user} --db_password={db_password} --db_host={db_host}"
+        neutralize_command = f"docker run -it --rm {env_forward}-p {port}:8069 -p {poll_port}:8072 --name={container_name} {volume} {image} neutralize --database={db_name} {db_auth_args}"
         
         # Only show full command in verbose mode
         if logger.level <= logging.DEBUG:
@@ -783,7 +799,7 @@ def process_container(container):
             return False, total_info, total_warnings, total_errors
             
         logger.info(f"Performing update after neutralization...")
-        update_command = f"docker run -it --rm -p {port}:8069 -p {poll_port}:8072 --name={container_name} {volume} {image} update --database={db_name} --db_user={db_user} --db_password={db_password} --db_host={db_host}{load_translation}"
+        update_command = f"docker run -it --rm {env_forward}-p {port}:8069 -p {poll_port}:8072 --name={container_name} {volume} {image} update --database={db_name} {db_auth_args}{load_translation}"
         
         # Only show full command in verbose mode
         if logger.level <= logging.DEBUG:

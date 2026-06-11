@@ -6,7 +6,7 @@ Constants and configuration values for getScripts.py
 import os
 
 # Script version and metadata
-SCRIPT_VERSION = "9.2.0"
+SCRIPT_VERSION = "9.3.0"
 SCRIPT_DATE = "11.06.2026"
 
 # Cache settings
@@ -32,7 +32,7 @@ DEFAULT_BRANCH = "2026"
 
 # Fish shell repository settings
 FISH_PPA_URL = "ppa:fish-shell/release-4"
-FISH_OBS_REPO_BASE = "http://download.opensuse.org/repositories/shells:/fish:/release:/4"
+FISH_OBS_REPO_BASE = "https://download.opensuse.org/repositories/shells:/fish:/release:/4"
 
 # Minimum versions
 MIN_FISH_VERSION = "4.0.0"

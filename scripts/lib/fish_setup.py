@@ -101,7 +101,7 @@ def install_fish_if_needed() -> Tuple[bool, bool]:
                 os_version = "13"
 
         debian_version = debian_repos.get(os_version, "Debian_13")
-        repo_url = f"http://download.opensuse.org/repositories/shells:/fish:/release:/4/{debian_version}/"
+        repo_url = f"https://download.opensuse.org/repositories/shells:/fish:/release:/4/{debian_version}/"
         key_url = f"https://download.opensuse.org/repositories/shells:fish:release:4/{debian_version}/Release.key"
 
         repo_list_path = "/etc/apt/sources.list.d/shells:fish:release:4.list"
@@ -111,7 +111,16 @@ def install_fish_if_needed() -> Tuple[bool, bool]:
             # (e.g. earlier run failed during key import) - breaks every 'apt update'
             key_repair_needed = os.path.exists(repo_list_path) and not is_fish_repo_key_present()
 
-            if not is_fish_repo_configured() or key_repair_needed:
+            # Migrate legacy plain-http repo entries to https
+            http_repair_needed = False
+            if os.path.exists(repo_list_path):
+                try:
+                    with open(repo_list_path) as repo_file:
+                        http_repair_needed = "http://" in repo_file.read()
+                except OSError:
+                    pass
+
+            if not is_fish_repo_configured() or key_repair_needed or http_repair_needed:
                 logger.info(f"Adding official Fish shell repository for {debian_version}...")
 
                 repo_list_content = f"deb {repo_url} /"
@@ -214,8 +223,21 @@ def install_fisher_if_needed() -> bool:
 
     logger.info("Installing Fisher plugin manager...")
     try:
+        # Bootstrap from the latest tagged release instead of the moving
+        # main branch (reproducible, no unreviewed HEAD code)
+        import requests
+        fisher_ref = "4.4.5"
+        try:
+            response = requests.get(
+                "https://api.github.com/repos/jorgebucaran/fisher/releases/latest", timeout=15
+            )
+            if response.status_code == 200:
+                fisher_ref = response.json().get("tag_name", fisher_ref).lstrip("v")
+        except Exception:
+            logger.warning(f"Could not resolve latest Fisher release, using {fisher_ref}")
         run_command(
-            'fish -c "curl -sL https://raw.githubusercontent.com/jorgebucaran/fisher/main/functions/fisher.fish | source && fisher install jorgebucaran/fisher"',
+            f'fish -c "curl -sL https://raw.githubusercontent.com/jorgebucaran/fisher/{fisher_ref}/functions/fisher.fish'
+            f' | source && fisher install jorgebucaran/fisher@{fisher_ref}"',
             shell=True, check=True
         )
         logger.info("Fisher installed successfully")

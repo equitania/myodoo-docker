@@ -47,7 +47,7 @@ function start {
         python3 /opt/odoo/odoo-server/odoo-bin -c $file $*
     else
         # Use su instead of sudo for user switching
-        su - odoo -c "python3 /opt/odoo/odoo-server/odoo-bin -c $file $*"
+        su - odoo --whitelist-environment=PGPASSWORD -c "python3 /opt/odoo/odoo-server/odoo-bin -c $file $*"
     fi
 
     SERVICE_PID=$!
@@ -69,7 +69,7 @@ function update {
         python3 /opt/odoo/odoo-server/odoo-bin --update=all --workers=0 --no-xmlrpc --stop-after-init $*
     else
         # Use su instead of sudo for user switching
-        su - odoo -c "python3 /opt/odoo/odoo-server/odoo-bin --update=all --workers=0 --no-xmlrpc --stop-after-init $*"
+        su - odoo --whitelist-environment=PGPASSWORD -c "python3 /opt/odoo/odoo-server/odoo-bin --update=all --workers=0 --no-xmlrpc --stop-after-init $*"
     fi
 
     SERVICE_PID=$!
@@ -91,7 +91,7 @@ function neutralize {
         python3 /opt/odoo/odoo-server/odoo-bin neutralize --workers=0 --no-xmlrpc --stop-after-init $*
     else
         # Use su instead of sudo for user switching
-        su - odoo -c "python3 /opt/odoo/odoo-server/odoo-bin neutralize --workers=0 --no-xmlrpc --stop-after-init $*"
+        su - odoo --whitelist-environment=PGPASSWORD -c "python3 /opt/odoo/odoo-server/odoo-bin neutralize --workers=0 --no-xmlrpc --stop-after-init $*"
     fi
 
     SERVICE_PID=$!

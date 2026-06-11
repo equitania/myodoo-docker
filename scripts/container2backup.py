@@ -3,8 +3,8 @@
 # ==============================================================================
 # Title:            container2backup.py
 # Description:      Script to backup Odoo database including FileStore under Docker
-# Version:          4.5.1
-# Date:             27.05.2026
+# Version:          4.6.0
+# Date:             11.06.2026
 # Author:           Equitania Software GmbH
 # ==============================================================================
 # Feature Overview:
@@ -13,7 +13,8 @@
 #   - FastReport backup integration
 #   - Service backups (nginx, letsencrypt, docker builds)
 #   - Multiple compression formats (7z, zip, gzip, zstd)
-#   - Optional AES-256 encryption (7z format only)
+#   - Optional AES-256 encryption via GPG (7z format only, output: .7z.gpg;
+#     falls back to 7z -p AES when gnupg is not installed)
 #   - Automatic cleanup of old backups
 # ==============================================================================
 #    Copyright (C) 2014-now Equitania Software GmbH(<http://www.equitania.de>).
@@ -187,8 +188,42 @@ def get_encryption_settings():
     if enabled and not password:
         print("WARNING: Encryption enabled but no password set in .env file")
         enabled = False
-    
+
     return enabled, password
+
+def encrypt_file_with_gpg(file_path, password):
+    """
+    Encrypts a file with GPG symmetric AES-256 encryption.
+    The passphrase is passed via file descriptor, never via argv,
+    so it is not visible in the process list (ps aux).
+
+    Decrypt with: gpg -d backup.7z.gpg > backup.7z
+
+    Returns the encrypted file path, or None on failure.
+    """
+    encrypted_path = file_path + '.gpg'
+    read_fd, write_fd = os.pipe()
+    try:
+        os.write(write_fd, password.encode('utf-8'))
+    finally:
+        os.close(write_fd)
+    try:
+        result = subprocess.run(
+            ['gpg', '--batch', '--yes', '--symmetric', '--cipher-algo', 'AES256',
+             '--passphrase-fd', str(read_fd), '--output', encrypted_path, file_path],
+            pass_fds=(read_fd,), stdout=subprocess.PIPE, stderr=subprocess.PIPE
+        )
+    finally:
+        os.close(read_fd)
+
+    if result.returncode != 0:
+        if result.stderr:
+            print(f"GPG error: {result.stderr.decode(errors='replace')}")
+        return None
+    if not os.path.exists(encrypted_path) or os.path.getsize(encrypted_path) == 0:
+        return None
+    os.remove(file_path)  # remove the unencrypted archive
+    return encrypted_path
 
 def create_backup(db_name, db_user, sql_container, data_container, backup_path, timestamp, additional_paths=None, only_sql_dump=False):
     """
@@ -541,6 +576,7 @@ def compress_directory(source_dir, output_file_base, config, only_sql_dump=False
             else:
                 print(f"Found SQL dump file: {sql_dump_file}, size: {os.path.getsize(sql_dump_file)} bytes")
                 
+        gpg_encrypt_pending = False
         if compression_format == '7z':
             # Überprüfen, ob 7zz verfügbar ist
             if not tools['7zz']:
@@ -551,7 +587,16 @@ def compress_directory(source_dir, output_file_base, config, only_sql_dump=False
             output_file = f"{output_file_base}.7z"
             zip_args = ['7zz', 'a', f'-mx={compression_level}', '-t7z']
             if encryption_enabled:
-                zip_args.extend(['-p' + password, '-mhe=on'])
+                if shutil.which('gpg'):
+                    # Encrypt with GPG after archiving: 7z's -p switch exposes
+                    # the password in the process list (ps aux) for the whole
+                    # compression run - GPG takes the passphrase via fd instead.
+                    gpg_encrypt_pending = True
+                else:
+                    print("WARNING: gpg not found - falling back to 7z AES encryption.")
+                    print("WARNING: The backup password is visible in the process list while 7zz runs.")
+                    print("Install gnupg (apt-get install gnupg) for secure encryption.")
+                    zip_args.extend(['-p' + password, '-mhe=on'])
                 
             # In SQL-only mode, only include dump.sql file
             if only_sql_dump:
@@ -698,6 +743,19 @@ def compress_directory(source_dir, output_file_base, config, only_sql_dump=False
         if os.path.exists(output_file):
             file_size = os.path.getsize(output_file)
             print(f"Archive created successfully: {output_file} (size: {file_size} bytes)")
+            if gpg_encrypt_pending:
+                print(f"Encrypting archive with GPG (AES-256): {output_file}.gpg")
+                encrypted_file = encrypt_file_with_gpg(output_file, password)
+                if encrypted_file is None:
+                    # Keep the unencrypted backup rather than losing it -
+                    # a plaintext backup beats no backup, but warn loudly.
+                    print("WARNING: GPG encryption FAILED - keeping UNENCRYPTED archive!")
+                    print(f"WARNING: {output_file} is NOT encrypted.")
+                    return output_file
+                encrypted_size = os.path.getsize(encrypted_file)
+                print(f"Archive encrypted successfully: {encrypted_file} (size: {encrypted_size} bytes)")
+                print("Decrypt with: gpg -d <file>.7z.gpg > <file>.7z")
+                return encrypted_file
             return output_file
         else:
             print(f"Error: Output file {output_file} was not created")
@@ -908,12 +966,18 @@ if __name__ == "__main__":
         rsync_config = config.get('rsync', {})
         if rsync_config.get('enabled', False):
             print("Executing rsync commands...")
+            import shlex
             rsync_commands = rsync_config.get('commands', [])
             for cmd in rsync_commands:
+                # Parse into an argument list (no shell) and only allow the
+                # rsync binary - the YAML config must not become a generic
+                # root command runner.
+                cmd_args = shlex.split(cmd)
+                if not cmd_args or os.path.basename(cmd_args[0]) != 'rsync':
+                    print(f"SECURITY: Skipping non-rsync command from config: {cmd}")
+                    continue
                 print(f"Running: {cmd}")
-                # Use shlex.split to safely parse command string into argument list
-                import shlex
-                subprocess.run(shlex.split(cmd), check=False)
+                subprocess.run(cmd_args, check=False)
             
     except yaml.YAMLError as e:
         print(f"Error reading YAML configuration: {str(e)}")

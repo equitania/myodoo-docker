@@ -127,7 +127,16 @@ def install_starship_if_needed() -> bool:
 
     logger.info("Installing Starship prompt...")
     try:
-        run_command("curl -sS https://starship.rs/install.sh | sh -s -- -y", shell=True, check=True)
+        # Download the official release binary from GitHub instead of piping
+        # the remote install.sh into a root shell
+        machine = get_system_architecture().lower()
+        target = "aarch64-unknown-linux-musl" if machine in ("aarch64", "arm64") else "x86_64-unknown-linux-musl"
+        tarball_url = f"https://github.com/starship/starship/releases/latest/download/starship-{target}.tar.gz"
+        tmp_tarball = "/tmp/starship.tar.gz"
+        run_command(f"curl -fsSL {tarball_url} -o {tmp_tarball}", shell=True, check=True)
+        run_command(f"sudo tar -xzf {tmp_tarball} -C /usr/local/bin starship", shell=True, check=True)
+        run_command("sudo chmod 755 /usr/local/bin/starship", shell=True, check=True)
+        os.remove(tmp_tarball)
 
         installed, new_version = is_starship_installed()
         if installed:
@@ -243,7 +252,24 @@ def install_zoxide_if_needed() -> bool:
 
     logger.info("Installing zoxide...")
     try:
-        run_command("curl -sSfL https://raw.githubusercontent.com/ajeetdsouza/zoxide/main/install.sh | sh", shell=True, check=True)
+        # Prefer the distro package; fall back to the official .deb release
+        # from GitHub (replaces the former `curl install.sh | sh` pipe)
+        try:
+            run_command("sudo apt-get install -y zoxide", shell=True, check=True)
+        except Exception:
+            import requests
+            response = requests.get(
+                "https://api.github.com/repos/ajeetdsouza/zoxide/releases/latest", timeout=15
+            )
+            response.raise_for_status()
+            latest_version = response.json()["tag_name"].lstrip("v")
+            machine = get_system_architecture().lower()
+            deb_arch = "arm64" if machine in ("aarch64", "arm64") else "amd64"
+            deb_url = f"https://github.com/ajeetdsouza/zoxide/releases/download/v{latest_version}/zoxide_{latest_version}-1_{deb_arch}.deb"
+            deb_file = f"/tmp/zoxide_{latest_version}_{deb_arch}.deb"
+            run_command(f"curl -fsSL {deb_url} -o {deb_file}", shell=True, check=True)
+            run_command(f"sudo dpkg -i {deb_file}", shell=True, check=True)
+            os.remove(deb_file)
 
         installed, new_version = is_zoxide_installed()
         if installed:

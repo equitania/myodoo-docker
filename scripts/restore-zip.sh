@@ -1,5 +1,5 @@
 #!/bin/bash
-# Version 1.3.0 - Stand 17.03.2026
+# Version 1.4.0 - Stand 11.06.2026
 # Mit diesem Skript wird ein Restore einer Odoo Datenbank auf Basis von Docker durchgeführt
 # Das FileStore wird in den Odoo Container und die Datenbank in den PostgreSQL Container eingespielt
 # With this script you can restore a Odoo db in postgresql on base of Docker
@@ -225,10 +225,12 @@ then
     cd "$HOME"
 
     # Helper function to execute SQL via docker exec
+    # Password is forwarded from the client environment (-e PGPASSWORD without
+    # value) so it never appears in the docker/psql argv (visible via ps).
     run_sql() {
         local sql="$1"
         echo "$sql"
-        docker exec -i "$mydbcontainer" env PGPASSWORD="$mypgpassword" psql -d "$mydb" -U "$mydbuser" -h "$mydbserver" -c "$sql"
+        PGPASSWORD="$mypgpassword" docker exec -i -e PGPASSWORD "$mydbcontainer" psql -d "$mydb" -U "$mydbuser" -h "$mydbserver" -c "$sql"
     }
 
     if [[ "$myrunsql" == "v10" ]] || [[ "$myrunsql" == "v12" ]] || [[ "$myrunsql" == "v13" ]] || [[ "$myrunsql" == "v14" ]] || [[ "$myrunsql" == "v15" ]] || [[ "$myrunsql" == "v16" ]]

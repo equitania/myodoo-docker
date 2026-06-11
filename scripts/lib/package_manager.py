@@ -80,7 +80,22 @@ def ensure_uv() -> bool:
 
     logger.info("Installing uv...")
     try:
-        run_command("curl -LsSf https://astral.sh/uv/install.sh | sh", shell=True, check=True)
+        # Install from the official GitHub release tarball (replaces the
+        # former `curl https://astral.sh/uv/install.sh | sh` pipe)
+        import platform
+        machine = platform.machine().lower()
+        target = "aarch64-unknown-linux-gnu" if machine in ("aarch64", "arm64") else "x86_64-unknown-linux-gnu"
+        tarball_url = f"https://github.com/astral-sh/uv/releases/latest/download/uv-{target}.tar.gz"
+        tmp_tarball = "/tmp/uv.tar.gz"
+        local_bin = os.path.expanduser("~/.local/bin")
+        os.makedirs(local_bin, exist_ok=True)
+        run_command(f"curl -fsSL {tarball_url} -o {tmp_tarball}", shell=True, check=True)
+        run_command(
+            f"tar -xzf {tmp_tarball} -C {local_bin} --strip-components=1 uv-{target}/uv uv-{target}/uvx",
+            shell=True, check=True
+        )
+        run_command(f"chmod 755 {local_bin}/uv {local_bin}/uvx", shell=True, check=True)
+        os.remove(tmp_tarball)
         # Ensure ~/.local/bin is in PATH for current session
         local_bin = os.path.expanduser("~/.local/bin")
         if local_bin not in os.environ.get("PATH", ""):

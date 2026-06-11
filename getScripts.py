@@ -55,7 +55,7 @@ if os.environ.get('GETSCRIPTS_DEBUG', '').lower() in ('1', 'true', 'yes'):
     logger.debug("Debug logging enabled")
 
 # Script version and date
-SCRIPT_VERSION = "9.2.0"
+SCRIPT_VERSION = "9.3.0"
 SCRIPT_DATE = "11.06.2026"
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -521,7 +521,7 @@ def install_fish_if_needed() -> Tuple[bool, bool]:
                 os_version = "13"
 
         debian_version = debian_repos.get(os_version, "Debian_13")
-        repo_url = f"http://download.opensuse.org/repositories/shells:/fish:/release:/4/{debian_version}/"
+        repo_url = f"https://download.opensuse.org/repositories/shells:/fish:/release:/4/{debian_version}/"
         key_url = f"https://download.opensuse.org/repositories/shells:fish:release:4/{debian_version}/Release.key"
 
         repo_list_path = "/etc/apt/sources.list.d/shells:fish:release:4.list"
@@ -531,8 +531,17 @@ def install_fish_if_needed() -> Tuple[bool, bool]:
             # (e.g. earlier run failed during key import) - breaks every 'apt update'
             key_repair_needed = os.path.exists(repo_list_path) and not is_fish_repo_key_present()
 
+            # Migrate legacy plain-http repo entries to https
+            http_repair_needed = False
+            if os.path.exists(repo_list_path):
+                try:
+                    with open(repo_list_path) as repo_file:
+                        http_repair_needed = "http://" in repo_file.read()
+                except OSError:
+                    pass
+
             # Check if repository needs to be added or repaired
-            if not is_fish_repo_configured() or key_repair_needed:
+            if not is_fish_repo_configured() or key_repair_needed or http_repair_needed:
                 logger.info(f"Adding official Fish shell repository for {debian_version}...")
 
                 # Add repository
@@ -644,6 +653,9 @@ def is_starship_installed() -> Tuple[bool, Optional[str]]:
 def install_starship_if_needed() -> bool:
     """Install Starship prompt if not installed.
 
+    Downloads the official release binary from GitHub instead of piping
+    the remote install.sh into a root shell.
+
     Returns:
         bool: True if Starship is available
     """
@@ -655,8 +667,15 @@ def install_starship_if_needed() -> bool:
 
     logger.info("Installing Starship prompt...")
     try:
-        # Install via official installer
-        run_command("curl -sS https://starship.rs/install.sh | sh -s -- -y", shell=True, check=True)
+        machine = platform.machine().lower()
+        target = "aarch64-unknown-linux-musl" if machine in ("aarch64", "arm64") else "x86_64-unknown-linux-musl"
+        tarball_url = f"https://github.com/starship/starship/releases/latest/download/starship-{target}.tar.gz"
+        tmp_tarball = "/tmp/starship.tar.gz"
+        logger.info(f"Downloading Starship release binary ({target})...")
+        run_command(f"curl -fsSL {tarball_url} -o {tmp_tarball}", shell=True, check=True)
+        run_command(f"sudo tar -xzf {tmp_tarball} -C /usr/local/bin starship", shell=True, check=True)
+        run_command("sudo chmod 755 /usr/local/bin/starship", shell=True, check=True)
+        os.remove(tmp_tarball)
 
         installed, new_version = is_starship_installed()
         if installed:
@@ -696,7 +715,21 @@ def install_fisher_if_needed() -> bool:
 
     logger.info("Installing Fisher plugin manager...")
     try:
-        install_cmd = 'fish -c "curl -sL https://raw.githubusercontent.com/jorgebucaran/fisher/main/functions/fisher.fish | source && fisher install jorgebucaran/fisher"'
+        # Bootstrap from the latest tagged release instead of the moving
+        # main branch (reproducible, no unreviewed HEAD code)
+        fisher_ref = "4.4.5"
+        try:
+            response = requests.get(
+                "https://api.github.com/repos/jorgebucaran/fisher/releases/latest", timeout=15
+            )
+            if response.status_code == 200:
+                fisher_ref = response.json().get("tag_name", fisher_ref).lstrip("v")
+        except Exception:
+            logger.warning(f"Could not resolve latest Fisher release, using {fisher_ref}")
+        install_cmd = (
+            f'fish -c "curl -sL https://raw.githubusercontent.com/jorgebucaran/fisher/{fisher_ref}/functions/fisher.fish'
+            f' | source && fisher install jorgebucaran/fisher@{fisher_ref}"'
+        )
         run_command(install_cmd, shell=True, check=True)
 
         if is_fisher_installed():
@@ -1253,10 +1286,17 @@ def install_zoxide_if_needed(target_version: Optional[str] = None) -> None:
             logger.warning("zoxide is optional - continuing without it.")
             return
 
-    # Fallback: curl-based installation for other distributions
+    # Fallback: install the official .deb release from GitHub (replaces the
+    # former `curl install.sh | sh` pipe - no remote shell execution as root)
     try:
-        install_cmd = "curl -sSfL https://raw.githubusercontent.com/ajeetdsouza/zoxide/main/install.sh | sh"
-        result = run_command(install_cmd, shell=True, check=True, capture_output=True)
+        machine = platform.machine().lower()
+        deb_arch = "arm64" if machine in ("aarch64", "arm64") else "amd64"
+        deb_url = f"https://github.com/ajeetdsouza/zoxide/releases/download/v{latest_version}/zoxide_{latest_version}-1_{deb_arch}.deb"
+        deb_file = f"/tmp/zoxide_{latest_version}_{deb_arch}.deb"
+        logger.info(f"Downloading zoxide {latest_version} .deb package...")
+        run_command(f"curl -fsSL {deb_url} -o {deb_file}", shell=True, check=True)
+        run_command(f"sudo dpkg -i {deb_file}", shell=True, check=True, capture_output=True)
+        os.remove(deb_file)
         logger.info(f"zoxide {latest_version} installed successfully.")
     except Exception as e:
         logger.warning(f"zoxide installation failed (this is not critical): {str(e)}")
@@ -1601,14 +1641,30 @@ def is_uv_installed() -> bool:
     return False
 
 def install_uv() -> bool:
-    """Install uv via curl installer and run self update.
+    """Install uv from the official GitHub release tarball.
+
+    Replaces the former `curl https://astral.sh/uv/install.sh | sh` pipe -
+    no remote shell execution.
 
     Returns:
         bool: True if uv is available after installation
     """
     logger.info("Installing uv...")
     try:
-        run_command("curl -LsSf https://astral.sh/uv/install.sh | sh", shell=True)
+        machine = platform.machine().lower()
+        target = "aarch64-unknown-linux-gnu" if machine in ("aarch64", "arm64") else "x86_64-unknown-linux-gnu"
+        tarball_url = f"https://github.com/astral-sh/uv/releases/latest/download/uv-{target}.tar.gz"
+        tmp_tarball = "/tmp/uv.tar.gz"
+        local_bin = os.path.expanduser("~/.local/bin")
+        os.makedirs(local_bin, exist_ok=True)
+        logger.info(f"Downloading uv release tarball ({target})...")
+        run_command(f"curl -fsSL {tarball_url} -o {tmp_tarball}", shell=True, check=True)
+        run_command(
+            f"tar -xzf {tmp_tarball} -C {local_bin} --strip-components=1 uv-{target}/uv uv-{target}/uvx",
+            shell=True, check=True
+        )
+        run_command(f"chmod 755 {local_bin}/uv {local_bin}/uvx", shell=True, check=True)
+        os.remove(tmp_tarball)
         # Ensure ~/.local/bin and ~/.cargo/bin are in PATH for current session
         local_bin = os.path.expanduser("~/.local/bin")
         if local_bin not in os.environ.get("PATH", ""):
