@@ -55,8 +55,8 @@ if os.environ.get('GETSCRIPTS_DEBUG', '').lower() in ('1', 'true', 'yes'):
     logger.debug("Debug logging enabled")
 
 # Script version and date
-SCRIPT_VERSION = "9.1.0"
-SCRIPT_DATE = "01.06.2026"
+SCRIPT_VERSION = "9.2.0"
+SCRIPT_DATE = "11.06.2026"
 
 # ─────────────────────────────────────────────────────────────────────────────
 # Install report
@@ -392,6 +392,24 @@ def is_fish_repo_configured() -> bool:
 
     return False
 
+
+def is_fish_repo_key_present() -> bool:
+    """Check if the Fish OBS repository signing key is present.
+
+    A .list file without its signing key leaves apt broken system-wide
+    (signature verification fails on every 'apt update').
+
+    Returns:
+        bool: True if a signing key for the Fish OBS repo exists
+    """
+    key_files = [
+        "/etc/apt/trusted.gpg.d/shells_fish_release_4.asc",
+        "/etc/apt/trusted.gpg.d/shells_fish_release_4.gpg",
+    ]
+    # Empty key files (from failed downloads in earlier versions) count as missing
+    return any(os.path.isfile(key) and os.path.getsize(key) > 0 for key in key_files)
+
+
 def cleanup_duplicate_fish_repo() -> None:
     """Remove duplicate Fish repository entries.
     If both .list and .sources files exist, remove the .list file
@@ -506,22 +524,32 @@ def install_fish_if_needed() -> Tuple[bool, bool]:
         repo_url = f"http://download.opensuse.org/repositories/shells:/fish:/release:/4/{debian_version}/"
         key_url = f"https://download.opensuse.org/repositories/shells:fish:release:4/{debian_version}/Release.key"
 
+        repo_list_path = "/etc/apt/sources.list.d/shells:fish:release:4.list"
+
         try:
-            # Check if repository needs to be added
-            if not is_fish_repo_configured():
+            # Repair half-configured state: .list present but signing key missing
+            # (e.g. earlier run failed during key import) - breaks every 'apt update'
+            key_repair_needed = os.path.exists(repo_list_path) and not is_fish_repo_key_present()
+
+            # Check if repository needs to be added or repaired
+            if not is_fish_repo_configured() or key_repair_needed:
                 logger.info(f"Adding official Fish shell repository for {debian_version}...")
 
                 # Add repository
                 repo_list_content = f"deb {repo_url} /"
                 subprocess.run(
-                    ["sudo", "tee", "/etc/apt/sources.list.d/shells:fish:release:4.list"],
+                    ["sudo", "tee", repo_list_path],
                     input=repo_list_content.encode(), check=True, stdout=subprocess.DEVNULL
                 )
 
-                # Import GPG key
-                logger.info("Importing Fish shell repository GPG key...")
+                # Import signing key as ASCII-armored .asc (supported since apt 1.4,
+                # Debian 9+) - avoids dependency on gnupg, which minimal images lack.
+                # Download to temp file first so a failed download propagates as error
+                # instead of leaving an empty key file behind (no pipefail in /bin/sh).
+                logger.info("Importing Fish shell repository signing key...")
                 run_command(
-                    f"curl -fsSL {key_url} | gpg --dearmor | sudo tee /etc/apt/trusted.gpg.d/shells_fish_release_4.gpg > /dev/null",
+                    f"curl -fsSL {key_url} -o /tmp/shells_fish_release_4.asc && "
+                    "sudo mv /tmp/shells_fish_release_4.asc /etc/apt/trusted.gpg.d/shells_fish_release_4.asc",
                     shell=True, check=True
                 )
 
@@ -549,6 +577,33 @@ def install_fish_if_needed() -> Tuple[bool, bool]:
                 return True, needs_migration
         except Exception as e:
             logger.error(f"Failed to install/upgrade Fish from official repository: {e}")
+
+            # Remove the half-configured repo so apt keeps working system-wide
+            logger.info("Removing Fish OBS repository files to keep apt functional...")
+            run_command(
+                f"sudo rm -f {repo_list_path} "
+                "/etc/apt/trusted.gpg.d/shells_fish_release_4.asc "
+                "/etc/apt/trusted.gpg.d/shells_fish_release_4.gpg",
+                shell=True
+            )
+
+            # Fallback: install Fish from Debian repos (frozen version, better than
+            # none). The OBS repo setup is retried on the next script run.
+            try:
+                run_command("sudo apt update", check=True)
+                if not installed:
+                    logger.info("Installing Fish shell from Debian repositories (fallback)...")
+                    run_command("sudo apt install -y fish", check=True)
+                    needs_migration = True
+                installed, new_version = is_fish_installed()
+                if installed:
+                    logger.warning(
+                        f"Fish {new_version} available from Debian repos only - "
+                        "official OBS repo setup failed, will retry on next run"
+                    )
+                    return True, needs_migration
+            except Exception as fallback_error:
+                logger.error(f"Fallback installation from Debian repositories also failed: {fallback_error}")
             return installed, False
 
     else:
@@ -3635,8 +3690,10 @@ def main() -> None:
             if os.path.exists(misplaced_log):
                 logger.info(f"Removing misplaced log file: {misplaced_log}")
                 run_command(f"rm -f {misplaced_log}")
-        else:
+        elif fish_installed:
             logger.info("Fish already installed - skipping legacy cleanup")
+        else:
+            logger.warning("Fish is not installed - skipping legacy cleanup")
 
         # Copy fastfetch config
         config_directory = os.path.join(_myhome, ".config", "fastfetch")

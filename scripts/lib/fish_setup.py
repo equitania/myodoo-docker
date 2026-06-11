@@ -11,7 +11,12 @@ from typing import Tuple
 
 from .logging_config import get_logger
 from .system_utils import run_command, get_os_info, is_root_or_has_sudo, ensure_directory_exists
-from .shell_detection import is_fish_installed, is_fish_repo_configured, cleanup_duplicate_fish_repo
+from .shell_detection import (
+    is_fish_installed,
+    is_fish_repo_configured,
+    is_fish_repo_key_present,
+    cleanup_duplicate_fish_repo,
+)
 
 
 def install_fish_if_needed() -> Tuple[bool, bool]:
@@ -99,19 +104,30 @@ def install_fish_if_needed() -> Tuple[bool, bool]:
         repo_url = f"http://download.opensuse.org/repositories/shells:/fish:/release:/4/{debian_version}/"
         key_url = f"https://download.opensuse.org/repositories/shells:fish:release:4/{debian_version}/Release.key"
 
+        repo_list_path = "/etc/apt/sources.list.d/shells:fish:release:4.list"
+
         try:
-            if not is_fish_repo_configured():
+            # Repair half-configured state: .list present but signing key missing
+            # (e.g. earlier run failed during key import) - breaks every 'apt update'
+            key_repair_needed = os.path.exists(repo_list_path) and not is_fish_repo_key_present()
+
+            if not is_fish_repo_configured() or key_repair_needed:
                 logger.info(f"Adding official Fish shell repository for {debian_version}...")
 
                 repo_list_content = f"deb {repo_url} /"
                 run_command(
-                    f"echo '{repo_list_content}' | sudo tee /etc/apt/sources.list.d/shells:fish:release:4.list",
+                    f"echo '{repo_list_content}' | sudo tee {repo_list_path}",
                     shell=True, check=True
                 )
 
-                logger.info("Importing Fish shell repository GPG key...")
+                # Import signing key as ASCII-armored .asc (supported since apt 1.4,
+                # Debian 9+) - avoids dependency on gnupg, which minimal images lack.
+                # Download to temp file first so a failed download propagates as error
+                # instead of leaving an empty key file behind (no pipefail in /bin/sh).
+                logger.info("Importing Fish shell repository signing key...")
                 run_command(
-                    f"curl -fsSL {key_url} | gpg --dearmor | sudo tee /etc/apt/trusted.gpg.d/shells_fish_release_4.gpg > /dev/null",
+                    f"curl -fsSL {key_url} -o /tmp/shells_fish_release_4.asc && "
+                    "sudo mv /tmp/shells_fish_release_4.asc /etc/apt/trusted.gpg.d/shells_fish_release_4.asc",
                     shell=True, check=True
                 )
 
@@ -136,6 +152,33 @@ def install_fish_if_needed() -> Tuple[bool, bool]:
                 return True, needs_migration
         except Exception as e:
             logger.error(f"Failed to install/upgrade Fish from official repository: {e}")
+
+            # Remove the half-configured repo so apt keeps working system-wide
+            logger.info("Removing Fish OBS repository files to keep apt functional...")
+            run_command(
+                f"sudo rm -f {repo_list_path} "
+                "/etc/apt/trusted.gpg.d/shells_fish_release_4.asc "
+                "/etc/apt/trusted.gpg.d/shells_fish_release_4.gpg",
+                shell=True
+            )
+
+            # Fallback: install Fish from Debian repos (frozen version, better than
+            # none). The OBS repo setup is retried on the next script run.
+            try:
+                run_command("sudo apt update", check=True)
+                if not installed:
+                    logger.info("Installing Fish shell from Debian repositories (fallback)...")
+                    run_command("sudo apt install -y fish", check=True)
+                    needs_migration = True
+                installed, new_version = is_fish_installed()
+                if installed:
+                    logger.warning(
+                        f"Fish {new_version} available from Debian repos only - "
+                        "official OBS repo setup failed, will retry on next run"
+                    )
+                    return True, needs_migration
+            except Exception as fallback_error:
+                logger.error(f"Fallback installation from Debian repositories also failed: {fallback_error}")
             return installed, False
 
     else:

@@ -165,6 +165,24 @@ def is_fish_repo_configured() -> bool:
     return False
 
 
+def is_fish_repo_key_present() -> bool:
+    """
+    Check if the Fish OBS repository signing key is present.
+
+    A .list file without its signing key leaves apt broken system-wide
+    (signature verification fails on every 'apt update').
+
+    Returns:
+        bool: True if a signing key for the Fish OBS repo exists
+    """
+    key_files = [
+        "/etc/apt/trusted.gpg.d/shells_fish_release_4.asc",
+        "/etc/apt/trusted.gpg.d/shells_fish_release_4.gpg",
+    ]
+    # Empty key files (from failed downloads in earlier versions) count as missing
+    return any(os.path.isfile(key) and os.path.getsize(key) > 0 for key in key_files)
+
+
 def cleanup_duplicate_fish_repo() -> None:
     """
     Remove duplicate Fish repository entries.
