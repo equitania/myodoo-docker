@@ -56,28 +56,32 @@ fail2ban:
       maxretry: 3
       bantime: 86400
 
+    # nginx jails parse the real host-nginx logs (reverse proxy). The previous
+    # /var/log/fail2ban_nginx-*.log paths were never written by anything, so
+    # --apply auto-disabled these jails on every run while the audit kept
+    # reporting them as errors.
     nginx-http-auth:
       enabled: true
       port: "http,https"
-      logpath: "/var/log/fail2ban_nginx-http-auth.log"
+      logpath: "/var/log/nginx/error.log"
       maxretry: 3
 
     nginx-limit-req:
       enabled: true
       port: "http,https"
-      logpath: "/var/log/fail2ban_nginx-limit-req.log"
+      logpath: "/var/log/nginx/error.log"
       maxretry: 5
 
     nginx-botsearch:
       enabled: true
       port: "http,https"
-      logpath: "/var/log/fail2ban_nginx-botsearch.log"
+      logpath: "/var/log/nginx/error.log"
       maxretry: 3
 
     nginx-bad-request:
       enabled: true
       port: "http,https"
-      logpath: "/var/log/fail2ban_nginx-bad-request.log"
+      logpath: "/var/log/nginx/access.log"
       maxretry: 3
 
   recidive:
@@ -202,11 +206,15 @@ nginx:
     server_tokens: "off"
     client_max_body_size: "16M"
     ssl_protocols: "TLSv1.2 TLSv1.3"
+  # Aligned with nginx/nginxconfig.io/security.conf v1.3 (single source of
+  # truth for headers). X-XSS-Protection was removed there (deprecated, can
+  # introduce XSS in old browsers) and must not be expected here anymore.
   security_headers:
     X-Frame-Options: "SAMEORIGIN"
     X-Content-Type-Options: "nosniff"
-    X-XSS-Protection: "1; mode=block"
     Referrer-Policy: "strict-origin-when-cross-origin"
+    Content-Security-Policy: "default-src 'self' http: https: ws: wss: data: blob: 'unsafe-inline'; frame-ancestors 'self';"
+    Permissions-Policy: "interest-cohort=()"
     Strict-Transport-Security: "max-age=63072000; includeSubDomains; preload"
 
 # --- Kernel-Modul-Blacklist ---
