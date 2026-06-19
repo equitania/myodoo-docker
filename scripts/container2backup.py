@@ -44,6 +44,7 @@ import os
 import io
 import sys
 import csv
+import json
 import datetime, time
 import os.path
 import re
@@ -366,25 +367,31 @@ def resolve_filestore_host_path(data_container, db_name):
     Returns the host path (str) only if it exists as a directory, else None.
     """
     container_path = f"/opt/odoo/data/filestore/{db_name}"
+    # Parse the raw JSON from `docker inspect` rather than a Go --format template:
+    # a template like {{"\n"}} is fragile (Python turns \n into a real newline,
+    # which Go then rejects as an invalid string literal). JSON is unambiguous.
     try:
         proc = subprocess.run(
-            ['docker', 'inspect', '-f',
-             '{{range .Mounts}}{{.Destination}}|{{.Source}}{{"\n"}}{{end}}',
-             data_container],
+            ['docker', 'inspect', data_container],
             stdout=subprocess.PIPE, stderr=subprocess.PIPE, check=False,
         )
     except OSError:
         return None
     if proc.returncode != 0:
         return None
+    try:
+        info = json.loads(proc.stdout.decode(errors='replace'))
+    except ValueError:
+        return None
+    if not isinstance(info, list) or not info:
+        return None
+    mounts = info[0].get('Mounts') or []
 
     best_dest = None
     best_source = None
-    for line in proc.stdout.decode(errors='replace').splitlines():
-        if '|' not in line:
-            continue
-        dest, source = line.split('|', 1)
-        dest, source = dest.strip(), source.strip()
+    for mount in mounts:
+        dest = (mount.get('Destination') or '').strip()
+        source = (mount.get('Source') or '').strip()
         if not dest or not source:
             continue
         # dest must be container_path itself or a parent directory of it.
