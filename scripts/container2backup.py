@@ -3,8 +3,8 @@
 # ==============================================================================
 # Title:            container2backup.py
 # Description:      Script to backup Odoo database including FileStore under Docker
-# Version:          4.6.0
-# Date:             11.06.2026
+# Version:          4.7.0
+# Date:             19.06.2026
 # Author:           Equitania Software GmbH
 # ==============================================================================
 # Feature Overview:
@@ -13,6 +13,12 @@
 #   - FastReport backup integration
 #   - Service backups (nginx, letsencrypt, docker builds)
 #   - Multiple compression formats (7z, zip, gzip, zstd)
+#   - Streaming full backup (opt-in via 'stream: true'): pipes pg_dump + the
+#     filestore (read in-place from the host volume) straight into a single
+#     .tar.zst on the target, so the backup medium no longer needs room for an
+#     uncompressed staging copy of the filestore. Restore-compatible (.tar.zst).
+#   - Disk pre-flight check before full backups (aborts cleanly when the
+#     temp/target mount cannot hold the backup)
 #   - Optional AES-256 encryption via GPG (7z format only, output: .7z.gpg;
 #     falls back to 7z -p AES when gnupg is not installed)
 #   - Automatic cleanup of old backups
@@ -49,6 +55,13 @@ import tempfile
 import shutil
 import platform
 import argparse  # Add argparse for command line parameters
+import signal  # Decode negative subprocess returncodes (signal kills) for diagnostics
+
+# Single source of truth for the version banner printed at runtime. Keep these
+# in sync with the header comment above. The __main__ banner is derived from
+# these constants so it cannot silently drift out of date again.
+SCRIPT_VERSION = "4.7.0"
+SCRIPT_DATE = "19.06.2026"
 
 # Whitelist for database names and Docker container names. Both propagate
 # into filesystem paths and subprocess argv, so restrict to shell-inert chars.
@@ -225,10 +238,300 @@ def encrypt_file_with_gpg(file_path, password):
     os.remove(file_path)  # remove the unencrypted archive
     return encrypted_path
 
-def create_backup(db_name, db_user, sql_container, data_container, backup_path, timestamp, additional_paths=None, only_sql_dump=False):
+
+def _free_bytes(path):
+    """Free bytes on the filesystem that holds ``path``.
+
+    Walks up to the nearest existing parent so it works even when ``path``
+    itself does not exist yet (e.g. the target archive). Returns None if it
+    cannot be determined.
+    """
+    probe = path
+    while probe and not os.path.exists(probe):
+        parent = os.path.dirname(probe)
+        if parent == probe:
+            break
+        probe = parent
+    try:
+        return shutil.disk_usage(probe or '/').free
+    except OSError:
+        return None
+
+
+def _human(num_bytes):
+    """Render a byte count as a human-readable string (or 'unknown')."""
+    if num_bytes is None:
+        return "unknown"
+    value = float(num_bytes)
+    for unit in ('B', 'KiB', 'MiB', 'GiB', 'TiB'):
+        if abs(value) < 1024.0 or unit == 'TiB':
+            return f"{value:.1f} {unit}"
+        value /= 1024.0
+
+
+def _report_failure_context(label, cmd, returncode, stdout, stderr, related_paths):
+    """Print everything needed to diagnose a failed compression/stream step.
+
+    The previous behaviour swallowed the real cause: it printed only a generic
+    "Error creating archive" line and the stderr *only if* it was non-empty,
+    never the return code, the signal, the stdout, or the free disk space.
+    """
+    print(f"Error: {label} failed")
+    if cmd is not None:
+        printable = ' '.join(cmd) if isinstance(cmd, (list, tuple)) else str(cmd)
+        print(f"  Command: {printable}")
+    if returncode is not None:
+        if returncode < 0:
+            try:
+                sig_name = signal.Signals(-returncode).name
+            except (ValueError, KeyError):
+                sig_name = f"signal {-returncode}"
+            print(f"  Return code: {returncode} (killed by {sig_name} - "
+                  f"often the OOM killer or a manual kill)")
+        else:
+            print(f"  Return code: {returncode}")
+
+    def _decode(blob):
+        if not blob:
+            return ''
+        return blob.decode(errors='replace') if hasattr(blob, 'decode') else str(blob)
+
+    err_text = _decode(stderr).strip()
+    out_text = _decode(stdout).strip()
+    if err_text:
+        print(f"  stderr: {err_text}")
+    if out_text:
+        print(f"  stdout: {out_text}")
+    if not err_text and not out_text:
+        print("  (no stderr/stdout captured - empty output usually means the "
+              "process was killed by a signal before it could report)")
+    for p in related_paths or []:
+        print(f"  Free space on mount for {p}: {_human(_free_bytes(p))}")
+
+
+def _remove_partial_archive(output_file):
+    """Delete a half-written archive after a failure.
+
+    Without this a truncated file is left behind and an external monitor that
+    only checks for file existence would treat it as a valid backup.
+    """
+    if output_file and os.path.exists(output_file):
+        try:
+            os.remove(output_file)
+            print(f"  Removed partial/incomplete archive: {output_file}")
+        except OSError as exc:
+            print(f"  Could not remove partial archive {output_file}: {exc}")
+
+
+def get_database_size_bytes(sql_container, db_user, db_name):
+    """Return the on-disk size of the database in bytes via pg_database_size,
+    or None if it cannot be determined."""
+    try:
+        proc = subprocess.run(
+            ['docker', 'exec', sql_container, 'psql', '-U', db_user, '-d', db_name,
+             '-tAc', f"SELECT pg_database_size('{db_name}')"],
+            stdout=subprocess.PIPE, stderr=subprocess.PIPE, check=False,
+        )
+        if proc.returncode == 0:
+            return int(proc.stdout.decode(errors='replace').strip())
+    except (ValueError, OSError):
+        pass
+    return None
+
+
+def get_filestore_size_bytes(data_container, db_name):
+    """Return the size of the container filestore in bytes via ``du -sb``,
+    or None if it cannot be determined."""
+    src_path = f"/opt/odoo/data/filestore/{db_name}"
+    try:
+        proc = subprocess.run(
+            ['docker', 'exec', data_container, 'du', '-sb', src_path],
+            stdout=subprocess.PIPE, stderr=subprocess.PIPE, check=False,
+        )
+        if proc.returncode == 0:
+            return int(proc.stdout.decode(errors='replace').split()[0])
+    except (ValueError, IndexError, OSError):
+        pass
+    return None
+
+
+def resolve_filestore_host_path(data_container, db_name):
+    """Resolve the host filesystem path of the container's filestore directory.
+
+    The filestore lives at the container path /opt/odoo/data/filestore/<db>.
+    We inspect the container's mounts and find the one whose Destination is the
+    longest prefix of that container path, then map it onto the host Source.
+    This lets us read the filestore IN-PLACE (no uncompressed staging copy).
+
+    Returns the host path (str) only if it exists as a directory, else None.
+    """
+    container_path = f"/opt/odoo/data/filestore/{db_name}"
+    try:
+        proc = subprocess.run(
+            ['docker', 'inspect', '-f',
+             '{{range .Mounts}}{{.Destination}}|{{.Source}}{{"\n"}}{{end}}',
+             data_container],
+            stdout=subprocess.PIPE, stderr=subprocess.PIPE, check=False,
+        )
+    except OSError:
+        return None
+    if proc.returncode != 0:
+        return None
+
+    best_dest = None
+    best_source = None
+    for line in proc.stdout.decode(errors='replace').splitlines():
+        if '|' not in line:
+            continue
+        dest, source = line.split('|', 1)
+        dest, source = dest.strip(), source.strip()
+        if not dest or not source:
+            continue
+        # dest must be container_path itself or a parent directory of it.
+        if container_path == dest or container_path.startswith(dest.rstrip('/') + '/'):
+            if best_dest is None or len(dest) > len(best_dest):
+                best_dest, best_source = dest, source
+
+    if not best_dest:
+        return None
+    remainder = container_path[len(best_dest.rstrip('/')):]
+    host_path = best_source.rstrip('/') + remainder
+    return host_path if os.path.isdir(host_path) else None
+
+
+def disk_preflight(temp_dir, dest_dir, db_size, filestore_size, streaming):
+    """Check there is enough free space before a full backup starts.
+
+    Streaming (Design A) only stages the SQL dump in temp; the filestore is
+    streamed compressed straight to the target. Legacy staging needs room for
+    the uncompressed dump AND the uncompressed filestore in temp, plus the
+    archive in the target.
+
+    Returns (ok: bool, message: str). Unknown sizes -> ok=True (log only); we
+    do not refuse a backup just because a size probe failed.
+    """
+    free_temp = _free_bytes(temp_dir)
+    free_dest = _free_bytes(dest_dir)
+    print(f"Disk pre-flight: db_size={_human(db_size)}, "
+          f"filestore_size={_human(filestore_size)}, "
+          f"free(temp)={_human(free_temp)}, free(target)={_human(free_dest)}, "
+          f"mode={'streaming' if streaming else 'staging'}")
+
+    if db_size is None:
+        return True, "size unknown - skipping space check"
+
+    same_mount = (free_temp is not None and free_dest is not None
+                  and os.stat(_existing_parent(temp_dir)).st_dev
+                  == os.stat(_existing_parent(dest_dir)).st_dev)
+
+    if streaming:
+        # temp only holds the uncompressed dump.
+        need_temp = int(db_size * 1.2)
+        if free_temp is not None and free_temp < need_temp:
+            return False, (f"temp mount needs ~{_human(need_temp)} for the SQL "
+                           f"dump but only {_human(free_temp)} is free")
+        return True, "ok"
+
+    # Legacy staging: dump + filestore uncompressed in temp, plus archive in dest.
+    fs = filestore_size or 0
+    need_temp = int((db_size + fs) * 1.1)
+    if same_mount:
+        # both staging and archive compete for the same free space.
+        need = int((db_size + fs) * 1.1 + (db_size + fs) * 0.4)
+        if free_temp is not None and free_temp < need:
+            return False, (f"backup mount needs ~{_human(need)} (uncompressed "
+                           f"staging + archive) but only {_human(free_temp)} is free")
+    else:
+        if free_temp is not None and free_temp < need_temp:
+            return False, (f"temp mount needs ~{_human(need_temp)} for uncompressed "
+                           f"staging but only {_human(free_temp)} is free")
+    return True, "ok"
+
+
+def _existing_parent(path):
+    """Nearest existing ancestor of path (for stat/dev comparisons)."""
+    probe = path
+    while probe and not os.path.exists(probe):
+        parent = os.path.dirname(probe)
+        if parent == probe:
+            break
+        probe = parent
+    return probe or '/'
+
+
+def stream_full_backup(temp_dir, output_file_base, host_filestore_path,
+                       db_name, compression_level):
+    """Design A: stream dump.sql + the in-place filestore into one .tar.zst.
+
+    Pre-condition: ``temp_dir/dump.sql`` already exists (plain-text dump).
+    A symlink ``temp_dir/filestore`` -> ``host_filestore_path`` is created so a
+    single ``tar -h`` run archives the dump plus the filestore (dereferenced)
+    as ``filestore/...`` - the exact layout restore-zip.sh expects. The tar
+    stream is piped through zstd straight to the target; the filestore is never
+    copied to disk.
+
+    Returns the output file path on success, else None.
+    """
+    output_file = f"{output_file_base}.tar.zst"
+    symlink_path = os.path.join(temp_dir, "filestore")
+    dest_dir = os.path.dirname(output_file)
+
+    # (Re)create the symlink that points tar at the in-place filestore.
+    try:
+        if os.path.islink(symlink_path) or os.path.exists(symlink_path):
+            os.remove(symlink_path)
+        os.symlink(host_filestore_path, symlink_path)
+    except OSError as exc:
+        print(f"Error: could not create filestore symlink for streaming: {exc}")
+        return None
+
+    print(f"Streaming full backup to {output_file}")
+    print(f"  Filestore read in-place from host: {host_filestore_path}")
+
+    # tar dereferences the 'filestore' symlink (-h) so its target is archived
+    # as a real directory named 'filestore'. dump.sql is a regular file.
+    tar_cmd = ['tar', '-C', temp_dir, '-h', '-cf', '-', 'dump.sql', 'filestore']
+    # -T0: use all cores. -f overwrite a stale partial. Level reused from config.
+    zstd_cmd = ['zstd', '-T0', f'-{compression_level}', '-f', '-o', output_file]
+
+    producer = subprocess.Popen(
+        tar_cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+    )
+    consumer = subprocess.Popen(
+        zstd_cmd, stdin=producer.stdout,
+        stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+    )
+    if producer.stdout is not None:
+        producer.stdout.close()  # let producer get SIGPIPE if consumer dies
+    cons_out, cons_err = consumer.communicate()
+    prod_out, prod_err = producer.communicate()
+
+    if producer.returncode != 0:
+        _report_failure_context(
+            "filestore/dump tar stream", tar_cmd, producer.returncode,
+            prod_out, prod_err, [temp_dir, dest_dir])
+        _remove_partial_archive(output_file)
+        return None
+    if consumer.returncode != 0:
+        _report_failure_context(
+            "zstd compression", zstd_cmd, consumer.returncode,
+            cons_out, cons_err, [dest_dir])
+        _remove_partial_archive(output_file)
+        return None
+
+    if not os.path.exists(output_file) or os.path.getsize(output_file) == 0:
+        print(f"Error: streamed archive {output_file} is missing or empty")
+        _remove_partial_archive(output_file)
+        return None
+
+    print(f"Archive created successfully: {output_file} "
+          f"(size: {os.path.getsize(output_file)} bytes)")
+    return output_file
+
+def create_backup(db_name, db_user, sql_container, data_container, backup_path, timestamp, additional_paths=None, only_sql_dump=False, stream=False):
     """
     Creates a backup with proper file structure
-    
+
     Args:
         db_name: Name of the database
         db_user: Database user
@@ -238,7 +541,9 @@ def create_backup(db_name, db_user, sql_container, data_container, backup_path, 
         timestamp: Timestamp for the backup
         additional_paths: Additional paths to include in the backup
         only_sql_dump: If True, only back up the SQL dump, skip filestore
-        
+        stream: If True, stream a full backup straight into a single .tar.zst
+                (Design A) instead of staging an uncompressed copy first.
+
     Returns:
         bool: Success status
     """
@@ -273,7 +578,47 @@ def create_backup(db_name, db_user, sql_container, data_container, backup_path, 
         print(f"Creating backup for {db_name} in {data_container}")
         if only_sql_dump:
             print(f"SQL dump only mode: filestore will be skipped")
-        
+
+        # Decide whether to use the streaming full-backup path (Design A).
+        # Streaming is opt-in and only applies to full backups. It requires
+        # zstd, must not run with encryption (the .tar.zst path is unencrypted),
+        # and needs the filestore to be resolvable on the host so tar can read
+        # it in-place. Any unmet condition -> fall back to legacy staging.
+        host_filestore = None
+        use_stream = False
+        if stream and not only_sql_dump:
+            tools = check_compression_tools()
+            enc_enabled, _ = get_encryption_settings()
+            if not tools.get('zstd'):
+                print("Streaming requested but zstd is not installed - "
+                      "falling back to staged backup.")
+            elif enc_enabled:
+                print("Streaming requested but encryption is enabled - "
+                      "streaming .tar.zst is unencrypted, falling back to "
+                      "staged (encryptable) 7z backup.")
+            else:
+                host_filestore = resolve_filestore_host_path(data_container, db_name)
+                if host_filestore:
+                    use_stream = True
+                else:
+                    print("Streaming requested but the filestore host path could "
+                          "not be resolved (no matching volume mount) - "
+                          "falling back to staged backup.")
+
+        # Disk pre-flight for full backups: refuse cleanly instead of failing
+        # halfway with a swallowed error.
+        if not only_sql_dump:
+            db_size = get_database_size_bytes(sql_container, db_user, db_name)
+            fs_size = get_filestore_size_bytes(data_container, db_name)
+            ok, msg = disk_preflight(temp_dir, docker_backup_path, db_size,
+                                     fs_size, use_stream)
+            if not ok:
+                print(f"ABORTING backup for {db_name}: insufficient disk space - {msg}")
+                print("  Hint: enable streaming ('stream: true') to avoid the "
+                      "uncompressed staging copy, free space, or point "
+                      "'temp_path' at a larger mount.")
+                return False
+
         # 1. Export SQL dump to file
         dump_file = os.path.join(temp_dir, "dump.sql")
         print(f"Creating database dump for {db_name}")
@@ -290,12 +635,23 @@ def create_backup(db_name, db_user, sql_container, data_container, backup_path, 
                 print(f"pg_dump error: {dump_proc.stderr.decode()}")
             return False
             
-        # 2. Export filestore only if not in SQL-only mode
+        # 2. Streaming path (Design A): pipe dump + in-place filestore into a
+        #    single .tar.zst on the target. No uncompressed staging copy.
+        if use_stream:
+            level = config.get('defaults', {}).get('compression', {}).get('level', 5)
+            output_file = stream_full_backup(
+                temp_dir, output_file_base, host_filestore, db_name, level)
+            if not output_file:
+                return False
+            print(f"Backup for {db_name} completed successfully")
+            return True
+
+        # 2b. Legacy staging path: extract filestore only if not SQL-only mode
         if not only_sql_dump:
             # Export filestore directly with database name as root
             # No "filestore" parent directory
             print(f"Backing up filestore for {db_name}")
-            
+
             # First check if filestore exists in container
             check_proc = subprocess.run(
                 ['docker', 'exec', data_container, 'ls', '-la', f'/opt/odoo/data/filestore/{db_name}'],
@@ -303,7 +659,7 @@ def create_backup(db_name, db_user, sql_container, data_container, backup_path, 
                 stderr=subprocess.PIPE,
                 check=False
             )
-            
+
             if check_proc.returncode != 0:
                 print(f"Warning: Filestore for {db_name} not found in container")
                 print(check_proc.stderr.decode())
@@ -335,6 +691,8 @@ def create_backup(db_name, db_user, sql_container, data_container, backup_path, 
                 _, producer_err = producer.communicate()
 
                 if producer.returncode != 0 or consumer.returncode != 0:
+                    # A partial/empty filestore must NOT be silently compressed
+                    # into a "successful" backup - treat it as fatal.
                     print(f"Error extracting filestore for {db_name}")
                     extract_error = (
                         (producer_err or b'').decode(errors='replace')
@@ -345,13 +703,17 @@ def create_backup(db_name, db_user, sql_container, data_container, backup_path, 
                         if "Killed" in extract_error or "Cannot allocate memory" in extract_error:
                             print("The process was killed due to memory constraints.")
                             print("Consider running the backup with nohup or in a screen/tmux session with lower priority.")
-        
+                    print(f"Aborting backup for {db_name}: filestore extraction "
+                          "failed - refusing to create a backup with an "
+                          "incomplete filestore.")
+                    return False
+
         # 3. Compress directory with configured format - now pass the only_sql_dump parameter
         output_file = compress_directory(temp_dir, output_file_base, config, only_sql_dump)
-        
+
         if not output_file:
             return False
-        
+
         print(f"Backup for {db_name} completed successfully")
         return True
         
@@ -598,16 +960,20 @@ def compress_directory(source_dir, output_file_base, config, only_sql_dump=False
                     print("Install gnupg (apt-get install gnupg) for secure encryption.")
                     zip_args.extend(['-p' + password, '-mhe=on'])
                 
-            # In SQL-only mode, only include dump.sql file
+            # Run 7zz with cwd=source_dir and relative inputs (like the zip
+            # path). The previous code passed a literal '<source_dir>/*' argument
+            # which 7zz does not reliably expand - depending on the build it
+            # could archive nothing or behave inconsistently.
             if only_sql_dump:
-                zip_args.extend([output_file, os.path.join(source_dir, "dump.sql")])
+                zip_args.extend([output_file, 'dump.sql'])
                 print(f"7z command for SQL-only mode: {' '.join(zip_args)}")
             else:
-                zip_args.extend([output_file, source_dir + "/*"])
+                zip_args.extend([output_file, '.'])
                 print(f"7z command for full backup: {' '.join(zip_args)}")
-            
+
             print(f"Creating 7z archive with 7zz: {output_file}")
-            result = subprocess.run(zip_args, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+            result = subprocess.run(zip_args, cwd=source_dir,
+                                    stdout=subprocess.PIPE, stderr=subprocess.PIPE)
             
         elif compression_format == 'zip':
             if not tools['zip']:
@@ -733,12 +1099,18 @@ def compress_directory(source_dir, output_file_base, config, only_sql_dump=False
             return None
         
         if result.returncode != 0:
-            print(f"Error creating archive: {output_file}")
-            if result.stderr:
-                error_text = result.stderr.decode() if hasattr(result.stderr, 'decode') else str(result.stderr)
-                print(f"Error details: {error_text}")
+            # Surface the FULL context (command, return code/signal, stderr AND
+            # stdout, free disk space). The old code printed only stderr and
+            # only if it was non-empty - a signal kill (e.g. OOM) leaves stderr
+            # empty, which is exactly why this failure was invisible before.
+            _report_failure_context(
+                "archive creation", locals().get('zip_args'),
+                result.returncode, getattr(result, 'stdout', None),
+                getattr(result, 'stderr', None),
+                [output_file, source_dir])
+            _remove_partial_archive(output_file)
             return None
-            
+
         # Check if output file was created and get its size
         if os.path.exists(output_file):
             file_size = os.path.getsize(output_file)
@@ -766,6 +1138,7 @@ def compress_directory(source_dir, output_file_base, config, only_sql_dump=False
         # Print detailed traceback
         import traceback
         print(traceback.format_exc())
+        _remove_partial_archive(output_file)
         return None
 
 # Main script
@@ -773,8 +1146,8 @@ if __name__ == "__main__":
     # Display version information
     print("===================================================")
     print("Odoo Docker Backup System")
-    print("Version: 4.4.0")
-    print("Date: 05.03.2026")
+    print(f"Version: {SCRIPT_VERSION}")
+    print(f"Date: {SCRIPT_DATE}")
     print("===================================================")
     
     # Display system information
@@ -893,6 +1266,9 @@ if __name__ == "__main__":
             # Get only_sql_dump setting for this database (default to False if not specified)
             # Override with command line argument if --sql-only is provided
             only_sql_dump = args.sql_only or db.get('only_sql_dump', False)
+
+            # Streaming full backup (Design A): per-db override, else defaults.
+            stream = db.get('stream', defaults.get('stream', False))
             
             print(f"\nProcessing backup for database {db_name}")
             print(f"Using container: {sql_container}")
@@ -919,14 +1295,15 @@ if __name__ == "__main__":
             
             # Create database backup
             create_backup(
-                db_name, 
-                db_user, 
-                sql_container, 
-                data_container, 
-                backup_path, 
+                db_name,
+                db_user,
+                sql_container,
+                data_container,
+                backup_path,
                 timestamp,
                 additional_paths,
-                only_sql_dump
+                only_sql_dump,
+                stream=stream
             )
             
             # Create FastReport backup if configured

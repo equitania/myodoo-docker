@@ -1,5 +1,5 @@
 # Backup configuration for Odoo databases
-# Date: 04.03.2026
+# Date: 19.06.2026
 
 # Default settings
 defaults:
@@ -9,7 +9,15 @@ defaults:
   temp_path: /tmp/odoo_backup  # Temporary path for backup operations
   compression:
     format: "7z"     # Compression format: 7z, zip, gzip, zstd (Note: encryption requires 7z format)
-    level: 5         # Compression level (0-9, default: 5)
+    level: 5         # Compression level (0-9, default: 5; for streaming this maps to the zstd level)
+  # Streaming full backup (recommended for large filestores):
+  # When true, full DB backups are piped straight into a single .tar.zst on the
+  # target (filestore read in-place from the host volume) - no uncompressed
+  # staging copy, so the backup medium only needs room for the SQL dump + the
+  # compressed archive. Restore-compatible (.tar.zst). Falls back to staged
+  # backup if zstd is missing, encryption is enabled, or the filestore host
+  # path cannot be resolved. Can be overridden per database below.
+  stream: false
 
 # System-wide service backups (independent from databases)
 services:
@@ -38,6 +46,7 @@ databases:
     data_container: live-odoo
     retention_days: 7
     only_sql_dump: false  # Optional: If true, only the SQL dump is backed up, filestore is skipped
+    # stream: true        # Optional per-db override of defaults.stream (Design A, .tar.zst)
     fast_report:  # Optional fast-report configuration per database
       enabled: true
       path: /opt/fast-report/fr-live
