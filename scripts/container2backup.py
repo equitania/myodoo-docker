@@ -425,26 +425,49 @@ def disk_preflight(temp_dir, dest_dir, db_size, filestore_size, streaming):
                   == os.stat(_existing_parent(dest_dir)).st_dev)
 
     if streaming:
-        # temp only holds the uncompressed dump.
+        # temp holds only the uncompressed dump; the archive is written to the
+        # target. Odoo filestores are mostly already-compressed media, so the
+        # archive barely shrinks - estimate it at 0.9x the filestore size.
+        fs = filestore_size or 0
+        archive_est = int(fs * 0.9)
         need_temp = int(db_size * 1.2)
-        if free_temp is not None and free_temp < need_temp:
-            return False, (f"temp mount needs ~{_human(need_temp)} for the SQL "
-                           f"dump but only {_human(free_temp)} is free")
+        if same_mount:
+            # dump (temp) and archive (target) share the same free space.
+            need = need_temp + archive_est
+            if free_temp is not None and free_temp < need:
+                return False, (f"backup mount needs ~{_human(need)} (SQL dump + "
+                               f"~{_human(archive_est)} archive) but only "
+                               f"{_human(free_temp)} is free")
+        else:
+            if free_temp is not None and free_temp < need_temp:
+                return False, (f"temp mount needs ~{_human(need_temp)} for the SQL "
+                               f"dump but only {_human(free_temp)} is free")
+            if free_dest is not None and free_dest < archive_est:
+                return False, (f"target mount needs ~{_human(archive_est)} for the "
+                               f"archive but only {_human(free_dest)} is free")
         return True, "ok"
 
     # Legacy staging: dump + filestore uncompressed in temp, plus archive in dest.
+    # Archive estimate: SQL compresses well (~0.3x), but an Odoo filestore is
+    # mostly already-compressed media (~0.9x) - the previous 0.4x guess was far
+    # too optimistic and would wrongly pass a media-heavy DB that then fails.
     fs = filestore_size or 0
-    need_temp = int((db_size + fs) * 1.1)
+    staging = int((db_size + fs) * 1.05)
+    archive_est = int(db_size * 0.3 + fs * 0.9)
     if same_mount:
-        # both staging and archive compete for the same free space.
-        need = int((db_size + fs) * 1.1 + (db_size + fs) * 0.4)
+        # staging (temp) and archive (target) compete for the same free space.
+        need = staging + archive_est
         if free_temp is not None and free_temp < need:
-            return False, (f"backup mount needs ~{_human(need)} (uncompressed "
-                           f"staging + archive) but only {_human(free_temp)} is free")
+            return False, (f"backup mount needs ~{_human(need)} (~{_human(staging)} "
+                           f"uncompressed staging + ~{_human(archive_est)} archive) "
+                           f"but only {_human(free_temp)} is free")
     else:
-        if free_temp is not None and free_temp < need_temp:
-            return False, (f"temp mount needs ~{_human(need_temp)} for uncompressed "
+        if free_temp is not None and free_temp < staging:
+            return False, (f"temp mount needs ~{_human(staging)} for uncompressed "
                            f"staging but only {_human(free_temp)} is free")
+        if free_dest is not None and free_dest < archive_est:
+            return False, (f"target mount needs ~{_human(archive_est)} for the "
+                           f"archive but only {_human(free_dest)} is free")
     return True, "ok"
 
 
