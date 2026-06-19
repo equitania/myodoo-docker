@@ -111,6 +111,34 @@ Diese Option ist besonders nützlich für:
 - Temporäre Kopien, bei denen der Filestore nicht benötigt wird
 - Situations, in denen häufigere SQL-Dumps, aber seltenere vollständige Backups gewünscht sind
 
+### Streaming-Voll-Backup für große Filestores (seit v4.7.0)
+
+Standardmäßig wird ein Voll-Backup **vor** der Kompression unkomprimiert nach `temp_path`
+zwischengelagert (Dump + entpackter Filestore), danach komprimiert. Das Backup-Medium
+braucht dadurch Platz für `unkomprimierter Dump + unkomprimierter Filestore + Archiv` —
+bei großen Filestores das Vielfache der eigentlichen Backup-Größe.
+
+Mit `stream: true` wird der Voll-Backup stattdessen direkt in ein einzelnes `.tar.zst`
+auf dem Ziel **gestreamt**: der Filestore wird **in-place** vom Host-Volume gelesen
+(nie kopiert), der SQL-Dump als einziges klein zwischengelagert. Spitzenbedarf sinkt von
+`Dump + Filestore + Archiv` auf `Dump + Archiv`.
+
+```yaml
+defaults:
+  stream: false          # global; pro Datenbank überschreibbar
+databases:
+  - name: live_db
+    stream: true         # für diese DB Streaming aktivieren
+```
+
+- **Restore-kompatibel:** Ausgabe ist `.tar.zst`, das `restore-zip.sh` direkt verarbeitet.
+- **Fallback:** Ist `zstd` nicht installiert, Verschlüsselung aktiv oder der Filestore-Host-Pfad
+  nicht auflösbar, fällt der Lauf automatisch auf den klassischen Staging-Pfad zurück.
+- **Disk-Preflight:** Vor jedem Voll-Backup wird geprüft, ob Temp- und Ziel-Mount genug Platz
+  haben; reicht es nicht, bricht der Lauf **sauber** mit klarer Meldung ab (statt halb).
+- **Kompressionsgrad:** Filestores sind meist bereits komprimierte Medien — `level: 3`
+  liefert beim Streaming praktisch dieselbe Größe wie 9, aber deutlich schneller.
+
 ### Kompressionskonfiguration
 
 Die Kompression kann im `defaults`-Bereich konfiguriert werden:

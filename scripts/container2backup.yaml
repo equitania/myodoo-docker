@@ -9,7 +9,11 @@ defaults:
   temp_path: /tmp/odoo_backup  # Temporary path for backup operations
   compression:
     format: "7z"     # Compression format: 7z, zip, gzip, zstd (Note: encryption requires 7z format)
-    level: 5         # Compression level (0-9, default: 5; for streaming this maps to the zstd level)
+    # Compression level. For streaming (below) this maps to the zstd level.
+    # Tip: an Odoo filestore is mostly already-compressed media that barely
+    # shrinks - on a large streamed filestore use level 3 (≈ same size as 9,
+    # much faster). Higher levels only pay off for the small SQL dump.
+    level: 5
   # Streaming full backup (recommended for large filestores):
   # When true, full DB backups are piped straight into a single .tar.zst on the
   # target (filestore read in-place from the host volume) - no uncompressed
