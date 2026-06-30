@@ -55,8 +55,8 @@ if os.environ.get('GETSCRIPTS_DEBUG', '').lower() in ('1', 'true', 'yes'):
     logger.debug("Debug logging enabled")
 
 # Script version and date
-SCRIPT_VERSION = "9.5.0"
-SCRIPT_DATE = "11.06.2026"
+SCRIPT_VERSION = "9.5.1"
+SCRIPT_DATE = "30.06.2026"
 
 # ─────────────────────────────────────────────────────────────────────────────
 # Install report
@@ -3793,16 +3793,9 @@ def main() -> None:
             if local_bin not in os.environ.get("PATH", ""):
                 os.environ["PATH"] = f"{local_bin}:{os.environ.get('PATH', '')}"
 
-            # Initialize zoxide for both shells
-            zoxide_path = os.path.join(_myhome, ".local", "bin", "zoxide")
-            if os.path.exists(zoxide_path):
-                # Try Fish first if available
-                if fish_installed:
-                    try:
-                        run_command(f"fish -c 'zoxide init fish | source'", shell=True)
-                    except Exception:
-                        pass
-
+            # zoxide is initialized per-shell via fish/conf.d/20-tools.fish on every
+            # interactive start; no throwaway `fish -c` priming needed here (it would
+            # persist nothing and only emit fish's cd.fish redirect warning).
         except Exception as e:
             logger.error(f"Error setting up shell environment: {e}")
 

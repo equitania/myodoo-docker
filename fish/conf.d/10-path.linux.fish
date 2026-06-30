@@ -1,9 +1,9 @@
 # PATH Configuration (Linux-Specific)
-# Version 1.0.0 | 28.01.2026
+# Version 1.0.1 | 30.06.2026
 
 # Only run on Linux
 if test (uname) != Linux
-    exit 0
+    return
 end
 
 # Snap packages
