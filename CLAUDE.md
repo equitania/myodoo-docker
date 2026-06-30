@@ -82,9 +82,9 @@ git clone https://github.com/equitania/myodoo-docker.git
 cp myodoo-docker/getScripts.py /root/
 ./getScripts.py
 
-# Branch-specific installation (e.g., 2025 branch)
+# Branch-specific installation (e.g., 2026 branch)
 cd $HOME && rm -rf myodoo-docker && rm -rf nginx-conf && \
-  git clone -b 2025 https://github.com/equitania/myodoo-docker.git && \
+  git clone -b 2026 https://github.com/equitania/myodoo-docker.git && \
   cp myodoo-docker/getScripts.py $HOME && \
   $HOME/getScripts.py && source ~/.zshrc
 
@@ -290,6 +290,6 @@ docker ps --format "table {{.Names}}\t{{.Status}}\t{{.Ports}}"
 1. **Docker Safety**: Always verify containers/volumes belong to project before deletion
 2. **Backup Retention**: Default 14 days, configurable in YAML
 3. **Encryption**: Available only with 7z format, uses AES-256
-4. **Branch Management**: Use specific branches (e.g., 2025) for major versions
+4. **Branch Management**: Use specific branches (e.g., 2026) for major versions
 5. **Permissions**: Most scripts require root or sudo access
 6. **Shell**: ZSH is the default shell after installation

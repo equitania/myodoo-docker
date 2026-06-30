@@ -55,7 +55,7 @@ if os.environ.get('GETSCRIPTS_DEBUG', '').lower() in ('1', 'true', 'yes'):
     logger.debug("Debug logging enabled")
 
 # Script version and date
-SCRIPT_VERSION = "9.5.1"
+SCRIPT_VERSION = "9.6.0"
 SCRIPT_DATE = "30.06.2026"
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -784,12 +784,27 @@ def copy_fish_configuration(_myhome: str, myodoo_docker: str) -> bool:
         target_confd = os.path.join(target_fish_dir, "conf.d")
         if os.path.exists(source_confd):
             ensure_directory_exists(target_confd)
+            source_confd_names = set()
             for item in os.listdir(source_confd):
                 source_item = os.path.join(source_confd, item)
                 target_item = os.path.join(target_confd, item)
                 if os.path.isfile(source_item):
+                    source_confd_names.add(item)
                     shutil.copy2(source_item, target_item)
             logger.info("Copied conf.d/ modules")
+
+            # Prune stale managed conf.d modules left by older script versions
+            # (the deploy is otherwise a merge, never a replace). Only files
+            # matching our NN-name.fish convention are removed; user-added files
+            # and functions/ (fisher.fish, funcsaved) are never touched.
+            managed_confd = re.compile(r"^\d{2}-.*\.fish$")
+            for item in os.listdir(target_confd):
+                if managed_confd.match(item) and item not in source_confd_names:
+                    try:
+                        os.remove(os.path.join(target_confd, item))
+                        logger.info(f"Removing stale managed conf.d file: {item}")
+                    except OSError as e:
+                        logger.warning(f"Could not remove stale conf.d file {item}: {e}")
 
         # Copy functions directory (Linux-specific)
         source_functions = os.path.join(source_fish_dir, "functions", "linux")
