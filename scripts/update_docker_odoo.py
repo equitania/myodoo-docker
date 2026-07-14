@@ -1,8 +1,8 @@
 #!/usr/bin/python3
 # -*- coding: utf-8 -*-
 # This script performs an update of an Odoo database in a Docker container
-# Version 5.2.0
-# Date 11.06.2026
+# Version 5.3.0
+# Date 14.07.2026
 ##############################################################################
 #
 #    Shell Script for Odoo, Open Source Management Solution
@@ -23,9 +23,11 @@
 #
 ##############################################################################
 import os
+import re
 import sys
 import time
 import yaml
+import shutil
 import platform
 import logging
 import argparse
@@ -53,6 +55,16 @@ default_config_file = current_dir_config if isfile(current_dir_config) else home
 git_path = "https://rm.ownerp.io/staff/v"
 build_script = "-muster/build_odoo.py"
 check_script = "-muster/check_dockerimage_odoo.py"
+
+# Proxy support: recognised keys for the optional YAML proxy blocks and the
+# marker file written by getScripts.py first-run setup (KEY=VALUE lines).
+PROXY_KEYS = ('http_proxy', 'https_proxy', 'no_proxy')
+PROXY_MARKER_FILE = join(home_path, '.getscripts_proxy')
+
+# Local source for build_odoo.py / check_dockerimage_odoo.py / bin files:
+# the myodoo-docker repository clone that getScripts.py keeps up to date.
+# Overridable via 'defaults: dockerfiles_source:' in docker2update.yaml.
+DEFAULT_DOCKERFILES_SOURCE = join(home_path, 'myodoo-docker', 'Dockerfiles')
 
 # Check if we are running on macOS or Linux
 is_macos = platform.system() == 'Darwin'
@@ -235,9 +247,27 @@ Configuration File Format (YAML):
       volume: "--network net -v /path:/data"      # Docker volume config (DNS auto-optimized)
       odoo_version: "16"                          # Odoo version for scripts
       translate: "Y"                              # Load translations? Y/N
-      
+      proxy:                                      # Optional: per-container proxy override
+        http_proxy: "http://proxy.local:3128"
+      pre_build_files:                            # Optional: copied into dockerfile_path
+        - source: "/opt/customer/eq_custom"       #   file OR directory
+          target: "custom-addons/"                #   relative to dockerfile_path (default ".")
+
+  defaults:                                       # Optional global section
+    proxy:                                        # Used for wget downloads and docker build
+      http_proxy: "http://proxy.local:3128"       #   (env + --build-arg). Fallback order without
+      https_proxy: "http://proxy.local:3128"      #   this block: container proxy > defaults.proxy >
+      no_proxy: "localhost,127.0.0.1"             #   environment vars > ~/.getscripts_proxy
+    dockerfiles_source: "~/myodoo-docker/Dockerfiles"  # Local source for build_odoo.py /
+                                                  #   check_dockerimage_odoo.py / bin files
+                                                  #   (default shown; kept current via 'ups')
+
 Note: DNS optimization is automatically applied to containers if host DNS is not optimal.
       This helps resolve DNS issues between different cloud providers (e.g., Hetzner <-> DigitalOcean).
+      Build scripts are synced from the local myodoo-docker repository (newer
+      version header wins); the release-manager wget only runs as fallback.
+      Base image pulls are done by the Docker daemon itself - configure its proxy
+      via getScripts.py --proxy-check (systemd drop-in), not in this file.
 '''
     )
     
@@ -262,12 +292,17 @@ Note: DNS optimization is automatically applied to containers if host DNS is not
     
     return parser.parse_args()
 
-def run_command(command, show_output=True, filter_output=False, show_progress=False, progress_msg=None, timeout=None):
-    """Run a shell command with proper error handling and output filtering."""
+def run_command(command, show_output=True, filter_output=False, show_progress=False, progress_msg=None, timeout=None, env=None):
+    """Run a shell command with proper error handling and output filtering.
+
+    Args:
+        env: Optional dict of extra environment variables (merged over os.environ),
+             e.g. proxy settings for commands that need internet access.
+    """
     try:
         if show_output and not filter_output and logger.level <= logging.INFO:
             logger.info(f"Running command: {command}")
-        
+
         # Set up process with pipes
         process = subprocess.Popen(
             command,
@@ -275,7 +310,8 @@ def run_command(command, show_output=True, filter_output=False, show_progress=Fa
             stdout=subprocess.PIPE,
             stderr=subprocess.PIPE,
             universal_newlines=True,
-            bufsize=1  # Line buffered
+            bufsize=1,  # Line buffered
+            env={**os.environ, **env} if env else None
         )
         
         # Variables to store filtered output
@@ -492,6 +528,220 @@ def load_config(config_file):
         logger.error(f"Error loading configuration: {e}")
         return None
 
+def resolve_proxy_settings(config, container):
+    """Resolve proxy settings for a container.
+
+    Precedence: per-container 'proxy' block > global 'defaults.proxy' block >
+    environment variables > ~/.getscripts_proxy marker file (written by the
+    getScripts.py first-run setup). Returns an empty dict when no proxy is
+    configured anywhere, so callers behave exactly as before.
+    """
+    for source_name, block in (
+        ('container config', container.get('proxy')),
+        ('defaults config', (config.get('defaults') or {}).get('proxy')),
+    ):
+        if isinstance(block, dict):
+            unknown_keys = [key for key in block if key not in PROXY_KEYS]
+            if unknown_keys:
+                logger.warning(f"Ignoring unknown proxy keys {unknown_keys} in {source_name}")
+            proxy = {key: str(block[key]) for key in PROXY_KEYS if block.get(key)}
+            if proxy:
+                logger.info(f"Using proxy settings from {source_name}")
+                return proxy
+
+    proxy = {}
+    for key in PROXY_KEYS:
+        value = os.environ.get(key) or os.environ.get(key.upper())
+        if value:
+            proxy[key] = value
+    if proxy:
+        logger.info("Using proxy settings from environment variables")
+        return proxy
+
+    if isfile(PROXY_MARKER_FILE):
+        try:
+            with open(PROXY_MARKER_FILE, 'r') as f:
+                for line in f:
+                    line = line.strip()
+                    if not line or line.startswith('#') or '=' not in line:
+                        continue
+                    key, _, value = line.partition('=')
+                    if key.strip().lower() in PROXY_KEYS and value.strip():
+                        proxy[key.strip().lower()] = value.strip()
+        except Exception as e:
+            logger.warning(f"Failed to read proxy marker file {PROXY_MARKER_FILE}: {e}")
+        if proxy:
+            logger.info(f"Using proxy settings from {PROXY_MARKER_FILE}")
+    return proxy
+
+def build_proxy_env(proxy_settings):
+    """Build extra environment variables (lower- and uppercase) for subprocesses
+    like wget, or None when no proxy is configured."""
+    if not proxy_settings:
+        return None
+    env = {}
+    for key, value in proxy_settings.items():
+        env[key] = value
+        env[key.upper()] = value
+    return env
+
+def build_proxy_build_args(proxy_settings):
+    """Build 'docker build' --build-arg options (trailing space included) so RUN
+    steps inside the image build reach the internet through the proxy.
+    Returns an empty string when no proxy is configured."""
+    if not proxy_settings:
+        return ""
+    args = []
+    for key, value in proxy_settings.items():
+        args.append(f'--build-arg {key}="{value}"')
+        args.append(f'--build-arg {key.upper()}="{value}"')
+    return " ".join(args) + " "
+
+def copy_pre_build_files(container, path):
+    """Copy customer-specific files/directories into the build folder before docker build.
+
+    Driven by the optional per-container 'pre_build_files' list of
+    {source, target} entries; 'target' is relative to dockerfile_path
+    (default "."). A missing source is a hard error: building without the
+    customer's custom modules would produce a broken image.
+
+    Returns:
+        tuple: (success, info_count, warning_count, error_count)
+    """
+    entries = container.get('pre_build_files') or []
+    info_count = 0
+    base = os.path.realpath(path)
+    for entry in entries:
+        if not isinstance(entry, dict) or not entry.get('source'):
+            logger.error(f"Invalid pre_build_files entry (needs 'source'): {entry}")
+            return False, info_count, 0, 1
+        source = expand_path(str(entry['source']))
+        target_rel = str(entry.get('target') or '.')
+        target_dir = os.path.realpath(join(base, target_rel))
+        if target_dir != base and not target_dir.startswith(base + os.sep):
+            logger.error(f"pre_build_files target escapes the build folder: {target_rel}")
+            return False, info_count, 0, 1
+        if not os.path.exists(source):
+            logger.error(f"pre_build_files source not found: {source}")
+            return False, info_count, 0, 1
+        try:
+            os.makedirs(target_dir, exist_ok=True)
+            destination = join(target_dir, os.path.basename(source.rstrip('/')))
+            if isdir(source):
+                shutil.copytree(source, destination, dirs_exist_ok=True)
+            else:
+                shutil.copy2(source, destination)
+            logger.info(f"Copied pre-build file: {source} -> {destination}")
+            info_count += 1
+        except Exception as e:
+            logger.error(f"Failed to copy pre-build file {source}: {e}")
+            return False, info_count, 0, 1
+    return True, info_count, 0, 0
+
+def get_script_version(file_path):
+    """Parse '# Version X.Y.Z' from the first lines of a script file.
+
+    Returns:
+        tuple: Version numbers as int tuple, or None if not found/readable.
+    """
+    try:
+        with open(file_path, 'r', encoding='utf-8', errors='replace') as f:
+            for _ in range(10):
+                line = f.readline()
+                if not line:
+                    break
+                match = re.match(r'^#\s*Version\s+(\d+(?:\.\d+)*)\s*$', line.strip())
+                if match:
+                    return tuple(int(part) for part in match.group(1).split('.'))
+    except Exception as e:
+        logger.warning(f"Could not read version from {file_path}: {e}")
+    return None
+
+def sync_build_scripts(version, path, source_base):
+    """Sync build_odoo.py, check_dockerimage_odoo.py and bin/ files from the
+    local myodoo-docker repository into the build folder.
+
+    A file is copied only when it is missing in the build folder or the
+    repository copy has a NEWER '# Version X.Y.Z' header; files without a
+    parsable header are copied when their content differs. Nothing is ever
+    deleted from the build folder. The repository itself is kept up to date
+    by getScripts.py ('ups'), not here.
+
+    Args:
+        version: Odoo version string (e.g. "18")
+        path: Build folder of the container (dockerfile_path)
+        source_base: Directory containing the v{version}-odoo folders
+
+    Returns:
+        tuple: (synced, info_count, warning_count, error_count) - synced is
+               False when the source folder is unavailable and the caller
+               should fall back to the legacy release-manager download.
+    """
+    source_dir = join(source_base, f"v{version}-odoo")
+    if not isdir(source_dir):
+        logger.warning(f"Local Dockerfiles source not found: {source_dir} - "
+                       f"falling back to release-manager download")
+        return False, 0, 1, 0
+
+    sync_files = ['build_odoo.py', 'check_dockerimage_odoo.py']
+    bin_dir = join(source_dir, 'bin')
+    if isdir(bin_dir):
+        for name in sorted(os.listdir(bin_dir)):
+            if isfile(join(bin_dir, name)):
+                sync_files.append(join('bin', name))
+
+    info_count = 0
+    warning_count = 0
+    for rel_name in sync_files:
+        source_file = join(source_dir, rel_name)
+        target_file = join(path, rel_name)
+        if not isfile(source_file):
+            logger.warning(f"Missing in Dockerfiles source: {source_file}")
+            warning_count += 1
+            continue
+
+        reason = None
+        if not isfile(target_file):
+            reason = "missing in build folder"
+        else:
+            source_version = get_script_version(source_file)
+            target_version = get_script_version(target_file)
+            if source_version and target_version:
+                if source_version > target_version:
+                    reason = ("version " +
+                              ".".join(map(str, target_version)) + " -> " +
+                              ".".join(map(str, source_version)))
+            elif source_version and not target_version:
+                reason = "no version header in build folder copy"
+            else:
+                # No comparable version headers: copy when content differs
+                try:
+                    with open(source_file, 'rb') as src, open(target_file, 'rb') as dst:
+                        if src.read() != dst.read():
+                            reason = "content differs"
+                except Exception as e:
+                    logger.warning(f"Could not compare {rel_name}: {e}")
+                    warning_count += 1
+                    continue
+        if not reason:
+            continue
+
+        try:
+            target_dir = os.path.dirname(target_file)
+            if target_dir:
+                os.makedirs(target_dir, exist_ok=True)
+            # copy2 preserves the executable bit (bin/boot)
+            shutil.copy2(source_file, target_file)
+            logger.info(f"Synced {rel_name} from {source_dir} ({reason})")
+            info_count += 1
+        except Exception as e:
+            logger.error(f"Failed to sync {rel_name}: {e}")
+            return True, info_count, warning_count, 1
+
+    if info_count == 0:
+        logger.info("Build scripts are up to date (local Dockerfiles source)")
+    return True, info_count, warning_count, 0
+
 def validate_container_config(container):
     """Validate container configuration."""
     required_fields = [
@@ -517,7 +767,26 @@ def validate_container_config(container):
     if not isdir(container['dockerfile_path']):
         logger.error(f"Dockerfile path does not exist: {container['dockerfile_path']}")
         return False
-        
+
+    # Validate optional pre_build_files block
+    pre_build_files = container.get('pre_build_files')
+    if pre_build_files is not None:
+        if not isinstance(pre_build_files, list):
+            logger.error("pre_build_files must be a list of {source, target} entries")
+            return False
+        for entry in pre_build_files:
+            if not isinstance(entry, dict) or not entry.get('source'):
+                logger.error(f"Invalid pre_build_files entry (needs 'source'): {entry}")
+                return False
+            if not os.path.exists(expand_path(str(entry['source']))):
+                logger.warning(f"pre_build_files source does not exist (yet): {entry['source']}")
+
+    # Validate optional proxy block
+    proxy = container.get('proxy')
+    if proxy is not None and not isinstance(proxy, dict):
+        logger.error("proxy must be a mapping with http_proxy/https_proxy/no_proxy")
+        return False
+
     return True
 
 def clean_docker_system():
@@ -534,8 +803,15 @@ def clean_docker_system():
         logger.warning("Failed to clean Docker system")
     return info, warn, err
 
-def process_container(container):
-    """Process a single container update."""
+def process_container(container, proxy_settings=None, dockerfiles_source=None):
+    """Process a single container update.
+
+    Args:
+        container: Container configuration dict
+        proxy_settings: Optional resolved proxy dict (see resolve_proxy_settings)
+        dockerfiles_source: Base directory with the v{version}-odoo script
+            sources (default: DEFAULT_DOCKERFILES_SOURCE)
+    """
     # Set default values if missing
     container.setdefault('delay_time', 30)
     container.setdefault('volume', "")
@@ -599,7 +875,25 @@ def process_container(container):
     except Exception as e:
         logger.error(f"Failed to change to directory {path}: {e}")
         return False, total_info, total_warnings, total_errors
-    
+
+    # Copy customer-specific files into the build folder before anything else
+    success, info, warn, err = copy_pre_build_files(container, path)
+    total_info += info
+    total_warnings += warn
+    total_errors += err
+    if not success:
+        logger.error("Aborting container update: pre-build file copy failed")
+        try:
+            os.chdir(original_dir)
+        except Exception:
+            pass
+        return False, total_info, total_warnings, total_errors
+
+    # Proxy environment for commands that need internet access (wget, docker build)
+    proxy_env = build_proxy_env(proxy_settings)
+    if proxy_env:
+        logger.info("Proxy settings active for downloads and docker build")
+
     # Backup filestore if no volume is specified
     if not volume:
         filestore_path = join(path, db_name)
@@ -624,28 +918,37 @@ def process_container(container):
         else:
             logger.info("Filestore saved successfully")
     
-    # Get new version of build scripts - Fix script name inconsistency
+    # Get new version of build scripts: prefer syncing from the local
+    # myodoo-docker repository (kept current via 'ups'); the legacy wget from
+    # the release manager only runs when no local source folder is available.
     if version:
-        logger.info("Downloading build scripts...")
-        # Use consistent script names
-        download_build_script = f"{git_path}{version}{build_script}"
-        download_check_script = f"{git_path}{version}{check_script}"
-        
-        logger.info(f"Downloading build script from: {download_build_script}")
-        success, _, info, warn, err = run_command(f"wget -q -N --timeout=30 --tries=3 {download_build_script}", timeout=60)
+        synced, info, warn, err = sync_build_scripts(
+            version, path, dockerfiles_source or DEFAULT_DOCKERFILES_SOURCE)
         total_info += info
         total_warnings += warn
         total_errors += err
-        if not success:
-            logger.warning(f"Failed to download build script from {download_build_script} - continuing anyway")
-        
-        logger.info(f"Downloading check script from: {download_check_script}")
-        success, _, info, warn, err = run_command(f"wget -q -N --timeout=30 --tries=3 {download_check_script}", timeout=60)
-        total_info += info
-        total_warnings += warn
-        total_errors += err
-        if not success:
-            logger.warning(f"Failed to download check script from {download_check_script} - continuing anyway")
+
+        if not synced:
+            logger.info("Downloading build scripts...")
+            # Use consistent script names
+            download_build_script = f"{git_path}{version}{build_script}"
+            download_check_script = f"{git_path}{version}{check_script}"
+
+            logger.info(f"Downloading build script from: {download_build_script}")
+            success, _, info, warn, err = run_command(f"wget -q -N --timeout=30 --tries=3 {download_build_script}", timeout=60, env=proxy_env)
+            total_info += info
+            total_warnings += warn
+            total_errors += err
+            if not success:
+                logger.warning(f"Failed to download build script from {download_build_script} - continuing anyway")
+
+            logger.info(f"Downloading check script from: {download_check_script}")
+            success, _, info, warn, err = run_command(f"wget -q -N --timeout=30 --tries=3 {download_check_script}", timeout=60, env=proxy_env)
+            total_info += info
+            total_warnings += warn
+            total_errors += err
+            if not success:
+                logger.warning(f"Failed to download check script from {download_check_script} - continuing anyway")
     
     # Override logging level for debugging critical sections
     original_level = logger.level
@@ -664,7 +967,8 @@ def process_container(container):
         logger.info(f"Running release manager using {check_script_name}...")
         # Temporarily increase log level for critical operations
         logger.setLevel(logging.INFO)
-        success, _, info, warn, err = run_command(f"python3 {check_script_name}")
+        # Forward proxy env: the check script downloads the release CSV via wget
+        success, _, info, warn, err = run_command(f"python3 {check_script_name}", env=proxy_env)
         total_info += info
         total_warnings += warn
         total_errors += err
@@ -713,7 +1017,8 @@ def process_container(container):
     print("This process downloads 977 modules individually and may take 10-20 minutes")
     print("Progress will be shown below - please wait...")
     
-    success, _, info, warn, err = run_command(f"docker build -t {image} .", timeout=3600)
+    proxy_build_args = build_proxy_build_args(proxy_settings)
+    success, _, info, warn, err = run_command(f"docker build {proxy_build_args}-t {image} .", timeout=3600, env=proxy_env)
     total_info += info
     total_warnings += warn
     total_errors += err
@@ -1006,7 +1311,11 @@ def main():
         
         # Process container
         try:
-            result = process_container(container)
+            defaults = config.get('defaults') or {}
+            dockerfiles_source = expand_path(
+                defaults.get('dockerfiles_source') or DEFAULT_DOCKERFILES_SOURCE)
+            result = process_container(container, resolve_proxy_settings(config, container),
+                                       dockerfiles_source)
             if isinstance(result, tuple):
                 success, info_count, warning_count, error_count = result
                 total_info_count += info_count

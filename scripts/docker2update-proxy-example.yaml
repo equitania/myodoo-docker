@@ -1,0 +1,103 @@
+# ============================================================================
+# Docker Container Update Configuration - PROXY CUSTOMER EXAMPLE
+# Date: 14.07.2026
+# ============================================================================
+#
+# Complete example configuration for customers whose servers can only reach
+# the internet through an HTTP proxy, including customer-specific modules
+# that must be copied into the build folder before 'docker build'.
+#
+# WHERE TO PLACE THIS FILE ON THE CUSTOMER SERVER:
+#   /root/docker2update.yaml
+#
+#   update_docker_odoo.py (alias 'doup') looks for 'docker2update.yaml'
+#   first in the current working directory, then in $HOME. The standard
+#   setup runs as root from the home directory, so /root/docker2update.yaml
+#   is the correct location. IMPORTANT: rename this file - the script only
+#   picks up the exact name 'docker2update.yaml'
+#   (or pass it explicitly: python3 ~/update_docker_odoo.py -c <file>).
+#
+# SECURITY WARNING: This is a TEMPLATE file!
+# Replace all placeholder passwords and proxy addresses before production use!
+#
+# PROXY SCOPE:
+#   defaults.proxy is applied to
+#     - wget downloads performed by the update script (legacy fallback)
+#     - the release-manager check script (downloads the release CSV)
+#     - docker build (as environment AND --build-arg, so apt/pip/urllib3
+#       INSIDE the image build reach the internet through the proxy)
+#   Resolution order: container proxy > defaults.proxy > environment
+#   variables > ~/.getscripts_proxy (written by getScripts.py first-run).
+#
+#   NOT covered here: the pull of the base image is done by the Docker
+#   daemon itself. Configure the daemon proxy once via:
+#     getScripts.py --proxy-check
+#   (creates the systemd drop-in /etc/systemd/system/docker.service.d/http-proxy.conf)
+#
+# PRE-BUILD FILES:
+#   pre_build_files copies customer-specific files or directories into the
+#   build folder (dockerfile_path) BEFORE 'docker build' - for custom modules
+#   that cannot be fetched during the Docker build itself. 'source' may be a
+#   file or a directory; 'target' is relative to dockerfile_path (default ".").
+#   A missing source aborts the container update (fail fast).
+#
+# BUILD SCRIPT SYNC:
+#   build_odoo.py, check_dockerimage_odoo.py and bin/ files are synced into
+#   each build folder from the local myodoo-docker repository (kept current
+#   via 'ups') whenever the repo copy has a newer '# Version X.Y.Z' header.
+#   Override the source location with defaults.dockerfiles_source if needed.
+# ============================================================================
+
+defaults:
+  proxy:
+    http_proxy: "http://proxy.customer.local:3128"
+    https_proxy: "http://proxy.customer.local:3128"
+    no_proxy: "localhost,127.0.0.1"
+  # Optional - default shown, only set when the repo lives elsewhere:
+  #dockerfiles_source: "~/myodoo-docker/Dockerfiles"
+
+containers:
+  - active: true
+    type: "F"
+    delay_time: 10
+    container_name: "live-odoo"
+    database_name: "live_odoo"
+    port: "127.0.0.1:11000"
+    longpolling_port: "127.0.0.1:12000"
+    dockerfile_path: "$HOME/docker-builds/live-odoo/"
+    docker_image_name: "odoo/live"
+    db_user: "ownerp"
+    db_password: "CHANGE_ME_BEFORE_PRODUCTION"  # WARNING: Replace with secure password!
+    db_host: "live-db"
+    volume: "--network live-db-net -v /opt/odoo/live:/opt/odoo/data"
+    odoo_version: "18"
+    translate: "Y"
+    # Customer-specific modules copied into the build folder before docker build.
+    # Add one entry per file or directory; 'target' is relative to dockerfile_path.
+    pre_build_files:
+      - source: "/opt/customer/eq_custom_module"
+        target: "custom-addons/"
+      - source: "/opt/customer/eq_custom_reports.tar.gz"
+        target: "custom-addons/"
+    # Optional per-container override of defaults.proxy (rarely needed):
+    #proxy:
+    #  http_proxy: "http://other-proxy.customer.local:3128"
+
+  - active: false
+    type: "F"
+    delay_time: 10
+    container_name: "test-odoo"
+    database_name: "test_db"
+    port: "127.0.0.1:13000"
+    longpolling_port: "127.0.0.1:14000"
+    dockerfile_path: "$HOME/docker-builds/test-odoo/"
+    docker_image_name: "odoo/test"
+    db_user: "ownerp"
+    db_password: "CHANGE_ME_BEFORE_PRODUCTION"  # WARNING: Replace with secure password!
+    db_host: "test-db"
+    volume: "--network test-db-net -v /opt/odoo/test:/opt/odoo/data"
+    odoo_version: "18"
+    translate: "Y"
+    pre_build_files:
+      - source: "/opt/customer/eq_custom_module"
+        target: "custom-addons/"

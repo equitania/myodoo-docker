@@ -1,5 +1,5 @@
 # Docker Container Update Configuration
-# Date: 04.03.2026
+# Date: 14.07.2026
 #
 # SECURITY WARNING: This is a TEMPLATE file!
 # Replace all placeholder passwords before production use!
@@ -19,11 +19,33 @@
 #   volume: Docker volume configuration
 #   odoo_version: Odoo version number
 #   translate: Whether to load translations (Y/N)
+#   proxy: (optional, per container) override of defaults.proxy, see below
+#   pre_build_files: (optional, per container) files/directories copied into
+#     dockerfile_path BEFORE docker build - e.g. customer-specific modules that
+#     cannot be fetched during the Docker build itself
 #
 # Notes:
 #   - [M]odule update: Only copies new modules to container without updating all (2-3 minutes)
 #   - [F]ull update: Updates all modules (10-20 minutes)
 #   - [N]eutralize: First neutralizes the DB, then updates all (10-20 minutes)
+
+# Optional global defaults (uncomment for customers behind a proxy).
+# The proxy is applied to wget downloads and passed to docker build as
+# environment + --build-arg so apt/pip/wget INSIDE the build work too.
+# Resolution order: container proxy > defaults.proxy > environment variables
+# > ~/.getscripts_proxy (written by getScripts.py first-run setup).
+# NOTE: Base image pulls are done by the Docker daemon itself - configure the
+# daemon proxy via getScripts.py --proxy-check (systemd drop-in).
+#defaults:
+#  proxy:
+#    http_proxy: "http://proxy.customer.local:3128"
+#    https_proxy: "http://proxy.customer.local:3128"
+#    no_proxy: "localhost,127.0.0.1"
+#  # Local source for build_odoo.py / check_dockerimage_odoo.py / bin files.
+#  # Files are synced into each build folder when the repo copy is newer
+#  # (compared via the '# Version X.Y.Z' header). Default shown below; the
+#  # repository is kept current via 'ups' (getScripts.py).
+#  dockerfiles_source: "~/myodoo-docker/Dockerfiles"
 
 containers:
   - active: true
@@ -41,7 +63,14 @@ containers:
     volume: "--network live-db-net -v /opt/odoo/live:/opt/odoo/data"
     odoo_version: "18"
     translate: "Y"
-    
+    # Optional: copy customer-specific files/directories into dockerfile_path
+    # before docker build. 'target' is relative to dockerfile_path (default ".").
+    #pre_build_files:
+    #  - source: "/opt/customer/eq_custom_module"
+    #    target: "custom-addons/"
+    #  - source: "$HOME/uploads/eq_custom2.tar.gz"
+
+
   - active: false
     type: "F"
     delay_time: 10

@@ -1,8 +1,8 @@
 #!/usr/bin/python3
 # -*- coding: utf-8 -*-
 # This script builds a new server using the Release Manager
-# Version 2.1.2
-# Date 16.07.2025
+# Version 2.2.0
+# Date 14.07.2026
 ##############################################################################
 #
 #    Shell Script for Odoo, Open Source Management Solution
@@ -36,12 +36,24 @@ _release_file = 'release.file'
 # Check if we are running on macOS or Linux
 is_macos = platform.system() == 'Darwin'
 
+def _create_http_pool():
+    """Create the HTTP pool; use a ProxyManager when proxy env vars are set.
+
+    urllib3 does NOT honor http_proxy/https_proxy implicitly (unlike wget or
+    requests). Inside 'docker build' the proxy env vars arrive via the
+    predefined --build-arg proxy args passed by update_docker_odoo.py.
+    """
+    proxy_url = (os.environ.get('https_proxy') or os.environ.get('HTTPS_PROXY')
+                 or os.environ.get('http_proxy') or os.environ.get('HTTP_PROXY'))
+    pool_kwargs = dict(maxsize=10, block=True,
+                       timeout=urllib3.Timeout(connect=30, read=300))
+    if proxy_url:
+        print(f"Using proxy for downloads: {proxy_url}")
+        return urllib3.ProxyManager(proxy_url, **pool_kwargs)
+    return urllib3.PoolManager(**pool_kwargs)
+
 # Global connection pool for efficient HTTP requests
-http_pool = urllib3.PoolManager(
-    maxsize=10,
-    block=True,
-    timeout=urllib3.Timeout(connect=30, read=300)
-)
+http_pool = _create_http_pool()
 
 def download_file(url, filename):
     """Download a file from URL and save it to the given filename."""
