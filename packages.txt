@@ -1,6 +1,9 @@
 # UV tool packages
+# One tool per line, optionally pinned as "name==1.2.3". Unpinned tools are
+# installed at the latest PyPI release and kept current on every run via
+# "uv tool upgrade --all" plus a PyPI version check.
 nginx-set-conf
-
+odoodev
 
 # PIP packages
 pip

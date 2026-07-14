@@ -55,8 +55,8 @@ if os.environ.get('GETSCRIPTS_DEBUG', '').lower() in ('1', 'true', 'yes'):
     logger.debug("Debug logging enabled")
 
 # Script version and date
-SCRIPT_VERSION = "9.6.0"
-SCRIPT_DATE = "30.06.2026"
+SCRIPT_VERSION = "9.7.0"
+SCRIPT_DATE = "14.07.2026"
 
 # ─────────────────────────────────────────────────────────────────────────────
 # Install report
@@ -1698,48 +1698,6 @@ def install_uv() -> bool:
         logger.error(f"Failed to install uv: {e}")
         return False
 
-def install_with_uv_tool(package_name: str) -> None:
-    """Install a package using uv tool.
-
-    Args:
-        package_name (str): Name of the package to install
-    """
-    if not is_uv_installed():
-        if not install_uv():
-            raise RuntimeError("uv is not installed. Installation failed.")
-
-    try:
-        subprocess.run(['uv', 'tool', 'install', '--force', package_name], check=True)
-        logger.info(f"Successfully installed {package_name} with uv tool")
-    except subprocess.CalledProcessError as e:
-        logger.error(f"Failed to install {package_name} with uv tool: {e}")
-        raise
-
-def install_specific_uv_tool_package(package_name: str, version: str) -> None:
-    """
-    Install a specific version of a package using uv tool if it's not already installed.
-
-    Args:
-        package_name (str): Name of the package to install
-        version (str): Specific version to install
-    """
-    try:
-        # Check if package is installed and get its version
-        current_version = get_installed_uv_tool_version(package_name)
-
-        if current_version:
-            if current_version == version:
-                logger.info(f"{package_name} version {version} is already installed")
-                return
-            else:
-                logger.info(f"Updating {package_name} from version {current_version} to {version}")
-                run_command(f"uv tool install --force {package_name}=={version}")
-        else:
-            logger.info(f"Installing {package_name} version {version}")
-            run_command(f"uv tool install {package_name}=={version}")
-    except Exception as e:
-        logger.error(f"Unexpected error installing {package_name}: {str(e)}")
-
 def is_pipx_installed_legacy() -> bool:
     """Check if pipx is still installed (for migration purposes).
 
@@ -3347,8 +3305,10 @@ def get_installed_uv_tool_version(package_name: str) -> Optional[str]:
         result = subprocess.run(['uv', 'tool', 'list'], capture_output=True, text=True, check=False)
         if result.returncode == 0:
             for line in result.stdout.split('\n'):
-                # uv tool list format: "package-name v1.2.3" or "package-name 1.2.3"
-                if package_name in line:
+                # uv tool list format: "package-name v1.2.3" or "package-name 1.2.3".
+                # Prefix match only: binary lines ("- package-name") and packages
+                # sharing a name prefix must not match.
+                if line.strip().startswith(f"{package_name} "):
                     parts = line.strip().split()
                     if len(parts) >= 2:
                         version = parts[1]
@@ -3362,15 +3322,18 @@ def get_installed_uv_tool_version(package_name: str) -> Optional[str]:
         logger.error(f"Error getting installed {package_name} version: {str(e)}")
         return None
 
-def install_or_update_nginx_set_conf() -> None:
-    """Install or update nginx-set-conf to the latest version using uv tool.
+def install_or_update_uv_tool(package_name: str, pinned_version: Optional[str] = None) -> None:
+    """Install or update a uv tool package, driven by packages.txt.
 
-    Every exit path records its outcome via record_install() so the end-of-run
-    summary makes failures visible — previously failures only hit the logger and
-    scrolled past unnoticed, leaving the tool silently uninstalled.
+    Without a pin the installed version is compared against the latest PyPI
+    release; with a pin (``name==version`` in packages.txt) the exact version
+    is installed. Every exit path records its outcome via record_install() so
+    the end-of-run summary makes failures visible.
+
+    Args:
+        package_name (str): Name of the package to install
+        pinned_version (Optional[str]): Exact version to install, or None for latest
     """
-    package_name = "nginx-set-conf"
-
     # Hard guard: without uv there is nothing to install with. Make it loud.
     if not is_uv_installed():
         logger.error(
@@ -3384,47 +3347,51 @@ def install_or_update_nginx_set_conf() -> None:
         # Check if already installed with uv tool
         current_version = get_installed_uv_tool_version(package_name)
 
-        # Get latest version from PyPI (best-effort — used only for the up-to-date
-        # short-circuit and log messages). A failed PyPI lookup must NOT abort the
-        # install when the tool isn't present yet: uv resolves the latest version
-        # itself, so we still attempt the install.
-        latest_version = get_latest_pypi_version(package_name)
+        if pinned_version:
+            target_version = pinned_version
+        else:
+            # Get latest version from PyPI (best-effort — used only for the
+            # up-to-date short-circuit and log messages). A failed PyPI lookup
+            # must NOT abort the install when the tool isn't present yet: uv
+            # resolves the latest version itself, so we still attempt the install.
+            target_version = get_latest_pypi_version(package_name)
 
-        if not latest_version:
-            if current_version:
+            if not target_version:
+                if current_version:
+                    logger.warning(
+                        f"Could not determine latest {package_name} version from PyPI; "
+                        f"{package_name} is installed ({current_version}), keeping it."
+                    )
+                    record_install(package_name, "ok", f"v{current_version} (PyPI check skipped)")
+                    return
                 logger.warning(
                     f"Could not determine latest {package_name} version from PyPI; "
-                    f"{package_name} is installed ({current_version}), keeping it."
+                    f"attempting install of the latest available version anyway."
                 )
-                record_install(package_name, "ok", f"v{current_version} (PyPI check skipped)")
-                return
-            logger.warning(
-                f"Could not determine latest {package_name} version from PyPI; "
-                f"attempting install of the latest available version anyway."
-            )
 
-        # Already up to date?
-        if current_version and latest_version and current_version == latest_version:
-            logger.info(f"{package_name} is already at the latest version ({latest_version})")
+        # Already at the wanted version?
+        if current_version and target_version and current_version == target_version:
+            logger.info(f"{package_name} is already at version {target_version}")
             record_install(package_name, "ok", f"v{current_version}")
             return
 
         # Install/update with uv tool
-        target = f"version {latest_version}" if latest_version else "latest version"
+        install_spec = f"{package_name}=={pinned_version}" if pinned_version else package_name
+        target = f"version {target_version}" if target_version else "latest version"
         if current_version:
             logger.info(f"Upgrading {package_name} from {current_version} to {target}")
         else:
             logger.info(f"Installing {package_name} {target}")
 
-        result = run_command(f"uv tool install {package_name}", capture_output=True)
+        result = run_command(f"uv tool install {install_spec}", capture_output=True)
 
         # If installation fails, retry once with --force.
         if result.returncode != 0:
             logger.warning(
-                f"uv tool install {package_name} failed (rc={result.returncode}); "
+                f"uv tool install {install_spec} failed (rc={result.returncode}); "
                 f"retrying with --force"
             )
-            result = run_command(f"uv tool install --force {package_name}", capture_output=True)
+            result = run_command(f"uv tool install --force {install_spec}", capture_output=True)
 
         # Verify installation
         new_version = get_installed_uv_tool_version(package_name)
@@ -3642,19 +3609,14 @@ def install_packages(package_info: Dict[str, Any]) -> None:
         except Exception as e:
             logger.warning(f"Failed to upgrade uv tools: {e}")
 
-    # 4. Install or update nginx-set-conf
+    # 4. Install or update all uv tools declared in packages.txt.
     # Called unconditionally on purpose: the function guards on is_uv_installed()
     # itself and records a visible "failed — uv not available" entry rather than
     # being silently skipped when uv is missing.
-    install_or_update_nginx_set_conf()
+    for package, version in package_info.get("uv_tools", {}).items():
+        install_or_update_uv_tool(package, version)
 
-    # 5. Install specific versions of packages with uv tool
-    if is_uv_installed():
-        for package, version in package_info.get("uv_tools", {}).items():
-            if package != "nginx-set-conf":
-                install_specific_uv_tool_package(package, version)
-
-    # 6. Migrate from pipx if still present (AFTER uv tools are installed)
+    # 5. Migrate from pipx if still present (AFTER uv tools are installed)
     migrate_from_pipx()
     
     # Collect all packages for parallel version checking
