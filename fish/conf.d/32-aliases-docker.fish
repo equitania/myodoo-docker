@@ -1,5 +1,5 @@
 # Docker Aliases
-# Version 1.0.0 | 28.01.2026
+# Version 1.1.0 | 14.07.2026
 
 # Docker base
 alias dk='docker'
@@ -19,6 +19,9 @@ alias dkvol='$HOME/myodoo-docker/scripts/check_docker_volumes.sh'
 alias dkstop='docker stop (docker ps -a -q)'
 
 # Prune commands (use with caution!)
+# dkprs/dkprv/dkprf/dkprfa run WITHOUT -f → Docker prompts [y/N] before deleting.
+# dkprfa also wipes unused *volumes* (--volumes) — confirm carefully.
+# dkprfs uses -f (no prompt) but never touches volumes (no --volumes).
 alias dkprs='docker system prune'
 alias dkprv='docker volume prune'
 alias dkprf='docker system prune -a'

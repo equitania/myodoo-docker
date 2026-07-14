@@ -1,8 +1,8 @@
 #!/bin/bash
 ##############################################################################
 # This script is designed to be run inside the container
-# Version 2.2.0
-# Date 20.01.2026
+# Version 2.3.0
+# Date 14.07.2026
 ##############################################################################
 #
 #    Shell Script for Odoo Docker Container
@@ -127,10 +127,19 @@ fi
 
 # Execute all provided parameters
 echo "Running parameters..."
-for arg in "$*"
-do
-    $arg
-done
+# Re-split combined argument strings into words, then whitelist the command.
+set -- $*
+cmd_word="${1:-}"
+case "$cmd_word" in
+    start|update|neutralize)
+        "$@"
+        ;;
+    *)
+        echo "ERROR: refusing to run unknown command: '$*'" >&2
+        echo "Allowed commands: start | update | neutralize" >&2
+        exit 1
+        ;;
+esac
 
 # Wait for all background processes to complete
 wait

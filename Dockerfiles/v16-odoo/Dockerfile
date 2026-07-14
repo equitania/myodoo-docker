@@ -2,6 +2,7 @@ FROM myodoo/prepare-v16:25.02.24-3.11.11
 LABEL maintainer=info@ownerp.com
 # Mit diesem Skript überprüft das passende Dockerimage gemäß des Releasefiles
 # Date 17.03.2026 - Added HEALTHCHECK directive
+# Date 14.07.2026 - Replaced ADD with COPY for bin/ (security hardening, avoid unintended tar auto-extraction)
 
 # create the odoo user
 RUN adduser --home=/opt/odoo --disabled-password --gecos "" --shell=/bin/bash odoo
@@ -35,4 +36,4 @@ CMD ["help"]
 
 # Expose the odoo ports (for linked containers)
 EXPOSE 8069 8072
-ADD bin /app/bin/
+COPY bin /app/bin/

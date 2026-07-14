@@ -1,5 +1,5 @@
 #!/bin/bash
-# Version 2.0.0 - Stand 11.06.2026
+# Version 2.1.0 - Stand 14.07.2026
 # Mit diesem Skript wird ein Restore einer Odoo Datenbank auf Basis von Docker durchgeführt
 # Das FileStore wird in den Odoo Container und die Datenbank in den PostgreSQL Container eingespielt
 # With this script you can restore a Odoo db in postgresql on base of Docker
@@ -27,6 +27,28 @@
 
 set -euo pipefail
 
+# Silent single-char read loop with '*' feedback per typed character.
+# Echoes '*' to stderr, supports backspace. Used for the interactive DB
+# password fallback (keeps the secret out of argv / shell history).
+_read_masked() {  # prompt -> value on stdout
+    local prompt="$1" value="" ch
+    printf '%s' "$prompt" >&2
+    while IFS= read -rs -n1 ch; do
+        [ -z "$ch" ] && break
+        if [ "$ch" = $'\x7f' ] || [ "$ch" = $'\b' ]; then
+            if [ -n "$value" ]; then
+                value="${value%?}"
+                printf '\b \b' >&2
+            fi
+        else
+            value+="$ch"
+            printf '*' >&2
+        fi
+    done
+    echo >&2
+    printf '%s' "$value"
+}
+
 mybackuppath="${mybasepath:-}/opt/backups/docker/"
 mybackuproot="$mybackuppath"   # immutable reference for the cleanup guard
 
@@ -38,7 +60,18 @@ mybackupzip="${5:-}"
 myodoocontainer="${6:-}"
 myodoovol="${7:-}"
 mydbcontainer="${8:-}"
-mypgpassword="${9:-}"
+# Password resolution — avoid exposing the DB password via argv (ps aux) or
+# shell history. Priority: 1) PGPASSWORD env (preferred for automation),
+# 2) 9th positional argument (legacy; discouraged, warns), 3) interactive
+# masked prompt.
+mypgpassword="${PGPASSWORD:-${9:-}}"
+if [ -n "${9:-}" ] && [ -z "${PGPASSWORD:-}" ]; then
+    echo "WARNING: passing the DB password as a positional argument exposes it via 'ps aux'"
+    echo "         and shell history. Prefer 'export PGPASSWORD=...' instead."
+fi
+if [ -z "$mypgpassword" ]; then
+    mypgpassword="$(_read_masked "  PostgreSQL password (DB user 'ownerp'): ")"
+fi
 
 mydbuser="ownerp"         # user for postgresql
 mydbserver="$mydbcontainer" # mostly the same like live-db or test-db
@@ -189,7 +222,9 @@ then
             command -v 7zz >/dev/null 2>&1 || { echo "ERROR: 7zz not installed"; exit 1; }
             mydecrypted="${myarchive%.gpg}"
             echo "GPG-encrypted backup - decrypting (passphrase prompt follows)..."
-            gpg --output "$mydecrypted" --decrypt "$myarchive"
+            # umask 077 (subshell) → the decrypted plaintext DB dump is created
+            # 0600, not world-readable in the (possibly shared) backup directory.
+            ( umask 077; gpg --output "$mydecrypted" --decrypt "$myarchive" )
             7zz x -y "$mydecrypted"
             rm -f "$mydecrypted"
             ;;

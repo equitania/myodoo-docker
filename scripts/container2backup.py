@@ -3,8 +3,8 @@
 # ==============================================================================
 # Title:            container2backup.py
 # Description:      Script to backup Odoo database including FileStore under Docker
-# Version:          4.7.0
-# Date:             19.06.2026
+# Version:          4.7.1
+# Date:             14.07.2026
 # Author:           Equitania Software GmbH
 # ==============================================================================
 # Feature Overview:
@@ -268,6 +268,16 @@ def _human(num_bytes):
         if abs(value) < 1024.0 or unit == 'TiB':
             return f"{value:.1f} {unit}"
         value /= 1024.0
+
+
+def _mask_password_args(args):
+    """Return a copy of a command argument list with '-p<password>' switches
+    masked, so archive commands can be logged without leaking the backup
+    password into /var/log/container2backup.log (cron log).
+    """
+    if not args:
+        return args
+    return ['-p***' if a.startswith('-p') and len(a) > 2 else a for a in args]
 
 
 def _report_failure_context(label, cmd, returncode, stdout, stderr, related_paths):
@@ -996,10 +1006,12 @@ def compress_directory(source_dir, output_file_base, config, only_sql_dump=False
             # could archive nothing or behave inconsistently.
             if only_sql_dump:
                 zip_args.extend([output_file, 'dump.sql'])
-                print(f"7z command for SQL-only mode: {' '.join(zip_args)}")
+                log_args = _mask_password_args(zip_args)
+                print(f"7z command for SQL-only mode: {' '.join(log_args)}")
             else:
                 zip_args.extend([output_file, '.'])
-                print(f"7z command for full backup: {' '.join(zip_args)}")
+                log_args = _mask_password_args(zip_args)
+                print(f"7z command for full backup: {' '.join(log_args)}")
 
             print(f"Creating 7z archive with 7zz: {output_file}")
             result = subprocess.run(zip_args, cwd=source_dir,
@@ -1134,7 +1146,7 @@ def compress_directory(source_dir, output_file_base, config, only_sql_dump=False
             # only if it was non-empty - a signal kill (e.g. OOM) leaves stderr
             # empty, which is exactly why this failure was invisible before.
             _report_failure_context(
-                "archive creation", locals().get('zip_args'),
+                "archive creation", _mask_password_args(locals().get('zip_args')),
                 result.returncode, getattr(result, 'stdout', None),
                 getattr(result, 'stderr', None),
                 [output_file, source_dir])

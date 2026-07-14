@@ -1,5 +1,27 @@
 # Release Notes
 
+## Repository Security Review & Hardening (14.07.2026)
+
+Full-repository security review (Python, Shell/Fish, Docker/config) with fixes applied across all severities.
+
+### Added
+- pg-local-deploy.sh / fr-local-deploy.sh: password input now shows one `*` per typed character (with backspace), so the number of entered characters is visible while the secret itself stays hidden (`_read_masked`). Same masking added to fr-local-deploy.sh registry-token input and restore-zip.sh password fallback.
+
+### Changed
+- fr-local-deploy.sh **[CRITICAL]**: removed the shared "baked default" secrets (JWT signing key, MD5 admin hash, bcrypt superuser hash) — they were identical across all deployments and would be an auth-bypass if the repo is readable. When no override and no existing appsettings.json is present, admin/superuser passwords and the JWT key are now generated **randomly per deployment** (`secrets`) and shown once in the final banner. First-time deploy now requires `bcrypt` (no insecure fallback).
+- update_docker_odoo.py v5.3.1 **[HIGH]**: `db_password_via_env` now defaults to **true** — the DB password goes via `-e PGPASSWORD` instead of the `docker run` argv (previously visible in `ps aux`). Example YAMLs document the flag.
+- bin/boot v2.2.0/v2.3.0 (v16/v18/v19): container entrypoint now whitelists `start|update|neutralize`; arbitrary arguments are no longer executed as root.
+- build_odoo.py v2.3.0 (v16/v18/v19): `unzip` runs without `shell=True` (+ CSV filename validation); TLS downloads enforce `cert_reqs=CERT_REQUIRED` with certifi.
+- odoo.conf (v16/v18/v19): `db_sslmode = require`; v19 gains a `proxy_access_token` placeholder. Dockerfiles: `ADD` → `COPY`.
+- syspatch.fish v1.3.0: dropped the unconfirmed `docker volume prune -f` (could irreversibly delete data volumes of stopped containers); prunes only dangling images now.
+
+### Fixed
+- fr-local-deploy.sh **[CRITICAL/HIGH]**: appsettings.json (contains the JWT key in cleartext) now `chmod 0600`; `docker login --password-stdin` and stdin/WGETRC-based basic auth instead of credentials in argv; whitelist validation for container name and image tag (Compose-YAML injection).
+- pg-local-deploy.sh v1.1.0 **[MEDIUM]**: whitelist validation for DB user/name; compose file created via `umask 077` (no world-readable TOCTOU window); docker-run fallback uses `--env-file` instead of `-e` for the password.
+- container2backup.py v4.7.1 **[HIGH]**: the backup password is masked in log output — the gpg-less 7z fallback no longer writes the cleartext password into the cron log.
+- restore-zip.sh v2.1.0: DB password resolved from `PGPASSWORD` env → positional arg (warns) → masked prompt, instead of a plain positional argument visible in `ps aux`; GPG-decrypted dump written with `umask 077`.
+- getScripts.py v9.7.2 / proxy_config.py: `no_proxy` is validated before being written into the sourced fish startup file (command-injection); missing `requests.get` timeouts added; predictable `/tmp` download paths replaced with `tempfile.mkstemp`; jammy APT repo over HTTPS.
+
 ## Live Version Checks & Fail2Ban Audit Polish (11.06.2026)
 
 ### Changed

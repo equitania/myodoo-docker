@@ -1,5 +1,5 @@
 # System Update Function
-# Version 1.2.0 | 27.05.2026
+# Version 1.3.0 | 14.07.2026
 # Comprehensive system update and cleanup
 
 function syspatch --description "Comprehensive system update and cleanup"
@@ -46,9 +46,13 @@ function syspatch --description "Comprehensive system update and cleanup"
     end
 
     echo ""
-    echo "🐳 Pruning Docker..."
-    docker system prune -f
-    docker volume prune -f
+    echo "🐳 Pruning Docker (dangling images only)..."
+    # SAFETY: only remove dangling image layers. Do NOT run `docker volume prune`
+    # or `docker system prune --volumes` here — that would irreversibly delete
+    # data volumes of stopped/paused containers (e.g. an Odoo filestore) with no
+    # confirmation. See the Docker safety rule in CLAUDE.md. Use the guarded
+    # `dkrmv` / `dkprv` aliases for deliberate, confirmed volume cleanup.
+    docker image prune -f
 
     echo ""
     echo "✅ System update complete!"

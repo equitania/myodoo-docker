@@ -7,6 +7,7 @@ Handles pip/uv tool package management.
 
 import os
 import subprocess
+import tempfile
 import requests
 from typing import Optional, Dict, Any
 
@@ -86,16 +87,22 @@ def ensure_uv() -> bool:
         machine = platform.machine().lower()
         target = "aarch64-unknown-linux-gnu" if machine in ("aarch64", "arm64") else "x86_64-unknown-linux-gnu"
         tarball_url = f"https://github.com/astral-sh/uv/releases/latest/download/uv-{target}.tar.gz"
-        tmp_tarball = "/tmp/uv.tar.gz"
+        # Securely-created temp path (unpredictable name) instead of a fixed
+        # /tmp filename to avoid symlink/race attacks as root.
+        tmp_fd, tmp_tarball = tempfile.mkstemp(suffix=".tar.gz")
+        os.close(tmp_fd)
         local_bin = os.path.expanduser("~/.local/bin")
         os.makedirs(local_bin, exist_ok=True)
-        run_command(f"curl -fsSL {tarball_url} -o {tmp_tarball}", shell=True, check=True)
-        run_command(
-            f"tar -xzf {tmp_tarball} -C {local_bin} --strip-components=1 uv-{target}/uv uv-{target}/uvx",
-            shell=True, check=True
-        )
-        run_command(f"chmod 755 {local_bin}/uv {local_bin}/uvx", shell=True, check=True)
-        os.remove(tmp_tarball)
+        try:
+            run_command(f"curl -fsSL {tarball_url} -o {tmp_tarball}", shell=True, check=True)
+            run_command(
+                f"tar -xzf {tmp_tarball} -C {local_bin} --strip-components=1 uv-{target}/uv uv-{target}/uvx",
+                shell=True, check=True
+            )
+            run_command(f"chmod 755 {local_bin}/uv {local_bin}/uvx", shell=True, check=True)
+        finally:
+            if os.path.exists(tmp_tarball):
+                os.remove(tmp_tarball)
         # Ensure ~/.local/bin is in PATH for current session
         local_bin = os.path.expanduser("~/.local/bin")
         if local_bin not in os.environ.get("PATH", ""):

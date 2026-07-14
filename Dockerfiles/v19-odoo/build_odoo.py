@@ -1,7 +1,7 @@
 #!/usr/bin/python3
 # -*- coding: utf-8 -*-
 # This script builds a new server using the Release Manager
-# Version 2.2.0
+# Version 2.3.0
 # Date 14.07.2026
 ##############################################################################
 #
@@ -25,16 +25,38 @@
 
 import os
 import csv
+import re
+import ssl
 import urllib3
 import platform
 import sys
 import subprocess
+
+# certifi provides a maintained CA bundle; fall back to the system's default
+# verify paths if it is not installed in the build environment.
+try:
+    import certifi
+    _ca_certs = certifi.where()
+except ImportError:
+    _ca_certs = ssl.get_default_verify_paths().cafile
 
 _build_path = '/opt/odoo'
 _release_file = 'release.file'
 
 # Check if we are running on macOS or Linux
 is_macos = platform.system() == 'Darwin'
+
+# Filenames/paths sourced from the downloaded release CSV must match this
+# conservative charset to prevent path traversal or command injection via a
+# manipulated or compromised release file.
+_SAFE_FILENAME_PATTERN = re.compile(r'^[A-Za-z0-9._/-]+$')
+
+def _validate_csv_filename(value):
+    """Validate a filename/path field sourced from the release CSV."""
+    if not value or not _SAFE_FILENAME_PATTERN.match(value):
+        print(f"Invalid filename in release file: '{value}'")
+        return False
+    return True
 
 def _create_http_pool():
     """Create the HTTP pool; use a ProxyManager when proxy env vars are set.
@@ -46,7 +68,8 @@ def _create_http_pool():
     proxy_url = (os.environ.get('https_proxy') or os.environ.get('HTTPS_PROXY')
                  or os.environ.get('http_proxy') or os.environ.get('HTTP_PROXY'))
     pool_kwargs = dict(maxsize=10, block=True,
-                       timeout=urllib3.Timeout(connect=30, read=300))
+                       timeout=urllib3.Timeout(connect=30, read=300),
+                       cert_reqs='CERT_REQUIRED', ca_certs=_ca_certs)
     if proxy_url:
         print(f"Using proxy for downloads: {proxy_url}")
         return urllib3.ProxyManager(proxy_url, **pool_kwargs)
@@ -89,18 +112,17 @@ def run_command(command):
 
 def extract_zip(zipfile, destination="."):
     """Extract a zip file to the specified destination."""
-    if is_macos:
-        # macOS unzip command
-        command = f"unzip -q -o {zipfile} -d {destination}"
-    else:
-        # Linux unzip command
-        command = f"unzip -q -o {zipfile} -d {destination}"
-    
-    if run_command(command):
+    # Use list-form subprocess call (no shell=True) to avoid shell injection
+    # via filenames sourced from the downloaded release CSV.
+    try:
+        subprocess.run(["unzip", "-q", "-o", zipfile, "-d", destination],
+                       check=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+                       universal_newlines=True)
         print(f"Extracted: {zipfile} to {destination}")
         return True
-    else:
+    except subprocess.CalledProcessError as e:
         print(f"Failed to extract {zipfile}")
+        print(f"Error: {e.stderr}")
         return False
 
 def count_csv_rows(file_path):
@@ -198,10 +220,12 @@ with open(_release_file, encoding="utf8") as csvfile:
             if _column == 'False':
                 print('kernel is missing .. stop!')
                 sys.exit(1)
+            elif not _validate_csv_filename(_column):
+                sys.exit(1)
             else:
                 # Create directories if they don't exist
                 os.makedirs('odoo-server/addons', exist_ok=True)
-                
+
                 # Download kernel
                 _zip_url = f"{_url}/{_column}"
                 downloaded_files += 1
@@ -210,9 +234,11 @@ with open(_release_file, encoding="utf8") as csvfile:
                 else:
                     print(f'Failed to process kernel: {_column}')
                     sys.exit(1)
-                    
+
         else:  # Modules
             if _column.find('.zip') != -1:
+                if not _validate_csv_filename(_column):
+                    continue
                 _zip_url = f"{_url}/{_column}"
                 downloaded_files += 1
                 if download_and_extract(_zip_url, _column, 'odoo-server/addons'):

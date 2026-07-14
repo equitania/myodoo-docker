@@ -55,7 +55,7 @@ if os.environ.get('GETSCRIPTS_DEBUG', '').lower() in ('1', 'true', 'yes'):
     logger.debug("Debug logging enabled")
 
 # Script version and date
-SCRIPT_VERSION = "9.7.0"
+SCRIPT_VERSION = "9.7.2"
 SCRIPT_DATE = "14.07.2026"
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -558,12 +558,20 @@ def install_fish_if_needed() -> Tuple[bool, bool]:
                 # Debian 9+) - avoids dependency on gnupg, which minimal images lack.
                 # Download to temp file first so a failed download propagates as error
                 # instead of leaving an empty key file behind (no pipefail in /bin/sh).
+                # Use a securely-created temp path (unpredictable name) instead of a
+                # fixed /tmp filename to avoid symlink/race attacks as root.
                 logger.info("Importing Fish shell repository signing key...")
-                run_command(
-                    f"curl -fsSL {key_url} -o /tmp/shells_fish_release_4.asc && "
-                    "sudo mv /tmp/shells_fish_release_4.asc /etc/apt/trusted.gpg.d/shells_fish_release_4.asc",
-                    shell=True, check=True
-                )
+                key_tmp_fd, key_tmp_path = tempfile.mkstemp(suffix=".asc")
+                os.close(key_tmp_fd)
+                try:
+                    run_command(
+                        f"curl -fsSL {key_url} -o {key_tmp_path} && "
+                        f"sudo mv {key_tmp_path} /etc/apt/trusted.gpg.d/shells_fish_release_4.asc",
+                        shell=True, check=True
+                    )
+                finally:
+                    if os.path.exists(key_tmp_path):
+                        os.unlink(key_tmp_path)
 
                 repo_was_added = True
                 needs_migration = True  # Migration from system packages
@@ -673,12 +681,18 @@ def install_starship_if_needed() -> bool:
         machine = platform.machine().lower()
         target = "aarch64-unknown-linux-musl" if machine in ("aarch64", "arm64") else "x86_64-unknown-linux-musl"
         tarball_url = f"https://github.com/starship/starship/releases/latest/download/starship-{target}.tar.gz"
-        tmp_tarball = "/tmp/starship.tar.gz"
-        logger.info(f"Downloading Starship release binary ({target})...")
-        run_command(f"curl -fsSL {tarball_url} -o {tmp_tarball}", shell=True, check=True)
-        run_command(f"sudo tar -xzf {tmp_tarball} -C /usr/local/bin starship", shell=True, check=True)
-        run_command("sudo chmod 755 /usr/local/bin/starship", shell=True, check=True)
-        os.remove(tmp_tarball)
+        # Securely-created temp path (unpredictable name) instead of a fixed
+        # /tmp filename to avoid symlink/race attacks as root.
+        tmp_fd, tmp_tarball = tempfile.mkstemp(suffix=".tar.gz")
+        os.close(tmp_fd)
+        try:
+            logger.info(f"Downloading Starship release binary ({target})...")
+            run_command(f"curl -fsSL {tarball_url} -o {tmp_tarball}", shell=True, check=True)
+            run_command(f"sudo tar -xzf {tmp_tarball} -C /usr/local/bin starship", shell=True, check=True)
+            run_command("sudo chmod 755 /usr/local/bin/starship", shell=True, check=True)
+        finally:
+            if os.path.exists(tmp_tarball):
+                os.remove(tmp_tarball)
 
         installed, new_version = is_starship_installed()
         if installed:
@@ -1063,7 +1077,7 @@ def download_and_install_deb(url: str, filename: str) -> None:
         Exception: If download or installation fails
     """
     try:
-        response = requests.get(url, stream=True)
+        response = requests.get(url, stream=True, timeout=30)
         response.raise_for_status()
 
         # Download file in chunks
@@ -1312,11 +1326,17 @@ def install_zoxide_if_needed(target_version: Optional[str] = None) -> None:
         machine = platform.machine().lower()
         deb_arch = "arm64" if machine in ("aarch64", "arm64") else "amd64"
         deb_url = f"https://github.com/ajeetdsouza/zoxide/releases/download/v{latest_version}/zoxide_{latest_version}-1_{deb_arch}.deb"
-        deb_file = f"/tmp/zoxide_{latest_version}_{deb_arch}.deb"
-        logger.info(f"Downloading zoxide {latest_version} .deb package...")
-        run_command(f"curl -fsSL {deb_url} -o {deb_file}", shell=True, check=True)
-        run_command(f"sudo dpkg -i {deb_file}", shell=True, check=True, capture_output=True)
-        os.remove(deb_file)
+        # Securely-created temp path (unpredictable name) instead of a fixed
+        # /tmp filename to avoid symlink/race attacks as root.
+        deb_fd, deb_file = tempfile.mkstemp(suffix=".deb")
+        os.close(deb_fd)
+        try:
+            logger.info(f"Downloading zoxide {latest_version} .deb package...")
+            run_command(f"curl -fsSL {deb_url} -o {deb_file}", shell=True, check=True)
+            run_command(f"sudo dpkg -i {deb_file}", shell=True, check=True, capture_output=True)
+        finally:
+            if os.path.exists(deb_file):
+                os.remove(deb_file)
         logger.info(f"zoxide {latest_version} installed successfully.")
     except Exception as e:
         logger.warning(f"zoxide installation failed (this is not critical): {str(e)}")
@@ -1674,17 +1694,23 @@ def install_uv() -> bool:
         machine = platform.machine().lower()
         target = "aarch64-unknown-linux-gnu" if machine in ("aarch64", "arm64") else "x86_64-unknown-linux-gnu"
         tarball_url = f"https://github.com/astral-sh/uv/releases/latest/download/uv-{target}.tar.gz"
-        tmp_tarball = "/tmp/uv.tar.gz"
+        # Securely-created temp path (unpredictable name) instead of a fixed
+        # /tmp filename to avoid symlink/race attacks as root.
+        tmp_fd, tmp_tarball = tempfile.mkstemp(suffix=".tar.gz")
+        os.close(tmp_fd)
         local_bin = os.path.expanduser("~/.local/bin")
         os.makedirs(local_bin, exist_ok=True)
-        logger.info(f"Downloading uv release tarball ({target})...")
-        run_command(f"curl -fsSL {tarball_url} -o {tmp_tarball}", shell=True, check=True)
-        run_command(
-            f"tar -xzf {tmp_tarball} -C {local_bin} --strip-components=1 uv-{target}/uv uv-{target}/uvx",
-            shell=True, check=True
-        )
-        run_command(f"chmod 755 {local_bin}/uv {local_bin}/uvx", shell=True, check=True)
-        os.remove(tmp_tarball)
+        try:
+            logger.info(f"Downloading uv release tarball ({target})...")
+            run_command(f"curl -fsSL {tarball_url} -o {tmp_tarball}", shell=True, check=True)
+            run_command(
+                f"tar -xzf {tmp_tarball} -C {local_bin} --strip-components=1 uv-{target}/uv uv-{target}/uvx",
+                shell=True, check=True
+            )
+            run_command(f"chmod 755 {local_bin}/uv {local_bin}/uvx", shell=True, check=True)
+        finally:
+            if os.path.exists(tmp_tarball):
+                os.remove(tmp_tarball)
         # Ensure ~/.local/bin and ~/.cargo/bin are in PATH for current session
         local_bin = os.path.expanduser("~/.local/bin")
         if local_bin not in os.environ.get("PATH", ""):
@@ -2045,7 +2071,7 @@ def install_or_update_zstd():
                     # Ubuntu 20.04 has outdated zstd in repos, need to install from newer source
                     logger.info("Ubuntu 20.04 detected, installing newer zstd version")
                     # Add Ubuntu 22.04 repository for newer zstd
-                    run_command("sudo add-apt-repository -y 'deb http://archive.ubuntu.com/ubuntu jammy main universe'")
+                    run_command("sudo add-apt-repository -y 'deb https://archive.ubuntu.com/ubuntu jammy main universe'")
                     run_command("sudo apt update")
                     # Install specific version that meets requirements
                     run_command("sudo apt install -y -t jammy zstd")
@@ -2358,7 +2384,7 @@ def install_or_update_7zip():
                 os.chdir(temp_dir)
 
                 logger.info(f"Downloading 7-Zip from {download_url}...")
-                response = requests.get(download_url, stream=True)
+                response = requests.get(download_url, stream=True, timeout=30)
                 response.raise_for_status()
 
                 with open(filename, 'wb') as f:
@@ -2597,7 +2623,7 @@ def install_or_update_ctop() -> None:
                 download_url = f"https://github.com/eqms/ctop/releases/download/v{latest_version}/{binary_name}"
 
                 logger.info(f"Downloading ctop from {download_url}")
-                response = requests.get(download_url, stream=True)
+                response = requests.get(download_url, stream=True, timeout=30)
                 response.raise_for_status()
 
                 temp_binary = os.path.join(temp_dir, "ctop")
@@ -3855,6 +3881,17 @@ def validate_proxy_url(url: str) -> bool:
     return bool(re.match(pattern, url))
 
 
+def validate_no_proxy(no_proxy: str) -> bool:
+    """Validate a no_proxy value before embedding it in the generated Fish
+    config. Unlike validate_proxy_url() this is a comma-separated list of
+    hostnames/IPs/CIDR/wildcards, not a URL, and needs its own whitelist -
+    a stray '"' here would break out of `set -gx no_proxy "{no_proxy}"` and
+    inject commands that run on every shell start.
+    """
+    pattern = r'^[A-Za-z0-9.,:*_/-]*$'
+    return bool(re.match(pattern, no_proxy))
+
+
 def configure_proxy_settings() -> bool:
     """Interactive proxy configuration."""
     print("\n" + "=" * 60)
@@ -3921,6 +3958,13 @@ def apply_proxy_settings(config: dict) -> bool:
     # Apply to Fish shell
     fish_conf_dir = os.path.expanduser("~/.config/fish/conf.d")
     ensure_directory_exists(fish_conf_dir)
+
+    # no_proxy is not URL-checked like http_proxy/https_proxy above - validate
+    # it separately before embedding it in the generated Fish config (see
+    # validate_no_proxy() docstring for the injection risk).
+    if not validate_no_proxy(no_proxy):
+        logger.warning(f"Invalid no_proxy value rejected (unsafe characters): {no_proxy!r} - using empty no_proxy")
+        no_proxy = ""
 
     proxy_fish = os.path.join(fish_conf_dir, "99-proxy.fish")
     fish_content = f'''# Proxy Configuration - managed by getScripts.py

@@ -72,6 +72,7 @@ containers:
     volume: "--network live-db-net -v /opt/odoo/live:/opt/odoo/data"
     odoo_version: "18"
     translate: "Y"
+    db_password_via_env: true  # secure default: password via -e PGPASSWORD, not argv
     # Customer-specific modules copied into the build folder before docker build.
     # Add one entry per file or directory; 'target' is relative to dockerfile_path.
     pre_build_files:
@@ -98,6 +99,7 @@ containers:
     volume: "--network test-db-net -v /opt/odoo/test:/opt/odoo/data"
     odoo_version: "18"
     translate: "Y"
+    db_password_via_env: true  # secure default: password via -e PGPASSWORD, not argv
     pre_build_files:
       - source: "/opt/customer/eq_custom_module"
         target: "custom-addons/"

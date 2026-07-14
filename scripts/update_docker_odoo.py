@@ -1,7 +1,7 @@
 #!/usr/bin/python3
 # -*- coding: utf-8 -*-
 # This script performs an update of an Odoo database in a Docker container
-# Version 5.3.0
+# Version 5.3.1
 # Date 14.07.2026
 ##############################################################################
 #
@@ -839,9 +839,10 @@ def process_container(container, proxy_settings=None, dockerfiles_source=None):
     # Pass the DB password via environment (docker run -e PGPASSWORD) instead
     # of argv when enabled - argv is visible to every local user via ps.
     # Requires an image whose boot script whitelists PGPASSWORD across su
-    # (myodoo images built from 11.06.2026 on). Default: legacy argv mode so
-    # existing images keep working.
-    password_via_env = bool(container.get('db_password_via_env', False))
+    # (myodoo images built from 11.06.2026 on). Default: secure env mode; set
+    # db_password_via_env: false only for legacy images without PGPASSWORD
+    # whitelist in bin/boot.
+    password_via_env = bool(container.get('db_password_via_env', True))
     if password_via_env:
         os.environ['PGPASSWORD'] = db_password
         db_auth_args = f"--db_user={db_user} --db_host={db_host}"

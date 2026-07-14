@@ -19,6 +19,10 @@
 #   volume: Docker volume configuration
 #   odoo_version: Odoo version number
 #   translate: Whether to load translations (Y/N)
+#   db_password_via_env: (optional, per container) pass the DB password via
+#     'docker run -e PGPASSWORD' instead of argv (default: true). Set to
+#     false only for legacy images without a PGPASSWORD whitelist in bin/boot -
+#     argv passwords are visible to every local user via 'ps aux'.
 #   proxy: (optional, per container) override of defaults.proxy, see below
 #   pre_build_files: (optional, per container) files/directories copied into
 #     dockerfile_path BEFORE docker build - e.g. customer-specific modules that
@@ -63,6 +67,7 @@ containers:
     volume: "--network live-db-net -v /opt/odoo/live:/opt/odoo/data"
     odoo_version: "18"
     translate: "Y"
+    db_password_via_env: true  # secure default: password via -e PGPASSWORD, not argv
     # Optional: copy customer-specific files/directories into dockerfile_path
     # before docker build. 'target' is relative to dockerfile_path (default ".").
     #pre_build_files:
@@ -85,4 +90,5 @@ containers:
     db_host: "test-db"
     volume: "--network test-db-net -v /opt/odoo/test:/opt/odoo/data"
     odoo_version: "18"
-    translate: "Y" 
+    translate: "Y"
+    db_password_via_env: true  # secure default: password via -e PGPASSWORD, not argv

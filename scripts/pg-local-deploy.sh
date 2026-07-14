@@ -2,7 +2,7 @@
 #
 # pg-local-deploy.sh — interaktives On-Premise-Deploy für PostgreSQL-Docker.
 #
-# Version: 1.0.0 — 14.07.2026
+# Version: 1.1.0 — 14.07.2026
 #
 # Spiegelt das Ansible-Playbook
 #   semaphore/playbooks/odoo/pg/pb_pg_docker_start.yaml
@@ -51,21 +51,41 @@ _ok()   { printf '%s✓ %s%s\n' "$C_GREEN" "$*" "$C_RESET"; }
 _info() { printf '%s➜ %s%s\n' "$C_CYAN"  "$*" "$C_RESET"; }
 _hr()   { printf '%s────────────────────────────────────────────────%s\n' "$C_GRAY" "$C_RESET"; }
 
+# Silent single-char read loop with '*' feedback per typed character.
+# Echoes '*' to stderr (keeps command substitution clean), supports backspace.
+_read_masked() {  # prompt -> value on stdout
+    local prompt="$1" value="" ch
+    printf '%s' "$prompt" >&2
+    while IFS= read -rs -n1 ch; do
+        [ -z "$ch" ] && break                      # Enter
+        if [ "$ch" = $'\x7f' ] || [ "$ch" = $'\b' ]; then
+            if [ -n "$value" ]; then
+                value="${value%?}"
+                printf '\b \b' >&2
+            fi
+        else
+            value+="$ch"
+            printf '*' >&2
+        fi
+    done
+    echo >&2
+    printf '%s' "$value"
+}
+
 # Doppelte Passwort-Eingabe mit Verifikation — Pflichtfeld, KEIN Default
-# (keine Secrets im Skript). Gibt das Passwort auf stdout aus. Prompts gehen
-# nach stderr (read -p), damit command substitution nur den Wert einfängt.
+# (keine Secrets im Skript). Gibt das Passwort auf stdout aus. Prompts +
+# '*'-Feedback gehen nach stderr, damit command substitution nur den Wert
+# einfängt.
 _read_pwd_twice() {
     local label="$1"
     local pwd1 pwd2
     while true; do
-        read -rsp "  $label: " pwd1
-        echo >&2
+        pwd1="$(_read_masked "  $label: ")"
         if [ -z "$pwd1" ]; then
             _err "$label ist Pflicht — bitte eingeben."
             continue
         fi
-        read -rsp "  $label (Wiederholung): " pwd2
-        echo >&2
+        pwd2="$(_read_masked "  $label (Wiederholung): ")"
         if [ "$pwd1" = "$pwd2" ]; then
             echo "$pwd1"
             return 0
@@ -128,9 +148,19 @@ esac
 echo
 read -rp "  DB-User [$DEFAULT_PG_USER]: " pg_user
 [ -z "$pg_user" ] && pg_user="$DEFAULT_PG_USER"
+# Whitelist — pg_user landet in generierter Compose-YAML (u.a. im CMD-SHELL-
+# Healthcheck); Sonderzeichen könnten die YAML-/Shell-Struktur aufbrechen.
+if ! [[ "$pg_user" =~ ^[a-zA-Z0-9][a-zA-Z0-9_.-]*$ ]]; then
+    _err "Ungültiger DB-User: $pg_user"
+    exit 1
+fi
 
 read -rp "  DB-Name [$DEFAULT_PG_DB]: " pg_db
 [ -z "$pg_db" ] && pg_db="$DEFAULT_PG_DB"
+if ! [[ "$pg_db" =~ ^[a-zA-Z0-9][a-zA-Z0-9_.-]*$ ]]; then
+    _err "Ungültiger DB-Name: $pg_db"
+    exit 1
+fi
 
 echo
 echo "  Hinweis: POSTGRES_PASSWORD greift nur beim ERSTEN Start (initdb)."
@@ -261,7 +291,9 @@ fi
 
 # Compose-File schreiben — kapselt alle Run-Parameter, ermöglicht späteres
 # start/stop/restart ohne dieses Skript. Enthält das DB-Passwort → 0600.
-cat > "$compose_file" <<EOF
+# umask 077 in Subshell: Datei entsteht direkt mit 0600 (kein TOCTOU-Fenster,
+# in dem das Passwort world-readable wäre, bevor chmod greift).
+( umask 077; cat > "$compose_file" <<EOF
 # Generiert von pg-local-deploy.sh — PostgreSQL Deployment "$pg_name".
 # Spiegel von semaphore/playbooks/odoo/pg/pb_pg_docker_start.yaml.
 # Steuerung (verzeichnis-unabhängig via -f):
@@ -291,6 +323,7 @@ networks:
   default:
     name: "$docker_network"
 EOF
+)
 chmod 0600 "$compose_file"
 _ok "Compose-File geschrieben: $compose_file (0600 — enthält Passwort)"
 
@@ -329,14 +362,17 @@ else
     fi
     port_args=()
     [ -n "$pg_port" ] && port_args=(-p "127.0.0.1:$pg_port:$CONTAINER_PORT")
+    # POSTGRES_PASSWORD nicht via '-e' (wäre in ps aux / /proc sichtbar) →
+    # temporäre env-Datei (0600), unmittelbar nach 'docker run' gelöscht.
+    run_env_file="$deploy_dir/.pg-run.env"
+    ( umask 077; printf 'POSTGRES_USER=%s\nPOSTGRES_PASSWORD=%s\nPOSTGRES_DB=%s\n' \
+        "$pg_user" "$pg_pass" "$pg_db" > "$run_env_file" )
     if ! docker run -d \
         --name "$pg_name" \
         --restart always \
         --shm-size 1g \
         --network "$docker_network" \
-        -e POSTGRES_USER="$pg_user" \
-        -e POSTGRES_PASSWORD="$pg_pass" \
-        -e POSTGRES_DB="$pg_db" \
+        --env-file "$run_env_file" \
         -v "$host_pgdata:/var/lib/postgresql/data/" \
         "${port_args[@]}" \
         --health-cmd "pg_isready -U $pg_user" \
@@ -346,8 +382,10 @@ else
         --health-start-period 30s \
         "$image" >/dev/null; then
         _err "docker run fehlgeschlagen"
+        rm -f "$run_env_file"
         exit 1
     fi
+    rm -f "$run_env_file"
     _ok "Container via docker run gestartet"
 fi
 

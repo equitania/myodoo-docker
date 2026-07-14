@@ -66,6 +66,26 @@ def validate_proxy_url(url: str) -> bool:
     return bool(re.match(pattern, url))
 
 
+def validate_no_proxy(no_proxy: str) -> bool:
+    """
+    Validate a no_proxy value before it gets embedded in a generated shell
+    config (e.g. `set -gx no_proxy "{no_proxy}"` in Fish). Unlike
+    validate_proxy_url() this value is a comma-separated list of hostnames,
+    IPs, CIDR ranges and wildcards - not a URL - so it needs its own
+    whitelist. Rejecting anything outside it prevents a stray quote from
+    breaking out of the generated config (command injection on every shell
+    start).
+
+    Args:
+        no_proxy: no_proxy value to validate
+
+    Returns:
+        bool: True if valid (empty string is allowed)
+    """
+    pattern = r'^[A-Za-z0-9.,:*_/-]*$'
+    return bool(re.match(pattern, no_proxy))
+
+
 def configure_proxy_settings() -> bool:
     """
     Interactive proxy configuration.
@@ -172,6 +192,15 @@ def _apply_proxy_to_fish(config: Dict[str, str]) -> bool:
 
     proxy_fish = os.path.join(fish_conf_dir, "99-proxy.fish")
 
+    # no_proxy is not URL-checked like http_proxy/https_proxy above - validate
+    # it separately before embedding it in the generated Fish config, or a
+    # stray '"' could break out of the `set -gx` string and inject commands
+    # that run on every shell start.
+    no_proxy = config.get('no_proxy', '')
+    if not validate_no_proxy(no_proxy):
+        logger.warning(f"Invalid no_proxy value rejected (unsafe characters): {no_proxy!r} - using empty no_proxy")
+        no_proxy = ""
+
     content = f'''# Proxy Configuration - managed by getScripts.py
 # Remove or edit this file to change proxy settings
 
@@ -179,8 +208,8 @@ set -gx http_proxy "{config['http_proxy']}"
 set -gx https_proxy "{config['https_proxy']}"
 set -gx HTTP_PROXY "{config['http_proxy']}"
 set -gx HTTPS_PROXY "{config['https_proxy']}"
-set -gx no_proxy "{config['no_proxy']}"
-set -gx NO_PROXY "{config['no_proxy']}"
+set -gx no_proxy "{no_proxy}"
+set -gx NO_PROXY "{no_proxy}"
 '''
 
     try:
