@@ -34,7 +34,7 @@ myodoovol=$7
 mydbcontainer=$8
 mypgpassword=$9
 
-#mypgpassword="ownerp2021" # password for postgresql
+#mypgpassword="REMOVED_PASSWORD" # password for postgresql
 mydbuser="ownerp"         # user for postgresql
 mydbserver=$mydbcontainer # mostly the same like live-db or test-db
 
