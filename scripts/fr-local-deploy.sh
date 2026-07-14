@@ -151,6 +151,60 @@ _read_pwd_twice() {
 _gen_secret()  { python3 -c 'import secrets; print(secrets.token_urlsafe(18))'; }
 _gen_jwt_key() { python3 -c 'import secrets; print(secrets.token_hex(32))'; }
 
+# Ensures a Python interpreter with the bcrypt module and sets BCRYPT_PYTHON to
+# its path. Order: 1) system python3 if it already has bcrypt, 2) a uv-managed
+# venv (created + cached under $HOME/.cache/fr-local-deploy/venv) with bcrypt.
+# Returns 1 (with guidance) if neither works. bcrypt is only needed to hash a
+# new/generated superuser password, so this runs lazily (Step 5), not up front.
+BCRYPT_PYTHON=""
+_ensure_bcrypt_python() {
+    [ -n "$BCRYPT_PYTHON" ] && return 0
+
+    # 1) System python3 already carries bcrypt.
+    if python3 -c 'import bcrypt' 2>/dev/null; then
+        BCRYPT_PYTHON="python3"
+        return 0
+    fi
+
+    # 2) Provision a dedicated uv venv with bcrypt (project standard: uv, not pip).
+    if ! command -v uv >/dev/null 2>&1; then
+        _err "Python-Modul 'bcrypt' fehlt und 'uv' ist nicht installiert."
+        echo "    bcrypt wird für den Superuser-Hash benötigt. Installiere uv"
+        echo "    (https://docs.astral.sh/uv/) — dann erzeugt dieses Skript das"
+        echo "    venv automatisch. Alternativ manuell bereitstellen:"
+        echo "      python3 -m venv ~/.frvenv && ~/.frvenv/bin/pip install bcrypt"
+        echo "      danach: PATH=\"\$HOME/.frvenv/bin:\$PATH\" ./$(basename "$0")"
+        return 1
+    fi
+
+    local venv_dir="${XDG_CACHE_HOME:-$HOME/.cache}/fr-local-deploy/venv"
+    local venv_py="$venv_dir/bin/python"
+
+    # Reuse a previously built venv if it still imports bcrypt.
+    if [ -x "$venv_py" ] && "$venv_py" -c 'import bcrypt' 2>/dev/null; then
+        BCRYPT_PYTHON="$venv_py"
+        _info "bcrypt aus vorhandenem uv-venv ($venv_dir)"
+        return 0
+    fi
+
+    _info "Erzeuge uv-venv für bcrypt ($venv_dir) …"
+    if ! uv venv "$venv_dir" >/dev/null 2>&1; then
+        _err "uv venv konnte nicht erstellt werden: $venv_dir"
+        return 1
+    fi
+    if ! uv pip install --python "$venv_py" bcrypt >/dev/null 2>&1; then
+        _err "bcrypt-Installation ins uv-venv fehlgeschlagen"
+        return 1
+    fi
+    if ! "$venv_py" -c 'import bcrypt' 2>/dev/null; then
+        _err "bcrypt im uv-venv nicht importierbar"
+        return 1
+    fi
+    BCRYPT_PYTHON="$venv_py"
+    _ok "bcrypt via uv-venv bereitgestellt ($venv_dir)"
+    return 0
+}
+
 # ── JSON-Helfer (Ersatz für jq via Python-Standardlib) ───────────────────────
 # Validiert eine JSON-Datei — exit 0 wenn parsebar.
 _json_valid() {  # file
@@ -210,16 +264,16 @@ else
     _err "Weder 'curl' noch 'wget' vorhanden — ein HTTP-Client ist erforderlich"
     exit 1
 fi
-# bcrypt wird NUR für ein NEU eingegebenes Superuser-Passwort benötigt.
-# Verfügbarkeit hier nur ermitteln — Hard-Check erst in Step 5, falls gebraucht.
-if python3 -c 'import bcrypt' 2>/dev/null; then
-    BCRYPT_AVAILABLE=1
-else
-    BCRYPT_AVAILABLE=0
-fi
+# bcrypt wird NUR für einen NEUEN/generierten Superuser-Hash benötigt. Nicht
+# hier hart prüfen — bei Bedarf stellt _ensure_bcrypt_python() es via uv-venv
+# bereit (Lazy, erst in Step 5).
 _ok "Alle Tools vorhanden (docker, python3, $HTTP_TOOL, md5sum, awk)"
-if [ "$BCRYPT_AVAILABLE" -eq 0 ]; then
-    _info "Hinweis: Python-Modul 'bcrypt' nicht verfügbar — nur nötig, wenn ein NEUES Superuser-Passwort gesetzt wird (Feld leer lassen = kein bcrypt)."
+if ! python3 -c 'import bcrypt' 2>/dev/null; then
+    if command -v uv >/dev/null 2>&1; then
+        _info "Hinweis: 'bcrypt' fehlt im System-Python — wird bei Bedarf automatisch via uv-venv bereitgestellt."
+    else
+        _info "Hinweis: 'bcrypt' fehlt und 'uv' ist nicht installiert — nur nötig, wenn ein neues/generiertes Superuser-Passwort gehasht wird."
+    fi
 fi
 
 # ── Step 2: Interaktive Parameter ────────────────────────────────────────────
@@ -420,19 +474,9 @@ fi
 
 # Superuser-Hash (bcrypt via stdin — Passwort niemals als CLI-Argument)
 if [ -n "$fr_superuser_password" ]; then
-    if [ "$BCRYPT_AVAILABLE" -eq 0 ]; then
-        _err "Neues Superuser-Passwort eingegeben, aber Python-Modul 'bcrypt' fehlt."
-        echo "    bcrypt ist für den Superuser-Hash zwingend nötig. Optionen ohne System-Install:"
-        echo "      • venv:  python3 -m venv ~/.frvenv && ~/.frvenv/bin/pip install bcrypt"
-        echo "               danach Skript starten mit: PATH=\"\$HOME/.frvenv/bin:\$PATH\" ./$(basename "$0")"
-        echo "      • pipx:  pipx install bcrypt   (falls pipx vorhanden)"
-        echo "      • Override (Risiko): pip install --user --break-system-packages bcrypt"
-        echo "    Alternativ: Superuser-Passwort leer lassen — dann bleibt der bestehende"
-        echo "    bzw. Baked-Default-Hash erhalten und bcrypt wird nicht benötigt."
-        exit 1
-    fi
+    _ensure_bcrypt_python || exit 1
     final_superuser_hash="$(printf '%s' "$fr_superuser_password" \
-        | python3 -c 'import sys, bcrypt; pwd=sys.stdin.read().encode(); print(bcrypt.hashpw(pwd, bcrypt.gensalt(rounds=12)).decode())')"
+        | "$BCRYPT_PYTHON" -c 'import sys, bcrypt; pwd=sys.stdin.read().encode(); print(bcrypt.hashpw(pwd, bcrypt.gensalt(rounds=12)).decode())')"
     if [ $? -ne 0 ] || [ -z "$final_superuser_hash" ]; then
         _err "bcrypt-Hashing fehlgeschlagen"
         exit 1
@@ -443,22 +487,12 @@ elif [ -n "$existing_superuser_pwd" ]; then
     _info "Superuser-Hash aus bestehender Datei übernommen"
 else
     # Kein Override, keine bestehende Datei → Zufallspasswort. Superuser-Hash
-    # ist zwingend bcrypt; ohne bcrypt kann kein sicherer Default erzeugt werden.
-    if [ "$BCRYPT_AVAILABLE" -eq 0 ]; then
-        _err "Erst-Deploy ohne Superuser-Passwort und ohne Python-Modul 'bcrypt'."
-        echo "    Ein sicherer Superuser-Hash kann nur mit bcrypt erzeugt werden"
-        echo "    (fixe Baked-Default-Hashes wurden aus Sicherheitsgründen entfernt)."
-        echo "    Optionen ohne System-Install:"
-        echo "      • venv:  python3 -m venv ~/.frvenv && ~/.frvenv/bin/pip install bcrypt"
-        echo "               danach: PATH=\"\$HOME/.frvenv/bin:\$PATH\" ./$(basename "$0")"
-        echo "      • pipx:  pipx install bcrypt"
-        echo "      • Override (Risiko): pip install --user --break-system-packages bcrypt"
-        echo "    Alternativ das Superuser-Passwort interaktiv angeben."
-        exit 1
-    fi
+    # ist zwingend bcrypt (Baked-Default-Hashes wurden aus Sicherheitsgründen
+    # entfernt); _ensure_bcrypt_python stellt bcrypt bei Bedarf via uv-venv bereit.
+    _ensure_bcrypt_python || exit 1
     GENERATED_SUPERUSER_PWD="$(_gen_secret)"
     final_superuser_hash="$(printf '%s' "$GENERATED_SUPERUSER_PWD" \
-        | python3 -c 'import sys, bcrypt; pwd=sys.stdin.read().encode(); print(bcrypt.hashpw(pwd, bcrypt.gensalt(rounds=12)).decode())')"
+        | "$BCRYPT_PYTHON" -c 'import sys, bcrypt; pwd=sys.stdin.read().encode(); print(bcrypt.hashpw(pwd, bcrypt.gensalt(rounds=12)).decode())')"
     if [ $? -ne 0 ] || [ -z "$final_superuser_hash" ]; then
         _err "bcrypt-Hashing fehlgeschlagen"
         exit 1
