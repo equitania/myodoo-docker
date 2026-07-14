@@ -3,7 +3,7 @@
 # installed at the latest PyPI release and kept current on every run via
 # "uv tool upgrade --all" plus a PyPI version check.
 nginx-set-conf
-odoodev
+odoodev-equitania
 
 # PIP packages
 pip
