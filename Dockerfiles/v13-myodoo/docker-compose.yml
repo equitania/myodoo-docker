@@ -13,7 +13,7 @@ services:
         image: postgres:12.7-alpine
         environment:
           - POSTGRES_USER=ownerp
-          - POSTGRES_PASSWORD=ownerp2021
+          - POSTGRES_PASSWORD=REMOVED_PASSWORD
           - POSTGRES_DB=postgres
         networks:
           - ownerp-net
