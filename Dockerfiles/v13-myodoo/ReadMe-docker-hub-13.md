@@ -1,4 +1,4 @@
-# Current status 28.02.2021 - **Password ../web/database/manager: ownerp2021**
+# Current status 28.02.2021 - **Password ../web/database/manager: REMOVED_PASSWORD**
 
 ### Create network
 ```
@@ -13,7 +13,7 @@ docker volume create vol-odoo-live
 ```
 docker run -d --restart=always \
        -e POSTGRES_USER=ownerp \
-       -e POSTGRES_PASSWORD=ownerp2021 \
+       -e POSTGRES_PASSWORD=REMOVED_PASSWORD \
        -e POSTGRES_DB=postgres \
        --name=live-db \
        --network=ownerp-net \
@@ -23,7 +23,7 @@ docker run -d --restart=always \
 ```
 docker run -d --restart=always \
        -e POSTGRES_USER=ownerp \
-       -e POSTGRES_PASSWORD=ownerp2021 \
+       -e POSTGRES_PASSWORD=REMOVED_PASSWORD \
        -e POSTGRES_DB=postgres \
        --name=live-db \
        --network=ownerp-net \
@@ -90,7 +90,7 @@ docker run -it --rm --restart=always \
        myodoo/myodoo-13-public:latest update \
        --database=test \
        --db_user=ownerp \
-       --db_password=ownerp2021 \
+       --db_password=REMOVED_PASSWORD \
        --db_host=live-db
 ```
 or
@@ -103,7 +103,7 @@ docker run -it --rm --restart=always \
        myodoo/myodoo-13-public:latest update \
        --database=test \
        --db_user=ownerp \
-       --db_password=ownerp2021 \
+       --db_password=REMOVED_PASSWORD \
        --db_host=live-db
 ```
 
@@ -116,7 +116,7 @@ sudo -i -u odoo /usr/bin/python3 \
     --no-xmlrpc \
     --database=test \
     --db_user=ownerp \
-    --db_password=ownerp2021 \
+    --db_password=REMOVED_PASSWORD \
     --db_host=live-db \
     --stop-after-init`
 ```

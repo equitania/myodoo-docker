@@ -10,10 +10,10 @@ services:
     environment:
       - MYSQL_DATABASE=nextcloud
       - MYSQL_USER=nextcloud
-      - MYSQL_PASSWORD=ownerp2021
+      - MYSQL_PASSWORD=REMOVED_PASSWORD
       - MYSQL_HOST=mariadb
       - NEXTCLOUD_ADMIN_USER=admin
-      - NEXTCLOUD_ADMIN_PASSWORD=ownerp2021
+      - NEXTCLOUD_ADMIN_PASSWORD=REMOVED_PASSWORD
       - NEXTCLOUD_TRUSTED_DOMAINS=*.myodoo.sh
     networks:
       - nextcloud-net
@@ -25,8 +25,8 @@ services:
     volumes:
       - vol-db:/var/lib/mysql
     environment:
-      - MYSQL_ROOT_PASSWORD=ownerp2021
-      - MYSQL_PASSWORD=ownerp2021
+      - MYSQL_ROOT_PASSWORD=REMOVED_PASSWORD
+      - MYSQL_PASSWORD=REMOVED_PASSWORD
       - MYSQL_DATABASE=nextcloud
       - MYSQL_USER=nextcloud
     networks:
