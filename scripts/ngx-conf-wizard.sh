@@ -2,7 +2,7 @@
 #
 # ngx-conf-wizard.sh — interactive wizard for nginx-set-conf YAML configs.
 #
-# Version: 1.0.0 — 15.07.2026
+# Version: 1.1.0 — 15.07.2026
 #
 # Builds the YAML config consumed by nginx-set-conf (and the 'ngxset' alias:
 #   nginx-set-conf --config_path=$HOME/docker-builds/ngx-conf/ )
@@ -124,10 +124,26 @@ _ok "Ziel: $config_file (Modus: $write_mode)"
 # ── Step 2: server IP (used for every entry's listen directive) ──────────────
 _hr
 _info "Step 2: Server-IP (für die listen-Direktiven aller Einträge)"
+# nginx can only bind() to locally configured addresses — behind NAT the
+# public/DNS IP lives on the gateway and bind() fails with errno 99.
+# Show local addresses as guidance and warn on a non-local choice.
+if command -v ip >/dev/null 2>&1; then
+    echo "  Lokal konfigurierte IPs (nur diese sind bind-fähig):"
+    ip -4 -brief addr show 2>/dev/null | awk '$3 != "" && $3 !~ /^127\./ {split($3,a,"/"); printf "    %-8s %s\n", $1, a[1]}'
+fi
 while :; do
     read -rp "  Server-IP (IPv4 oder IPv6): " server_ip
-    if _valid_ip "$server_ip"; then break; fi
-    _err "Ungültige IP: $server_ip"
+    if ! _valid_ip "$server_ip"; then
+        _err "Ungültige IP: $server_ip"
+        continue
+    fi
+    if command -v ip >/dev/null 2>&1 && ! ip -o addr show 2>/dev/null | grep -qwF "$server_ip"; then
+        _warn "IP $server_ip ist auf keinem lokalen Interface konfiguriert (NAT-Gateway?)."
+        _warn "nginx bind() wird damit fehlschlagen — hinter NAT gehört hier die LOKALE Interface-IP hin."
+        read -rp "  Trotzdem verwenden? (y/N) " force_ip
+        [[ "$force_ip" =~ ^[yYjJ]$ ]] || continue
+    fi
+    break
 done
 _ok "Server-IP: $server_ip"
 
