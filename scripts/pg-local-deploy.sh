@@ -2,7 +2,7 @@
 #
 # pg-local-deploy.sh — interaktives On-Premise-Deploy für PostgreSQL-Docker.
 #
-# Version: 1.1.0 — 14.07.2026
+# Version: 1.2.0 — 15.07.2026
 #
 # Spiegelt das Ansible-Playbook
 #   semaphore/playbooks/odoo/pg/pb_pg_docker_start.yaml
@@ -11,7 +11,7 @@
 #
 # Eingaben (interaktiv): Container-Name, Basis-Verzeichnis, DB-User/-Name,
 # Passwort (Pflicht), PostgreSQL-Version, Conf-Profil (2cpu4gb/2cpu8gb/
-# 4cpu16gb/8cpu32gb), optionaler Host-Port.
+# 4cpu16gb/8cpu32gb), optionaler Host-Port, optionales Self-Signed-SSL.
 #
 # Sicherheits-Hygiene: KEINE Secrets im Skript hinterlegt — das DB-Passwort
 # wird zwingend interaktiv (silent, mit Wiederholung) abgefragt.
@@ -206,6 +206,17 @@ if [ -n "$pg_port" ]; then
     fi
 fi
 
+echo
+echo "  Optional — Self-Signed-SSL für verschlüsselte Client-Verbindungen."
+echo "  Odoo (db_sslmode=prefer) nutzt TLS dann automatisch. Zertifikat ist"
+echo "  self-signed (keine Client-Verifikation via verify-ca/verify-full)."
+read -rp "  SSL mit Self-Signed-Zertifikat aktivieren? (y/N) " ssl_choice
+case "$ssl_choice" in
+    [yYjJ]) pg_ssl="yes" ;;
+    *)      pg_ssl="no"  ;;
+esac
+_ok "SSL: $pg_ssl"
+
 docker_network="${pg_name}-net"
 host_pgdata="$pg_basedir/$pg_name"
 deploy_dir="$pg_basedir/${pg_name}-deploy"
@@ -264,6 +275,17 @@ if ! "$conf_func" > "$conf_src"; then
 fi
 chmod 0644 "$conf_src"
 _ok "Profil geschrieben: $conf_src ($(wc -l < "$conf_src" | tr -d ' ') Zeilen)"
+
+# SSL-Override anhängen — die eingebetteten Profile bleiben 1:1 Ansible-Kopien.
+# server.crt/server.key liegen in PGDATA (PostgreSQL-Defaults, kein Pfad nötig).
+if [ "$pg_ssl" = "yes" ]; then
+    cat >> "$conf_src" <<'EOF_SSL_OVERRIDE'
+
+# --- pg-local-deploy override: self-signed SSL ---
+ssl = on
+EOF_SSL_OVERRIDE
+    _ok "SSL-Override angehängt: ssl = on (Zertifikat: PGDATA/server.crt)"
+fi
 
 # ── Step 5: Image-Pull ───────────────────────────────────────────────────────
 _hr
@@ -418,6 +440,20 @@ _ok "Container gestoppt"
 
 # Copy via Docker-root-Container — funktioniert ohne sudo, da PGDATA dem
 # Container-User 999 gehört. Backup der bisherigen Conf wie Ansible (backup: yes).
+# Bei SSL: Self-Signed-Zertifikat idempotent im selben Container erzeugen
+# (openssl ist im postgres-Image enthalten; vorhandenes Zertifikat bleibt).
+ssl_cmd=""
+if [ "$pg_ssl" = "yes" ]; then
+    ssl_cmd=" &&
+        if [ ! -f /data/server.key ]; then
+            openssl req -x509 -newkey rsa:4096 -nodes -days 3650 \
+                -keyout /data/server.key -out /data/server.crt \
+                -subj '/CN=$pg_name'
+        fi &&
+        chown 999:999 /data/server.key /data/server.crt &&
+        chmod 600 /data/server.key &&
+        chmod 644 /data/server.crt"
+fi
 ts="$(date +%s)"
 if ! docker run --rm \
     -v "$host_pgdata:/data" \
@@ -428,13 +464,14 @@ if ! docker run --rm \
         fi
         cp /src/postgresql.conf.src /data/postgresql.conf &&
         chown 999:999 /data/postgresql.conf &&
-        chmod 600 /data/postgresql.conf
+        chmod 600 /data/postgresql.conf$ssl_cmd
     "; then
-    _err "Conf-Copy fehlgeschlagen — Container wird ohne neues Profil wieder gestartet."
+    _err "Conf-Copy/SSL-Setup fehlgeschlagen — Container wird ohne neues Profil wieder gestartet."
     if [ -n "$DC" ]; then $DC -f "$compose_file" start >/dev/null; else docker start "$pg_name" >/dev/null; fi
     exit 1
 fi
 _ok "postgresql.conf eingespielt (Profil $pg_conf_version, Backup: postgresql.conf.bak-$ts)"
+[ "$pg_ssl" = "yes" ] && _ok "SSL-Zertifikat bereit: PGDATA/server.crt (self-signed, 10 Jahre)"
 
 if [ -n "$DC" ]; then
     $DC -f "$compose_file" start >/dev/null
@@ -475,6 +512,16 @@ _ok "Smoke-Test: $server_version"
 shared_buffers="$(docker exec "$pg_name" psql -U "$pg_user" -d "$pg_db" -tAc 'SHOW shared_buffers;' 2>/dev/null)"
 [ -n "$shared_buffers" ] && _ok "Conf aktiv: shared_buffers = $shared_buffers"
 
+if [ "$pg_ssl" = "yes" ]; then
+    ssl_active="$(docker exec "$pg_name" psql -U "$pg_user" -d "$pg_db" -tAc 'SHOW ssl;' 2>/dev/null)"
+    if [ "$ssl_active" = "on" ]; then
+        _ok "SSL aktiv: SHOW ssl = on"
+    else
+        _err "SSL nicht aktiv (SHOW ssl = '$ssl_active') — Logs prüfen: docker logs $pg_name"
+        exit 1
+    fi
+fi
+
 _hr
 echo
 _ok "PostgreSQL Deployment erfolgreich"
@@ -484,6 +531,11 @@ echo "  Image:       $image"
 echo "  Netzwerk:    $docker_network"
 echo "  PGDATA:      $host_pgdata"
 echo "  Conf-Profil: $pg_conf_version"
+if [ "$pg_ssl" = "yes" ]; then
+    echo "  SSL:         aktiv (self-signed, PGDATA/server.crt)"
+else
+    echo "  SSL:         aus"
+fi
 echo "  Compose:     $compose_file"
 if [ -n "$pg_port" ]; then
     echo "  Host-Port:   127.0.0.1:$pg_port → $CONTAINER_PORT"
