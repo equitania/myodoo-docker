@@ -289,8 +289,8 @@ if ! [[ "$fr_name" =~ ^[a-zA-Z0-9][a-zA-Z0-9_.-]*$ ]]; then
     exit 1
 fi
 
-read -rp "  Basis-Verzeichnis für Volumes [$PWD/fast-report]: " fr_basedir
-[ -z "$fr_basedir" ] && fr_basedir="$PWD/fast-report"
+read -rp "  Basis-Verzeichnis für Volumes [/opt/fast-report]: " fr_basedir
+[ -z "$fr_basedir" ] && fr_basedir="/opt/fast-report"
 # read expandiert '~' nicht — manuell auflösen.
 case "$fr_basedir" in
     "~")   fr_basedir="$HOME" ;;
@@ -309,7 +309,7 @@ if ! [[ "$fr_port" =~ ^[0-9]+$ ]]; then
     exit 1
 fi
 
-read -rp "  Image-Tag (z.B. 2026.1.2.7): " fr_version
+read -rp "  Image-Tag (z.B. 2026.2.3-3.2.7): " fr_version
 if [ -z "$fr_version" ]; then
     _err "Image-Tag ist Pflicht"
     exit 1
