@@ -55,8 +55,8 @@ if os.environ.get('GETSCRIPTS_DEBUG', '').lower() in ('1', 'true', 'yes'):
     logger.debug("Debug logging enabled")
 
 # Script version and date
-SCRIPT_VERSION = "9.7.2"
-SCRIPT_DATE = "14.07.2026"
+SCRIPT_VERSION = "9.7.3"
+SCRIPT_DATE = "15.07.2026"
 
 # ─────────────────────────────────────────────────────────────────────────────
 # Install report
@@ -3497,9 +3497,21 @@ def setup_environment() -> Tuple[str, str]:
             logger.info("\nExiting.")
             sys.exit(0)
 
-    # Get appropriate home directory based on execution context
-    # Priority: SUDO_USER (if running with sudo) > current user home
-    if os.environ.get('SUDO_USER'):
+    # Get appropriate home directory based on execution context.
+    # Priority: SUDO_USER (direct 'sudo ./getScripts.py') > current user home.
+    # Exception: inside an interactive root shell ('sudo su', 'sudo -s',
+    # 'sudo -i') SUDO_USER is still set although the operator now works as
+    # root — detect this via SUDO_COMMAND (contains the shell, not the
+    # script) and install for root in that case.
+    _sudo_shell_names = ('su', 'sh', 'bash', 'zsh', 'fish', 'dash')
+    _sudo_command = os.environ.get('SUDO_COMMAND', '')
+    _sudo_cmd_base = os.path.basename(_sudo_command.split()[0]) if _sudo_command.strip() else ''
+    if os.environ.get('SUDO_USER') and _sudo_cmd_base in _sudo_shell_names:
+        # sudo-spawned root shell: the effective user (root) is the target
+        _myhome = os.path.expanduser('~')
+        logger.info(f"Detected root shell via sudo ({_sudo_cmd_base}), "
+                    f"installing for root: {_myhome}")
+    elif os.environ.get('SUDO_USER'):
         # Running with sudo - use the real user's home directory
         import pwd
         sudo_user = os.environ['SUDO_USER']
