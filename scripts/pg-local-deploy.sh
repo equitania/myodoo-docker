@@ -2,7 +2,7 @@
 #
 # pg-local-deploy.sh — interaktives On-Premise-Deploy für PostgreSQL-Docker.
 #
-# Version: 1.2.0 — 15.07.2026
+# Version: 1.2.1 — 15.07.2026
 #
 # Spiegelt das Ansible-Playbook
 #   semaphore/playbooks/odoo/pg/pb_pg_docker_start.yaml
@@ -168,13 +168,14 @@ echo "  Bei bestehendem Datenverzeichnis wird die Eingabe von PostgreSQL ignorie
 pg_pass="$(_read_pwd_twice "DB-Passwort")"
 
 echo
-read -rp "  PostgreSQL-Version (z.B. 16.9): " pg_version
+echo "  Verfügbare Tags: https://hub.docker.com/_/postgres/tags?name=16."
+read -rp "  PostgreSQL-Version (z.B. 16.14): " pg_version
 if [ -z "$pg_version" ]; then
     _err "PostgreSQL-Version ist Pflicht"
     exit 1
 fi
 if ! [[ "$pg_version" =~ ^[0-9]+(\.[0-9]+)*$ ]]; then
-    _err "Ungültige Version: $pg_version (erwartet z.B. 16 oder 16.9)"
+    _err "Ungültige Version: $pg_version (erwartet z.B. 16 oder 16.14)"
     exit 1
 fi
 

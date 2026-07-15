@@ -41,7 +41,7 @@ Das Skript fragt interaktiv ab:
 | DB-User | `ownerp` | PostgreSQL-Superuser (initdb) |
 | DB-Name | `postgres` | Initiale Datenbank |
 | Passwort | — (Pflicht) | Silent-Eingabe mit Wiederholung |
-| PostgreSQL-Version | — (Pflicht) | z.B. `16.9` → Image `postgres:16.9` |
+| PostgreSQL-Version | — (Pflicht) | z.B. `16.14` → Image `postgres:16.14` ([verfügbare Tags](https://hub.docker.com/_/postgres/tags?name=16.)) |
 | Conf-Profil | `2cpu8gb` | Hardware-Profil (siehe oben) |
 | Host-Port | keiner | Optionales Publish auf `127.0.0.1` |
 | SSL | `nein` | Self-Signed-SSL aktivieren (y/N) |
@@ -128,7 +128,7 @@ The script prompts interactively:
 | DB user | `ownerp` | PostgreSQL superuser (initdb) |
 | DB name | `postgres` | Initial database |
 | Password | — (required) | Silent input with confirmation |
-| PostgreSQL version | — (required) | e.g. `16.9` → image `postgres:16.9` |
+| PostgreSQL version | — (required) | e.g. `16.14` → image `postgres:16.14` ([available tags](https://hub.docker.com/_/postgres/tags?name=16.)) |
 | Conf profile | `2cpu8gb` | Hardware profile (see above) |
 | Host port | none | Optional publish on `127.0.0.1` |
 | SSL | `no` | Enable self-signed SSL (y/N) |
