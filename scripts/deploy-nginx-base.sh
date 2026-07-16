@@ -27,8 +27,8 @@
 
 set -Eeuo pipefail
 
-SCRIPT_VERSION="1.0.0"
-SCRIPT_DATE="27.05.2026"
+SCRIPT_VERSION="1.1.0"
+SCRIPT_DATE="15.07.2026"
 
 DEST="/etc/nginx"
 SRC=""
