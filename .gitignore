@@ -1,25 +1,11 @@
-# sphinx build directories
-_build/
-
-# dotfiles
 # compiled python files
 *.py[co]
+*.pyc
 # setup.py egg_info
 *.egg-info
-# emacs backup files
+# editor backup files
 *~
-# hg stuff
 *.orig
-status
-*.pyc
-# odoo filestore
-openerp/filestore
-# maintenance migration scripts
-openerp/addons/base/maintenance
-
-# generated for windows installer?
-install/win32/*.bat
-install/win32/meta.py
 
 # various virtualenv
 /bin/
@@ -47,14 +33,8 @@ pip-selfcheck.json
 .pydevproject
 .settings/
 
-# odoo
-.mailmap
-
 # mac
 .DS_Store
-
-# Release
-odoo-ce.zip
 
 #vs code
 .vscode
@@ -74,3 +54,9 @@ __pycache__/
 .pytest_cache/
 .ruff_cache/
 .mypy_cache/
+
+# Internal analysis/planning artifacts (GSD workflows) — never publish
+.planning/
+
+# Git worktree checkouts
+worktrees/
