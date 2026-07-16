@@ -1,6 +1,6 @@
 #!/bin/bash
 # bootstrap.sh — Out-of-the-box initializer for fresh Debian/Ubuntu servers
-# Version 1.6.0 — 11.06.2026
+# Version 1.7.0 — 16.07.2026
 #
 # Supported: Debian 12 (bookworm) / 13 (trixie); Ubuntu 20.04/22.04/24.04/26.04
 # (focal/jammy/noble/resolute). OS + codename are auto-detected from os-release;
@@ -11,7 +11,10 @@
 #   1. Self-installs to /opt (so it stays available out-of-the-box)
 #   2. Installs base packages (ca-certificates, curl, gnupg, git)
 #      and ensures the en_US.UTF-8 locale is generated (minimal images)
-#   3. Installs Docker CE from the official Docker repository (deb822 format)
+#   3. Installs Docker CE from the official Docker repository (deb822 format);
+#      pins the classic overlay2 storage driver via /etc/docker/daemon.json —
+#      Docker >= 29 defaults fresh installs to the containerd image store whose
+#      image export is broken for large builds (moby/moby#52431)
 #   4. Installs nginx from the official nginx.org repository (reverse proxy)
 #   5. Installs certbot (Let's Encrypt client; renewal via ssl-renew.sh standalone)
 #   6. Installs UFW (firewall — installed but NOT enabled, see below)
@@ -266,6 +269,14 @@ install_docker() {
     # Just make sure the service is enabled and move on.
     if command -v docker >/dev/null 2>&1; then
         log "Docker already present: $(docker --version). Leaving apt repo untouched."
+        # Do NOT switch the store on a live install (images/containers would
+        # become invisible) — but do surface the moby#52431 exposure.
+        if [ "$(docker info --format '{{.Driver}}' 2>/dev/null)" = "overlayfs" ]; then
+            warn "This Docker uses the containerd image store — image export of large builds"
+            warn "is broken there (moby/moby#52431: 'ref locked: unavailable' / hollow images)."
+            warn "Manual fix: /etc/docker/daemon.json {\"storage-driver\": \"overlay2\"},"
+            warn "restart docker, re-pull images, then 'docker builder prune -af'."
+        fi
         if command -v systemctl >/dev/null 2>&1; then
             $SUDO systemctl enable --now docker 2>/dev/null || true
         fi
@@ -299,6 +310,24 @@ Components: stable
 Architectures: ${ARCH}
 Signed-By: /etc/apt/keyrings/docker.asc
 EOF
+
+    # Pin the classic overlay2 storage driver BEFORE the package postinst starts
+    # dockerd for the first time. Docker >= 29 defaults FRESH installs to the
+    # containerd image store, whose image export is broken for large builds
+    # (moby/moby#52431: 'ref moby/1/... locked: unavailable', or hollow images
+    # missing even /bin/sh). Seen live on RZ-OD02, 16.07.2026. Remove this pin
+    # once the upstream issue is fixed. An existing daemon.json is respected.
+    if [ ! -f /etc/docker/daemon.json ]; then
+        $SUDO install -m 0755 -d /etc/docker
+        write_file /etc/docker/daemon.json <<'EOF'
+{
+  "storage-driver": "overlay2"
+}
+EOF
+        log "Pinned storage-driver overlay2 in /etc/docker/daemon.json (moby#52431 workaround)."
+    else
+        warn "/etc/docker/daemon.json already exists — leaving the storage driver untouched."
+    fi
 
     apt_update
     $SUDO apt-get install -y \
