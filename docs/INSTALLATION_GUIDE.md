@@ -431,10 +431,13 @@ Backup zurückspielen (Archiv aus `container2backup.py`, erkennt
 `.zip/.7z/.7z.gpg/.tar.gz/.tar.zst` automatisch):
 
 ```bash
-~/myodoo-docker/scripts/restore-zip.sh <backup_kind 1|2> <run_sql> \
-  <orig_dbname> <new_dbname> <drop_db Y/n> <archiv> <odoo_volume> \
-  <pg_container> <pg_password>
+env PGPASSWORD='<pg_password>' ~/myodoo-docker/scripts/restore-zip.sh \
+  <backup_kind 1|2> <run_sql> <orig_dbname> <new_dbname> <drop_db Y/n> \
+  <archiv> <odoo_volume> <pg_container>
 ```
+
+Das Passwort per `PGPASSWORD`-Umgebungsvariable übergeben — als 9. Argument
+wäre es in `ps aux` und der Shell-History sichtbar (das Skript warnt dann).
 
 Typischer Anwendungsfall: Live-Backup als Test-DB einspielen, danach im
 Container `neutralize` ausführen (Mails/Cron deaktivieren). Für manuelle
@@ -984,10 +987,14 @@ Restore a backup (archive produced by `container2backup.py`; detects
 `.zip/.7z/.7z.gpg/.tar.gz/.tar.zst` automatically):
 
 ```bash
-~/myodoo-docker/scripts/restore-zip.sh <backup_kind 1|2> <run_sql> \
-  <orig_dbname> <new_dbname> <drop_db Y/n> <archive> <odoo_volume> \
-  <pg_container> <pg_password>
+env PGPASSWORD='<pg_password>' ~/myodoo-docker/scripts/restore-zip.sh \
+  <backup_kind 1|2> <run_sql> <orig_dbname> <new_dbname> <drop_db Y/n> \
+  <archive> <odoo_volume> <pg_container>
 ```
+
+Pass the password via the `PGPASSWORD` environment variable — as the 9th
+positional argument it would be visible in `ps aux` and shell history (the
+script warns in that case).
 
 Typical use case: restore the live backup as the test DB, then run
 `neutralize` in the container (disables mails/cron). For manual container
