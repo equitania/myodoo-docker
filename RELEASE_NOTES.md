@@ -1,5 +1,22 @@
 # Release Notes
 
+## Deployment Tooling, Docker-29 Hardening & Installation Guide (15.–16.07.2026)
+
+### Added
+- **docs/INSTALLATION_GUIDE.md**: bilingual (DE/EN) step-by-step guide for system administrators — fresh server → two production Odoo systems (live/test) behind nginx with Let's Encrypt, updates (`edup`/`doup`) and backups (`edbk`/`dobk`). Covers all repository scripts (reference table with usages), the complete fish alias/function reference, and a troubleshooting section built from real rollout lessons (Docker ≥ 29 containerd-store export bug incl. orphaned-overlay-mount aftermath, nginx pid-file reload trap, NAT bind-IP, split-horizon DNS, `db_sslmode`, `127.0.0.1:` port binding). ReadMe.md links the guide prominently and gains a "Scripts at a Glance" usage table (DE + EN).
+- ngx-conf-wizard.sh v1.0.0/v1.1.0: interactive YAML config builder for nginx-set-conf — all 19 templates, entry-by-entry loop with validation, append/overwrite with backup, local-IP display with warning on non-local bind IPs (NAT), optional deploy at the end.
+- pg-local-deploy.sh v1.2.0: optional self-signed SSL for the PostgreSQL container (server.crt/server.key in PGDATA, RSA-4096, 10 years, idempotent) — mirrored in the Semaphore playbook (`pg_ssl` extra var).
+
+### Changed
+- pg-local-deploy.sh v1.2.1: version prompt shows a current example (16.14) plus the Docker Hub tag-search URL.
+- fr-local-deploy.sh: default volume base `/opt/fast-report`, current image-tag example.
+
+### Fixed
+- bootstrap.sh v1.7.0: pin the classic overlay2 storage driver on fresh Docker ≥ 29 installs (`/etc/docker/daemon.json`) — the containerd image store's export is broken for large builds (moby/moby#52431: `ref … locked: unavailable`, or hollow images missing even `/bin/sh`). Existing installs are never switched automatically; a warning with the manual remediation path is printed instead.
+- odoo.conf v16/v18/v19: revert `db_sslmode` to `prefer` — `require` (from the 14.07 security review) broke database creation against every standard PostgreSQL container without SSL.
+- getScripts.py v9.7.3: install for root in sudo-spawned root shells (`SUDO_COMMAND` detection) — operators working via `sudo su` previously got the fish config installed into the admin user's home instead of `/root`.
+- deploy-nginx-base.sh v1.1.0: surface nginx reload failures (previously swallowed — old config silently stayed live) and repair an empty `/run/nginx.pid` from systemd's MainPID before reloading; internal `SCRIPT_VERSION` aligned with the header.
+
 ## Repository Security Review & Hardening (14.07.2026)
 
 Full-repository security review (Python, Shell/Fish, Docker/config) with fixes applied across all severities.

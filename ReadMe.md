@@ -13,6 +13,8 @@ Dieses Repository enthält eine Sammlung von Docker-Konfigurationen und Verwaltu
 
 ### Schnellstart
 
+➡️ **Kompletter Leitfaden vom frischen Server bis zum laufenden Odoo-live/test-System:** [docs/INSTALLATION_GUIDE.md](docs/INSTALLATION_GUIDE.md)
+
 Für einen **frisch installierten Debian-/Ubuntu-Server** ist `bootstrap.sh` der Einstiegspunkt. Es richtet die Grundausstattung (Docker, nginx, certbot, UFW, fail2ban, automatische Sicherheitsupdates) ein und ruft anschließend `getScripts.py` auf.
 
 ```bash
@@ -190,10 +192,28 @@ cd $HOME && rm -rf myodoo-docker && rm -rf nginx-conf && \
 
 ### Weiterführende Dokumentation
 
+- **[docs/INSTALLATION_GUIDE.md](docs/INSTALLATION_GUIDE.md) — Installationsleitfaden: frischer Server → Odoo live/test (DE/EN, inkl. Troubleshooting & Erfahrungswerten)**
 - [scripts/README_BackUp.md](scripts/README_BackUp.md) — Backup-System (Konfiguration, Kompression, Automatisierung)
+- [scripts/README_pg-local-deploy.md](scripts/README_pg-local-deploy.md) — PostgreSQL-Container-Deployment (Profile, Self-Signed-SSL)
 - [scripts/NIGHTLY_CLEANUP.md](scripts/NIGHTLY_CLEANUP.md) — speicherbasierter Container-Neustart
 - [fish/README.md](fish/README.md) — vollständige Alias-/Funktionsreferenz
 - [docs/MANUAL_DOCKER_UPDATE_GUIDE.md](docs/MANUAL_DOCKER_UPDATE_GUIDE.md) — manuelles Container-Update (Fallback)
+
+#### Skripte auf einen Blick
+
+| Aufgabe | Befehl / Skript | Details |
+|---|---|---|
+| Server initialisieren | `bootstrap.sh` (One-Liner) | [Guide Kap. 3](docs/INSTALLATION_GUIDE.md#de-3-schritt-1-bootstrap) |
+| Shell & Skripte installieren | `./getScripts.py` | [Guide Kap. 4](docs/INSTALLATION_GUIDE.md#de-4-schritt-2-getscriptspy) |
+| Server härten | `sudo python3 server_hardening.py --apply` | [Guide Kap. 5](docs/INSTALLATION_GUIDE.md#de-5-schritt-3-server-härtung) |
+| nginx-Basis + Vhosts | `deploy-nginx-base.sh`, `ngx-conf-wizard.sh`, `ngxset` | [Guide Kap. 6](docs/INSTALLATION_GUIDE.md#de-6-schritt-4-nginx-basis--vhosts) |
+| PostgreSQL deployen | `pg-local-deploy.sh` | [Guide Kap. 7](docs/INSTALLATION_GUIDE.md#de-7-schritt-5-postgresql-live-dbtest-db) |
+| Odoo-Container starten | `docker run … start` | [Guide Kap. 8](docs/INSTALLATION_GUIDE.md#de-8-schritt-6-odoo-container-erststarten) |
+| Updates | `edup` (Config) / `doup` (Lauf) | [Guide Kap. 10](docs/INSTALLATION_GUIDE.md#de-10-schritt-8-updates-einrichten-edupdoup) |
+| Backups | `edbk` (Config) / `dobk` (Lauf) / `llbk` | [Guide Kap. 11](docs/INSTALLATION_GUIDE.md#de-11-schritt-9-backups-einrichten-edbkdobk) |
+| Wartungs-Cron | `setup-maintenance-cron.sh` | [Guide Kap. 12](docs/INSTALLATION_GUIDE.md#de-12-schritt-10-wartung-automatisieren) |
+| Restore | `restore-zip.sh` | [Guide Kap. 13](docs/INSTALLATION_GUIDE.md#de-13-restore--notfall) |
+| Alle 17 Skripte + Usages | — | [Guide Kap. 14](docs/INSTALLATION_GUIDE.md#de-14-skript-referenz) |
 
 ---
 
@@ -205,6 +225,8 @@ cd $HOME && rm -rf myodoo-docker && rm -rf nginx-conf && \
 This repository contains a collection of Docker configurations and management scripts for Odoo installations. It is used daily in professional customer system administration — from provisioning a fresh server through hardening to backup, SSL, and maintenance.
 
 ### Quick Start
+
+➡️ **Complete guide from a fresh server to a running Odoo live/test system:** [docs/INSTALLATION_GUIDE.md](docs/INSTALLATION_GUIDE.md)
 
 For a **freshly installed Debian/Ubuntu server**, `bootstrap.sh` is the entry point. It sets up the baseline (Docker, nginx, certbot, UFW, fail2ban, automatic security updates) and then runs `getScripts.py`.
 
@@ -383,10 +405,28 @@ cd $HOME && rm -rf myodoo-docker && rm -rf nginx-conf && \
 
 ### Further Documentation
 
+- **[docs/INSTALLATION_GUIDE.md](docs/INSTALLATION_GUIDE.md) — installation guide: fresh server → Odoo live/test (DE/EN, incl. troubleshooting & lessons learned)**
 - [scripts/README_BackUp.md](scripts/README_BackUp.md) — backup system (configuration, compression, automation)
+- [scripts/README_pg-local-deploy.md](scripts/README_pg-local-deploy.md) — PostgreSQL container deployment (profiles, self-signed SSL)
 - [scripts/NIGHTLY_CLEANUP.md](scripts/NIGHTLY_CLEANUP.md) — memory-based container restart
 - [fish/README.md](fish/README.md) — complete alias/function reference
 - [docs/MANUAL_DOCKER_UPDATE_GUIDE.md](docs/MANUAL_DOCKER_UPDATE_GUIDE.md) — manual container update (fallback)
+
+#### Scripts at a Glance
+
+| Task | Command / script | Details |
+|---|---|---|
+| Initialize a server | `bootstrap.sh` (one-liner) | [Guide ch. 3](docs/INSTALLATION_GUIDE.md#en-3-step-1-bootstrap) |
+| Install shell & scripts | `./getScripts.py` | [Guide ch. 4](docs/INSTALLATION_GUIDE.md#en-4-step-2-getscriptspy) |
+| Harden the server | `sudo python3 server_hardening.py --apply` | [Guide ch. 5](docs/INSTALLATION_GUIDE.md#en-5-step-3-server-hardening) |
+| nginx base + vhosts | `deploy-nginx-base.sh`, `ngx-conf-wizard.sh`, `ngxset` | [Guide ch. 6](docs/INSTALLATION_GUIDE.md#en-6-step-4-nginx-base--vhosts) |
+| Deploy PostgreSQL | `pg-local-deploy.sh` | [Guide ch. 7](docs/INSTALLATION_GUIDE.md#en-7-step-5-postgresql-live-dbtest-db) |
+| Start Odoo containers | `docker run … start` | [Guide ch. 8](docs/INSTALLATION_GUIDE.md#en-8-step-6-first-start-of-the-odoo-containers) |
+| Updates | `edup` (config) / `doup` (run) | [Guide ch. 10](docs/INSTALLATION_GUIDE.md#en-10-step-8-set-up-updates-edupdoup) |
+| Backups | `edbk` (config) / `dobk` (run) / `llbk` | [Guide ch. 11](docs/INSTALLATION_GUIDE.md#en-11-step-9-set-up-backups-edbkdobk) |
+| Maintenance cron | `setup-maintenance-cron.sh` | [Guide ch. 12](docs/INSTALLATION_GUIDE.md#en-12-step-10-automate-maintenance) |
+| Restore | `restore-zip.sh` | [Guide ch. 13](docs/INSTALLATION_GUIDE.md#en-13-restore--emergency) |
+| All 17 scripts + usages | — | [Guide ch. 14](docs/INSTALLATION_GUIDE.md#en-14-script-reference) |
 
 ---
 
