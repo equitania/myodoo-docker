@@ -213,6 +213,7 @@ cd $HOME && rm -rf myodoo-docker && rm -rf nginx-conf && \
 | Backups | `edbk` (Config) / `dobk` (Lauf) / `llbk` | [Guide Kap. 11](docs/INSTALLATION_GUIDE.md#de-11-schritt-9-backups-einrichten-edbkdobk) |
 | Wartungs-Cron | `setup-maintenance-cron.sh` | [Guide Kap. 12](docs/INSTALLATION_GUIDE.md#de-12-schritt-10-wartung-automatisieren) |
 | Restore | `restore-zip.sh` | [Guide Kap. 13](docs/INSTALLATION_GUIDE.md#de-13-restore--notfall) |
+| Proxy-Umgebung einrichten | `./getScripts.py --proxy-check` | [Guide Kap. 18](docs/INSTALLATION_GUIDE.md#de-18-betrieb-hinter-http-proxy) |
 | Alle 17 Skripte + Usages | — | [Guide Kap. 14](docs/INSTALLATION_GUIDE.md#de-14-skript-referenz) |
 
 ---
@@ -426,6 +427,7 @@ cd $HOME && rm -rf myodoo-docker && rm -rf nginx-conf && \
 | Backups | `edbk` (config) / `dobk` (run) / `llbk` | [Guide ch. 11](docs/INSTALLATION_GUIDE.md#en-11-step-9-set-up-backups-edbkdobk) |
 | Maintenance cron | `setup-maintenance-cron.sh` | [Guide ch. 12](docs/INSTALLATION_GUIDE.md#en-12-step-10-automate-maintenance) |
 | Restore | `restore-zip.sh` | [Guide ch. 13](docs/INSTALLATION_GUIDE.md#en-13-restore--emergency) |
+| Set up a proxy environment | `./getScripts.py --proxy-check` | [Guide ch. 18](docs/INSTALLATION_GUIDE.md#en-18-operation-behind-an-http-proxy) |
 | All 17 scripts + usages | — | [Guide ch. 14](docs/INSTALLATION_GUIDE.md#en-14-script-reference) |
 
 ---

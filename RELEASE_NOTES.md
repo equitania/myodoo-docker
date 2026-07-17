@@ -1,5 +1,20 @@
 # Release Notes
 
+## Proxy Customer Support & Multi-ZIP Builds (16.–17.07.2026)
+
+### Added
+- **docs/INSTALLATION_GUIDE.md v1.1.0**: new chapter 18 "Operation Behind an HTTP Proxy" (DE/EN) — initial installation behind a proxy (session env before bootstrap), the four locations `--proxy-check` writes with their activation points, `docker2update.yaml` `defaults.proxy` + `pre_build_files`, proxy peculiarities (fastfetch, uv, `no_proxy` for internal domains), verification block and troubleshooting table. Distilled from a real proxy-customer deployment.
+- usage/AGENT.md: agent capability card for the admin toolkit (LLM-facing usage reference).
+
+### Changed
+- Repo hygiene: untrack internal planning artifacts, prune legacy `.gitignore` entries.
+
+### Fixed
+- getScripts.py v9.8.0: `--proxy-check` now really writes the Docker daemon systemd drop-in (`docker.service.d/http-proxy.conf` + daemon-reload; deliberately no automatic restart — that restarts all containers) as long documented by update_docker_odoo.py. fastfetch deploy is proxy-aware: the `publicip` module (raw sockets, ignores `http_proxy`, hung every login behind silently-dropping firewalls) gets a 1 s timeout globally and is stripped entirely on hosts with a configured proxy marker; `--proxy-check` re-deploys the config immediately.
+- getScripts.py v9.8.1/v9.8.2: no more warning noise from `uv self update` on package-manager installs — the command result is classified instead of guessing from the binary path (unreliable: `pip install --user uv` lands in `~/.local/bin`, the standalone installer's location; pip-wheel and homebrew builds also word the refusal differently). Known "cannot self-update" messages log as INFO skip; real failures keep the WARNING with stderr.
+- bootstrap.sh v1.8.0: stage the overlay2 pin on existing Docker installs too (previously fresh installs only).
+- build_odoo.py v2.4.0 (v16/v18/v19): extract **all** `*custom_modules.zip` archives from the build context — a second customer-specific archive (e.g. `xy_custom_modules.zip`) was copied into the image but silently never extracted. The generic `custom_modules.zip` is processed first so customer-specific archives can override its modules. Dockerfile template comment widened to `*custom_modules.*`.
+
 ## Deployment Tooling, Docker-29 Hardening & Installation Guide (15.–16.07.2026)
 
 ### Added

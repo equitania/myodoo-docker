@@ -116,6 +116,14 @@ Prefer `PGPASSWORD` env over the 9th positional arg — the latter is visible in
 ```
 Installs: backups 02:00+14:00 · ssl-renew 00:00 · cert-guard 23:50 · weblog purge 03:00 · nightly cleanup 04:30.
 
+### Configure a server behind an HTTP proxy
+```bash
+python3 ~/getScripts.py --proxy-check   # writes fish conf.d, /etc/environment, marker, docker daemon drop-in
+systemctl restart docker                # maintenance window — restarts ALL containers
+```
+Optionally pin the proxy in `docker2update.yaml` (`defaults.proxy`) so cron `doup` runs are
+independent of the shell environment. Full walkthrough: INSTALLATION_GUIDE chapter 18.
+
 ## Guardrails & gotchas
 - **Destructive:** `doup` (type `F`) **stops, removes and re-creates** the target container and
   removes its image before rebuilding — a failed run leaves the system down until re-run.
@@ -139,6 +147,14 @@ Installs: backups 02:00+14:00 · ssl-renew 00:00 · cert-guard 23:50 · weblog p
   `bash -c '…'`. Scripts themselves are bash/python and run normally.
 - **Hardening order:** apply the `ssh` module last, with a second open SSH session as safety net.
   `docker` module never auto-restarts the daemon; UFW rules only take effect once UFW is enabled.
+- **Proxy hosts:** the Docker daemon drop-in written by `--proxy-check` (getScripts ≥ 9.8.0) only
+  takes effect after `systemctl restart docker` — maintenance window, restarts all containers.
+  fastfetch's `publicip` module ignores `http_proxy` and is stripped automatically on proxy hosts;
+  ~1 s fastfetch runtime is normal (NetIO/DiskIO sampling). Corporate firewalls often drop
+  outbound traffic silently — "hangs" usually means missing proxy env, not a slow server.
+- **Custom modules:** every `*custom_modules.zip` in the build folder is extracted into the image
+  (build_odoo ≥ 2.4.0; the generic `custom_modules.zip` first, customer-specific archives
+  override). Stage archives via `pre_build_files` in `docker2update.yaml`.
 
 ## Machine-readable outputs
 - None of the tools emit JSON. Use exit codes: `update_docker_odoo.py --validate` (0 = config OK),
