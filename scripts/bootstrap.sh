@@ -1,6 +1,6 @@
 #!/bin/bash
 # bootstrap.sh — Out-of-the-box initializer for fresh Debian/Ubuntu servers
-# Version 1.7.0 — 16.07.2026
+# Version 1.8.0 — 17.07.2026
 #
 # Supported: Debian 12 (bookworm) / 13 (trixie); Ubuntu 20.04/22.04/24.04/26.04
 # (focal/jammy/noble/resolute). OS + codename are auto-detected from os-release;
@@ -14,7 +14,11 @@
 #   3. Installs Docker CE from the official Docker repository (deb822 format);
 #      pins the classic overlay2 storage driver via /etc/docker/daemon.json —
 #      Docker >= 29 defaults fresh installs to the containerd image store whose
-#      image export is broken for large builds (moby/moby#52431)
+#      image export is broken for large builds (moby/moby#52431, still open as
+#      of 17.07.2026). On a server where Docker is already installed and still
+#      on the containerd store, the pin is staged (file written) but never
+#      auto-applied — activating it needs a builder prune + restart + reboot,
+#      which this idempotent/non-destructive script does not do unattended.
 #   4. Installs nginx from the official nginx.org repository (reverse proxy)
 #   5. Installs certbot (Let's Encrypt client; renewal via ssl-renew.sh standalone)
 #   6. Installs UFW (firewall — installed but NOT enabled, see below)
@@ -62,8 +66,8 @@ set -Eeuo pipefail
 # Configuration
 # ──────────────────────────────────────────
 
-SCRIPT_VERSION="1.6.0"
-SCRIPT_DATE="01.06.2026"
+SCRIPT_VERSION="1.8.0"
+SCRIPT_DATE="17.07.2026"
 
 REPO_URL="${REPO_URL:-https://github.com/equitania/myodoo-docker.git}"
 REPO_BRANCH="${REPO_BRANCH:-2026}"
@@ -269,13 +273,31 @@ install_docker() {
     # Just make sure the service is enabled and move on.
     if command -v docker >/dev/null 2>&1; then
         log "Docker already present: $(docker --version). Leaving apt repo untouched."
-        # Do NOT switch the store on a live install (images/containers would
-        # become invisible) — but do surface the moby#52431 exposure.
+        # Do NOT switch a LIVE store here (images/containers would become
+        # invisible until a restart+reboot) — but do surface the moby#52431
+        # exposure, and pre-stage the daemon.json pin (inert until applied) so
+        # an operator doesn't have to hand-type it during an incident.
         if [ "$(docker info --format '{{.Driver}}' 2>/dev/null)" = "overlayfs" ]; then
             warn "This Docker uses the containerd image store — image export of large builds"
             warn "is broken there (moby/moby#52431: 'ref locked: unavailable' / hollow images)."
-            warn "Manual fix: /etc/docker/daemon.json {\"storage-driver\": \"overlay2\"},"
-            warn "restart docker, re-pull images, then 'docker builder prune -af'."
+            if [ ! -f /etc/docker/daemon.json ]; then
+                $SUDO install -m 0755 -d /etc/docker
+                write_file /etc/docker/daemon.json <<'EOF'
+{
+  "storage-driver": "overlay2"
+}
+EOF
+                warn "Staged /etc/docker/daemon.json (storage-driver overlay2) — NOT applied yet,"
+                warn "restarting docker now would only make current images/containers invisible."
+                warn "To activate: 'docker builder prune -af', restart docker, then REBOOT THE"
+                warn "SERVER (orphaned containerd mounts otherwise cause non-deterministic hollow"
+                warn "image exports) — then re-pull images / recreate containers (bind mounts and"
+                warn "named volumes survive the switch)."
+            else
+                warn "/etc/docker/daemon.json already exists but the containerd store is still"
+                warn "active — check its storage-driver value, and whether docker/the server was"
+                warn "restarted since it was last edited."
+            fi
         fi
         if command -v systemctl >/dev/null 2>&1; then
             $SUDO systemctl enable --now docker 2>/dev/null || true
