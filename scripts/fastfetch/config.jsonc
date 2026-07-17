@@ -15,7 +15,12 @@
     "uptime",
     "separator",
     "localip",
-    "PublicIp",
+    {
+      // Public IP lookup bypasses http_proxy (fastfetch uses raw sockets);
+      // bound the wait so login never hangs on restricted networks.
+      "type": "publicip",
+      "timeout": 1000
+    },
     "DNS",
     "NetIO",
     "separator",
