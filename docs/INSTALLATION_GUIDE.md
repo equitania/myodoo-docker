@@ -1,6 +1,6 @@
 # Server Installation Guide — Odoo live/test under Docker
 
-Version 1.0.0 — 16.07.2026
+Version 1.1.0 — 17.07.2026
 
 [🇩🇪 Deutsche Version](#deutsche-version) | [🇬🇧 English Version](#english-version)
 
@@ -24,6 +24,7 @@ ersetze Domains, IPs und Passwörter durch eure Werte.
 | `192.168.1.50` | Interne Server-IP (nur bei NAT relevant) |
 | `live-odoo` / `test-odoo`, `live-db` / `test-db` | Container-Namen |
 | `odoo/live`, `odoo/test` | Docker-Image-Namen |
+| `proxy.example.com:8080` | HTTP-Proxy des Kunden (nur [Kapitel 18](#de-18-betrieb-hinter-http-proxy)) |
 
 ## Inhalt
 
@@ -44,6 +45,7 @@ ersetze Domains, IPs und Passwörter durch eure Werte.
 15. [Shell-Referenz (fish)](#de-15-shell-referenz-fish)
 16. [Troubleshooting](#de-16-troubleshooting)
 17. [Optionale Komponenten](#de-17-optionale-komponenten)
+18. [Betrieb hinter HTTP-Proxy](#de-18-betrieb-hinter-http-proxy)
 
 <a id="de-1-überblick--architektur"></a>
 ## 1. Überblick & Architektur
@@ -558,6 +560,105 @@ Registry-Zugang erforderlich. Die Backup-Einbindung erfolgt über den
 **Debian-Major-Upgrade:** `dist-upgrade-debian.sh` führt geführt durch ein
 In-Place-Upgrade (Quellen umschreiben, phasenweises Upgrade, Reboot-Abfrage).
 
+<a id="de-18-betrieb-hinter-http-proxy"></a>
+## 18. Betrieb hinter HTTP-Proxy
+
+Für Server, die nur über einen Firmen-Proxy ins Internet dürfen
+(getScripts.py ≥ 9.8.2, update_docker_odoo.py ≥ 5.3.0). Typisches
+Erkennungsmerkmal: Firewalls solcher Umgebungen **droppen** direkte
+Outbound-Verbindungen oft still — Prozesse ohne Proxy-Konfiguration
+**hängen** dann, statt sofort zu scheitern.
+
+### 18.1 Erstinstallation hinter Proxy
+
+Bootstrap und Repo-Clone brauchen Internet, bevor der Proxy dauerhaft
+konfiguriert ist — daher die Variablen zuerst manuell in der Session setzen
+(frischer Server = noch bash), dann den normalen Bootstrap aus
+[Kapitel 3](#de-3-schritt-1-bootstrap) ausführen:
+
+```bash
+# As root, bash — set proxy for this session first:
+export http_proxy="http://proxy.example.com:8080"
+export https_proxy="http://proxy.example.com:8080"
+export no_proxy="localhost,127.0.0.1,::1,.local"
+```
+
+`apt`, `curl` und `git` übernehmen die Variablen — der Bootstrap läuft damit
+vollständig durch den Proxy. Direkt danach die Konfiguration dauerhaft
+machen (18.2).
+
+### 18.2 Proxy dauerhaft konfigurieren
+
+```fish
+python3 ~/getScripts.py --proxy-check
+```
+
+Fragt Proxy-URL und Ausnahmen interaktiv ab und schreibt vier Stellen:
+
+| Datei | Wirkung | Greift ab |
+|---|---|---|
+| `~/.config/fish/conf.d/99-proxy.fish` | Alle fish-Sessions (interaktiv + Skripte) | Nächste fish-Session (`exec fish`) |
+| `/etc/environment` | Systemweit über PAM: Logins, cron, su | Nächster Login |
+| `~/.getscripts_proxy` | Marker/Fallback für `update_docker_odoo.py` und das fastfetch-Deploy | Sofort |
+| `/etc/systemd/system/docker.service.d/http-proxy.conf` | Docker-Daemon (Image-Pulls) | **Erst nach `systemctl restart docker`** |
+
+> ⚠️ **Wartungsfenster:** `systemctl restart docker` startet **alle
+> Container** neu. Bis zum Restart schlagen `docker pull`s fehl.
+
+Proxy ändern oder entfernen: immer erneut über `--proxy-check` — nie die
+Dateien einzeln editieren.
+
+### 18.3 Container-Updates (doup)
+
+`update_docker_odoo.py` löst den Proxy in dieser Reihenfolge auf:
+`container.proxy` > `defaults.proxy` > Umgebungsvariablen >
+`~/.getscripts_proxy`. Empfehlung: explizit in der `docker2update.yaml`
+eintragen, dann sind auch cron-Läufe unabhängig von der Shell-Umgebung:
+
+```yaml
+defaults:
+  proxy:                                    # wget downloads + docker build
+    http_proxy: "http://proxy.example.com:8080"
+    https_proxy: "http://proxy.example.com:8080"
+    no_proxy: "localhost,127.0.0.1,.local"
+```
+
+Der YAML-Proxy wirkt auf `wget` und `docker build` (Env + `--build-arg`).
+Das **Base-Image-Pull macht der Docker-Daemon** — dafür ist ausschließlich
+das systemd-Drop-in aus 18.2 zuständig. Dateien, die der Build nicht selbst
+laden kann, lassen sich pro Container über `pre_build_files`
+(Liste aus `{source, target}`) vorab in den Build-Ordner kopieren.
+
+### 18.4 Besonderheiten
+
+- **fastfetch:** Das `publicip`-Modul nutzt Raw-Sockets, ignoriert
+  `http_proxy` und würde beim Login endlos hängen. getScripts entfernt es
+  auf Proxy-Hosts automatisch aus der deployten Config. Die verbleibende
+  ~1 s Laufzeit ist normal (NetIO/DiskIO messen über ein 1-s-Fenster).
+- **uv:** Bei per Paketmanager installiertem uv ist `uv self update` nicht
+  möglich — getScripts erkennt das und loggt einen INFO-Skip, kein Fehler.
+- **Interne Dienste:** Sprechen Skripte oder Container interne Hosts per
+  HTTP an (z.B. `*.internal.example.com`), die Ausnahmen bei
+  `--proxy-check` um `.internal.example.com` erweitern — sonst läuft der
+  Traffic durch den Proxy.
+
+### 18.5 Verifikation
+
+```fish
+env | grep -i proxy                                # fish-Umgebung
+grep -i proxy /etc/environment                     # systemweit
+systemctl show docker --property=Environment       # Docker-Daemon
+git -C ~/myodoo-docker fetch --dry-run; echo $status   # Internet via Proxy (0 = ok)
+time fastfetch > /dev/null                         # ~1 s, kein Haenger
+```
+
+| Symptom | Ursache | Fix |
+|---|---|---|
+| Login/fastfetch hängt endlos | Alte fastfetch-Config mit `publicip` | `ups`, danach `--proxy-check` |
+| `docker pull` hängt/scheitert | Drop-in fehlt oder Docker nicht neu gestartet | 18.2 |
+| `git pull` / `curl` hängt | Session ohne Proxy-Umgebung | `exec fish` bzw. neu einloggen |
+| cron-Jobs ohne Internet | `/etc/environment` fehlt/veraltet | `--proxy-check` erneut ausführen |
+
 ---
 
 <a id="english-version"></a>
@@ -578,6 +679,7 @@ with your values.
 | `192.168.1.50` | Internal server IP (only relevant behind NAT) |
 | `live-odoo` / `test-odoo`, `live-db` / `test-db` | Container names |
 | `odoo/live`, `odoo/test` | Docker image names |
+| `proxy.example.com:8080` | Customer HTTP proxy (only [chapter 18](#en-18-operation-behind-an-http-proxy)) |
 
 ## Contents
 
@@ -598,6 +700,7 @@ with your values.
 15. [Shell Reference (fish)](#en-15-shell-reference-fish)
 16. [Troubleshooting](#en-16-troubleshooting)
 17. [Optional Components](#en-17-optional-components)
+18. [Operation Behind an HTTP Proxy](#en-18-operation-behind-an-http-proxy)
 
 <a id="en-1-overview--architecture"></a>
 ## 1. Overview & Architecture
@@ -1114,3 +1217,102 @@ registry access required. Backup integration via the `fast_report:` block in
 
 **Debian major upgrade:** `dist-upgrade-debian.sh` guides through an in-place
 upgrade (rewrite sources, phased upgrade, reboot prompt).
+
+<a id="en-18-operation-behind-an-http-proxy"></a>
+## 18. Operation Behind an HTTP Proxy
+
+For servers that may only reach the internet through a corporate proxy
+(getScripts.py ≥ 9.8.2, update_docker_odoo.py ≥ 5.3.0). Typical tell:
+firewalls in such environments often **drop** direct outbound connections
+silently — processes without proxy configuration then **hang** instead of
+failing immediately.
+
+### 18.1 Initial Installation Behind a Proxy
+
+Bootstrap and repo clone need internet access before the proxy is
+permanently configured — so set the variables manually in the session first
+(fresh server = still bash), then run the normal bootstrap from
+[chapter 3](#en-3-step-1-bootstrap):
+
+```bash
+# As root, bash — set proxy for this session first:
+export http_proxy="http://proxy.example.com:8080"
+export https_proxy="http://proxy.example.com:8080"
+export no_proxy="localhost,127.0.0.1,::1,.local"
+```
+
+`apt`, `curl` and `git` pick up the variables — the bootstrap then runs
+entirely through the proxy. Immediately afterwards, make the configuration
+permanent (18.2).
+
+### 18.2 Configure the Proxy Permanently
+
+```fish
+python3 ~/getScripts.py --proxy-check
+```
+
+Prompts for proxy URL and exceptions interactively and writes four places:
+
+| File | Effect | Takes effect |
+|---|---|---|
+| `~/.config/fish/conf.d/99-proxy.fish` | All fish sessions (interactive + scripts) | Next fish session (`exec fish`) |
+| `/etc/environment` | System-wide via PAM: logins, cron, su | Next login |
+| `~/.getscripts_proxy` | Marker/fallback for `update_docker_odoo.py` and the fastfetch deploy | Immediately |
+| `/etc/systemd/system/docker.service.d/http-proxy.conf` | Docker daemon (image pulls) | **Only after `systemctl restart docker`** |
+
+> ⚠️ **Maintenance window:** `systemctl restart docker` restarts **all
+> containers**. Until the restart, `docker pull` will fail.
+
+To change or remove the proxy: always rerun `--proxy-check` — never edit
+the files individually.
+
+### 18.3 Container Updates (doup)
+
+`update_docker_odoo.py` resolves the proxy in this order:
+`container.proxy` > `defaults.proxy` > environment variables >
+`~/.getscripts_proxy`. Recommendation: set it explicitly in
+`docker2update.yaml` so cron runs are independent of the shell environment:
+
+```yaml
+defaults:
+  proxy:                                    # wget downloads + docker build
+    http_proxy: "http://proxy.example.com:8080"
+    https_proxy: "http://proxy.example.com:8080"
+    no_proxy: "localhost,127.0.0.1,.local"
+```
+
+The YAML proxy applies to `wget` and `docker build` (env + `--build-arg`).
+The **base image pull is done by the Docker daemon** — only the systemd
+drop-in from 18.2 covers that. Files the build cannot fetch itself can be
+copied into the build folder beforehand via per-container `pre_build_files`
+(list of `{source, target}`).
+
+### 18.4 Peculiarities
+
+- **fastfetch:** The `publicip` module uses raw sockets, ignores
+  `http_proxy` and would hang the login indefinitely. getScripts strips it
+  automatically from the deployed config on proxy hosts. The remaining
+  ~1 s runtime is normal (NetIO/DiskIO sample over a 1 s window).
+- **uv:** With uv installed via a package manager, `uv self update` is not
+  possible — getScripts detects this and logs an INFO skip, not an error.
+- **Internal services:** If scripts or containers talk to internal hosts
+  over HTTP (e.g. `*.internal.example.com`), extend the exceptions in
+  `--proxy-check` with `.internal.example.com` — otherwise that traffic
+  goes through the proxy.
+
+### 18.5 Verification
+
+```fish
+env | grep -i proxy                                # fish environment
+grep -i proxy /etc/environment                     # system-wide
+systemctl show docker --property=Environment       # Docker daemon
+git -C ~/myodoo-docker fetch --dry-run; echo $status   # internet via proxy (0 = ok)
+time fastfetch > /dev/null                         # ~1 s, no hang
+```
+
+| Symptom | Cause | Fix |
+|---|---|---|
+| Login/fastfetch hangs indefinitely | Old fastfetch config with `publicip` | `ups`, then `--proxy-check` |
+| `docker pull` hangs/fails | Drop-in missing or Docker not restarted | 18.2 |
+| `git pull` / `curl` hangs | Session without proxy environment | `exec fish` or re-login |
+| cron jobs without internet | `/etc/environment` missing/outdated | Rerun `--proxy-check` |
