@@ -1,8 +1,8 @@
 #!/usr/bin/python3
 # -*- coding: utf-8 -*-
 # This script builds a new server using the Release Manager
-# Version 2.3.0
-# Date 14.07.2026
+# Version 2.4.0
+# Date 17.07.2026
 ##############################################################################
 #
 #    Shell Script for Odoo, Open Source Management Solution
@@ -250,14 +250,21 @@ with open(_release_file, encoding="utf8") as csvfile:
 
 print(f"\nAll entries from release file processed! Files downloaded: {downloaded_files}/{total_zip_files}")
 
-# Check for custom modules
-custom_modules = 'custom_modules.zip'
-if os.path.exists(custom_modules):
+# Check for custom modules: process every *custom_modules.zip in the build
+# context (custom_modules.zip plus customer-specific archives like
+# xy_custom_modules.zip). The generic archive is extracted first so
+# customer-specific archives can override modules from it.
+custom_zips = sorted(f for f in os.listdir('.') if f.endswith('custom_modules.zip'))
+if 'custom_modules.zip' in custom_zips:
+    custom_zips.remove('custom_modules.zip')
+    custom_zips.insert(0, 'custom_modules.zip')
+if custom_zips:
     print("\nProcessing custom modules...")
-    if extract_zip(custom_modules, 'odoo-server/addons'):
-        print(f'file: {custom_modules} loaded and installed..')
-    else:
-        print(f'Failed to extract custom modules')
+    for custom_modules in custom_zips:
+        if extract_zip(custom_modules, 'odoo-server/addons'):
+            print(f'file: {custom_modules} loaded and installed..')
+        else:
+            print(f'Failed to extract custom modules: {custom_modules}')
 
 print('\nBuild finished! [100%]')
 

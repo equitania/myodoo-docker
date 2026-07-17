@@ -17,7 +17,9 @@ RUN /bin/bash -c "mkdir -p /opt/odoo/{odoo-server/odoo,etc,data,data/filestore} 
 COPY build_odoo.py /opt/odoo/
 COPY release.file /opt/odoo/
 COPY odoo.conf /opt/odoo/etc/
-#COPY custom_modules.* /opt/odoo/
+# Uncomment to bake customer modules into the image; the pattern also matches
+# customer-specific archives like xy_custom_modules.zip (build fails if no file matches)
+#COPY *custom_modules.* /opt/odoo/
 
 RUN cd /opt/odoo/ && \
     python3 build_odoo.py
