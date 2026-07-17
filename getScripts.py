@@ -55,8 +55,8 @@ if os.environ.get('GETSCRIPTS_DEBUG', '').lower() in ('1', 'true', 'yes'):
     logger.debug("Debug logging enabled")
 
 # Script version and date
-SCRIPT_VERSION = "9.7.3"
-SCRIPT_DATE = "15.07.2026"
+SCRIPT_VERSION = "9.8.0"
+SCRIPT_DATE = "17.07.2026"
 
 # ─────────────────────────────────────────────────────────────────────────────
 # Install report
@@ -3583,6 +3583,77 @@ def update_repository(myodoo_docker: str, server_version: str) -> None:
     # Clean pyc files
     run_command("find . -name '*.pyc' -type f -delete")
 
+def read_proxy_marker() -> Dict[str, str]:
+    """Read the proxy marker file written by apply_proxy_settings().
+
+    Returns:
+        Dict[str, str]: Parsed key=value pairs, empty dict if no marker exists.
+    """
+    marker = os.path.expanduser("~/.getscripts_proxy")
+    settings: Dict[str, str] = {}
+    if not os.path.exists(marker):
+        return settings
+    try:
+        with open(marker, 'r', encoding='utf-8') as f:
+            for line in f:
+                line = line.strip()
+                if not line or line.startswith('#') or '=' not in line:
+                    continue
+                key, value = line.split('=', 1)
+                settings[key.strip()] = value.strip()
+    except Exception as e:
+        logger.warning(f"Could not read proxy marker file: {e}")
+    return settings
+
+
+def is_proxy_active() -> bool:
+    """Check whether a proxy has been configured via --proxy-check."""
+    return bool(read_proxy_marker().get('http_proxy'))
+
+
+def deploy_fastfetch_config(source: str, target: str) -> None:
+    """Deploy the fastfetch config, stripping network-dependent modules on
+    proxy hosts.
+
+    fastfetch's publicip module uses raw sockets and ignores http_proxy, so
+    behind a corporate proxy it can only fail (or hang on firewalls that drop
+    packets silently). On hosts with a configured proxy the module is removed
+    entirely instead of showing a failing line on every login.
+    """
+    if not os.path.exists(source):
+        return
+
+    if not is_proxy_active():
+        run_command(f"cp {source} {target}")
+        return
+
+    try:
+        with open(source, 'r', encoding='utf-8') as f:
+            # Strip full-line // comments so the JSONC file parses as JSON
+            raw = '\n'.join(
+                line for line in f.read().splitlines()
+                if not line.strip().startswith('//')
+            )
+        config = json.loads(raw)
+
+        def is_publicip(module: Any) -> bool:
+            if isinstance(module, str):
+                return module.lower() == "publicip"
+            if isinstance(module, dict):
+                return str(module.get("type", "")).lower() == "publicip"
+            return False
+
+        config["modules"] = [m for m in config.get("modules", []) if not is_publicip(m)]
+
+        with open(target, 'w', encoding='utf-8') as f:
+            json.dump(config, f, indent=2, ensure_ascii=False)
+            f.write('\n')
+        logger.info("Fastfetch config deployed without publicip module (proxy host)")
+    except Exception as e:
+        logger.warning(f"Could not filter fastfetch config ({e}) - copying unmodified")
+        run_command(f"cp {source} {target}")
+
+
 def copy_configuration_files(_myhome: str, myodoo_docker: str) -> None:
     """Copy configuration files from repository to home directory."""
 
@@ -3592,8 +3663,7 @@ def copy_configuration_files(_myhome: str, myodoo_docker: str) -> None:
 
     source_fastfetch = os.path.join(myodoo_docker, "scripts", "fastfetch", "config.jsonc")
     target_fastfetch = os.path.join(config_directory, "config.jsonc")
-    if os.path.exists(source_fastfetch):
-        run_command(f"cp {source_fastfetch} {target_fastfetch}")
+    deploy_fastfetch_config(source_fastfetch, target_fastfetch)
 
 def copy_scripts(_myhome: str, myodoo_docker: str) -> None:
     """Copy utility scripts to home directory."""
@@ -3780,8 +3850,7 @@ def main() -> None:
         ensure_directory_exists(config_directory)
         source_fastfetch = os.path.join(myodoo_docker, "scripts", "fastfetch", "config.jsonc")
         target_fastfetch = os.path.join(config_directory, "config.jsonc")
-        if os.path.exists(source_fastfetch):
-            run_command(f"cp {source_fastfetch} {target_fastfetch}")
+        deploy_fastfetch_config(source_fastfetch, target_fastfetch)
 
         os.chdir(_myhome)
 
@@ -4027,6 +4096,44 @@ set -gx NO_PROXY "{no_proxy}"
             logger.info("System environment proxy configuration applied")
         except Exception as e:
             logger.warning(f"Could not apply system-wide proxy: {e}")
+
+    # Apply to Docker daemon via systemd drop-in (image pulls are done by the
+    # daemon itself and do not inherit shell environment variables).
+    # update_docker_odoo.py documents this drop-in as the daemon proxy source.
+    docker_unit_paths = [
+        "/lib/systemd/system/docker.service",
+        "/usr/lib/systemd/system/docker.service",
+        "/etc/systemd/system/docker.service",
+    ]
+    if is_root_or_has_sudo() and any(os.path.exists(p) for p in docker_unit_paths):
+        try:
+            dropin_dir = "/etc/systemd/system/docker.service.d"
+            dropin_file = os.path.join(dropin_dir, "http-proxy.conf")
+            dropin_content = (
+                "# Docker daemon proxy - managed by getScripts.py\n"
+                "[Service]\n"
+                f'Environment="HTTP_PROXY={http_proxy}"\n'
+                f'Environment="HTTPS_PROXY={https_proxy}"\n'
+                f'Environment="NO_PROXY={no_proxy}"\n'
+            )
+            subprocess.run(["sudo", "mkdir", "-p", dropin_dir], check=True)
+            subprocess.run(["sudo", "tee", dropin_file], input=dropin_content.encode(), check=True, stdout=subprocess.DEVNULL)
+            subprocess.run(["sudo", "systemctl", "daemon-reload"], check=True)
+            logger.info("Docker daemon proxy drop-in written")
+            # Deliberately no automatic restart: restarting dockerd restarts
+            # all containers. The operator must schedule this.
+            print("\n⚠️  Docker-Daemon-Proxy geschrieben - wird erst nach")
+            print("   'systemctl restart docker' aktiv (startet alle Container neu!)")
+        except Exception as e:
+            logger.warning(f"Could not apply Docker daemon proxy: {e}")
+
+    # Re-deploy the fastfetch config so network-dependent modules (publicip)
+    # are stripped now that a proxy is configured.
+    myodoo_docker = os.path.join(os.path.expanduser("~"), "myodoo-docker")
+    source_fastfetch = os.path.join(myodoo_docker, "scripts", "fastfetch", "config.jsonc")
+    target_fastfetch = os.path.join(os.path.expanduser("~"), ".config", "fastfetch", "config.jsonc")
+    if os.path.exists(source_fastfetch) and os.path.exists(os.path.dirname(target_fastfetch)):
+        deploy_fastfetch_config(source_fastfetch, target_fastfetch)
 
     return success
 
