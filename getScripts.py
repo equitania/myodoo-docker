@@ -31,7 +31,6 @@ from functools import wraps, lru_cache
 import time
 import platform
 import re
-import shutil
 import socket
 import tempfile
 from concurrent.futures import ThreadPoolExecutor, as_completed
@@ -56,7 +55,7 @@ if os.environ.get('GETSCRIPTS_DEBUG', '').lower() in ('1', 'true', 'yes'):
     logger.debug("Debug logging enabled")
 
 # Script version and date
-SCRIPT_VERSION = "9.8.1"
+SCRIPT_VERSION = "9.8.2"
 SCRIPT_DATE = "17.07.2026"
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -3691,26 +3690,36 @@ def copy_scripts(_myhome: str, myodoo_docker: str) -> None:
         if os.path.exists(source):
             run_command(f"cp {source} {target}")
 
-def is_uv_standalone_install() -> bool:
-    """Check whether uv was installed via the standalone installer.
+# uv builds that cannot self-update (pip wheel, brew, apt, ...) refuse with
+# exit code 2 but the message text differs per build - match all known ones.
+# Binary location is NOT a reliable indicator: `pip install --user uv` puts a
+# non-standalone binary at ~/.local/bin, the standalone installer's path.
+UV_NO_SELF_UPDATE_PATTERNS = (
+    "self-update is only available",   # pip/wheel build
+    "cannot update itself",            # homebrew build
+)
 
-    `uv self update` only works for standalone installer binaries
-    (~/.local/bin, ~/.cargo/bin or $XDG_BIN_HOME); installs from apt, pip,
-    pipx or brew reject it with exit code 2. realpath() resolves symlink
-    shims (e.g. pipx links in ~/.local/bin) to their real location.
-    """
-    uv_path = shutil.which("uv")
-    if not uv_path:
-        return False
-    resolved_dir = os.path.dirname(os.path.realpath(uv_path))
-    standalone_dirs = [
-        os.path.expanduser("~/.local/bin"),
-        os.path.expanduser("~/.cargo/bin"),
-    ]
-    xdg_bin = os.environ.get("XDG_BIN_HOME")
-    if xdg_bin:
-        standalone_dirs.append(xdg_bin)
-    return any(resolved_dir == os.path.realpath(d) for d in standalone_dirs)
+
+def update_uv_via_self_update() -> None:
+    """Update uv via `uv self update`, skipping quietly when the installed
+    build does not support self-update (only the standalone installer
+    binaries do - package manager installs are updated by the package
+    manager itself)."""
+    logger.info("Updating uv to latest version...")
+    try:
+        result = subprocess.run(
+            ["uv", "self", "update"],
+            capture_output=True, text=True, timeout=180
+        )
+        output = f"{result.stdout}\n{result.stderr}".lower()
+        if result.returncode == 0:
+            logger.info("uv is up to date")
+        elif any(p in output for p in UV_NO_SELF_UPDATE_PATTERNS):
+            logger.info("uv build does not support self-update (package manager install) - skipping")
+        else:
+            logger.warning(f"uv self update failed (exit {result.returncode}): {result.stderr.strip()}")
+    except Exception as e:
+        logger.warning(f"Failed to update uv: {e}")
 
 
 def install_packages(package_info: Dict[str, Any]) -> None:
@@ -3725,17 +3734,9 @@ def install_packages(package_info: Dict[str, Any]) -> None:
         if not install_uv():
             logger.warning("uv installation failed, skipping uv tool installations")
 
-    # 2. Update uv to latest version (standalone installs only - package
-    # manager installs are updated by the package manager itself)
+    # 2. Update uv to latest version
     if is_uv_installed():
-        if is_uv_standalone_install():
-            logger.info("Updating uv to latest version...")
-            try:
-                run_command("uv self update")
-            except Exception as e:
-                logger.warning(f"Failed to update uv: {e}")
-        else:
-            logger.info("uv installed via package manager - skipping self-update")
+        update_uv_via_self_update()
 
         # 3. Upgrade all existing uv tools
         logger.info("Upgrading all existing uv tools...")
