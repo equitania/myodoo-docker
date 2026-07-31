@@ -141,6 +141,12 @@ independent of the shell environment. Full walkthrough: INSTALLATION_GUIDE chapt
   moby/moby#52431). Cure: reboot → `docker builder prune -af` → `docker build --no-cache --pull`.
 - **nginx pid trap:** `nginx -t` can truncate `/run/nginx.pid`; the stock nginx.org unit then fails
   `reload` (kill usage text) while the old config stays live. Use the `$MAINPID` ExecReload drop-in.
+- **nginx dies during apt upgrades:** the nginx.org unit ships `Restart=no`, so a start that fails
+  mid-library-swap (glibc/openssl under `apt-daily-upgrade`) leaves nginx down until a human
+  notices — `Connection refused` on 80 *and* 443 while SSH still answers. `bootstrap.sh` ≥ 1.9.0
+  installs a `Restart=on-failure` drop-in and pins `certbot.timer` to 03:00 (its stock ≤12h jitter
+  drifts into the 06:00–07:00 apt window, and standalone renewals stop nginx). Both are applied to
+  pre-existing installs when bootstrap is re-run.
 - **Port bindings:** always map Odoo ports with the `127.0.0.1:` prefix — without it the LAN
   bypasses nginx/SSL. Odoo ≥ 16 uses `/websocket` (templates handle it).
 - **Shell:** interactive shell is fish — `$status` not `$?`, no heredocs; run bash snippets via

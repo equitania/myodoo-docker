@@ -1,6 +1,6 @@
 #!/bin/bash
 # bootstrap.sh — Out-of-the-box initializer for fresh Debian/Ubuntu servers
-# Version 1.8.0 — 17.07.2026
+# Version 1.9.0 — 31.07.2026
 #
 # Supported: Debian 12 (bookworm) / 13 (trixie); Ubuntu 20.04/22.04/24.04/26.04
 # (focal/jammy/noble/resolute). OS + codename are auto-detected from os-release;
@@ -20,7 +20,14 @@
 #      auto-applied — activating it needs a builder prune + restart + reboot,
 #      which this idempotent/non-destructive script does not do unattended.
 #   4. Installs nginx from the official nginx.org repository (reverse proxy)
+#      and hardens its systemd unit with Restart=on-failure — the nginx.org unit
+#      ships Restart=no, so a start that fails transiently (e.g. while an apt
+#      upgrade swaps glibc/openssl underneath) leaves nginx down until a human
+#      notices. Applied to pre-existing installs too.
 #   5. Installs certbot (Let's Encrypt client; renewal via ssl-renew.sh standalone)
+#      and pins the distro's certbot.timer to a quiet 03:00 slot, clear of the
+#      06:00-07:00 apt-daily-upgrade window (its stock randomized delay of up to
+#      12h regularly drifts into it, and standalone renewals stop nginx)
 #   6. Installs UFW (firewall — installed but NOT enabled, see below)
 #   7. Installs fail2ban (baseline SSH brute-force protection)
 #   8. Installs unattended-upgrades (automatic security updates)
@@ -371,6 +378,71 @@ EOF
     log "Docker installed: $(docker --version 2>/dev/null || echo 'n/a')"
 }
 
+# Install a systemd drop-in that restarts nginx when a start FAILS.
+#
+# Background: the nginx.org unit ships `Restart=no`. Observed twice within two
+# days on a release server (29./31.07.2026): apt-daily-upgrade replaced glibc
+# resp. openssl, something restarted nginx mid-swap (needrestart in one case, the
+# certbot pre-hook in the other), the start failed because the binary could not
+# load the library being replaced — and nothing ever tried again. A three-second
+# library swap became an outage lasting hours.
+#
+# StartLimitBurst/IntervalSec keep this bounded: a genuinely broken config still
+# gives up after 5 attempts within 5 minutes and stays down visibly, instead of
+# restart-looping forever and hiding the real error.
+harden_nginx_service() {
+    command -v systemctl >/dev/null 2>&1 || return 0
+
+    $SUDO mkdir -p /etc/systemd/system/nginx.service.d
+    printf '%s\n' \
+        '# Managed by bootstrap.sh — nginx must survive a transient failed start.' \
+        '[Unit]' \
+        'StartLimitIntervalSec=300' \
+        'StartLimitBurst=5' \
+        '' \
+        '[Service]' \
+        'Restart=on-failure' \
+        'RestartSec=10' \
+        | write_file /etc/systemd/system/nginx.service.d/10-restart.conf
+
+    $SUDO systemctl daemon-reload
+    log "nginx: Restart=on-failure drop-in installed (recovers from a failed start in 10s)."
+}
+
+# Pin the distro certbot.timer to a quiet slot.
+#
+# The Debian/Ubuntu certbot package ships an ENABLED certbot.timer whose
+# RandomizedDelaySec spans up to 12h — which is how it ended up firing at 06:51,
+# right inside the apt-daily-upgrade window. Since renewals authenticate via
+# standalone, every renewal stops nginx; colliding with a library swap is exactly
+# what took nginx down. A fixed 03:00-03:30 slot keeps the two apart.
+#
+# The empty `OnCalendar=` line is REQUIRED: without it systemd ADDS this schedule
+# to the unit's original one rather than replacing it, and the timer would keep
+# firing in the apt window as well.
+harden_certbot_timer() {
+    command -v systemctl >/dev/null 2>&1 || return 0
+    # Only the distro package provides certbot.timer; a snap install uses a
+    # different unit name and is left alone.
+    $SUDO systemctl list-unit-files certbot.timer >/dev/null 2>&1 || {
+        log "certbot.timer not present — leaving renewal scheduling untouched."
+        return 0
+    }
+
+    $SUDO mkdir -p /etc/systemd/system/certbot.timer.d
+    printf '%s\n' \
+        '# Managed by bootstrap.sh — keep renewals out of the apt-upgrade window.' \
+        '[Timer]' \
+        'OnCalendar=' \
+        'OnCalendar=*-*-* 03:00:00' \
+        'RandomizedDelaySec=1800' \
+        | write_file /etc/systemd/system/certbot.timer.d/10-offpeak.conf
+
+    $SUDO systemctl daemon-reload
+    $SUDO systemctl restart certbot.timer 2>/dev/null || true
+    log "certbot.timer pinned to 03:00-03:30 (clear of the 06:00-07:00 apt window)."
+}
+
 install_nginx() {
     [ "${INSTALL_NGINX}" = "1" ] || { log "nginx install disabled — skipping."; return 0; }
 
@@ -384,6 +456,9 @@ install_nginx() {
         if command -v systemctl >/dev/null 2>&1; then
             $SUDO systemctl enable --now nginx 2>/dev/null || true
         fi
+        # Pre-existing installs need the hardening just as much — arguably more,
+        # since they are the ones already carrying production traffic.
+        harden_nginx_service
         return 0
     fi
 
@@ -413,6 +488,8 @@ install_nginx() {
         log "nginx service enabled and started."
     fi
 
+    harden_nginx_service
+
     log "nginx installed: $(nginx -v 2>&1 || echo 'n/a')"
 }
 
@@ -423,6 +500,8 @@ install_certbot() {
 
     if command -v certbot >/dev/null 2>&1; then
         log "certbot already present: $(certbot --version 2>&1 || echo 'n/a'). Skipping install."
+        # An existing certbot still has the stock timer schedule — pin it.
+        harden_certbot_timer
         return 0
     fi
 
@@ -432,9 +511,12 @@ install_certbot() {
     # intentionally NOT installed — it would only add an unused authenticator.
     $SUDO apt-get install -y certbot
 
+    harden_certbot_timer
+
     log "certbot installed: $(certbot --version 2>&1 || echo 'n/a')"
     log "  Issue certs with: certbot certonly --standalone -d <domain> (stop nginx first)."
     log "  Automatic renewal is handled by scripts/ssl-renew.sh (cron, standalone mode)."
+    log "  The package's own certbot.timer is pinned to 03:00 to avoid the apt window."
 }
 
 install_ufw() {

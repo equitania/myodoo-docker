@@ -1,5 +1,15 @@
 # Release Notes
 
+## nginx Survives apt Upgrades (31.07.2026)
+
+### Added
+- **bootstrap.sh v1.9.0**: installs two systemd drop-ins that close a real outage path found on a release server (two outages in two days, 29./31.07.2026). `harden_nginx_service()` writes `Restart=on-failure` + `RestartSec=10` for nginx — the nginx.org unit ships `Restart=no`, so a start failing transiently while `apt-daily-upgrade` swapped glibc resp. openssl left nginx down until someone noticed; a three-second library swap became an outage of hours. `StartLimitBurst=5`/`StartLimitIntervalSec=300` keep it bounded so a genuinely broken config still fails visibly instead of restart-looping. `harden_certbot_timer()` pins the distro `certbot.timer` to 03:00–03:30 — its stock randomized delay of up to 12 h is what put a renewal at 06:51, inside the apt window, and standalone renewals stop nginx. The empty `OnCalendar=` reset line is mandatory: without it systemd *adds* the schedule to the unit's original one instead of replacing it.
+- bootstrap.sh: both hardening steps also run on the "already installed" paths of `install_nginx()` / `install_certbot()`, so re-running bootstrap against an existing production server applies them — those are the hosts that need it most.
+
+### Changed
+- docs/INSTALLATION_GUIDE.md v1.1.3: the nginx-outage troubleshooting entry (DE/EN) now notes that bootstrap.sh ≥ 1.9.0 sets both drop-ins automatically.
+- usage/AGENT.md: new "nginx dies during apt upgrades" guardrail with the symptom (`Connection refused` on 80 *and* 443 while SSH answers) and the automated remedy.
+
 ## No More Silently Incomplete Images (31.07.2026)
 
 ### Changed
