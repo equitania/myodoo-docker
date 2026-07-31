@@ -1,5 +1,13 @@
 # Release Notes
 
+## No More Silently Incomplete Images (31.07.2026)
+
+### Changed
+- **build_odoo.py v2.6.0 (v16/v18/v19)**: a module archive that cannot be installed now fails the build instead of only printing a line. Previously the image was built regardless and shipped silently missing that module — a defect that typically surfaces much later as a puzzling `ImportError` or a menu entry that never appears in Odoo. All failed archives are collected and listed together at the end, so one run reveals every problem rather than exposing them one rerun at a time; filenames rejected by the release-file validator are tracked as failures too, since they are just as absent from the image. A circuit breaker aborts the run after 3 consecutive failures (`BUILD_ODOO_FAILURE_LIMIT`) — without it, a release server that disappears mid-build would burn the full ~45 s retry budget on each of several hundred remaining archives. `BUILD_ODOO_ALLOW_PARTIAL=1` is the deliberate opt-out for builds that knowingly tolerate missing modules.
+- build_odoo.py: the closing statistic counts successful downloads only. It previously incremented per *attempt*, so `Files downloaded: 407/407` was printed even when archives had failed.
+- docs/INSTALLATION_GUIDE.md v1.1.2: new troubleshooting entry (DE/EN) for the aborted build with the archive list, incl. `BUILD_ODOO_FAILURE_LIMIT` and the `BUILD_ODOO_ALLOW_PARTIAL` opt-out.
+- usage/AGENT.md: new "Incomplete images" guardrail; the kernel-vs-module asymmetry noted earlier no longer applies.
+
 ## Build Resilience Against Release-Server Downtime (31.07.2026)
 
 ### Added

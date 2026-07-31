@@ -159,9 +159,12 @@ independent of the shell environment. Full walkthrough: INSTALLATION_GUIDE chapt
   timeouts, 5xx) 5× with exponential backoff, ~45 s total (build_odoo ≥ 2.5.0); 404/403 fail
   immediately. Tune via `BUILD_ODOO_RETRIES` / `BUILD_ODOO_RETRY_BACKOFF`. If the build still
   aborts with `Release server '…' could not be reached`, the web service on the release host is
-  down — check `systemctl status nginx` there, then rerun. Beware: only a failed **kernel**
-  download aborts the build; a failed **module** download just prints a message and yields an
-  incomplete image.
+  down — check `systemctl status nginx` there, then rerun.
+- **Incomplete images:** missing module archives fail the build (build_odoo ≥ 2.6.0). All failed
+  archives are listed at the end instead of surfacing one rerun at a time; 3 consecutive failures
+  abort the run early (`BUILD_ODOO_FAILURE_LIMIT`) so a dead release server cannot burn the retry
+  budget on hundreds of archives. `BUILD_ODOO_ALLOW_PARTIAL=1` is the deliberate opt-out and the
+  only way to ship an image with modules missing.
 
 ## Machine-readable outputs
 - None of the tools emit JSON. Use exit codes: `update_docker_odoo.py --validate` (0 = config OK),

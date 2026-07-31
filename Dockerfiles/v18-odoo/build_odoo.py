@@ -1,7 +1,7 @@
 #!/usr/bin/python3
 # -*- coding: utf-8 -*-
 # This script builds a new server using the Release Manager
-# Version 2.5.0
+# Version 2.6.0
 # Date 31.07.2026
 ##############################################################################
 #
@@ -94,6 +94,20 @@ _RETRY_BACKOFF_CAP = 60.0
 # 404 (file genuinely absent from the release) or 403 are permanent, and
 # retrying them only delays a build that is going to fail anyway.
 _RETRYABLE_STATUS = frozenset({408, 425, 429, 500, 502, 503, 504})
+
+# Module archives that fail to install are collected rather than aborting on the
+# first one, so a single run reports every missing archive instead of revealing
+# them one rerun at a time. But a *run* of consecutive failures means the release
+# server went away mid-build: without a circuit breaker the remaining hundreds of
+# archives would each burn the full retry budget (~45s), turning one outage into
+# hours of pointless waiting.
+_CONSECUTIVE_FAILURE_LIMIT = max(1, int(os.environ.get('BUILD_ODOO_FAILURE_LIMIT', '3')))
+
+# Escape hatch: a build that knowingly tolerates missing modules (e.g. a stale
+# entry in the release file that cannot be fixed right now) can opt out of the
+# hard failure. Off by default — an incomplete image must never be the silent
+# default outcome.
+_ALLOW_PARTIAL = os.environ.get('BUILD_ODOO_ALLOW_PARTIAL', '').strip().lower() in ('1', 'true', 'yes')
 
 def _retry_delay(attempt):
     """Return the exponential backoff delay before retry number `attempt` (1-based)."""
@@ -225,6 +239,9 @@ print('Starting with build at ' + _build_path)
 # Count the total number of ZIP files to download
 total_zip_files = count_zip_files_in_csv(_release_file)
 downloaded_files = 0
+failed_modules = []
+consecutive_failures = 0
+aborted_early = False
 
 print(f"Release file contains {total_zip_files} files to download.")
 
@@ -275,8 +292,8 @@ with open(_release_file, encoding="utf8") as csvfile:
 
                 # Download kernel
                 _zip_url = f"{_url}/{_column}"
-                downloaded_files += 1
                 if download_and_extract(_zip_url, _column, 'odoo-server'):
+                    downloaded_files += 1
                     print(f'kernel: {_column} loaded and installed..')
                 else:
                     print(f'Failed to process kernel: {_column}')
@@ -285,17 +302,51 @@ with open(_release_file, encoding="utf8") as csvfile:
         else:  # Modules
             if _column.find('.zip') != -1:
                 if not _validate_csv_filename(_column):
+                    # A rejected filename means this module will be missing from
+                    # the image just as surely as a failed download — track it.
+                    failed_modules.append(f"{_column} (rejected: invalid filename)")
                     continue
                 _zip_url = f"{_url}/{_column}"
-                downloaded_files += 1
                 if download_and_extract(_zip_url, _column, 'odoo-server/addons'):
+                    downloaded_files += 1
+                    consecutive_failures = 0
                     print(f'file: {_column} loaded and installed..')
                 else:
+                    failed_modules.append(_column)
+                    consecutive_failures += 1
                     print(f'Failed to process module: {_column}')
+                    if consecutive_failures >= _CONSECUTIVE_FAILURE_LIMIT:
+                        print(f"\nAborting run: {consecutive_failures} module downloads failed "
+                              f"back to back — the release server is most likely unavailable. "
+                              f"Remaining entries are not attempted.")
+                        aborted_early = True
+                        break
         
         _count += 1
 
-print(f"\nAll entries from release file processed! Files downloaded: {downloaded_files}/{total_zip_files}")
+if aborted_early:
+    print(f"\nRun aborted before the end of the release file. "
+          f"Files downloaded: {downloaded_files}/{total_zip_files}")
+else:
+    print(f"\nAll entries from release file processed! Files downloaded: {downloaded_files}/{total_zip_files}")
+
+# A module archive that never made it into the image previously produced nothing
+# but a log line: the build succeeded and shipped an image silently missing that
+# module, which typically surfaces much later as a puzzling ImportError or a
+# missing menu entry in Odoo. Fail loudly instead, listing every affected archive.
+if failed_modules:
+    print("\n" + "=" * 70)
+    print(f"{len(failed_modules)} module archive(s) could NOT be installed:")
+    for _failed in failed_modules:
+        print(f"  - {_failed}")
+    print("=" * 70)
+    if _ALLOW_PARTIAL:
+        print("BUILD_ODOO_ALLOW_PARTIAL is set — continuing with an INCOMPLETE image.")
+    else:
+        print("Refusing to build an incomplete image. Check the release server and the")
+        print("release file, then rerun the build. To build anyway (not recommended),")
+        print("set BUILD_ODOO_ALLOW_PARTIAL=1.")
+        sys.exit(1)
 
 # Check for custom modules: process every *custom_modules.zip in the build
 # context (custom_modules.zip plus customer-specific archives like
