@@ -1,8 +1,8 @@
 #!/usr/bin/python3
 # -*- coding: utf-8 -*-
 # This script builds a new server using the Release Manager
-# Version 2.4.0
-# Date 17.07.2026
+# Version 2.5.0
+# Date 31.07.2026
 ##############################################################################
 #
 #    Shell Script for Odoo, Open Source Management Solution
@@ -27,10 +27,12 @@ import os
 import csv
 import re
 import ssl
+import time
 import urllib3
 import platform
 import sys
 import subprocess
+from urllib.parse import urlsplit
 
 # certifi provides a maintained CA bundle; fall back to the system's default
 # verify paths if it is not installed in the build environment.
@@ -78,25 +80,70 @@ def _create_http_pool():
 # Global connection pool for efficient HTTP requests
 http_pool = _create_http_pool()
 
+# Retry policy for downloads. A release server that is briefly unavailable
+# (service restart after a package upgrade, proxy hiccup, transient DNS issue)
+# must not abort an entire image build that pulls hundreds of archives.
+# Defaults give ~45s of total wait across 5 attempts (3s, 6s, 12s, 24s), which
+# comfortably covers a systemd restart of the web service on the release host.
+# Override via environment for slower links or unattended CI runs.
+_MAX_DOWNLOAD_ATTEMPTS = max(1, int(os.environ.get('BUILD_ODOO_RETRIES', '5')))
+_RETRY_BACKOFF_BASE = max(0.5, float(os.environ.get('BUILD_ODOO_RETRY_BACKOFF', '3')))
+_RETRY_BACKOFF_CAP = 60.0
+
+# Server-side and rate-limit responses are worth retrying; client errors such as
+# 404 (file genuinely absent from the release) or 403 are permanent, and
+# retrying them only delays a build that is going to fail anyway.
+_RETRYABLE_STATUS = frozenset({408, 425, 429, 500, 502, 503, 504})
+
+def _retry_delay(attempt):
+    """Return the exponential backoff delay before retry number `attempt` (1-based)."""
+    return min(_RETRY_BACKOFF_BASE * (2 ** (attempt - 1)), _RETRY_BACKOFF_CAP)
+
 def download_file(url, filename):
-    """Download a file from URL and save it to the given filename."""
-    try:
-        # Use global connection pool for efficient HTTP requests
-        response = http_pool.request('GET', url)
-        
-        # Check if the request was successful (status code 200)
-        if response.status == 200:
-            # Open the local file in binary write mode and write the downloaded content to it
-            with open(filename, 'wb') as f:
-                f.write(response.data)
-            print(f"Downloaded: {filename}")
-            return True
-        else:
-            print(f"Failed to download {filename}. Status code: {response.status}")
-            return False
-    except Exception as e:
-        print(f"Error downloading {filename}: {e}")
-        return False
+    """Download a file from URL and save it to the given filename.
+
+    Transient failures (connection refused/reset, timeouts, 5xx responses) are
+    retried with exponential backoff. Permanent failures return immediately.
+    Every attempt is logged so a stalled build is diagnosable from the Docker
+    build output instead of appearing to hang silently.
+    """
+    host = urlsplit(url).netloc or url
+    last_error = None
+
+    for attempt in range(1, _MAX_DOWNLOAD_ATTEMPTS + 1):
+        try:
+            # retries=False: this function owns the retry loop, so urllib3 must
+            # not add its own (invisible) attempts on top and distort the log.
+            response = http_pool.request('GET', url, retries=False)
+
+            if response.status == 200:
+                with open(filename, 'wb') as f:
+                    f.write(response.data)
+                if attempt > 1:
+                    print(f"Downloaded: {filename} (succeeded on attempt {attempt})")
+                else:
+                    print(f"Downloaded: {filename}")
+                return True
+
+            last_error = f"HTTP status {response.status}"
+            if response.status not in _RETRYABLE_STATUS:
+                print(f"Failed to download {filename}. Status code: {response.status}")
+                return False
+        except Exception as e:
+            last_error = f"{type(e).__name__}: {e}"
+
+        if attempt < _MAX_DOWNLOAD_ATTEMPTS:
+            delay = _retry_delay(attempt)
+            print(f"Attempt {attempt}/{_MAX_DOWNLOAD_ATTEMPTS} for {filename} failed "
+                  f"({last_error}) — retrying in {delay:.0f}s...")
+            sys.stdout.flush()
+            time.sleep(delay)
+
+    print(f"Error downloading {filename} after {_MAX_DOWNLOAD_ATTEMPTS} attempts: {last_error}")
+    print(f"Release server '{host}' could not be reached. Verify that the web "
+          f"service on that host is running (e.g. 'systemctl status nginx'), "
+          f"then rerun the build.")
+    return False
 
 def run_command(command):
     """Run a shell command with proper error handling."""

@@ -1,5 +1,14 @@
 # Release Notes
 
+## Build Resilience Against Release-Server Downtime (31.07.2026)
+
+### Added
+- **build_odoo.py v2.5.0 (v16/v18/v19)**: downloads now survive a briefly unavailable release server instead of aborting the whole image build. Transient failures (connection refused/reset, timeouts, HTTP 408/425/429/5xx) are retried up to 5× with exponential backoff (3 s, 6 s, 12 s, 24 s, capped at 60 s — ~45 s total), which comfortably covers a systemd restart of the web service on the release host. Permanent failures (404/403) still fail immediately rather than wasting four retries on a file that does not exist. Every attempt is logged with its cause and the pending delay (flushed immediately), so a waiting build is visible in the Docker build output instead of appearing to hang; the final message names the unreachable host and points at `systemctl status nginx`. Tunable via `BUILD_ODOO_RETRIES` and `BUILD_ODOO_RETRY_BACKOFF`. urllib3's own retry layer is disabled for these requests so the logged attempt count matches reality.
+
+### Changed
+- docs/INSTALLATION_GUIDE.md v1.1.1: two new troubleshooting entries (DE/EN) — aborted builds with `Release server '…' could not be reached` (incl. the caveat that only a failed *kernel* download aborts, while a failed *module* download silently yields an incomplete image), and nginx staying dead after an apt upgrade because it was restarted mid-swap of glibc/openssl while the nginx.org unit ships `Restart=no`, with the `Restart=on-failure` and `certbot.timer` drop-ins as the fix.
+- usage/AGENT.md: new "Release-server downtime" guardrail covering the retry behaviour, both env vars, and the kernel-vs-module abort asymmetry.
+
 ## Proxy Customer Support & Multi-ZIP Builds (16.–17.07.2026)
 
 ### Added

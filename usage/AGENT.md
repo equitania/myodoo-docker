@@ -155,6 +155,13 @@ independent of the shell environment. Full walkthrough: INSTALLATION_GUIDE chapt
 - **Custom modules:** every `*custom_modules.zip` in the build folder is extracted into the image
   (build_odoo ≥ 2.4.0; the generic `custom_modules.zip` first, customer-specific archives
   override). Stage archives via `pre_build_files` in `docker2update.yaml`.
+- **Release-server downtime:** downloads retry transient failures (connection refused/reset,
+  timeouts, 5xx) 5× with exponential backoff, ~45 s total (build_odoo ≥ 2.5.0); 404/403 fail
+  immediately. Tune via `BUILD_ODOO_RETRIES` / `BUILD_ODOO_RETRY_BACKOFF`. If the build still
+  aborts with `Release server '…' could not be reached`, the web service on the release host is
+  down — check `systemctl status nginx` there, then rerun. Beware: only a failed **kernel**
+  download aborts the build; a failed **module** download just prints a message and yields an
+  incomplete image.
 
 ## Machine-readable outputs
 - None of the tools emit JSON. Use exit codes: `update_docker_odoo.py --validate` (0 = config OK),
