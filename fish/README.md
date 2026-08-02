@@ -76,6 +76,7 @@ fish/
 |-------|---------------------------|
 | `syspatch` | Full system update & cleanup |
 | `ups` | Update ownERP scripts |
+| `chk` | Server readiness report (read-only) / Readiness-Report (rein lesend) |
 | `cleandlog` | Clean Docker logs |
 
 ## Installation / Installation

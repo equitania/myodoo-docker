@@ -55,8 +55,8 @@ if os.environ.get('GETSCRIPTS_DEBUG', '').lower() in ('1', 'true', 'yes'):
     logger.debug("Debug logging enabled")
 
 # Script version and date
-SCRIPT_VERSION = "9.8.2"
-SCRIPT_DATE = "17.07.2026"
+SCRIPT_VERSION = "9.9.0"
+SCRIPT_DATE = "02.08.2026"
 
 # ─────────────────────────────────────────────────────────────────────────────
 # Install report
@@ -3679,16 +3679,43 @@ def copy_scripts(_myhome: str, myodoo_docker: str) -> None:
         "setup-maintenance-cron.sh",
         "myodoo-maintenance.cron",
         "myodoo-maintenance.logrotate",
+        "server-readiness.py",
         "getScripts.py"
     ]
-    
+
     for script in scripts:
-        source = os.path.join(myodoo_docker, 
-                            "scripts" if script != "getScripts.py" else "", 
+        source = os.path.join(myodoo_docker,
+                            "scripts" if script != "getScripts.py" else "",
                             script)
         target = os.path.join(_myhome, script)
         if os.path.exists(source):
             run_command(f"cp {source} {target}")
+
+
+def print_readiness_report(_myhome: str) -> None:
+    """Run server-readiness.py and pass its output straight through.
+
+    Why this is here: copy_scripts() delivers the maintenance tooling but never
+    runs it, so the operator had no way of knowing whether a server was actually
+    in the expected state — missing logrotate configs went unnoticed for months.
+
+    Deliberately non-fatal in every direction. The readiness exit code is
+    ignored: an `ups` run that installed its packages correctly must not fail
+    just because the server is missing a maintenance cron, or existing callers
+    would break. A missing script (server never updated before) is skipped
+    silently.
+    """
+    script = os.path.join(_myhome, "server-readiness.py")
+    if not os.path.exists(script):
+        logger.debug("server-readiness.py not present - skipping readiness report")
+        return
+
+    try:
+        # No capture_output: the report is meant for the console, and streaming
+        # it keeps the colour handling inside server-readiness.py.
+        subprocess.run([sys.executable, script, "--brief"], timeout=120)
+    except Exception as e:
+        logger.warning(f"Readiness report could not be generated: {e}")
 
 # uv builds that cannot self-update (pip wheel, brew, apt, ...) refuse with
 # exit code 2 but the message text differs per build - match all known ones.
@@ -3931,6 +3958,9 @@ def main() -> None:
 
         # Visible install summary (surfaces failures that only hit the logger).
         print_install_report()
+
+        # Server readiness: what is installed vs. what this server still needs.
+        print_readiness_report(_myhome)
 
         logger.info("")
         logger.info("=" * 60)

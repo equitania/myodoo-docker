@@ -53,6 +53,7 @@ All commands run as **root** on the target server. The interactive login shell i
 | `cleanup-weblogs.py` | — | Rotate nginx logs, GDPR purge > 7 days | `--clear-cache` (also wipe proxy/FastCGI caches — off by default) |
 | `nightly-cleanup.sh` | — | Restart containers over memory threshold (Odoo→PG order) | env: `MEMORY_THRESHOLD=90` · `DRY_RUN=1` |
 | `setup-maintenance-cron.sh` | — | Install `/etc/cron.d/myodoo-maintenance` + logrotate (idempotent) | `--remove` · env: `SCRIPT_DIR=/root` |
+| `server-readiness.py` | `chk` | Report config drift vs. expected server state; read-only, one fix command per finding | `--brief` (non-OK only) \| `--quiet` (silent unless WARN/FAIL; for cron) · `--root DIR` `--home DIR` `--repo DIR` (testing) |
 | `dist-upgrade-debian.sh` | — | Guided Debian major upgrade (bookworm→trixie→…) | `[CODENAME]` optional target · `--yes` |
 | `check_docker_volumes.sh` | `dkvol` | List volumes + referencing containers | none |
 
@@ -174,8 +175,11 @@ independent of the shell environment. Full walkthrough: INSTALLATION_GUIDE chapt
 
 ## Machine-readable outputs
 - None of the tools emit JSON. Use exit codes: `update_docker_odoo.py --validate` (0 = config OK),
-  `nginx -t`, `deploy-nginx-base.sh` (non-zero on failed reload). Logs land in
+  `nginx -t`, `deploy-nginx-base.sh` (non-zero on failed reload),
+  `server-readiness.py` (0 = no FAIL, 1 = at least one FAIL; WARN/SKIP do not affect it).
+  Logs land in
   `/var/log/{container2backup,ssl-renew,cleanup-weblogs,nightly-cleanup,nginx-cert-guard}.log`.
+  `server-readiness.py` deliberately writes no log — it reports to stdout so cron mails it.
 
 ## Deeper docs
 - `docs/INSTALLATION_GUIDE.md` — full fresh-server → Odoo live/test walkthrough (DE/EN, troubleshooting matrix)

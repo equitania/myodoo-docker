@@ -89,6 +89,7 @@ Die Tools sind auf einen klaren Ablauf abgestimmt:
 - **cleanup-weblogs.py** (v2.x) — DSGVO-konforme nginx-Log-Rotation: rotiert `/var/log/nginx/*.log` und löscht `.bak` älter als 7 Tage (Access-Logs enthalten personenbezogene IP-Adressen)
 - **nightly-cleanup.sh** — speicherbasierter Container-Neustart bei Überschreiten einer Schwelle → [scripts/NIGHTLY_CLEANUP.md](scripts/NIGHTLY_CLEANUP.md)
 - **setup-maintenance-cron.sh** — installiert die Wartungs-Cron-Jobs deklarativ als `/etc/cron.d/myodoo-maintenance` plus passende logrotate-Konfiguration (idempotent, `--remove` zum Entfernen)
+- **server-readiness.py** (v1.0.0) — beantwortet „ist dieser Server auf Stand, und was fehlt noch?“ mit einer Ampel-Liste aus 13 Prüfungen (Wartungs-Cron, logrotate, doppelte Cron-Einträge, Log-Größen, Backup-Alter/-Konfiguration/-Plattenplatz, Docker-Storage-Driver, nginx-systemd-Drop-in, certbot-Fenster, Skript-Stände). Zu jedem Befund gehört genau ein kopierfertiger Fix-Befehl. **Rein lesend** — verändert nichts. Läuft automatisch am Ende jedes `ups`-Laufs (`--brief`), auf Zuruf per `chk`, und wöchentlich montags 06:00 per Cron (`--quiet`, meldet sich nur bei Abweichung)
 - **nginx-cert-guard.py** — verhindert den nginx-Totalausfall, wenn eine Kunden-(Sub-)Domain nicht mehr auf den Server zeigt. `--reconcile` bringt nginx beim Renewal **immer** hoch und isoliert dabei nur die kaputte vhost (statt dass ein einzelnes fehlendes Zertifikat den ganzen Server lahmlegt); `--check` erkennt weg-zeigende Domains proaktiv per DNS und deaktiviert sie nach mehreren bestätigten Fehlläufen + Alarm-Mail. Mit Massenfehler-Schutz (kein Blind-Abschalten). Reaktivierung via `--restore <domain>`
 - **deploy-nginx-base.sh** — rollt die von jeder vhost benötigten nginx-Basisdateien aus (`nginxconfig.io/security.conf`, `general.conf`, `html/custom_50x.html`) nach `/etc/nginx` und tauscht die `nginx.conf` abgesichert aus (Backup + `nginx -t` + automatischer Rollback bei Fehler). **Vor** dem Erstellen von vhosts ausführen, damit `include nginxconfig.io/...` nie fehlschlägt. Idempotent; `--no-main-conf`, `--dry-run`
 
@@ -129,11 +130,12 @@ fish/
 
 Die Fish-Konfiguration enthält ~80 Aliase und Funktionen. Unten die wichtigsten — die **vollständige Referenz** steht in [fish/README.md](fish/README.md).
 
-> **Hinweis:** `syspatch`, `ups`, `dkrm`, `dkrmi`, `dkrmv` sind **Funktionen** (mit Logik/Bestätigung), keine einfachen Aliase.
+> **Hinweis:** `syspatch`, `ups`, `chk`, `dkrm`, `dkrmi`, `dkrmv` sind **Funktionen** (mit Logik/Bestätigung), keine einfachen Aliase.
 
 ##### System (Funktionen & Aliase)
 - `syspatch` *(Funktion)* — umfassende Systemaktualisierung + Bereinigung (inkl. AIDE-Baseline)
 - `ups` *(Funktion)* — ownERP-Skripte aus dem Repository aktualisieren
+- `chk` *(Funktion)* — Readiness-Report: ist der Server auf Stand, was fehlt noch? (rein lesend)
 - `prepatch` — Systemupdate in einer Screen-Session vorbereiten
 - `cleandlog` — Docker-Container-Logs leeren
 - `dusort` — Verzeichnisgrößen sortiert anzeigen
@@ -303,6 +305,7 @@ The tools follow a clear sequence:
 - **cleanup-weblogs.py** (v2.x) — DSGVO-compliant nginx log rotation: rotates `/var/log/nginx/*.log` and deletes `.bak` older than 7 days (access logs contain personal IP data)
 - **nightly-cleanup.sh** — memory-based container restart above a threshold → [scripts/NIGHTLY_CLEANUP.md](scripts/NIGHTLY_CLEANUP.md)
 - **setup-maintenance-cron.sh** — installs the maintenance cron jobs declaratively as `/etc/cron.d/myodoo-maintenance` plus a matching logrotate config (idempotent, `--remove` to uninstall)
+- **server-readiness.py** (v1.0.0) — answers "is this server up to date, and what is still missing?" with a traffic-light list of 13 checks (maintenance cron, logrotate, duplicate cron entries, log sizes, backup age/config/disk space, Docker storage driver, nginx systemd drop-in, certbot window, script staleness). Every finding carries exactly one copy-paste fix command. **Read-only** — changes nothing. Runs automatically at the end of every `ups` run (`--brief`), on demand via `chk`, and weekly on Mondays at 06:00 via cron (`--quiet`, speaks up only on drift)
 - **nginx-cert-guard.py** — prevents a full nginx outage when a customer's (sub)domain stops pointing at the server. `--reconcile` always brings nginx up at renewal, isolating only the broken vhost (instead of one missing certificate taking the whole server down); `--check` proactively detects drifted domains via DNS and disables them after several confirmed failing runs plus an alert email. Includes a mass-failure guard (no blind shutdown). Re-enable with `--restore <domain>`
 - **deploy-nginx-base.sh** — rolls out the base nginx files every vhost needs (`nginxconfig.io/security.conf`, `general.conf`, `html/custom_50x.html`) to `/etc/nginx`, and replaces `nginx.conf` safely (backup + `nginx -t` + automatic rollback on failure). Run it **before** creating vhosts so `include nginxconfig.io/...` never fails. Idempotent; `--no-main-conf`, `--dry-run`
 
@@ -343,11 +346,12 @@ fish/
 
 The Fish configuration ships ~80 aliases and functions. The most important are below — the **full reference** lives in [fish/README.md](fish/README.md).
 
-> **Note:** `syspatch`, `ups`, `dkrm`, `dkrmi`, `dkrmv` are **functions** (with logic/confirmation), not plain aliases.
+> **Note:** `syspatch`, `ups`, `chk`, `dkrm`, `dkrmi`, `dkrmv` are **functions** (with logic/confirmation), not plain aliases.
 
 ##### System (functions & aliases)
 - `syspatch` *(function)* — comprehensive system update + cleanup (incl. AIDE baseline)
 - `ups` *(function)* — update ownERP scripts from the repository
+- `chk` *(function)* — readiness report: is the server up to date, what is missing? (read-only)
 - `prepatch` — prepare a system update in a screen session
 - `cleandlog` — clear Docker container logs
 - `dusort` — show directory sizes sorted

@@ -1,6 +1,6 @@
 # Server Installation Guide — Odoo live/test under Docker
 
-Version 1.1.3 — 31.07.2026
+Version 1.2.0 — 02.08.2026
 
 [🇩🇪 Deutsche Version](#deutsche-version) | [🇬🇧 English Version](#english-version)
 
@@ -422,9 +422,21 @@ Wartungsjobs als `/etc/cron.d/myodoo-maintenance` (inkl. logrotate):
 | 00:00 | `ssl-renew.sh` — Let's-Encrypt-Renewal |
 | 03:00 | `cleanup-weblogs.py` — DSGVO-Weblog-Rotation (7 Tage) |
 | 04:30 | `nightly-cleanup.sh` — speicherbasierter Container-Neustart |
+| Mo 06:00 | `server-readiness.py --quiet` — Konfigurations-Drift-Report |
 
 Entfernen mit `--remove`. Details zum Nightly-Cleanup:
 [scripts/NIGHTLY_CLEANUP.md](../scripts/NIGHTLY_CLEANUP.md).
+
+Der wöchentliche Readiness-Report schreibt bewusst **kein** Logfile: `--quiet`
+gibt nichts aus, solange alles in Ordnung ist, sodass Cron per `MAILTO=root`
+ausschließlich bei tatsächlicher Abweichung eine Mail schickt. Den vollen
+Bericht jederzeit auf Zuruf: `chk`.
+
+> **Prüfen statt raten:** Nach diesem Schritt beantwortet `chk` die Frage, ob
+> der Server vollständig eingerichtet ist. Genau dafür existiert das Werkzeug —
+> auf Servern, auf denen `setup-maintenance-cron.sh` nie lief, fehlt die
+> logrotate-Konfiguration, und `/var/log/container2backup.log` wächst
+> unbemerkt ins Unendliche.
 
 <a id="de-13-restore--notfall"></a>
 ## 13. Restore & Notfall
@@ -465,7 +477,8 @@ Alle Skripte des Repos (`scripts/`, Stand 16.07.2026):
 | `restore-zip.sh` (2.1.0) | Backup-Restore (DB + Filestore) in Docker | siehe [Kapitel 13](#de-13-restore--notfall) |
 | `ssl-renew.sh` (1.3.0) | certbot-Renewal, nginx nur bei Bedarf angehalten | `./ssl-renew.sh` (Cron) |
 | `nginx-cert-guard.py` (1.1.0) | Defekte Vhosts quarantänisieren statt nginx zu blockieren | `--reconcile [--start]`, `--check [--apply]`, `--list`, `--restore DOMAIN` |
-| `setup-maintenance-cron.sh` (1.2.0) | Wartungs-Cron + logrotate installieren | `./setup-maintenance-cron.sh [--remove]` |
+| `setup-maintenance-cron.sh` (1.3.0) | Wartungs-Cron + logrotate installieren | `./setup-maintenance-cron.sh [--remove]` |
+| `server-readiness.py` (1.0.0) | Konfigurations-Drift prüfen (13 Checks, rein lesend) | `chk` bzw. `~/server-readiness.py [--brief\|--quiet]` |
 | `nightly-cleanup.sh` (1.1.0) | Container-Neustart bei Speicherdruck | Cron; `MEMORY_THRESHOLD=90 DRY_RUN=1 ./nightly-cleanup.sh` |
 | `cleanup-weblogs.py` (2.0.0) | nginx-Log-Rotation, DSGVO-Löschung nach 7 Tagen | Cron; `python3 cleanup-weblogs.py` |
 | `dist-upgrade-debian.sh` (1.0.0) | Geführtes Debian-Major-Upgrade (z.B. bookworm→trixie) | `./dist-upgrade-debian.sh [CODENAME] [--yes]` |
@@ -527,6 +540,7 @@ Die wichtigsten Aliase/Funktionen nach Kategorie:
 |---|---|
 | `syspatch` | Komplettes Systemupdate: journalctl-Vacuum → apt dist-upgrade → AIDE-Baseline → `docker image prune -f` |
 | `ups` | ownERP-Skripte aktualisieren (getScripts.py neu ausführen) |
+| `chk` | Readiness-Report: ist der Server auf Stand, was fehlt noch? (rein lesend) |
 | `dkrm` / `dkrmi` / `dkrmv` | Alle Container/Images/Volumes löschen — mit Sicherheitsabfrage, `dkrmv` verlangt wörtlich `DELETE` |
 
 **Odoo** (`35-aliases-odoo.fish`): `odoo-shell`, `odoo-logs`, `odoo-restart`,
@@ -1082,9 +1096,19 @@ maintenance jobs as `/etc/cron.d/myodoo-maintenance` (incl. logrotate):
 | 00:00 | `ssl-renew.sh` — Let's Encrypt renewal |
 | 03:00 | `cleanup-weblogs.py` — GDPR weblog rotation (7 days) |
 | 04:30 | `nightly-cleanup.sh` — memory-based container restart |
+| Mon 06:00 | `server-readiness.py --quiet` — configuration drift report |
 
 Remove with `--remove`. Nightly cleanup details:
 [scripts/NIGHTLY_CLEANUP.md](../scripts/NIGHTLY_CLEANUP.md).
+
+The weekly readiness report deliberately writes **no** logfile: `--quiet` prints
+nothing while everything is fine, so cron mails via `MAILTO=root` only on actual
+drift. For the full report at any time: `chk`.
+
+> **Check instead of guessing:** After this step, `chk` answers whether the
+> server is fully set up. That is exactly what the tool exists for — on servers
+> where `setup-maintenance-cron.sh` never ran, the logrotate config is missing
+> and `/var/log/container2backup.log` grows unbounded unnoticed.
 
 <a id="en-13-restore--emergency"></a>
 ## 13. Restore & Emergency
@@ -1126,7 +1150,8 @@ All scripts in this repository (`scripts/`, as of 16.07.2026):
 | `restore-zip.sh` (2.1.0) | Backup restore (DB + filestore) into Docker | see [chapter 13](#en-13-restore--emergency) |
 | `ssl-renew.sh` (1.3.0) | certbot renewal, nginx stopped only when needed | `./ssl-renew.sh` (cron) |
 | `nginx-cert-guard.py` (1.1.0) | Quarantine broken vhosts instead of blocking nginx | `--reconcile [--start]`, `--check [--apply]`, `--list`, `--restore DOMAIN` |
-| `setup-maintenance-cron.sh` (1.2.0) | Install maintenance cron + logrotate | `./setup-maintenance-cron.sh [--remove]` |
+| `setup-maintenance-cron.sh` (1.3.0) | Install maintenance cron + logrotate | `./setup-maintenance-cron.sh [--remove]` |
+| `server-readiness.py` (1.0.0) | Check configuration drift (13 checks, read-only) | `chk` or `~/server-readiness.py [--brief\|--quiet]` |
 | `nightly-cleanup.sh` (1.1.0) | Container restart under memory pressure | cron; `MEMORY_THRESHOLD=90 DRY_RUN=1 ./nightly-cleanup.sh` |
 | `cleanup-weblogs.py` (2.0.0) | nginx log rotation, GDPR purge after 7 days | cron; `python3 cleanup-weblogs.py` |
 | `dist-upgrade-debian.sh` (1.0.0) | Guided Debian major upgrade (e.g. bookworm→trixie) | `./dist-upgrade-debian.sh [CODENAME] [--yes]` |
@@ -1188,6 +1213,7 @@ The most important aliases/functions by category:
 |---|---|
 | `syspatch` | Full system update: journalctl vacuum → apt dist-upgrade → AIDE baseline → `docker image prune -f` |
 | `ups` | Update the ownERP scripts (re-run getScripts.py) |
+| `chk` | Readiness report: is the server up to date, what is missing? (read-only) |
 | `dkrm` / `dkrmi` / `dkrmv` | Delete all containers/images/volumes — confirmation-gated, `dkrmv` requires typing `DELETE` |
 
 **Odoo** (`35-aliases-odoo.fish`): `odoo-shell`, `odoo-logs`, `odoo-restart`,

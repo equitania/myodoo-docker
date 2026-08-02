@@ -36,3 +36,11 @@ PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
 # well after the 02:00 backup so a container restart can never hit a running
 # backup. The script logs itself to the file; the redirect catches the rest.
 30 4 * * * root /root/nightly-cleanup.sh >> /var/log/nightly-cleanup.log 2>&1
+
+# Weekly readiness report, Mondays 06:00: reports configuration drift (missing
+# cron or logrotate, duplicate entries, stale scripts, oversized logs, wrong
+# Docker storage driver). Read-only, changes nothing.
+# NO redirect on purpose: --quiet stays silent when everything is fine, so cron
+# mails via MAILTO only on actual drift. Appending this to a logfile would
+# repeat the very mistake the report exists to catch — an unwatched append.
+0 6  * * 1 root /root/server-readiness.py --quiet

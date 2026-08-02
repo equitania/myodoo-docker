@@ -1,5 +1,22 @@
 # Release Notes
 
+## Server Readiness Report (02.08.2026)
+
+### Added
+- **scripts/server-readiness.py v1.0.0**: answers "is this server up to date, and what is still missing?" instead of leaving the administrator to check known problems one by one from memory. Runs 13 read-only checks and prints a traffic-light report in which every non-OK finding carries exactly one copy-paste fix command. The gap it closes: `copy_scripts()` in getScripts.py delivers `setup-maintenance-cron.sh` and its two templates to `/root` but never runs or even mentions them — so on servers still driving the backup from a hand-written `crontab -e` entry, `/etc/logrotate.d/myodoo-maintenance` was never installed and `/var/log/container2backup.log` had been growing unbounded since commissioning, with nothing surfacing it.
+  Checks: maintenance cron present/current, logrotate present/coverage, duplicate cron entries (root crontab *and* stray `/etc/cron.d` files — with the managed cron active, a leftover entry means two concurrent dumps of the same database), oversized logs, backup recency, backup config, backup disk space, Docker storage driver (moby#52431), nginx systemd drop-in, certbot timer window, script staleness vs. the repository checkout.
+  Modes: full report (default), `--brief` (non-OK only), `--quiet` (silent unless WARN/FAIL — for cron). Exit code 1 on any FAIL. `--root/--home/--repo` allow running it against a fixture tree instead of a live server. A check that raises becomes a SKIP finding rather than costing the whole report.
+- **fish/functions/linux/chk.fish v1.0.0**: `chk` runs the full report on demand.
+- myodoo-maintenance.cron: weekly readiness report Mondays 06:00 via `--quiet`, deliberately **without** a logfile redirect — `MAILTO=root` delivers it only on actual drift, and appending it to an unwatched logfile would repeat the very mistake the report exists to catch.
+
+### Changed
+- **getScripts.py v9.9.0**: delivers `server-readiness.py` and prints the readiness report (`--brief`) after the install summary, so every `ups` run ends with the server's actual state. The readiness exit code deliberately does not propagate — an `ups` run that installed its packages correctly must not fail because a maintenance cron is missing.
+- setup-maintenance-cron.sh v1.3.0: `server-readiness.py` added to `MANAGED_SCRIPTS` so its absence is reported at install time.
+- docs/INSTALLATION_GUIDE.md v1.2.0, ReadMe.md, usage/AGENT.md, fish/README.md: `chk`/`server-readiness.py` documented (DE/EN).
+
+### Known issue (not addressed here)
+- `scripts/lib/` (7451 lines) is dead code: no file in the repository imports it, `getScripts.py` uses only the standard library plus `requests`, and the versions have drifted apart (`lib/constants.py` 9.5.0 vs. getScripts.py 9.9.0). The v8.0 modularisation was apparently never wired up. Left untouched deliberately; its fate needs a separate decision.
+
 ## nginx Survives apt Upgrades (31.07.2026)
 
 ### Added

@@ -1,6 +1,6 @@
 #!/bin/bash
 # setup-maintenance-cron.sh — Install the myodoo maintenance cron jobs + logrotate
-# Version 1.2.0 — 11.06.2026
+# Version 1.3.0 — 02.08.2026
 #
 # Installs a declarative /etc/cron.d/ drop-in (versioned in this repo) instead of
 # hand-edited per-user crontabs, plus a matching logrotate config. Idempotent:
@@ -11,6 +11,7 @@
 #   - ssl-renew.sh          00:00 daily     (Let's Encrypt renewal, no-op if nothing due)
 #   - cleanup-weblogs.py    03:00 daily     (DSGVO: rotate/purge nginx logs >7 days)
 #   - nightly-cleanup.sh    04:30 daily     (container restart cycle + journald vacuum)
+#   - server-readiness.py   06:00 Mondays   (config drift report, mails only on drift)
 #
 # The cron entries reference the scripts in ${SCRIPT_DIR} (default /root, where
 # getScripts.py deploys them). Override with SCRIPT_DIR=/path if they live elsewhere.
@@ -32,8 +33,8 @@
 
 set -Eeuo pipefail
 
-SCRIPT_VERSION="1.2.0"
-SCRIPT_DATE="11.06.2026"
+SCRIPT_VERSION="1.3.0"
+SCRIPT_DATE="02.08.2026"
 
 # Where the maintenance scripts live (getScripts.py copies them to /root).
 SCRIPT_DIR="${SCRIPT_DIR:-/root}"
@@ -47,7 +48,7 @@ CRON_SRC="${SELF_DIR}/myodoo-maintenance.cron"
 LOGROTATE_SRC="${SELF_DIR}/myodoo-maintenance.logrotate"
 
 # Scripts referenced by the cron entries (for an existence sanity-check).
-MANAGED_SCRIPTS=(container2backup.py ssl-renew.sh cleanup-weblogs.py nginx-cert-guard.py nightly-cleanup.sh)
+MANAGED_SCRIPTS=(container2backup.py ssl-renew.sh cleanup-weblogs.py nginx-cert-guard.py nightly-cleanup.sh server-readiness.py)
 
 SEPARATOR="────────────────────────────────────────────────────────"
 if [ -t 1 ]; then
