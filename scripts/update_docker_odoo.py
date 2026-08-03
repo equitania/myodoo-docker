@@ -1,7 +1,7 @@
 #!/usr/bin/python3
 # -*- coding: utf-8 -*-
 # This script performs an update of an Odoo database in a Docker container
-# Version 5.4.0
+# Version 5.4.1
 # Date 03.08.2026
 ##############################################################################
 #
@@ -34,12 +34,18 @@ import argparse
 import subprocess
 from os.path import expanduser, isdir, isfile, join
 import threading
-import select
+
+# On a terminal the date repeats on every line of a run that takes minutes,
+# and this script's own messages should line up with the indented child
+# output. A log file keeps the full timestamp - there the date matters.
+IS_TTY = sys.stdout.isatty()
 
 # Set up logging - Default to WARNING level
 logging.basicConfig(
     level=logging.WARNING,  # Default to WARNING level now
-    format='%(asctime)s - %(levelname)s - %(message)s',
+    format=('  %(asctime)s %(levelname)-5s %(message)s' if IS_TTY
+            else '%(asctime)s - %(levelname)s - %(message)s'),
+    datefmt='%H:%M:%S' if IS_TTY else None,
     handlers=[
         logging.StreamHandler(sys.stdout)
     ]
@@ -56,8 +62,6 @@ logger = logging.getLogger(__name__)
 # '<date> - INFO - ' prefix. Progress spinners only run on a TTY - under cron
 # their carriage returns would end up in the log file.
 ##############################################################################
-
-IS_TTY = sys.stdout.isatty()
 
 # Column at which the dots of a compact step line end
 STEP_WIDTH = 44
@@ -442,8 +446,10 @@ def run_command(command, show_output=True, filter_output=False, show_progress=Fa
              visually underneath the step that produced them.
     """
     try:
-        if show_output and not filter_output and logger.level <= logging.INFO:
-            logger.info(f"Running command: {command}")
+        # Debug only - under -v this echoed the command in front of every
+        # step, right above the step line that already names it
+        if logger.level <= logging.DEBUG:
+            logger.debug(f"Running command: {command}")
 
         # Set up process with pipes
         process = subprocess.Popen(
@@ -472,15 +478,6 @@ def run_command(command, show_output=True, filter_output=False, show_progress=Fa
         progress_lock = threading.Lock()
         spinner_running = False
 
-        def clear_spinner_line():
-            """Erase the spinner line - no-op when no spinner is running.
-
-            The previous implementation wrote 80 blanks unconditionally, which
-            littered every non-spinner run (and every log file) with padding.
-            """
-            if spinner_running:
-                sys.stdout.write("\r\033[K")
-
         def emit(text):
             """Print a child-process line verbatim, indented under its step.
 
@@ -488,9 +485,15 @@ def run_command(command, show_output=True, filter_output=False, show_progress=Fa
             child's own timestamp and level, and a second '<date> - INFO - '
             prefix only makes the output harder to read.
             """
-            nonlocal emitted_lines
+            nonlocal emitted_lines, spinner_running, stop_progress
             with progress_lock:
-                clear_spinner_line()
+                if spinner_running:
+                    # Once the child produces output, that output *is* the
+                    # progress indicator. Running both means every emitted
+                    # line races a half-drawn spinner frame for the cursor.
+                    stop_progress = True
+                    spinner_running = False
+                    sys.stdout.write("\r\033[K")
                 sys.stdout.write(f"{output_indent}{text}\n")
                 sys.stdout.flush()
                 emitted_lines += 1
@@ -510,10 +513,12 @@ def run_command(command, show_output=True, filter_output=False, show_progress=Fa
                         sys.stdout.flush()
                     idx += 1
                     time.sleep(0.1)
-                # Clear the line when done
+                # Clear the line when done - unless emit() already took over,
+                # in which case it has erased the last frame itself
                 with progress_lock:
-                    sys.stdout.write("\r\033[K")
-                    sys.stdout.flush()
+                    if spinner_running:
+                        sys.stdout.write("\r\033[K")
+                        sys.stdout.flush()
             
             progress_thread = threading.Thread(target=show_spinner)
             progress_thread.daemon = True
@@ -523,26 +528,17 @@ def run_command(command, show_output=True, filter_output=False, show_progress=Fa
         stdout_lines = []
         stderr_lines = []
         
-        # Function to read from a pipe with a timeout, collecting important messages
-        def read_pipe(pipe, line_list, timeout):
+        def read_pipe(pipe, line_list):
+            """Read one child pipe to EOF, classifying and printing as we go.
+
+            Plain blocking reads. The timeout is enforced by the caller's
+            process.wait(timeout=...), which kills the process and thereby
+            closes this pipe. The previous select()-based loop gave up as
+            soon as process.poll() reported an exit - lines still sitting in
+            the text buffer at that moment were silently dropped.
+            """
             nonlocal warnings_count, errors_count, info_count, last_error_line
-            end_time = time.time() + timeout if timeout else None
-            while True:
-                if end_time and time.time() > end_time:
-                    raise TimeoutError("Command timed out")
-                
-                # Wait for data with a small timeout
-                readable, _, _ = select.select([pipe], [], [], 0.1)
-                if not readable:
-                    # Check if process is still running
-                    if process.poll() is not None:
-                        break
-                    continue
-                
-                line = pipe.readline()
-                if not line:
-                    break
-                
+            for line in iter(pipe.readline, ''):
                 line_list.append(line)
                 stripped_line = line.strip()
                 
@@ -571,24 +567,26 @@ def run_command(command, show_output=True, filter_output=False, show_progress=Fa
         
         # Start threads to read stdout and stderr
         stdout_thread = threading.Thread(
-            target=read_pipe, 
-            args=(process.stdout, stdout_lines, timeout)
+            target=read_pipe,
+            args=(process.stdout, stdout_lines)
         )
         stderr_thread = threading.Thread(
-            target=read_pipe, 
-            args=(process.stderr, stderr_lines, timeout)
+            target=read_pipe,
+            args=(process.stderr, stderr_lines)
         )
-        
+
         stdout_thread.daemon = True
         stderr_thread.daemon = True
         stdout_thread.start()
         stderr_thread.start()
-        
-        # Wait for process to complete
+
+        # Wait for process to complete. The readers hit EOF when the process
+        # closes its pipes; give them room to drain rather than cutting them
+        # off mid-buffer.
         try:
             exit_code = process.wait(timeout=timeout)
-            stdout_thread.join(1)
-            stderr_thread.join(1)
+            stdout_thread.join(5)
+            stderr_thread.join(5)
         except subprocess.TimeoutExpired:
             process.kill()
             stop_progress = True
@@ -625,10 +623,9 @@ def run_command(command, show_output=True, filter_output=False, show_progress=Fa
                     emit(msg)
             return False, stderr_output, info_count, warnings_count, errors_count
         
-        # Only show success message in verbose mode or if warnings/errors occurred
-        if filter_output and errors_count == 0 and warnings_count == 0 and logger.level <= logging.INFO:
-            logger.info("Command completed successfully with no warnings or errors")
-            
+        # No success message here - the step line already reports 'ok'. Under
+        # -v this used to print 'Command completed successfully with no
+        # warnings or errors' in front of every single step.
         return True, stdout_output, info_count, warnings_count, errors_count
     except Exception as e:
         stop_progress = True
