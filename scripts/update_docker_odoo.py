@@ -1,7 +1,7 @@
 #!/usr/bin/python3
 # -*- coding: utf-8 -*-
 # This script performs an update of an Odoo database in a Docker container
-# Version 5.4.1
+# Version 5.4.2
 # Date 03.08.2026
 ##############################################################################
 #
@@ -40,10 +40,19 @@ import threading
 # output. A log file keeps the full timestamp - there the date matters.
 IS_TTY = sys.stdout.isatty()
 
+# A terminal left in raw mode by a child stops translating '\n' into CR+LF:
+# every following line then starts in the column where the previous one ended,
+# producing a staircase. 'docker run -t' does exactly this to the client's
+# terminal, which is why the batch runs below no longer ask for a TTY. Leading
+# every write with a carriage return repairs the damage should it happen
+# anyway, and is a no-op in normal cooked mode. Never in a log file, where it
+# would only leave stray ^M bytes.
+CR = "\r" if IS_TTY else ""
+
 # Set up logging - Default to WARNING level
 logging.basicConfig(
     level=logging.WARNING,  # Default to WARNING level now
-    format=('  %(asctime)s %(levelname)-5s %(message)s' if IS_TTY
+    format=(f'{CR}  %(asctime)s %(levelname)-5s %(message)s' if IS_TTY
             else '%(asctime)s - %(levelname)s - %(message)s'),
     datefmt='%H:%M:%S' if IS_TTY else None,
     handlers=[
@@ -167,7 +176,7 @@ def print_section(title, rune='─'):
     """
     prefix = f"{rune * 2} {title} "
     padding = max(3, SECTION_WIDTH - len(prefix))
-    print(f"\n{prefix}{rune * padding}")
+    print(f"\n{CR}{prefix}{rune * padding}")
     sys.stdout.flush()
 
 
@@ -175,13 +184,13 @@ def print_step(label, status, duration=None):
     """Print a compact one-line step result: 'label ......... ok (94s)'."""
     dots = '.' * max(3, STEP_WIDTH - len(label))
     suffix = f" ({format_duration(duration)})" if duration is not None else ""
-    print(f"  {label} {dots} {status}{suffix}")
+    print(f"{CR}  {label} {dots} {status}{suffix}")
     sys.stdout.flush()
 
 
 def print_section_summary(label, warnings, errors, duration):
     """Print the closing line of a container section."""
-    print(f"  → {label}: {warnings} warning(s), {errors} error(s), "
+    print(f"{CR}  → {label}: {warnings} warning(s), {errors} error(s), "
           f"{format_duration(duration)}")
     sys.stdout.flush()
 
@@ -494,7 +503,7 @@ def run_command(command, show_output=True, filter_output=False, show_progress=Fa
                     stop_progress = True
                     spinner_running = False
                     sys.stdout.write("\r\033[K")
-                sys.stdout.write(f"{output_indent}{text}\n")
+                sys.stdout.write(f"{CR}{output_indent}{text}\n")
                 sys.stdout.flush()
                 emitted_lines += 1
         
@@ -662,7 +671,7 @@ def run_stream(label, command, **kwargs):
         tuple: Same as run_command (success, output, info, warnings, errors)
     """
     started = time.time()
-    print(f"  {label}")
+    print(f"{CR}  {label}")
     sys.stdout.flush()
     result = run_command(command, **kwargs)
     print_step(label, "ok" if result[0] else "FAILED", time.time() - started)
@@ -1191,7 +1200,7 @@ def process_container(container, proxy_settings=None, dockerfiles_source=None):
     # Perform update based on type
     if update_type == "F":
         # Full update
-        update_command = f"docker run -it --rm {env_forward}-p {port}:8069 -p {poll_port}:8072 --name={container_name} {volume} {image} update --database={db_name} {db_auth_args}{load_translation}"
+        update_command = f"docker run --rm {env_forward}-p {port}:8069 -p {poll_port}:8072 --name={container_name} {volume} {image} update --database={db_name} {db_auth_args}{load_translation}"
 
         # Debug only - the command line can contain database credentials
         if logger.level <= logging.DEBUG:
@@ -1220,7 +1229,7 @@ def process_container(container, proxy_settings=None, dockerfiles_source=None):
             
     elif update_type == "N":
         # Neutralize and update
-        neutralize_command = f"docker run -it --rm {env_forward}-p {port}:8069 -p {poll_port}:8072 --name={container_name} {volume} {image} neutralize --database={db_name} {db_auth_args}"
+        neutralize_command = f"docker run --rm {env_forward}-p {port}:8069 -p {poll_port}:8072 --name={container_name} {volume} {image} neutralize --database={db_name} {db_auth_args}"
 
         # Debug only - the command line can contain database credentials
         if logger.level <= logging.DEBUG:
@@ -1247,7 +1256,7 @@ def process_container(container, proxy_settings=None, dockerfiles_source=None):
                 pass
             return False, total_info, total_warnings, total_errors
             
-        update_command = f"docker run -it --rm {env_forward}-p {port}:8069 -p {poll_port}:8072 --name={container_name} {volume} {image} update --database={db_name} {db_auth_args}{load_translation}"
+        update_command = f"docker run --rm {env_forward}-p {port}:8069 -p {poll_port}:8072 --name={container_name} {volume} {image} update --database={db_name} {db_auth_args}{load_translation}"
 
         # Debug only - the command line can contain database credentials
         if logger.level <= logging.DEBUG:
