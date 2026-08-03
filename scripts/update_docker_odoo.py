@@ -1,8 +1,8 @@
 #!/usr/bin/python3
 # -*- coding: utf-8 -*-
 # This script performs an update of an Odoo database in a Docker container
-# Version 5.3.1
-# Date 14.07.2026
+# Version 5.4.0
+# Date 03.08.2026
 ##############################################################################
 #
 #    Shell Script for Odoo, Open Source Management Solution
@@ -45,6 +45,141 @@ logging.basicConfig(
     ]
 )
 logger = logging.getLogger(__name__)
+
+##############################################################################
+# Output formatting
+#
+# Two writers share stdout: this script's own messages (via logging) and the
+# verbatim output of child processes (docker build, odoo update, helper
+# scripts). Child lines already carry their own timestamp and log level, so
+# they are passed through unchanged instead of being wrapped in a second
+# '<date> - INFO - ' prefix. Progress spinners only run on a TTY - under cron
+# their carriage returns would end up in the log file.
+##############################################################################
+
+IS_TTY = sys.stdout.isatty()
+
+# Column at which the dots of a compact step line end
+STEP_WIDTH = 44
+
+# Width of a section header line
+SECTION_WIDTH = 64
+
+# How many errors are repeated as a recap when a command fails
+ERROR_RECAP_LIMIT = 10
+
+# Minimum number of lines that must have scrolled past the last error before
+# repeating it is worth anything - otherwise the recap sits directly below the
+# line it repeats
+ERROR_RECAP_DISTANCE = 20
+
+# Odoo log line: "2026-08-03 17:25:26,102 12 WARNING ? odoo.tools.config: ..."
+ODOO_LOG_RE = re.compile(
+    r'^(?P<date>\d{4}-\d{2}-\d{2})\s+(?P<time>\d{2}:\d{2}:\d{2}),\d+\s+'
+    r'(?P<pid>\d+)\s+(?P<level>[A-Z]+)\s+(?P<db>\S+)\s+(?P<rest>.*)$'
+)
+
+# Log line of a nested python helper: "2026-08-03 19:25:26,103 - INFO - ..."
+PY_LOG_RE = re.compile(
+    r'^\d{4}-\d{2}-\d{2}\s+\d{2}:\d{2}:\d{2},\d+\s+-\s+(?P<level>[A-Z]+)\s+-\s+'
+    r'(?P<rest>.*)$'
+)
+
+# Shortened level names so the passthrough columns stay aligned
+LEVEL_ALIASES = {'WARNING': 'WARN', 'CRITICAL': 'CRIT'}
+
+ERROR_LEVELS = {'ERROR', 'CRITICAL', 'FATAL'}
+WARNING_LEVELS = {'WARNING', 'WARN'}
+
+
+def _level_bucket(level):
+    """Map a raw log level name onto ERROR / WARNING / INFO."""
+    level = level.upper()
+    if level in ERROR_LEVELS:
+        return 'ERROR'
+    if level in WARNING_LEVELS:
+        return 'WARNING'
+    return 'INFO'
+
+
+def classify_line(line):
+    """Determine the log level of a child-process line and format it for display.
+
+    The level is taken from the line's actual log-level field (Odoo format or
+    the '<ts> - LEVEL - msg' python format) instead of scanning the whole line
+    for substrings like ' ERROR '. A module name, a file path or a translated
+    string containing that word must not turn an INFO line into an error.
+
+    Only lines without any recognisable log format fall back to a conservative
+    content check, and only an explicit 'error:'/'warning:' marker counts.
+
+    Args:
+        line: Raw line as read from the child process
+
+    Returns:
+        tuple: (level, display) - level is 'ERROR', 'WARNING' or 'INFO';
+               display is the text to print (redundant date dropped, this
+               script's own timestamp never added).
+    """
+    stripped = line.rstrip()
+
+    match = ODOO_LOG_RE.match(stripped)
+    if match:
+        level = match.group('level')
+        display = (f"{match.group('time')} {match.group('pid'):>5} "
+                   f"{LEVEL_ALIASES.get(level, level):<5} "
+                   f"{match.group('db')} {match.group('rest')}")
+        return _level_bucket(level), display
+
+    match = PY_LOG_RE.match(stripped)
+    if match:
+        level = match.group('level')
+        display = f"{LEVEL_ALIASES.get(level, level):<5} {match.group('rest')}"
+        return _level_bucket(level), display
+
+    lower = stripped.lower()
+    if lower.startswith('error') or lower.startswith('exception') or 'error: ' in lower:
+        return 'ERROR', stripped
+    if lower.startswith('warning') or 'warning: ' in lower:
+        return 'WARNING', stripped
+    return 'INFO', stripped
+
+
+def format_duration(seconds):
+    """Format a duration as '42s' or '3m12s'."""
+    seconds = int(seconds)
+    if seconds < 60:
+        return f"{seconds}s"
+    return f"{seconds // 60}m{seconds % 60:02d}s"
+
+
+def print_section(title, rune='─'):
+    """Print a section header.
+
+    Args:
+        title: Section name, e.g. the container name
+        rune: Line character - the closing summary uses a different one so it
+              is distinguishable from a container section at a glance
+    """
+    prefix = f"{rune * 2} {title} "
+    padding = max(3, SECTION_WIDTH - len(prefix))
+    print(f"\n{prefix}{rune * padding}")
+    sys.stdout.flush()
+
+
+def print_step(label, status, duration=None):
+    """Print a compact one-line step result: 'label ......... ok (94s)'."""
+    dots = '.' * max(3, STEP_WIDTH - len(label))
+    suffix = f" ({format_duration(duration)})" if duration is not None else ""
+    print(f"  {label} {dots} {status}{suffix}")
+    sys.stdout.flush()
+
+
+def print_section_summary(label, warnings, errors, duration):
+    """Print the closing line of a container section."""
+    print(f"  → {label}: {warnings} warning(s), {errors} error(s), "
+          f"{format_duration(duration)}")
+    sys.stdout.flush()
 
 # Default configuration
 home_path = expanduser("~")
@@ -292,12 +427,19 @@ Note: DNS optimization is automatically applied to containers if host DNS is not
     
     return parser.parse_args()
 
-def run_command(command, show_output=True, filter_output=False, show_progress=False, progress_msg=None, timeout=None, env=None):
+def run_command(command, show_output=True, filter_output=False, show_progress=False,
+                progress_msg=None, timeout=None, env=None, output_indent="    "):
     """Run a shell command with proper error handling and output filtering.
+
+    Child output is passed through verbatim (only reformatted by
+    classify_line) instead of being re-wrapped in this script's log format,
+    so every line carries exactly one timestamp - its own.
 
     Args:
         env: Optional dict of extra environment variables (merged over os.environ),
              e.g. proxy settings for commands that need internet access.
+        output_indent: Prefix for passed-through child lines, so they sit
+             visually underneath the step that produced them.
     """
     try:
         if show_output and not filter_output and logger.level <= logging.INFO:
@@ -314,9 +456,12 @@ def run_command(command, show_output=True, filter_output=False, show_progress=Fa
             env={**os.environ, **env} if env else None
         )
         
-        # Variables to store filtered output
-        all_warnings = []
+        # Collected for the failure recap (warnings are printed live only)
         all_errors = []
+        # Line bookkeeping, so the recap can tell whether the last error is
+        # still on screen or has scrolled away in a long build log
+        emitted_lines = 0
+        last_error_line = None
         warnings_count = 0
         errors_count = 0
         info_count = 0  # Counter for INFO messages
@@ -325,8 +470,36 @@ def run_command(command, show_output=True, filter_output=False, show_progress=Fa
         progress_thread = None
         stop_progress = False
         progress_lock = threading.Lock()
+        spinner_running = False
+
+        def clear_spinner_line():
+            """Erase the spinner line - no-op when no spinner is running.
+
+            The previous implementation wrote 80 blanks unconditionally, which
+            littered every non-spinner run (and every log file) with padding.
+            """
+            if spinner_running:
+                sys.stdout.write("\r\033[K")
+
+        def emit(text):
+            """Print a child-process line verbatim, indented under its step.
+
+            Deliberately bypasses the logger: the line already carries the
+            child's own timestamp and level, and a second '<date> - INFO - '
+            prefix only makes the output harder to read.
+            """
+            nonlocal emitted_lines
+            with progress_lock:
+                clear_spinner_line()
+                sys.stdout.write(f"{output_indent}{text}\n")
+                sys.stdout.flush()
+                emitted_lines += 1
         
-        if show_progress:
+        # A spinner only makes sense on a terminal - under cron its carriage
+        # returns would be written into the log file.
+        if show_progress and IS_TTY:
+            spinner_running = True
+
             def show_spinner():
                 spinner = "|/-\\"
                 idx = 0
@@ -339,7 +512,7 @@ def run_command(command, show_output=True, filter_output=False, show_progress=Fa
                     time.sleep(0.1)
                 # Clear the line when done
                 with progress_lock:
-                    sys.stdout.write("\r" + " " * (len(msg) + 10) + "\r")
+                    sys.stdout.write("\r\033[K")
                     sys.stdout.flush()
             
             progress_thread = threading.Thread(target=show_spinner)
@@ -352,7 +525,7 @@ def run_command(command, show_output=True, filter_output=False, show_progress=Fa
         
         # Function to read from a pipe with a timeout, collecting important messages
         def read_pipe(pipe, line_list, timeout):
-            nonlocal warnings_count, errors_count, info_count  # Add info_count to nonlocal
+            nonlocal warnings_count, errors_count, info_count, last_error_line
             end_time = time.time() + timeout if timeout else None
             while True:
                 if end_time and time.time() > end_time:
@@ -373,61 +546,28 @@ def run_command(command, show_output=True, filter_output=False, show_progress=Fa
                 line_list.append(line)
                 stripped_line = line.strip()
                 
-                # Analyze output for warnings and errors
-                lower_line = stripped_line.lower()
-                is_error = False
-                is_warning = False
-                is_info = True  # Default to info unless determined otherwise
+                if not stripped_line:
+                    continue
                 
-                # Check for actual log level indicators at the beginning
-                # Typical Odoo log format: "2025-02-28 08:32:13,414 10 INFO live_odoo ..."
-                # or standard log format: "2025-02-28 09:32:13,415 - ERROR - ..."
-                if " ERROR " in stripped_line or stripped_line.startswith("ERROR:") or " - ERROR - " in stripped_line:
-                    is_error = True
-                    is_info = False
-                elif " WARNING " in stripped_line or stripped_line.startswith("WARNING:") or " - WARNING - " in stripped_line:
-                    is_warning = True
-                    is_info = False
-                # For Odoo format logs: only check the actual log level, not the content
-                elif "INFO " in stripped_line and ("error" in lower_line or "exception" in lower_line):
-                    # This is an INFO log that happens to contain the word "error" or "exception"
-                    is_error = False
-                    is_info = True
-                elif "WARNING " in stripped_line:
-                    is_warning = True
-                    is_info = False
-                elif "ERROR " in stripped_line or "CRITICAL " in stripped_line:
-                    is_error = True
-                    is_info = False
-                # General case for non-odoo format where error appears in the line content
-                elif "error: " in lower_line or "exception: " in lower_line or lower_line.startswith("error") or lower_line.startswith("exception"):
-                    is_error = True
-                    is_info = False
-                elif "warning: " in lower_line or lower_line.startswith("warning"):
-                    is_warning = True
-                    is_info = False
-                    
-                if is_error:
+                # Level detection and display formatting live in classify_line();
+                # see there for why substring matching on the raw line is wrong.
+                level, display = classify_line(line)
+
+                if level == 'ERROR':
                     errors_count += 1
-                    all_errors.append(stripped_line)
-                    # Always show errors
-                    with progress_lock:
-                        sys.stdout.write("\r" + " " * 80 + "\r")  # Clear spinner line
-                        logger.error(stripped_line)
-                elif is_warning:
+                    all_errors.append(display)
+                elif level == 'WARNING':
                     warnings_count += 1
-                    all_warnings.append(stripped_line)
-                    # Always show warnings
-                    with progress_lock:
-                        sys.stdout.write("\r" + " " * 80 + "\r")  # Clear spinner line
-                        logger.warning(stripped_line)
-                elif is_info:
-                    info_count += 1  # Count info messages
-                    # Show info messages if not filtered or in verbose mode
-                    if not filter_output and (show_output or logger.level <= logging.INFO):
-                        with progress_lock:
-                            sys.stdout.write("\r" + " " * 80 + "\r")  # Clear spinner line
-                            logger.info(stripped_line)
+                else:
+                    info_count += 1
+                    # INFO is noise unless the caller asked to see it
+                    if filter_output or not (show_output or logger.level <= logging.INFO):
+                        continue
+
+                # Errors and warnings always appear - exactly once, here
+                emit(display)
+                if level == 'ERROR':
+                    last_error_line = emitted_lines
         
         # Start threads to read stdout and stderr
         stdout_thread = threading.Thread(
@@ -461,37 +601,28 @@ def run_command(command, show_output=True, filter_output=False, show_progress=Fa
         stop_progress = True
         if progress_thread:
             progress_thread.join(1)
-        
+        spinner_running = False
+
         stdout_output = "".join(stdout_lines)
         stderr_output = "".join(stderr_lines)
         
-        # Show summary of warnings and errors
-        if filter_output and (warnings_count > 0 or errors_count > 0):
-            summary = []
-            if warnings_count > 0:
-                summary.append(f"{warnings_count} warning(s)")
-            if errors_count > 0:
-                summary.append(f"{errors_count} error(s)")
-                
-            if summary:
-                logger.warning(f"Command completed with {' and '.join(summary)}")
-                
-                # Show errors first
-                if errors_count > 0:
-                    logger.warning("--- ERRORS ---")
-                    for msg in all_errors:
-                        logger.error(msg)
-                
-                # Then show warnings
-                if warnings_count > 0:
-                    logger.warning("--- WARNINGS ---")
-                    for msg in all_warnings:
-                        logger.warning(msg)
-        
+        # Errors and warnings have already been printed live, so there is no
+        # blanket repeat here. Only a failure gets a short recap, so the cause
+        # sits right above the failure message instead of scrolled far up in a
+        # 20-minute build log.
         if exit_code != 0:
             logger.error(f"Command failed with exit code {exit_code}")
-            if stderr_output and not filter_output and logger.level <= logging.INFO:
-                logger.error(stderr_output)
+            scrolled_away = (last_error_line is not None and
+                             emitted_lines - last_error_line >= ERROR_RECAP_DISTANCE)
+            if all_errors and scrolled_away:
+                recap = all_errors[-ERROR_RECAP_LIMIT:]
+                omitted = len(all_errors) - len(recap)
+                header = f"--- last {len(recap)} error(s)"
+                if omitted:
+                    header += f", {omitted} earlier one(s) above"
+                emit(header + " ---")
+                for msg in recap:
+                    emit(msg)
             return False, stderr_output, info_count, warnings_count, errors_count
         
         # Only show success message in verbose mode or if warnings/errors occurred
@@ -505,6 +636,41 @@ def run_command(command, show_output=True, filter_output=False, show_progress=Fa
             progress_thread.join(1)
         logger.error(f"Exception running command: {e}")
         return False, str(e), 0, 0, 1  # Return counts with the error
+
+def run_step(label, command, **kwargs):
+    """Run a short command and report it as one compact line.
+
+    Output is suppressed unless it contains warnings or errors - for a
+    'docker stop' the interesting information is 'did it work and how long
+    did it take', not its chatter.
+
+    Returns:
+        tuple: Same as run_command (success, output, info, warnings, errors)
+    """
+    started = time.time()
+    kwargs.setdefault('show_output', False)
+    kwargs.setdefault('filter_output', True)
+    result = run_command(command, **kwargs)
+    print_step(label, "ok" if result[0] else "FAILED", time.time() - started)
+    return result
+
+
+def run_stream(label, command, **kwargs):
+    """Run a long command whose output is streamed verbatim under a heading.
+
+    Used for docker build and the Odoo update runs, where watching progress
+    is the whole point.
+
+    Returns:
+        tuple: Same as run_command (success, output, info, warnings, errors)
+    """
+    started = time.time()
+    print(f"  {label}")
+    sys.stdout.flush()
+    result = run_command(command, **kwargs)
+    print_step(label, "ok" if result[0] else "FAILED", time.time() - started)
+    return result
+
 
 def load_config(config_file):
     """Load configuration from YAML file."""
@@ -795,12 +961,17 @@ def clean_docker_system():
     Removes all stopped containers, networks not used by at least one container,
     all dangling images, and unused build cache.
     """
-    logger.info("Cleaning up Docker system...")
-    success, _, info, warn, err = run_command("docker system prune -f", show_output=True)
-    if success:
-        logger.info("Docker system cleaned successfully")
-    else:
-        logger.warning("Failed to clean Docker system")
+    started = time.time()
+    success, output, info, warn, err = run_command(
+        "docker system prune -f", show_output=False, filter_output=True)
+
+    # The prune listing itself is noise; the reclaimed space is the one number
+    # worth carrying into the step line.
+    status = "ok" if success else "FAILED"
+    reclaimed = re.search(r'Total reclaimed space:\s*(.+)', output or "")
+    if success and reclaimed:
+        status = f"ok, {reclaimed.group(1).strip()} reclaimed"
+    print_step("docker system prune", status, time.time() - started)
     return info, warn, err
 
 def process_container(container, proxy_settings=None, dockerfiles_source=None):
@@ -854,19 +1025,18 @@ def process_container(container, proxy_settings=None, dockerfiles_source=None):
     version = container['odoo_version']
     translation = container['translate']
     
-    # Log container info
-    logger.info(f"{'='*80}")
-    logger.info(f"Processing container: {container_name}")
-    logger.info(f"Update type: {'Full update' if update_type == 'F' else 'Module copy' if update_type == 'M' else 'Neutralize and update'}")
-    logger.info(f"Database: {db_name}")
-    logger.info(f"Ports: {port} (HTTP), {poll_port} (Longpolling)")
+    # Section header - one line of context, the rest stays behind -v
+    container_started = time.time()
+    update_label = ('Full update' if update_type == 'F'
+                    else 'Module copy' if update_type == 'M'
+                    else 'Neutralize and update')
+    print_section(container_name)
+    print(f"  {update_label} · db {db_name} · ports {port}/{poll_port}"
+          + (f" · odoo {version}" if version else ""))
     logger.info(f"Dockerfile path: {path}")
     logger.info(f"Docker image: {image}")
-    if version:
-        logger.info(f"Odoo version: {version}")
     if volume:
         logger.info(f"Volume: {volume}")
-    logger.info(f"{'='*80}")
     
     # Change to Dockerfile directory - This is critical for docker build
     try:
@@ -951,8 +1121,6 @@ def process_container(container, proxy_settings=None, dockerfiles_source=None):
             if not success:
                 logger.warning(f"Failed to download check script from {download_check_script} - continuing anyway")
     
-    # Override logging level for debugging critical sections
-    original_level = logger.level
 
     # Run release manager to get latest Docker image if access file exists
     # Use the correct script name based on what we have in the directory
@@ -965,43 +1133,27 @@ def process_container(container, proxy_settings=None, dockerfiles_source=None):
         access_file_name = "access_myodoo.txt"  # Try alternative name
         
     if isfile(check_script_name) and isfile(access_file_name):
-        logger.info(f"Running release manager using {check_script_name}...")
-        # Temporarily increase log level for critical operations
-        logger.setLevel(logging.INFO)
         # Forward proxy env: the check script downloads the release CSV via wget
-        success, _, info, warn, err = run_command(f"python3 {check_script_name}", env=proxy_env)
+        success, _, info, warn, err = run_step(
+            "release manager", f"python3 {check_script_name}", env=proxy_env)
         total_info += info
         total_warnings += warn
         total_errors += err
-        # Restore original log level
-        logger.setLevel(original_level)
         if not success:
             logger.warning("Failed to run release manager check script - continuing anyway")
     else:
         logger.warning(f"Skipping release manager check - files not found: {check_script_name} or {access_file_name}")
         total_warnings += 1
     
-    # Stop and remove container - Always show these critical operations
-    logger.setLevel(logging.INFO)
-    logger.info(f"Stopping container {container_name}...")
-    _, _, info, warn, err = run_command(f"docker stop {container_name}", show_output=False)
-    total_info += info
-    total_warnings += warn
-    total_errors += err
-    logger.info(f"Removing container {container_name}...")
-    _, _, info, warn, err = run_command(f"docker rm {container_name}", show_output=False)
-    total_info += info
-    total_warnings += warn
-    total_errors += err
-
-    # Remove image
-    logger.info(f"Removing Docker image {image}:latest...")
-    _, _, info, warn, err = run_command(f"docker rmi {image}:latest", show_output=False)
-    total_info += info
-    total_warnings += warn
-    total_errors += err
-    # Restore original log level
-    logger.setLevel(original_level)
+    # Stop and remove the container plus its image
+    for step_label, step_command in (
+            (f"stop {container_name}", f"docker stop {container_name}"),
+            (f"remove {container_name}", f"docker rm {container_name}"),
+            (f"remove image {image}:latest", f"docker rmi {image}:latest")):
+        _, _, info, warn, err = run_step(step_label, step_command)
+        total_info += info
+        total_warnings += warn
+        total_errors += err
     
     # Verify Dockerfile exists
     if not isfile('Dockerfile'):
@@ -1013,13 +1165,13 @@ def process_container(container, proxy_settings=None, dockerfiles_source=None):
             pass
         return False, total_info, total_warnings, total_errors
         
-    # Build new image
-    print(f"Building new Docker image {image} in {os.getcwd()}...")
-    print("This process downloads 977 modules individually and may take 10-20 minutes")
-    print("Progress will be shown below - please wait...")
-    
+    # Build new image - a full build downloads every module and can easily
+    # take 10-20 minutes, so its output is streamed rather than summarised
     proxy_build_args = build_proxy_build_args(proxy_settings)
-    success, _, info, warn, err = run_command(f"docker build {proxy_build_args}-t {image} .", timeout=3600, env=proxy_env)
+    success, _, info, warn, err = run_stream(
+        f"build image {image}",
+        f"docker build {proxy_build_args}-t {image} .",
+        timeout=3600, env=proxy_env)
     total_info += info
     total_warnings += warn
     total_errors += err
@@ -1042,21 +1194,18 @@ def process_container(container, proxy_settings=None, dockerfiles_source=None):
     # Perform update based on type
     if update_type == "F":
         # Full update
-        if logger.level <= logging.INFO:
-            logger.info(f"Performing full update of {container_name}...")
         update_command = f"docker run -it --rm {env_forward}-p {port}:8069 -p {poll_port}:8072 --name={container_name} {volume} {image} update --database={db_name} {db_auth_args}{load_translation}"
-        
-        # Only show full command in verbose mode
+
+        # Debug only - the command line can contain database credentials
         if logger.level <= logging.DEBUG:
             logger.info(f"Update command: {update_command}")
-        
-        # Set filter_output based on verbose mode
-        should_filter = logger.level > logging.INFO  # Only filter if NOT verbose
-        show_full_output = logger.level <= logging.INFO
-        success, _, info, warn, err = run_command(
-            update_command, 
-            show_output=True,  # Always show output
-            filter_output=should_filter,  # Only filter if not verbose
+
+        # Without -v only warnings and errors are streamed, with -v every line
+        should_filter = logger.level > logging.INFO
+        success, _, info, warn, err = run_stream(
+            "update odoo",
+            update_command,
+            filter_output=should_filter,
             show_progress=True,
             progress_msg=f"Updating database {db_name}",
             timeout=1800  # 30 minute timeout
@@ -1074,21 +1223,18 @@ def process_container(container, proxy_settings=None, dockerfiles_source=None):
             
     elif update_type == "N":
         # Neutralize and update
-        logger.info(f"Neutralizing database in {container_name}...")
         neutralize_command = f"docker run -it --rm {env_forward}-p {port}:8069 -p {poll_port}:8072 --name={container_name} {volume} {image} neutralize --database={db_name} {db_auth_args}"
-        
-        # Only show full command in verbose mode
+
+        # Debug only - the command line can contain database credentials
         if logger.level <= logging.DEBUG:
             logger.info(f"Neutralize command: {neutralize_command}")
-        
-        # Set filter_output based on verbose mode
-        should_filter = logger.level > logging.INFO  # Only filter if NOT verbose
-        show_full_output = logger.level <= logging.INFO
-        logger.info(f"Starting Odoo neutralization process (use -v for detailed output)...")
-        success, _, info, warn, err = run_command(
-            neutralize_command, 
-            show_output=True,  # Always show output
-            filter_output=should_filter,  # Only filter if not verbose
+
+        # Without -v only warnings and errors are streamed, with -v every line
+        should_filter = logger.level > logging.INFO
+        success, _, info, warn, err = run_stream(
+            "neutralize odoo",
+            neutralize_command,
+            filter_output=should_filter,
             show_progress=True,
             progress_msg=f"Neutralizing database {db_name}",
             timeout=900  # 15 minute timeout
@@ -1104,21 +1250,18 @@ def process_container(container, proxy_settings=None, dockerfiles_source=None):
                 pass
             return False, total_info, total_warnings, total_errors
             
-        logger.info(f"Performing update after neutralization...")
         update_command = f"docker run -it --rm {env_forward}-p {port}:8069 -p {poll_port}:8072 --name={container_name} {volume} {image} update --database={db_name} {db_auth_args}{load_translation}"
-        
-        # Only show full command in verbose mode
+
+        # Debug only - the command line can contain database credentials
         if logger.level <= logging.DEBUG:
             logger.info(f"Update command: {update_command}")
-        
-        # Set filter_output based on verbose mode
-        should_filter = logger.level > logging.INFO  # Only filter if NOT verbose
-        show_full_output = logger.level <= logging.INFO
-        logger.info(f"Starting Odoo update process (use -v for detailed output)...")
-        success, _, info, warn, err = run_command(
-            update_command, 
-            show_output=True,  # Always show output
-            filter_output=should_filter,  # Only filter if not verbose
+
+        # Without -v only warnings and errors are streamed, with -v every line
+        should_filter = logger.level > logging.INFO
+        success, _, info, warn, err = run_stream(
+            "update odoo",
+            update_command,
+            filter_output=should_filter,
             show_progress=True,
             progress_msg=f"Updating database {db_name}",
             timeout=1800  # 30 minute timeout
@@ -1135,10 +1278,9 @@ def process_container(container, proxy_settings=None, dockerfiles_source=None):
             return False, total_info, total_warnings, total_errors
     
     # Restart container
-    logger.info(f"Restarting container {container_name}...")
     restart_command = f"docker run -d --restart=always -p {port}:8069 -p {poll_port}:8072 --name={container_name} {volume} {image} start"
     logger.info(f"Restart command: {restart_command}")
-    success, _, info, warn, err = run_command(restart_command)
+    success, _, info, warn, err = run_step(f"restart {container_name}", restart_command)
     total_info += info
     total_warnings += warn
     total_errors += err
@@ -1146,24 +1288,28 @@ def process_container(container, proxy_settings=None, dockerfiles_source=None):
         logger.error("Failed to restart container")
         return False, total_info, total_warnings, total_errors
     
-    # Show countdown for delay time instead of silent sleep
+    # Show countdown for delay time instead of silent sleep - the live
+    # countdown needs a terminal, under cron it would only produce \r noise
     if delay_time > 0:
-        logger.info(f"Waiting {delay_time} seconds for container to initialize...")
         try:
-            for remaining in range(delay_time, 0, -1):
-                sys.stdout.write(f"\rWaiting: {remaining} seconds remaining... (Ctrl+C to skip) ")
-                sys.stdout.flush()
-                time.sleep(1)
-            sys.stdout.write("\rWait completed.                                           \n")
+            if IS_TTY:
+                for remaining in range(delay_time, 0, -1):
+                    sys.stdout.write(f"\rWaiting: {remaining} seconds remaining... (Ctrl+C to skip) ")
+                    sys.stdout.flush()
+                    time.sleep(1)
+                sys.stdout.write("\r\033[K")
+            else:
+                time.sleep(delay_time)
+            print_step("wait for startup", "ok", delay_time)
         except KeyboardInterrupt:
-            sys.stdout.write("\rWait skipped by user.                                     \n")
-            logger.info("Wait period skipped by user.")
+            sys.stdout.write("\r\033[K")
+            print_step("wait for startup", "skipped by user")
     
     # Run additional scripts if they exist
     remove_menus_script = join(path, "remove_website_menus.py")
     if isfile(remove_menus_script):
-        logger.info("Running script to remove website menus...")
-        success, _, info, warn, err = run_command(f"python3 {remove_menus_script}")
+        success, _, info, warn, err = run_step(
+            "remove website menus", f"python3 {remove_menus_script}")
         total_info += info
         total_warnings += warn
         total_errors += err
@@ -1173,8 +1319,8 @@ def process_container(container, proxy_settings=None, dockerfiles_source=None):
         
         cleanup_script = join(path, "cleanup_odoo.py")
         if isfile(cleanup_script):
-            logger.info("Running cleanup script...")
-            success, _, info, warn, err = run_command(f"python3 {cleanup_script}")
+            success, _, info, warn, err = run_step(
+                "cleanup odoo", f"python3 {cleanup_script}")
             total_info += info
             total_warnings += warn
             total_errors += err
@@ -1185,21 +1331,21 @@ def process_container(container, proxy_settings=None, dockerfiles_source=None):
     # Clean up old filestore backups
     backup_path = f"{path}{db_name}.bak"
     if isdir(backup_path):
-        logger.info(f"Removing old filestore backup: {backup_path}")
-        _, _, info, warn, err = run_command(f"rm -rf {backup_path}")
+        _, _, info, warn, err = run_step(
+            "remove old filestore backup", f"rm -rf {backup_path}")
         total_info += info
         total_warnings += warn
         total_errors += err
     
     if isdir(join(path, db_name)):
         logger.info(f"Moving current filestore to backup: {path}{db_name} -> {backup_path}")
-        _, _, info, warn, err = run_command(f"mv {path}{db_name} {backup_path}")
+        _, _, info, warn, err = run_step(
+            "move filestore to backup", f"mv {path}{db_name} {backup_path}")
         total_info += info
         total_warnings += warn
         total_errors += err
     
     # Clean up Docker system
-    logger.info("Running Docker system cleanup...")
     info, warn, err = clean_docker_system()
     total_info += info
     total_warnings += warn
@@ -1212,7 +1358,8 @@ def process_container(container, proxy_settings=None, dockerfiles_source=None):
         logger.warning(f"Failed to change back to original directory: {e}")
         total_warnings += 1
     
-    logger.info(f"Update of {db_name} completed successfully")
+    print_section_summary(db_name, total_warnings, total_errors,
+                          time.time() - container_started)
     return True, total_info, total_warnings, total_errors
 
 def main():
@@ -1334,45 +1481,36 @@ def main():
             failure_count += 1
             total_error_count += 1
     
-    # Summary - use a custom function to print without WARNING level
-    def print_summary(message):
-        # Print in a way that mimics logger but without the WARNING prefix
-        timestamp = time.strftime('%Y-%m-%d %H:%M:%S')
-        print(f"{timestamp} - INFO - {message}")
-    
-    print_summary(f"{'='*80}")
+    # Closing summary - same step schema as the container sections, marked
+    # with a different rune so it stands out from them
     execution_time = time.time() - start_time
-    minutes, seconds = divmod(execution_time, 60)
+    print_section("summary", rune='═')
     if args.validate:
-        print_summary(f"Configuration validation completed in {int(minutes)}m {int(seconds)}s.")
-        print_summary(f"Valid configurations: {validate_count}")
+        print_step("configuration validation", "done", execution_time)
+        print_step("valid configurations", str(validate_count))
         if failure_count > 0:
-            print_summary(f"Invalid configurations: {failure_count}")
+            print_step("invalid configurations", str(failure_count))
     elif args.dns_optimize:
-        print_summary(f"DNS optimization completed in {int(minutes)}m {int(seconds)}s.")
-        print_summary(f"Valid configurations: {validate_count}")
-        if config_modified:
-            print_summary("DNS optimization applied to configuration file")
-        else:
-            print_summary("DNS configuration was already optimal")
+        print_step("dns optimization", "done", execution_time)
+        print_step("valid configurations", str(validate_count))
+        print_step("dns configuration",
+                   "updated" if config_modified else "already optimal")
         if failure_count > 0:
-            print_summary(f"Invalid configurations: {failure_count}")
+            print_step("invalid configurations", str(failure_count))
     else:
-        print_summary(f"Update process completed in {int(minutes)}m {int(seconds)}s.")
-        print_summary(f"Successful updates: {success_count}")
+        print_step("update process", "done", execution_time)
+        print_step("successful updates", str(success_count))
         if failure_count > 0:
-            print_summary(f"Failed updates: {failure_count}")
-        # Add the message counts to the summary
-        print_summary(f"Log statistics: {total_info_count} INFO, {total_warning_count} WARNING, {total_error_count} ERROR messages")
-        
-        # Final Docker system cleanup after all containers are processed
-        if not args.validate:
-            print_summary("Performing final Docker system cleanup...")
-            info, warn, err = clean_docker_system()
-            print_summary(f"Final cleanup completed with {warn} warnings and {err} errors")
-    
-    print_summary(f"{'='*80}")
-    
+            print_step("failed updates", str(failure_count))
+        print_step("log statistics",
+                   f"{total_info_count} info, {total_warning_count} warning, "
+                   f"{total_error_count} error")
+
+        # Final Docker system cleanup after all containers are processed.
+        # It prints its own step line, including the space it reclaimed.
+        clean_docker_system()
+    print()
+
     # Ensure all output is flushed
     sys.stdout.flush()
     sys.stderr.flush()
