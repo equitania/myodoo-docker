@@ -3680,6 +3680,7 @@ def copy_scripts(_myhome: str, myodoo_docker: str) -> None:
         "myodoo-maintenance.cron",
         "myodoo-maintenance.logrotate",
         "server-readiness.py",
+        "odoo_build_cache.py",
         "getScripts.py"
     ]
 

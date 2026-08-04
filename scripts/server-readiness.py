@@ -4,7 +4,7 @@
 # Title:            server-readiness.py
 # Description:      Report whether this server matches the state myodoo-docker
 #                   expects, and name the exact command that closes each gap.
-# Version:          1.2.0
+# Version:          1.3.0
 # Date:             04.08.2026
 # Author:           Equitania Software GmbH
 # ==============================================================================
@@ -62,7 +62,7 @@ from dataclasses import dataclass
 from enum import Enum
 from typing import Callable, List, Optional, Tuple
 
-SCRIPT_VERSION = "1.2.0"
+SCRIPT_VERSION = "1.3.0"
 SCRIPT_DATE = "04.08.2026"
 
 # Installed locations managed by setup-maintenance-cron.sh.
@@ -86,6 +86,7 @@ DELIVERED_SCRIPTS = (
     "deploy-nginx-base.sh",
     "setup-maintenance-cron.sh",
     "server-readiness.py",
+    "odoo_build_cache.py",
 )
 
 # Job names that must run from /etc/cron.d/myodoo-maintenance and nowhere else.
@@ -101,6 +102,9 @@ BACKUP_LOG = "var/log/container2backup.log"
 # Must mirror container2backup.py: it reads defaults.backup_path and falls back
 # to /opt/backups. Any other key/default here checks a config nothing ever reads.
 DEFAULT_BACKUP_PATH = "/opt/backups"
+
+# Must mirror odoo_build_cache.py CACHE_ROOT_DEFAULT.
+BUILD_CACHE_ROOT = "opt/odoo-build-cache"
 
 # Thresholds. Kept here so they are adjustable without hunting through checks.
 LOG_WARN_BYTES = 100 * 1024 ** 2
@@ -652,6 +656,27 @@ def check_script_versions(ctx: HealthContext) -> Finding:
 # Registry and runner
 # ==============================================================================
 
+def check_build_cache(ctx: HealthContext) -> Finding:
+    """Report the build cache's size.
+
+    Its absence is informational, not a warning: the cache is pure
+    optimisation, and a server that never ran a build simply has none. Its size
+    is worth seeing before it fills a disk.
+    """
+    root = ctx.p(BUILD_CACHE_ROOT)
+    if not os.path.isdir(root):
+        return _skip("build_cache", "Build cache", "not in use")
+    count = total = 0
+    for current, _dirs, files in os.walk(root):
+        for name in files:
+            try:
+                total += os.path.getsize(os.path.join(current, name))
+                count += 1
+            except OSError:
+                continue
+    return _ok("build_cache", "Build cache", f"{count} archive(s), {_human(total)}")
+
+
 CHECKS: Tuple[Callable[[HealthContext], Finding], ...] = (
     check_maintenance_cron_present,
     check_maintenance_cron_current,
@@ -666,6 +691,7 @@ CHECKS: Tuple[Callable[[HealthContext], Finding], ...] = (
     check_certbot_timer_window,
     check_script_versions,
     check_backup_disk_space,
+    check_build_cache,
 )
 
 

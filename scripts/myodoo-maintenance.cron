@@ -44,3 +44,8 @@ PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
 # mails via MAILTO only on actual drift. Appending this to a logfile would
 # repeat the very mistake the report exists to catch — an unwatched append.
 0 6  * * 1 root /root/server-readiness.py --quiet
+
+# Weekly build-cache cleanup, Sundays 03:30: drops release archives unused for
+# 30 days and prunes the release.file-<timestamp> copies that
+# check_dockerimage_odoo.py creates on every run and never deletes.
+30 3 * * 0 root /usr/bin/python3 /root/odoo_build_cache.py gc >> /var/log/odoo-build-cache.log 2>&1
