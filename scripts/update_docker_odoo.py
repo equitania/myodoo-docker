@@ -1,8 +1,8 @@
 #!/usr/bin/python3
 # -*- coding: utf-8 -*-
 # This script performs an update of an Odoo database in a Docker container
-# Version 5.4.2
-# Date 03.08.2026
+# Version 5.5.0
+# Date 04.08.2026
 ##############################################################################
 #
 #    Shell Script for Odoo, Open Source Management Solution
@@ -1073,20 +1073,25 @@ def process_container(container, proxy_settings=None, dockerfiles_source=None):
 
     # Backup filestore if no volume is specified
     if not volume:
-        filestore_path = join(path, db_name)
+        # Under a fixed folder name so .dockerignore can exclude it. Previously
+        # this landed in the build folder root as <db_name>/, which is not
+        # statically nameable — so both this copy and its .bak rotation were
+        # shipped to the Docker daemon as build context on every build.
+        filestore_root = join(path, "filestore-backup")
+        filestore_path = join(filestore_root, db_name)
         logger.info(f"Backing up filestore to {filestore_path}")
-        
+
         # Create directory for filestore backup
-        success, _, info, warn, err = run_command(f"mkdir -p {filestore_path}")
+        success, _, info, warn, err = run_command(f"mkdir -p {filestore_root}")
         total_info += info
         total_warnings += warn
         total_errors += err
         if not success:
             logger.error("Failed to create directory for filestore backup")
             return False, total_info, total_warnings, total_errors
-            
+
         # Copy filestore from container
-        success, _, info, warn, err = run_command(f"docker cp {container_name}:/opt/odoo/data/filestore/{db_name} {path}")
+        success, _, info, warn, err = run_command(f"docker cp {container_name}:/opt/odoo/data/filestore/{db_name} {filestore_root}")
         total_info += info
         total_warnings += warn
         total_errors += err
@@ -1150,7 +1155,21 @@ def process_container(container, proxy_settings=None, dockerfiles_source=None):
     else:
         logger.warning(f"Skipping release manager check - files not found: {check_script_name} or {access_file_name}")
         total_warnings += 1
-    
+
+    # Pre-fetch the release archives on the host so the build only downloads
+    # what actually changed. Never fatal: whatever is missing from the cache,
+    # build_odoo.py fetches itself, exactly as it did before the cache existed.
+    cache_script = join(home_path, "odoo_build_cache.py")
+    if isfile(cache_script):
+        _, _, info, warn, err = run_step(
+            "cache release archives", f"python3 {cache_script} sync {path}", env=proxy_env)
+        total_info += info
+        total_warnings += warn
+        total_errors += err
+    else:
+        logger.debug("odoo_build_cache.py not present - build downloads every archive")
+
+
     # Stop and remove the container plus its image
     for step_label, step_command in (
             (f"stop {container_name}", f"docker stop {container_name}"),
@@ -1334,19 +1353,22 @@ def process_container(container, proxy_settings=None, dockerfiles_source=None):
                 logger.warning("Failed to run cleanup_odoo.py script")
                 total_warnings += 1
     
-    # Clean up old filestore backups
-    backup_path = f"{path}{db_name}.bak"
+    # Clean up old filestore backups. Both live under filestore-backup/ so a
+    # single .dockerignore entry keeps them out of the build context.
+    filestore_root = join(path, "filestore-backup")
+    current_filestore = join(filestore_root, db_name)
+    backup_path = join(filestore_root, f"{db_name}.bak")
     if isdir(backup_path):
         _, _, info, warn, err = run_step(
             "remove old filestore backup", f"rm -rf {backup_path}")
         total_info += info
         total_warnings += warn
         total_errors += err
-    
-    if isdir(join(path, db_name)):
-        logger.info(f"Moving current filestore to backup: {path}{db_name} -> {backup_path}")
+
+    if isdir(current_filestore):
+        logger.info(f"Moving current filestore to backup: {current_filestore} -> {backup_path}")
         _, _, info, warn, err = run_step(
-            "move filestore to backup", f"mv {path}{db_name} {backup_path}")
+            "move filestore to backup", f"mv {current_filestore} {backup_path}")
         total_info += info
         total_warnings += warn
         total_errors += err
