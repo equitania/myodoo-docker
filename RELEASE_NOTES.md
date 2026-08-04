@@ -1,5 +1,14 @@
 # Release Notes
 
+## Quiet Runs and a Closing Problem Block (04.08.2026)
+
+### Fixed
+- **scripts/update_docker_odoo.py v5.6.0**: there was effectively no non-verbose mode left. `docker build` was the one long-running step invoked without `filter_output`, so a plain `doup` streamed every line of a ten-to-twenty-minute build — several hundred `Downloaded: …` lines per container — while the Odoo update runs next to it already honoured the setting. It now filters like the rest: without `-v` only warnings and errors appear, with `-v` the full stream as before.
+- update_docker_odoo.py: a filtered long-running step keeps its spinner. Previously the first emitted line stopped it for good, on the reasoning that "once output flows, the output is the progress indicator" — true for an unfiltered stream, but with filtering a single warning would leave the remaining twenty minutes of a build without any sign of life. Both writers hold the same lock, so the frame is cleared before a line is written and redrawn afterwards.
+
+### Added
+- **update_docker_odoo.py: closing `warnings & errors` block.** Warnings were counted but never collected, and errors only got a short recap when a command failed. So the only way to find out whether a run across a dozen containers had problems was scrolling back through the whole log — and the filtered output above makes that worse, not better, because the interesting lines sit between the step lines of every other container. Every warning and error is now listed once at the end, grouped by container and step, errors first within each group. Repeats of the same message are collapsed with a count (`(3x)`) — the key ignores the leading timestamp columns, otherwise the same warning would count as new on every repetition. Capped at 40 entries with a pointer to `-v` for the rest. Printed before the summary, so its counts refer to the block right above them.
+
 ## Build Cache for Release Archives (04.08.2026)
 
 ### Added

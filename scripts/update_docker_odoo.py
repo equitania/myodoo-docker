@@ -1,7 +1,7 @@
 #!/usr/bin/python3
 # -*- coding: utf-8 -*-
 # This script performs an update of an Odoo database in a Docker container
-# Version 5.5.0
+# Version 5.6.0
 # Date 04.08.2026
 ##############################################################################
 #
@@ -81,10 +81,38 @@ SECTION_WIDTH = 64
 # How many errors are repeated as a recap when a command fails
 ERROR_RECAP_LIMIT = 10
 
+# Every warning and error of the whole run, collected so the closing block can
+# list them in one place. Without it the only way to find out whether a run of
+# a dozen containers had problems is scrolling back through twenty minutes of
+# build output — and with filtered output the lines are printed live but still
+# sit between the step lines of every other container.
+RUN_ISSUES = []                      # list of (context, level, text)
+
+# Named so a collected line can say where it came from. Set by print_section
+# (container) and run_step/run_stream (the individual step).
+CURRENT_SECTION = ""
+CURRENT_STEP = ""
+
+# Cap for the closing block: a broken module update can emit hundreds of
+# identical warnings, and a recap that scrolls is no better than no recap.
+ISSUE_RECAP_LIMIT = 40
+
+# Leading "HH:MM:SS <pid> LEVEL " columns of an already formatted line, stripped
+# before comparing two messages for the recap — otherwise the same warning
+# counts as new on every repetition purely because of its timestamp.
+ISSUE_KEY_RE = re.compile(r'^\d{2}:\d{2}:\d{2}\s+\d+\s+\S+\s+|^\S+\s+')
+
+
 # Minimum number of lines that must have scrolled past the last error before
 # repeating it is worth anything - otherwise the recap sits directly below the
 # line it repeats
 ERROR_RECAP_DISTANCE = 20
+
+
+def note_issue(level, text):
+    """Record a warning or error for the closing block."""
+    context = " · ".join(part for part in (CURRENT_SECTION, CURRENT_STEP) if part)
+    RUN_ISSUES.append((context, level, text))
 
 # Odoo log line: "2026-08-03 17:25:26,102 12 WARNING ? odoo.tools.config: ..."
 ODOO_LOG_RE = re.compile(
@@ -174,6 +202,8 @@ def print_section(title, rune='─'):
         rune: Line character - the closing summary uses a different one so it
               is distinguishable from a container section at a glance
     """
+    global CURRENT_SECTION
+    CURRENT_SECTION = title
     prefix = f"{rune * 2} {title} "
     padding = max(3, SECTION_WIDTH - len(prefix))
     print(f"\n{CR}{prefix}{rune * padding}")
@@ -185,6 +215,64 @@ def print_step(label, status, duration=None):
     dots = '.' * max(3, STEP_WIDTH - len(label))
     suffix = f" ({format_duration(duration)})" if duration is not None else ""
     print(f"{CR}  {label} {dots} {status}{suffix}")
+    sys.stdout.flush()
+
+
+def print_issue_recap():
+    """List every warning and error of the run in one closing block.
+
+    Runs regardless of -v: without it, finding out whether a run had problems
+    means scrolling back through the whole log. Identical lines from the same
+    step are collapsed with a count — a single broken module update can emit
+    the same warning hundreds of times, and a recap that scrolls is no better
+    than none.
+    """
+    if not RUN_ISSUES:
+        return
+
+    # Collapse repeats of the same message. The key drops the leading
+    # timestamp/pid/level columns: the same warning emitted a hundred times
+    # differs only in its timestamp, and keeping them apart would defeat the
+    # whole point of the block. The first occurrence is what gets shown, so
+    # its timestamp still says when the problem started.
+    collapsed = {}                       # key -> [context, level, text, count]
+    for context, level, text in RUN_ISSUES:
+        key = (context, level, ISSUE_KEY_RE.sub('', text))
+        if key in collapsed:
+            collapsed[key][3] += 1
+        else:
+            collapsed[key] = [context, level, text, 1]
+
+    errors = [entry for entry in collapsed.values() if entry[1] == 'ERROR']
+    warnings = [entry for entry in collapsed.values() if entry[1] == 'WARNING']
+
+    total_errors = sum(entry[3] for entry in errors)
+    total_warnings = sum(entry[3] for entry in warnings)
+    print_section(f"warnings & errors: {total_errors} error(s), "
+                  f"{total_warnings} warning(s)", rune='═')
+
+    # One heading per step, errors before warnings within it. Listing all
+    # errors first instead would repeat the heading for every step that has
+    # both.
+    context_order = {}
+    for entry in collapsed.values():
+        context_order.setdefault(entry[0], len(context_order))
+    entries = sorted(collapsed.values(),
+                     key=lambda e: (context_order[e[0]], e[1] != 'ERROR'))
+
+    shown = 0
+    last_context = None
+    for context, level, text, count in entries:
+        if shown >= ISSUE_RECAP_LIMIT:
+            remaining = len(entries) - shown
+            print(f"{CR}  ... and {remaining} more (run with -v for the full log)")
+            break
+        if context != last_context:
+            print(f"{CR}  {context or 'run'}:")
+            last_context = context
+        suffix = f"  ({count}x)" if count > 1 else ""
+        print(f"{CR}    {LEVEL_ALIASES.get(level, level):<5} {text}{suffix}")
+        shown += 1
     sys.stdout.flush()
 
 
@@ -496,7 +584,15 @@ def run_command(command, show_output=True, filter_output=False, show_progress=Fa
             """
             nonlocal emitted_lines, spinner_running, stop_progress
             with progress_lock:
-                if spinner_running:
+                if spinner_running and filter_output:
+                    # Filtered output produces a line only for a warning or an
+                    # error, so here the output is NOT a progress indicator —
+                    # a single warning must not leave the remaining twenty
+                    # minutes of a build without any sign of life. Clear the
+                    # spinner frame and let it keep drawing afterwards; both
+                    # writers hold this lock, so they cannot interleave.
+                    sys.stdout.write("\r\033[K")
+                elif spinner_running:
                     # Once the child produces output, that output *is* the
                     # progress indicator. Running both means every emitted
                     # line races a half-drawn spinner frame for the cursor.
@@ -561,8 +657,10 @@ def run_command(command, show_output=True, filter_output=False, show_progress=Fa
                 if level == 'ERROR':
                     errors_count += 1
                     all_errors.append(display)
+                    note_issue(level, display)
                 elif level == 'WARNING':
                     warnings_count += 1
+                    note_issue(level, display)
                 else:
                     info_count += 1
                     # INFO is noise unless the caller asked to see it
@@ -653,10 +751,15 @@ def run_step(label, command, **kwargs):
     Returns:
         tuple: Same as run_command (success, output, info, warnings, errors)
     """
+    global CURRENT_STEP
     started = time.time()
     kwargs.setdefault('show_output', False)
     kwargs.setdefault('filter_output', True)
-    result = run_command(command, **kwargs)
+    CURRENT_STEP = label
+    try:
+        result = run_command(command, **kwargs)
+    finally:
+        CURRENT_STEP = ""
     print_step(label, "ok" if result[0] else "FAILED", time.time() - started)
     return result
 
@@ -670,10 +773,15 @@ def run_stream(label, command, **kwargs):
     Returns:
         tuple: Same as run_command (success, output, info, warnings, errors)
     """
+    global CURRENT_STEP
     started = time.time()
     print(f"{CR}  {label}")
     sys.stdout.flush()
-    result = run_command(command, **kwargs)
+    CURRENT_STEP = label
+    try:
+        result = run_command(command, **kwargs)
+    finally:
+        CURRENT_STEP = ""
     print_step(label, "ok" if result[0] else "FAILED", time.time() - started)
     return result
 
@@ -1191,12 +1299,19 @@ def process_container(container, proxy_settings=None, dockerfiles_source=None):
         return False, total_info, total_warnings, total_errors
         
     # Build new image - a full build downloads every module and can easily
-    # take 10-20 minutes, so its output is streamed rather than summarised
+    # take 10-20 minutes. Under -v every line is streamed; without it only
+    # warnings and errors appear and a spinner shows the build is alive — this
+    # was the one long-running step that ignored the verbosity setting, so a
+    # plain 'doup' drowned in several hundred 'Downloaded: ...' lines.
+    should_filter = logger.level > logging.INFO
     proxy_build_args = build_proxy_build_args(proxy_settings)
     success, _, info, warn, err = run_stream(
         f"build image {image}",
         f"docker build {proxy_build_args}-t {image} .",
-        timeout=3600, env=proxy_env)
+        timeout=3600, env=proxy_env,
+        filter_output=should_filter,
+        show_progress=should_filter,
+        progress_msg="  building image")
     total_info += info
     total_warnings += warn
     total_errors += err
@@ -1509,6 +1624,10 @@ def main():
             failure_count += 1
             total_error_count += 1
     
+    # Every warning and error of the run, collected in one place. Printed
+    # before the summary so its counts refer to the block right above them.
+    print_issue_recap()
+
     # Closing summary - same step schema as the container sections, marked
     # with a different rune so it stands out from them
     execution_time = time.time() - start_time
