@@ -1,7 +1,7 @@
 #!/usr/bin/python3
 # -*- coding: utf-8 -*-
 # This script performs an update of an Odoo database in a Docker container
-# Version 5.7.0
+# Version 5.8.0
 # Date 04.08.2026
 ##############################################################################
 #
@@ -75,7 +75,7 @@ logger = logging.getLogger(__name__)
 # Kept in sync with the header comment above. Printed at the start of every run
 # so a pasted log says which version produced it — the single most common
 # question when a report comes back from a server.
-SCRIPT_VERSION = "5.7.0"
+SCRIPT_VERSION = "5.8.0"
 SCRIPT_DATE = "04.08.2026"
 
 # Column at which the dots of a compact step line end
@@ -1273,10 +1273,24 @@ def process_container(container, proxy_settings=None, dockerfiles_source=None):
     # Pre-fetch the release archives on the host so the build only downloads
     # what actually changed. Never fatal: whatever is missing from the cache,
     # build_odoo.py fetches itself, exactly as it did before the cache existed.
+    #
+    # The same step brings the build folder's Dockerfile up to date against the
+    # repository copy. sync_build_scripts() above deliberately never overwrites
+    # that file - it is the customer's, and may carry its own COPY and RUN
+    # steps - so image directives added to the repository later (HEALTHCHECK)
+    # would otherwise never reach an existing installation. Only entirely
+    # absent directives are inserted; anything else is reported.
     cache_script = join(home_path, "odoo_build_cache.py")
     if isfile(cache_script):
+        reference_arg = ""
+        if version:
+            reference = join(dockerfiles_source or DEFAULT_DOCKERFILES_SOURCE,
+                             f"v{version}-odoo", "Dockerfile")
+            if isfile(reference):
+                reference_arg = f' --reference "{reference}"'
         _, _, info, warn, err = run_step(
-            "cache release archives", f"python3 {cache_script} sync {path}", env=proxy_env)
+            "cache release archives",
+            f'python3 {cache_script} sync "{path}"{reference_arg}', env=proxy_env)
         total_info += info
         total_warnings += warn
         total_errors += err

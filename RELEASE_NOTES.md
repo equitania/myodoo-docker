@@ -1,5 +1,14 @@
 # Release Notes
 
+## The Dockerfile Update Reaches Existing Installations (04.08.2026)
+
+### Fixed
+- **A build folder's Dockerfile never received anything added to the repository since it was created.** `sync_build_scripts()` distributes `build_odoo.py`, `check_dockerimage_odoo.py` and `bin/`, but deliberately not the Dockerfile — that file is the customer's and may carry its own `COPY` and `RUN` steps. The consequence went unnoticed: the `HEALTHCHECK` added to all three repository Dockerfiles in March 2026 is present on no installation commissioned before that date, and no amount of `ups`/`doup` would ever have changed that. The same holds for the July 2026 `ADD` → `COPY` hardening of `bin/`.
+  `odoo_build_cache.py sync` now takes `--reference <repository Dockerfile>` and fills in the image directives that are entirely absent — `VOLUME`, `HEALTHCHECK`, `EXPOSE`, inserted ahead of the `ENTRYPOINT` where the reference keeps them, with their explaining comment. These describe the finished image and change no other instruction's behaviour, which is exactly why they are safe to insert. `update_docker_odoo.py` v5.8.0 passes the reference for the container's Odoo version.
+- **Everything else is reported, never applied.** An instruction that differs rather than being absent — the customer's `ADD bin /app/bin/` against the repository's `COPY bin /app/bin/`, an extra `RUN` — is printed as a warning naming the exact line and left alone, so it lands in the closing `warnings & errors` block of `doup` for a human to decide on. A step the customer *extended* (`RUN cd /opt/odoo/ && python3 build_odoo.py && pip3 install …`) is not reported: warning about that would train everyone to skip these lines, which is how the one that matters gets missed.
+- **The guards from v1.1.1 still hold.** `_dockerfile_regression()` now knows which additions were intended and refuses the write when anything else changed; a `.bak_<timestamp>` copy is still taken first; the `FROM` line stays untouched, since `check_dockerimage_odoo.py` owns it. Running the repository Dockerfile against itself is a no-op, and a second run changes nothing — verified for v16, v18 and v19.
+- The Dockerfile step no longer depends on the cache: it runs before the `release.file` check, so a build folder without one is still brought up to date. `ensure_dockerfile_mount()` remains as a thin wrapper for callers that have no reference.
+
 ## Archives Bind-Mounted Instead of Copied (04.08.2026)
 
 ### Added

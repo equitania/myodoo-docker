@@ -373,6 +373,164 @@ EXPOSE 8069
             self.assertIn(instruction, after)
 
 
+class DockerfileReferenceTest(unittest.TestCase):
+    """update_docker_odoo.py never overwrites a build folder's Dockerfile — it
+    is the customer's file. So a directive added to the repository afterwards,
+    HEALTHCHECK being the case that prompted this, has to be filled in here or
+    it never arrives on an existing installation."""
+
+    REFERENCE = """FROM registry.invalid/prepare:9.9
+LABEL maintainer=info@ownerp.com
+
+USER odoo
+COPY build_odoo.py /opt/odoo/
+RUN cd /opt/odoo/ && \\
+    python3 build_odoo.py
+
+USER 0
+WORKDIR /app
+VOLUME ["/opt/odoo/var", "/opt/odoo/data"]
+# Healthcheck: Verify Odoo responds on /web/health
+HEALTHCHECK --interval=60s --timeout=10s --start-period=60s --retries=3 \\
+    CMD wget -q --spider http://localhost:8069/web/health || exit 1
+
+ENTRYPOINT ["/app/bin/boot"]
+CMD ["help"]
+
+EXPOSE 8069 8072
+COPY bin /app/bin/
+"""
+
+    # An installation from before HEALTHCHECK existed, with the customer's own
+    # additions: a second COPY, an extra command in the build RUN, and ADD
+    # where the repository has since moved to COPY.
+    LEGACY_INSTALL = """FROM registry.invalid/prepare:1.0
+LABEL maintainer=info@ownerp.com
+
+USER odoo
+COPY build_odoo.py /opt/odoo/
+COPY xy_custom_modules.zip /opt/odoo/
+# customer: extra package for our reports
+RUN cd /opt/odoo/ && python3 build_odoo.py && pip3 install --no-cache-dir openpyxl
+
+USER 0
+WORKDIR /app
+VOLUME ["/opt/odoo/var", "/opt/odoo/data"]
+
+ENTRYPOINT ["/app/bin/boot"]
+CMD ["help"]
+
+EXPOSE 8069 8072
+ADD bin /app/bin/
+"""
+
+    def setUp(self):
+        self.tmp = tempfile.mkdtemp()
+        self.reference = write(os.path.join(self.tmp, "reference"), self.REFERENCE)
+        self.path = write(os.path.join(self.tmp, "Dockerfile"), self.LEGACY_INSTALL)
+
+    def _content(self):
+        return open(self.path, encoding="utf8").read()
+
+    def test_missing_healthcheck_is_added(self):
+        self.assertTrue(obc.ensure_dockerfile_current(self.path, self.reference))
+        content = self._content()
+        self.assertIn("HEALTHCHECK --interval=60s", content)
+        self.assertIn("wget -q --spider http://localhost:8069/web/health", content)
+
+    def test_healthcheck_lands_before_the_entrypoint(self):
+        obc.ensure_dockerfile_current(self.path, self.reference)
+        lines = self._content().splitlines()
+        health = next(i for i, l in enumerate(lines) if l.startswith("HEALTHCHECK"))
+        entry = next(i for i, l in enumerate(lines) if l.startswith("ENTRYPOINT"))
+        self.assertLess(health, entry)
+
+    def test_the_explaining_comment_comes_along(self):
+        obc.ensure_dockerfile_current(self.path, self.reference)
+        self.assertIn("# Healthcheck: Verify Odoo responds on /web/health", self._content())
+
+    def test_customer_additions_survive(self):
+        obc.ensure_dockerfile_current(self.path, self.reference)
+        content = self._content()
+        self.assertIn("COPY xy_custom_modules.zip /opt/odoo/", content)
+        self.assertIn("pip3 install --no-cache-dir openpyxl", content)
+        self.assertIn("# customer: extra package for our reports", content)
+
+    def test_base_image_is_left_alone(self):
+        """check_dockerimage_odoo.py owns the FROM line; this must not race it."""
+        obc.ensure_dockerfile_current(self.path, self.reference)
+        self.assertTrue(self._content().startswith("FROM registry.invalid/prepare:1.0"))
+
+    def test_a_present_directive_is_not_duplicated(self):
+        obc.ensure_dockerfile_current(self.path, self.reference)
+        content = self._content()
+        self.assertEqual(content.count("VOLUME "), 1)
+        self.assertEqual(content.count("EXPOSE "), 1)
+
+    def test_is_idempotent(self):
+        obc.ensure_dockerfile_current(self.path, self.reference)
+        first = self._content()
+        self.assertFalse(obc.ensure_dockerfile_current(self.path, self.reference))
+        self.assertEqual(self._content(), first)
+
+    def test_reference_against_itself_changes_nothing(self):
+        path = write(os.path.join(self.tmp, "Same"), self.REFERENCE)
+        obc.ensure_dockerfile_current(path, self.reference)   # only the mount
+        self.assertFalse(obc.ensure_dockerfile_current(path, self.reference))
+
+    def test_a_run_the_customer_extended_is_not_reported_missing(self):
+        """Their build RUN carries an extra pip3 install. Reporting that as a
+        missing instruction would teach everyone to ignore these warnings."""
+        lines = self.LEGACY_INSTALL.splitlines()
+        _added, missing = obc._apply_reference(lines, self.REFERENCE.splitlines())
+        self.assertFalse([m for m in missing if "build_odoo.py" in m])
+
+    def test_an_instruction_that_really_differs_is_reported(self):
+        """ADD was replaced by COPY for bin/ in July 2026 (tar auto-extraction).
+        That cannot be patched in safely, so it has to be said out loud."""
+        lines = self.LEGACY_INSTALL.splitlines()
+        _added, missing = obc._apply_reference(lines, self.REFERENCE.splitlines())
+        self.assertIn("COPY bin /app/bin/", missing)
+
+    def test_nothing_is_reported_for_a_matching_file(self):
+        lines = self.REFERENCE.splitlines()
+        _added, missing = obc._apply_reference(lines, self.REFERENCE.splitlines())
+        self.assertEqual(missing, [])
+
+    def test_a_file_that_only_lacks_the_healthcheck_is_still_patched(self):
+        """The common case on a server updated last week: the mount is already
+        in place, so the mount patch has nothing to do — the directive still
+        has to be inserted."""
+        obc.ensure_dockerfile_current(self.path)              # mount only
+        self.assertIn(obc.MOUNT_FLAG, self._content())
+        self.assertNotIn("HEALTHCHECK", self._content())
+        self.assertTrue(obc.ensure_dockerfile_current(self.path, self.reference))
+        self.assertIn("HEALTHCHECK --interval=60s", self._content())
+
+    def test_no_reference_leaves_the_old_behaviour(self):
+        self.assertTrue(obc.ensure_dockerfile_current(self.path))
+        self.assertNotIn("HEALTHCHECK", self._content())
+        self.assertIn(obc.MOUNT_FLAG, self._content())
+
+    def test_an_unreadable_reference_is_not_fatal(self):
+        missing_ref = os.path.join(self.tmp, "does-not-exist")
+        self.assertTrue(obc.ensure_dockerfile_current(self.path, missing_ref))
+        self.assertIn(obc.MOUNT_FLAG, self._content())
+
+    def test_the_repository_dockerfiles_are_already_complete(self):
+        """Guards the reference itself: if a repository Dockerfile were missing
+        one of these directives, every server would silently inherit the gap."""
+        root = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
+                            "Dockerfiles")
+        for version in ("16", "18", "19"):
+            path = os.path.join(root, f"v{version}-odoo", "Dockerfile")
+            if not os.path.isfile(path):
+                continue
+            content = open(path, encoding="utf8").read()
+            for keyword in obc.ADDITIVE_KEYWORDS:
+                self.assertIn(keyword, content, f"v{version} lacks {keyword}")
+
+
 class DockerfileGuardTest(unittest.TestCase):
     """_dockerfile_regression is the last line of defence: it compares the
     instructions before and after and refuses anything but the intended change."""

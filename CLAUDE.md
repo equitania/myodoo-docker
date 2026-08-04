@@ -274,18 +274,29 @@ myodoo-docker/
   - Automated restart management
   - Module updates for Odoo
 
-#### 4. odoo_build_cache.py (v1.0.0)
+#### 4. odoo_build_cache.py (v1.3.0)
 - **Purpose**: Host-side cache of Odoo release archives, shared by every instance
 - **Why**: `build_odoo.py` runs inside the build container and re-downloads all
   several hundred archives on every build; the Docker layer holding them is
   removed by the `docker system prune -f` after each `doup`
 - **Cache key is the file name** — release archives carry their version, so a
   name that is present is by definition the right content (no revalidation)
-- **Commands**: `sync <build-dir>` (called by update_docker_odoo.py before the
-  build), `gc [--days 30]` (weekly via cron), `stats`
+- **Commands**: `sync <build-dir> [--reference <repo Dockerfile>]` (called by
+  update_docker_odoo.py before the build), `gc [--days 30]` (weekly via cron),
+  `stats`
 - **Location**: `/opt/odoo-build-cache`, partitioned by release URL
 - **Never blocks a build**: anything the cache did not supply is downloaded by
   `build_odoo.py` exactly as before
+- **Also maintains the build folder's Dockerfile**, because nothing else does:
+  `sync_build_scripts()` distributes `build_odoo.py` and `bin/` but never the
+  Dockerfile — it is the customer's file. Without this, a directive added to the
+  repository later (the March 2026 `HEALTHCHECK`) never reaches an installation
+  created before it. With `--reference` it inserts image directives that are
+  **entirely absent** (`VOLUME`, `HEALTHCHECK`, `EXPOSE`) ahead of the
+  `ENTRYPOINT`, and only reports anything else that differs. It never rewrites a
+  line's content, never touches `FROM` (owned by `check_dockerimage_odoo.py`),
+  takes a `.bak_<timestamp>` first, and refuses the write when the
+  before/after instruction comparison shows an unintended change
 
 ### Development Patterns
 
