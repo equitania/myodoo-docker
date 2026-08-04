@@ -1,7 +1,7 @@
 #!/usr/bin/python3
 # -*- coding: utf-8 -*-
 # This script performs an update of an Odoo database in a Docker container
-# Version 5.6.0
+# Version 5.6.1
 # Date 04.08.2026
 ##############################################################################
 #
@@ -545,7 +545,7 @@ def run_command(command, show_output=True, filter_output=False, show_progress=Fa
     try:
         # Debug only - under -v this echoed the command in front of every
         # step, right above the step line that already names it
-        if logger.level <= logging.DEBUG:
+        if logger.getEffectiveLevel() <= logging.DEBUG:
             logger.debug(f"Running command: {command}")
 
         # Set up process with pipes
@@ -664,7 +664,7 @@ def run_command(command, show_output=True, filter_output=False, show_progress=Fa
                 else:
                     info_count += 1
                     # INFO is noise unless the caller asked to see it
-                    if filter_output or not (show_output or logger.level <= logging.INFO):
+                    if filter_output or not (show_output or logger.getEffectiveLevel() <= logging.INFO):
                         continue
 
                 # Errors and warnings always appear - exactly once, here
@@ -1303,7 +1303,7 @@ def process_container(container, proxy_settings=None, dockerfiles_source=None):
     # warnings and errors appear and a spinner shows the build is alive — this
     # was the one long-running step that ignored the verbosity setting, so a
     # plain 'doup' drowned in several hundred 'Downloaded: ...' lines.
-    should_filter = logger.level > logging.INFO
+    should_filter = logger.getEffectiveLevel() > logging.INFO
     proxy_build_args = build_proxy_build_args(proxy_settings)
     success, _, info, warn, err = run_stream(
         f"build image {image}",
@@ -1337,11 +1337,11 @@ def process_container(container, proxy_settings=None, dockerfiles_source=None):
         update_command = f"docker run --rm {env_forward}-p {port}:8069 -p {poll_port}:8072 --name={container_name} {volume} {image} update --database={db_name} {db_auth_args}{load_translation}"
 
         # Debug only - the command line can contain database credentials
-        if logger.level <= logging.DEBUG:
+        if logger.getEffectiveLevel() <= logging.DEBUG:
             logger.info(f"Update command: {update_command}")
 
         # Without -v only warnings and errors are streamed, with -v every line
-        should_filter = logger.level > logging.INFO
+        should_filter = logger.getEffectiveLevel() > logging.INFO
         success, _, info, warn, err = run_stream(
             "update odoo",
             update_command,
@@ -1366,11 +1366,11 @@ def process_container(container, proxy_settings=None, dockerfiles_source=None):
         neutralize_command = f"docker run --rm {env_forward}-p {port}:8069 -p {poll_port}:8072 --name={container_name} {volume} {image} neutralize --database={db_name} {db_auth_args}"
 
         # Debug only - the command line can contain database credentials
-        if logger.level <= logging.DEBUG:
+        if logger.getEffectiveLevel() <= logging.DEBUG:
             logger.info(f"Neutralize command: {neutralize_command}")
 
         # Without -v only warnings and errors are streamed, with -v every line
-        should_filter = logger.level > logging.INFO
+        should_filter = logger.getEffectiveLevel() > logging.INFO
         success, _, info, warn, err = run_stream(
             "neutralize odoo",
             neutralize_command,
@@ -1393,11 +1393,11 @@ def process_container(container, proxy_settings=None, dockerfiles_source=None):
         update_command = f"docker run --rm {env_forward}-p {port}:8069 -p {poll_port}:8072 --name={container_name} {volume} {image} update --database={db_name} {db_auth_args}{load_translation}"
 
         # Debug only - the command line can contain database credentials
-        if logger.level <= logging.DEBUG:
+        if logger.getEffectiveLevel() <= logging.DEBUG:
             logger.info(f"Update command: {update_command}")
 
         # Without -v only warnings and errors are streamed, with -v every line
-        should_filter = logger.level > logging.INFO
+        should_filter = logger.getEffectiveLevel() > logging.INFO
         success, _, info, warn, err = run_stream(
             "update odoo",
             update_command,
@@ -1518,7 +1518,7 @@ def main():
         logger.setLevel(logging.INFO)
         logger.info("Verbose output enabled")
     
-    if logger.level <= logging.INFO:
+    if logger.getEffectiveLevel() <= logging.INFO:
         logger.info("Starting Odoo Docker container update process")
     
     # Check if PyYAML is installed
@@ -1668,7 +1668,7 @@ def main():
 if __name__ == "__main__":
     try:
         exit_code = main()
-        if logger.level <= logging.INFO:
+        if logger.getEffectiveLevel() <= logging.INFO:
             logger.info("Script execution completed. Exiting now.")
         sys.exit(exit_code)
     except KeyboardInterrupt:

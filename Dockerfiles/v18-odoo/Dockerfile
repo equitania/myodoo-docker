@@ -24,7 +24,11 @@ COPY odoo.conf /opt/odoo/etc/
 # Archives pre-fetched by odoo_build_cache.py on the host. The folder is created
 # by 'odoo_build_cache.py sync' even when empty, because COPY fails on a missing
 # source. build_odoo.py downloads whatever is not in here.
-COPY zips/ /opt/odoo/zips/
+#
+# --chown is required: COPY writes as root even after USER odoo, and build_odoo.py
+# runs as odoo. Without it the cleanup 'rm -rf zips' fails with Permission denied
+# (the directory itself is root-owned) and every archive stays in the image.
+COPY --chown=odoo:odoo zips/ /opt/odoo/zips/
 
 RUN cd /opt/odoo/ && \
     python3 build_odoo.py
