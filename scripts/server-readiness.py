@@ -4,7 +4,7 @@
 # Title:            server-readiness.py
 # Description:      Report whether this server matches the state myodoo-docker
 #                   expects, and name the exact command that closes each gap.
-# Version:          1.1.0
+# Version:          1.1.1
 # Date:             04.08.2026
 # Author:           Equitania Software GmbH
 # ==============================================================================
@@ -62,7 +62,7 @@ from dataclasses import dataclass
 from enum import Enum
 from typing import Callable, List, Optional, Tuple
 
-SCRIPT_VERSION = "1.1.0"
+SCRIPT_VERSION = "1.1.1"
 SCRIPT_DATE = "04.08.2026"
 
 # Installed locations managed by setup-maintenance-cron.sh.
@@ -98,7 +98,9 @@ MANAGED_JOBS = (
 )
 
 BACKUP_LOG = "var/log/container2backup.log"
-DEFAULT_BACKUP_FOLDER = "/home/backup/"
+# Must mirror container2backup.py: it reads defaults.backup_path and falls back
+# to /opt/backups. Any other key/default here checks a config nothing ever reads.
+DEFAULT_BACKUP_PATH = "/opt/backups"
 
 # Thresholds. Kept here so they are adjustable without hunting through checks.
 LOG_WARN_BYTES = 100 * 1024 ** 2
@@ -478,25 +480,28 @@ def check_backup_config(ctx: HealthContext) -> Finding:
             "edbk   # create or repair the backup configuration",
         )
 
-    instances = config.get("odoo_instances") or []
-    if not instances:
+    # The key is `databases` — that is what container2backup.py iterates over.
+    databases = config.get("databases") or []
+    if not databases:
         return Finding(
             "backup_config", Severity.WARN, "Backup config",
-            "no odoo_instances defined — the backup would do nothing",
+            "no databases defined — the backup would do nothing",
             "edbk",
         )
     return _ok("backup_config", "Backup config",
-               f"{len(instances)} instance(s) configured")
+               f"{len(databases)} database(s) configured")
 
 
 def check_backup_disk_space(ctx: HealthContext) -> Finding:
     config, error = _load_backup_config(ctx)
-    folder = DEFAULT_BACKUP_FOLDER
+    folder = DEFAULT_BACKUP_PATH
     source = "default"
     if config:
-        configured = (config.get("defaults") or {}).get("backup_folder")
+        configured = (config.get("defaults") or {}).get("backup_path")
         if configured:
-            folder, source = configured, "container2backup.yaml"
+            # container2backup.py expands both, and the shipped config uses $HOME.
+            folder = os.path.expandvars(os.path.expanduser(str(configured)))
+            source = "container2backup.yaml"
 
     target = ctx.p(folder)
     try:

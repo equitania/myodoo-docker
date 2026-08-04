@@ -111,26 +111,40 @@ python3 ~/container2backup.py --odoo mycontainer # Specific container only
 ```
 
 **Backup Configuration (container2backup.yaml)**:
+
+The authoritative, commented template is `scripts/container2backup.yaml` — read that
+file before writing anything that parses this config. The keys below are the ones
+`container2backup.py` actually reads; there is no `odoo_instances`, no `backup_folder`
+and no `db_pass` (encryption credentials come from a `.env` file, not from the YAML).
+
 ```yaml
 defaults:
   retention_days: 14
-  backup_folder: "/home/backup/"
-  db_user: "ownerp"
-  db_pass: "ownerp2025"
+  db_user: ownerp
+  backup_path: /opt/backups     # base path; DB archives land in <backup_path>/docker
+  temp_path: /tmp/odoo_backup
+  stream: false                 # true: pipe straight into one .tar.zst (large filestores)
   compression:
-    format: "7z"      # Options: 7z, zip, gzip, zstd
-    level: 5          # Compression level (0-9 for 7z/zip)
-    encrypt: false    # AES-256 encryption (7z only)
+    format: "7z"                # Options: 7z, zip, gzip, zstd
+    level: 5                    # Compression level (0-9 for 7z/zip)
 
-odoo_instances:
-  - name: "live"
-    db_container: "live-db"
-    odoo_container: "live-odoo"
-    databases: ["production_db"]
-    filestore_paths:
-      - "/opt/odoo/.local/share/Odoo/filestore/"
-    additional_paths:
-      - "/opt/odoo/custom_addons/"
+services:                       # system-wide backups, independent of databases
+  nginx:
+    enabled: true
+    source_path: /etc/nginx
+    backup_path: nginx          # subdirectory under defaults.backup_path
+    retention_days: 7
+
+databases:                      # NOT `odoo_instances`
+  - name: equitania             # database name
+    sql_container: equitania-db
+    data_container: equitania-odoo
+    retention_days: 5
+    only_sql_dump: false        # true: skip the filestore
+    stream: true                # overrides defaults.stream
+    fast_report:
+      enabled: false
+      path: /opt/fast-report/live
 ```
 
 ### Container Updates

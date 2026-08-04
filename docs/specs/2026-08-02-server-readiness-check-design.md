@@ -142,10 +142,10 @@ Alle Checks laufen mit root-Rechten (`ups.fish` ruft `getScripts.py` bereits per
 | 7 | `backup_recency` | mtime von `/var/log/container2backup.log` | > 26 h → **WARN** · > 7 d → **FAIL** · Datei fehlt → **WARN** |
 | 8 | `backup_config` | `~/container2backup.yaml` vorhanden und per `yaml.safe_load` lesbar | fehlt oder Parse-Fehler → **FAIL** · Fix: `edbk` |
 | 9 | `docker_storage_driver` | `docker info` Storage Driver | ungleich `overlay2` → **FAIL** (moby#52431, hohle Images) · Docker nicht installiert → **SKIP** |
-| 10 | `nginx_unit_dropin` | `/etc/systemd/system/nginx.service.d/*.conf` enthält `$MAINPID` und `Restart=on-failure` | fehlt → **WARN** (Reload-Falle, Ausfall im apt-Fenster) · nginx nicht installiert → **SKIP** · Fix: `/root/deploy-nginx-base.sh` |
-| 11 | `certbot_timer_window` | `systemctl show certbot.timer -p TimersCalendar` gegen das von `bootstrap.sh` gesetzte 03:00-Fenster | Default-Fenster (`00,12:00:00`) → **WARN** · Timer nicht vorhanden → **SKIP** · Fix: `systemctl edit certbot.timer` (Zielwert in der Detailzeile) |
+| 10 | `nginx_unit_dropin` | `/etc/systemd/system/nginx.service.d/*.conf` enthält `$MAINPID` und `Restart=on-failure` | fehlt → **WARN** (Reload-Falle, Ausfall im apt-Fenster) · nginx nicht installiert → **SKIP** · Fix: `printf`-Befehl für das jeweils fehlende Drop-in (ab v1.1.0; `bootstrap.sh` ≥ 1.10.0 schreibt beide) |
+| 11 | `certbot_timer_window` | `systemctl show certbot.timer -p TimersCalendar` gegen das von `bootstrap.sh` gesetzte 03:00-Fenster | Default-Fenster (`00,12:00:00`) → **WARN** · Timer nicht vorhanden → **SKIP** · Fix: `printf`-Befehl für `certbot.timer.d/10-offpeak.conf` (ab v1.1.0) |
 | 12 | `script_versions` | Header-Version jedes Skripts aus `copy_scripts()` in `/root` gegen `~/myodoo-docker/scripts/` | abweichend → **WARN** · Fix: `ups` |
-| 13 | `backup_disk_space` | Füllstand von `backup_folder` aus `container2backup.yaml` (Vorgabe `/home/backup/`) | > 85 % → **WARN** · > 95 % → **FAIL** |
+| 13 | `backup_disk_space` | Füllstand von `defaults.backup_path` aus `container2backup.yaml` (Vorgabe `/opt/backups`, wie in `container2backup.py`) | > 85 % → **WARN** · > 95 % → **FAIL** |
 
 Die Checks 9 bis 11 stammen aus real aufgetretenen Störungen (containerd-Store-Exportfehler,
 nginx-Reload-Falle beim PID-File, nginx-Ausfall während apt-Upgrades).
