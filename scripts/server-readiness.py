@@ -4,8 +4,8 @@
 # Title:            server-readiness.py
 # Description:      Report whether this server matches the state myodoo-docker
 #                   expects, and name the exact command that closes each gap.
-# Version:          1.0.0
-# Date:             02.08.2026
+# Version:          1.1.0
+# Date:             04.08.2026
 # Author:           Equitania Software GmbH
 # ==============================================================================
 # Why this exists:
@@ -62,8 +62,8 @@ from dataclasses import dataclass
 from enum import Enum
 from typing import Callable, List, Optional, Tuple
 
-SCRIPT_VERSION = "1.0.0"
-SCRIPT_DATE = "02.08.2026"
+SCRIPT_VERSION = "1.1.0"
+SCRIPT_DATE = "04.08.2026"
 
 # Installed locations managed by setup-maintenance-cron.sh.
 CRON_DEST = "etc/cron.d/myodoo-maintenance"
@@ -566,15 +566,33 @@ def check_nginx_unit_dropin(ctx: HealthContext) -> Finding:
     if has_mainpid and has_restart:
         return _ok("nginx_unit_dropin", "nginx unit", "reload + restart drop-in present")
 
+    # Name the commands that actually close the gap. deploy-nginx-base.sh only
+    # repairs an empty /run/nginx.pid at runtime; it writes no unit drop-in, and
+    # bootstrap.sh writes the Restart one but not the ExecReload one.
     lacking = []
+    fix_lines = ["mkdir -p /etc/systemd/system/nginx.service.d"]
     if not has_mainpid:
         lacking.append("$MAINPID reload (reloads fail silently after nginx -t)")
+        fix_lines.append(
+            "printf '[Service]\\nExecReload=\\n"
+            "ExecReload=/bin/kill -s HUP $MAINPID\\n' > "
+            "/etc/systemd/system/nginx.service.d/10-reload-mainpid.conf"
+        )
     if not has_restart:
         lacking.append("Restart=on-failure (stays down after an apt upgrade)")
+        fix_lines.append(
+            "printf '[Unit]\\nStartLimitIntervalSec=300\\nStartLimitBurst=5\\n\\n"
+            "[Service]\\nRestart=on-failure\\nRestartSec=10\\n' > "
+            "/etc/systemd/system/nginx.service.d/10-restart.conf"
+        )
+        fix_lines.append(
+            "(the Restart drop-in is also written by myodoo-docker/scripts/bootstrap.sh)"
+        )
+    fix_lines.append("systemctl daemon-reload")
     return Finding(
         "nginx_unit_dropin", Severity.WARN, "nginx unit",
         "drop-in incomplete: " + "; ".join(lacking),
-        "/root/deploy-nginx-base.sh",
+        "\n".join(fix_lines),
     )
 
 
@@ -597,8 +615,15 @@ def check_certbot_timer_window(ctx: HealthContext) -> Finding:
         "certbot_timer_window", Severity.WARN, "certbot timer",
         f"stock schedule ({calendar}) — renewal can collide with the apt window; "
         f"expected OnCalendar=*-*-* 03:00:00",
-        "systemctl edit certbot.timer   # OnCalendar=*-*-* 03:00:00 "
-        "(clear OnCalendar= first), then: systemctl restart certbot.timer",
+        "mkdir -p /etc/systemd/system/certbot.timer.d\n"
+        "printf '[Timer]\\nOnCalendar=\\nOnCalendar=*-*-* 03:00:00\\n"
+        "RandomizedDelaySec=1800\\n' > "
+        "/etc/systemd/system/certbot.timer.d/10-offpeak.conf\n"
+        "systemctl daemon-reload && systemctl restart certbot.timer\n"
+        "The empty 'OnCalendar=' line is mandatory: it clears the stock schedule.\n"
+        "Without it systemd ADDS 03:00 instead of replacing 00,12:00:00.\n"
+        "Alternative: re-run myodoo-docker/scripts/bootstrap.sh — it writes this "
+        "drop-in itself.",
     )
 
 
@@ -739,7 +764,14 @@ def print_report(findings: List[Finding], mode: str = "full", stream=None) -> No
         emit(f"  {color}{label}{colors['reset']} {finding.title.ljust(width)}  {finding.detail}")
         if finding.fix:
             # Align under the detail column: 2 indent + 6 label + 1 gap + title + 2 gap.
-            emit(f"{' ' * (11 + width)}{colors['dim']}Fix:{colors['reset']} {finding.fix}")
+            indent = " " * (11 + width)
+            fix_lines = finding.fix.split("\n")
+            emit(f"{indent}{colors['dim']}Fix:{colors['reset']} {fix_lines[0]}")
+            # Continuation lines line up under the first one (past the "Fix: " label).
+            # A fix that spells out a file's exact content must survive copy & paste
+            # verbatim — squeezing it into one line invites pasting the prose too.
+            for fix_line in fix_lines[1:]:
+                emit(f"{indent}     {fix_line}")
 
     emit("-" * 60)
     summary = (f"  {counts[Severity.OK]} OK · {counts[Severity.WARN]} WARN · "

@@ -1,5 +1,18 @@
 # Release Notes
 
+## Fix Hints You Can Actually Paste (04.08.2026)
+
+### Added
+- **scripts/bootstrap.sh v1.10.0**: `harden_nginx_service()` also writes `/etc/systemd/system/nginx.service.d/10-reload-mainpid.conf` (`ExecReload=/bin/kill -s HUP $MAINPID`). Until now no script installed it — it existed only as a manual command in the installation guide, so `server-readiness.py` reported `nginx unit` as WARN on every server indefinitely. The stock nginx.org unit reloads via `kill -s HUP $(cat /run/nginx.pid)`, and a preceding `nginx -t` truncates that pid file to zero bytes: the command degenerates to a bare `kill -s HUP`, the reload reports failure, and the old config silently stays live while the new one looks deployed. The empty `ExecReload=` reset line is mandatory — without it systemd appends to the original command instead of replacing it, and the broken `kill` still runs first. Applied to pre-existing installs too, like the other hardening steps.
+- bootstrap.sh: the version header said 1.8.0 while carrying the v1.9.0 changes (the bump was missed on 31.07.2026); it now reads 1.10.0.
+
+### Fixed
+- **scripts/deploy-nginx-base.sh v1.2.0**: the main `nginx.conf` deploy no longer drops host-specific `load_module` lines. On a server running njs, `nginx -t` failed straight after the deploy with `unknown directive "js_periodic"` — the versioned template carries no `load_module` line (it cannot: dynamic modules like njs, brotli or geoip2 are installed per host), so overwriting `/etc/nginx/nginx.conf` unloaded the module while the vhost using its directives stayed in place. The rollback worked as designed, which means the deploy was simply impossible to complete on that host. `build_main_conf()` now reads the `load_module` lines out of the existing config and prepends them to the template, deduplicated by `.so` path so a re-run does not stack them.
+- deploy-nginx-base.sh: a pre-flight `nginx -t` runs before the first write. A config that was already broken beforehand is now reported as such, and the post-deploy failure says so explicitly instead of pointing at an `nginx.conf` that was never the fault.
+- **scripts/server-readiness.py v1.1.0**: the `certbot timer` fix hint was pasted verbatim into a drop-in — parenthetical prose and all. It read `systemctl edit certbot.timer   # OnCalendar=*-*-* 03:00:00 (clear OnCalendar= first)`, which squeezes a four-line file, an editor session and a caveat into one comment; what landed in the drop-in was the literal line `OnCalendar=*-*-* 03:00:00 (clear OnCalendar= first)`, without the `[Timer]` header, which breaks the unit. The hint now spells out the exact file content as commands that can be pasted as they stand, states why the empty `OnCalendar=` line is mandatory, and names `bootstrap.sh` as the alternative.
+- server-readiness.py: the `nginx unit` fix named `/root/deploy-nginx-base.sh`, which writes no unit drop-in at all — it only repairs an empty `/run/nginx.pid` at runtime. Neither does `bootstrap.sh` write the `ExecReload=$MAINPID` one (it writes only the `Restart=on-failure` drop-in). The hint now emits the `printf` command for whichever of the two drop-ins is actually missing.
+- server-readiness.py: `print_report()` renders a multi-line fix with its continuation lines aligned under the first. A fix that has to state a file's exact content cannot be folded into one line without inviting exactly the paste error above.
+
 ## Readable Update Output (03.08.2026)
 
 ### Changed

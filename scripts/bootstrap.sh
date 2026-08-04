@@ -20,10 +20,13 @@
 #      auto-applied — activating it needs a builder prune + restart + reboot,
 #      which this idempotent/non-destructive script does not do unattended.
 #   4. Installs nginx from the official nginx.org repository (reverse proxy)
-#      and hardens its systemd unit with Restart=on-failure — the nginx.org unit
-#      ships Restart=no, so a start that fails transiently (e.g. while an apt
-#      upgrade swaps glibc/openssl underneath) leaves nginx down until a human
-#      notices. Applied to pre-existing installs too.
+#      and hardens its systemd unit with two drop-ins: Restart=on-failure — the
+#      nginx.org unit ships Restart=no, so a start that fails transiently (e.g.
+#      while an apt upgrade swaps glibc/openssl underneath) leaves nginx down
+#      until a human notices — and ExecReload via $MAINPID, because the stock
+#      reload reads /run/nginx.pid, which `nginx -t` truncates to zero bytes
+#      (the reload then fails and the OLD config silently stays live).
+#      Applied to pre-existing installs too.
 #   5. Installs certbot (Let's Encrypt client; renewal via ssl-renew.sh standalone)
 #      and pins the distro's certbot.timer to a quiet 03:00 slot, clear of the
 #      06:00-07:00 apt-daily-upgrade window (its stock randomized delay of up to
@@ -73,8 +76,8 @@ set -Eeuo pipefail
 # Configuration
 # ──────────────────────────────────────────
 
-SCRIPT_VERSION="1.8.0"
-SCRIPT_DATE="17.07.2026"
+SCRIPT_VERSION="1.10.0"
+SCRIPT_DATE="04.08.2026"
 
 REPO_URL="${REPO_URL:-https://github.com/equitania/myodoo-docker.git}"
 REPO_BRANCH="${REPO_BRANCH:-2026}"
@@ -378,7 +381,9 @@ EOF
     log "Docker installed: $(docker --version 2>/dev/null || echo 'n/a')"
 }
 
-# Install a systemd drop-in that restarts nginx when a start FAILS.
+# Install the two systemd drop-ins the nginx.org unit needs.
+#
+# (1) Restart=on-failure — restart nginx when a start FAILS.
 #
 # Background: the nginx.org unit ships `Restart=no`. Observed twice within two
 # days on a release server (29./31.07.2026): apt-daily-upgrade replaced glibc
@@ -390,6 +395,19 @@ EOF
 # StartLimitBurst/IntervalSec keep this bounded: a genuinely broken config still
 # gives up after 5 attempts within 5 minutes and stays down visibly, instead of
 # restart-looping forever and hiding the real error.
+#
+# (2) ExecReload via $MAINPID — make `systemctl reload nginx` reliable.
+#
+# The nginx.org unit reloads with `kill -s HUP $(cat /run/nginx.pid)`, but any
+# preceding `nginx -t` truncates that pid file to zero bytes. The command then
+# expands to a bare `kill -s HUP`, which exits with kill's usage text: the reload
+# reports failure, and — far worse — the OLD config stays live while the new one
+# looks deployed. Reading the pid from systemd instead removes the dependency on
+# a file another command is free to clobber.
+#
+# The empty `ExecReload=` reset line is mandatory: without it systemd APPENDS
+# this command to the unit's original one instead of replacing it, and the
+# broken `kill` would still run first.
 harden_nginx_service() {
     command -v systemctl >/dev/null 2>&1 || return 0
 
@@ -405,8 +423,17 @@ harden_nginx_service() {
         'RestartSec=10' \
         | write_file /etc/systemd/system/nginx.service.d/10-restart.conf
 
+    printf '%s\n' \
+        '# Managed by bootstrap.sh — reload from systemd MainPID, not /run/nginx.pid,' \
+        '# which `nginx -t` truncates to zero bytes.' \
+        '[Service]' \
+        'ExecReload=' \
+        'ExecReload=/bin/kill -s HUP $MAINPID' \
+        | write_file /etc/systemd/system/nginx.service.d/10-reload-mainpid.conf
+
     $SUDO systemctl daemon-reload
     log "nginx: Restart=on-failure drop-in installed (recovers from a failed start in 10s)."
+    log "nginx: ExecReload pinned to \$MAINPID (reload no longer breaks after 'nginx -t')."
 }
 
 # Pin the distro certbot.timer to a quiet slot.
