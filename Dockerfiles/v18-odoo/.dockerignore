@@ -1,0 +1,9 @@
+# The build context is the instance's build folder. Without this file the two
+# filestore copies update_docker_odoo.py keeps there (the docker cp backup and
+# its .bak rotation) are shipped to the daemon on every build — gigabytes per
+# build for a large instance.
+filestore-backup/
+release.file-*
+__pycache__/
+*.log
+*.tmp

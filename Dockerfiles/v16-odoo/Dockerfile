@@ -21,6 +21,11 @@ COPY odoo.conf /opt/odoo/etc/
 # customer-specific archives like xy_custom_modules.zip (build fails if no file matches)
 #COPY *custom_modules.* /opt/odoo/
 
+# Archives pre-fetched by odoo_build_cache.py on the host. The folder is created
+# by 'odoo_build_cache.py sync' even when empty, because COPY fails on a missing
+# source. build_odoo.py downloads whatever is not in here.
+COPY zips/ /opt/odoo/zips/
+
 RUN cd /opt/odoo/ && \
     python3 build_odoo.py
 

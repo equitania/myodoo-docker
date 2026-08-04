@@ -1,8 +1,8 @@
 #!/usr/bin/python3
 # -*- coding: utf-8 -*-
 # This script builds a new server using the Release Manager
-# Version 2.6.0
-# Date 31.07.2026
+# Version 2.7.0
+# Date 04.08.2026
 ##############################################################################
 #
 #    Shell Script for Odoo, Open Source Management Solution
@@ -45,6 +45,11 @@ except ImportError:
 _build_path = '/opt/odoo'
 _release_file = 'release.file'
 
+# Archives pre-fetched on the host by odoo_build_cache.py and copied in by the
+# Dockerfile. Absent on servers without the cache, where every archive is
+# downloaded exactly as before.
+_local_zip_dir = 'zips'
+
 # Check if we are running on macOS or Linux
 is_macos = platform.system() == 'Darwin'
 
@@ -54,9 +59,19 @@ is_macos = platform.system() == 'Darwin'
 _SAFE_FILENAME_PATTERN = re.compile(r'^[A-Za-z0-9._/-]+$')
 
 def _validate_csv_filename(value):
-    """Validate a filename/path field sourced from the release CSV."""
+    """Validate a filename/path field sourced from the release CSV.
+
+    The character class alone is not sufficient: it permits both '.' and '/',
+    so '../../etc/passwd' matches it — and the value is used as the target of
+    open() and as the argument of `unzip -d`, i.e. it can write outside the
+    build directory. Traversal segments and absolute paths are therefore
+    rejected explicitly.
+    """
     if not value or not _SAFE_FILENAME_PATTERN.match(value):
         print(f"Invalid filename in release file: '{value}'")
+        return False
+    if value.startswith('/') or '..' in value.split('/'):
+        print(f"Refused path traversal in release file: '{value}'")
         return False
     return True
 
@@ -209,17 +224,31 @@ def count_zip_files_in_csv(file_path):
                     zip_count += 1
     return zip_count
 
+def _local_zip(filename):
+    """Path of a host-provided archive, or None when it has to be downloaded."""
+    candidate = os.path.join(_local_zip_dir, os.path.basename(filename))
+    return candidate if os.path.isfile(candidate) else None
+
 def download_and_extract(url, filename, destination):
-    """Download and extract a file in one operation."""
+    """Extract an archive, downloading it first unless the host provided it.
+
+    Returns (ok, from_cache). A missing local archive is not an error: the
+    cache is an optimisation, and anything it did not supply is fetched here
+    exactly as before.
+    """
+    local = _local_zip(filename)
+    if local:
+        if extract_zip(local, destination):
+            return True, True
+        print(f"Failed to extract cached {filename}")
+        return False, True
     if download_file(url, filename):
         if extract_zip(filename, destination):
-            return True
-        else:
-            print(f"Failed to extract {filename}")
-            return False
-    else:
-        print(f"Failed to download {filename}")
-        return False
+            return True, False
+        print(f"Failed to extract {filename}")
+        return False, False
+    print(f"Failed to download {filename}")
+    return False, False
 
 # Main script execution
 if not os.path.isfile(_release_file):
@@ -239,6 +268,7 @@ print('Starting with build at ' + _build_path)
 # Count the total number of ZIP files to download
 total_zip_files = count_zip_files_in_csv(_release_file)
 downloaded_files = 0
+cached_files = 0
 failed_modules = []
 consecutive_failures = 0
 aborted_early = False
@@ -292,9 +322,13 @@ with open(_release_file, encoding="utf8") as csvfile:
 
                 # Download kernel
                 _zip_url = f"{_url}/{_column}"
-                if download_and_extract(_zip_url, _column, 'odoo-server'):
+                _ok, _from_cache = download_and_extract(_zip_url, _column, 'odoo-server')
+                if _ok:
                     downloaded_files += 1
-                    print(f'kernel: {_column} loaded and installed..')
+                    if _from_cache:
+                        cached_files += 1
+                    print(f"kernel: {_column} loaded and installed.."
+                          f"{' (cached)' if _from_cache else ''}")
                 else:
                     print(f'Failed to process kernel: {_column}')
                     sys.exit(1)
@@ -307,10 +341,14 @@ with open(_release_file, encoding="utf8") as csvfile:
                     failed_modules.append(f"{_column} (rejected: invalid filename)")
                     continue
                 _zip_url = f"{_url}/{_column}"
-                if download_and_extract(_zip_url, _column, 'odoo-server/addons'):
+                _ok, _from_cache = download_and_extract(_zip_url, _column, 'odoo-server/addons')
+                if _ok:
                     downloaded_files += 1
+                    if _from_cache:
+                        cached_files += 1
                     consecutive_failures = 0
-                    print(f'file: {_column} loaded and installed..')
+                    print(f"file: {_column} loaded and installed.."
+                          f"{' (cached)' if _from_cache else ''}")
                 else:
                     failed_modules.append(_column)
                     consecutive_failures += 1
@@ -328,7 +366,9 @@ if aborted_early:
     print(f"\nRun aborted before the end of the release file. "
           f"Files downloaded: {downloaded_files}/{total_zip_files}")
 else:
-    print(f"\nAll entries from release file processed! Files downloaded: {downloaded_files}/{total_zip_files}")
+    print(f"\nAll entries from release file processed! Files installed: "
+          f"{downloaded_files}/{total_zip_files} "
+          f"({cached_files} from cache, {downloaded_files - cached_files} downloaded)")
 
 # A module archive that never made it into the image previously produced nothing
 # but a log line: the build succeeded and shipped an image silently missing that
@@ -375,5 +415,9 @@ for file_pattern in files_to_remove:
     else:
         cmd = f"rm -f {file_pattern}"
     run_command(cmd)
+
+# The host-provided archives must not remain in the image either — they are
+# already extracted, and they would roughly double its size.
+run_command(f"rm -rf {_local_zip_dir}")
 
 print('Cleanup and finished!')
