@@ -1,6 +1,6 @@
 #!/bin/bash
 # bootstrap.sh — Out-of-the-box initializer for fresh Debian/Ubuntu servers
-# Version 1.9.0 — 31.07.2026
+# Version 1.11.0 — 04.08.2026
 #
 # Supported: Debian 12 (bookworm) / 13 (trixie); Ubuntu 20.04/22.04/24.04/26.04
 # (focal/jammy/noble/resolute). OS + codename are auto-detected from os-release;

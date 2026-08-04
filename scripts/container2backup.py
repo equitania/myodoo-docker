@@ -61,8 +61,8 @@ import signal  # Decode negative subprocess returncodes (signal kills) for diagn
 # Single source of truth for the version banner printed at runtime. Keep these
 # in sync with the header comment above. The __main__ banner is derived from
 # these constants so it cannot silently drift out of date again.
-SCRIPT_VERSION = "4.7.0"
-SCRIPT_DATE = "19.06.2026"
+SCRIPT_VERSION = "4.7.1"
+SCRIPT_DATE = "14.07.2026"
 
 # Whitelist for database names and Docker container names. Both propagate
 # into filesystem paths and subprocess argv, so restrict to shell-inert chars.

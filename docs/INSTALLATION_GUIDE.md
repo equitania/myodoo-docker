@@ -365,6 +365,23 @@ Nützliche Optionen: `doup --validate` (Config prüfen), `-s CONTAINER`
 (einzelner Container), `-v` (verbose). **Proxy-Kunden:** `defaults.proxy` und
 `pre_build_files` in der YAML, Daemon-Proxy via `getScripts.py --proxy-check`.
 
+**Build-Cache.** Vor jedem Build lädt `odoo_build_cache.py` die Release-Archive
+auf den Host nach `/opt/odoo-build-cache` und verlinkt sie in den Build-Ordner
+— alle Instanzen desselben Release teilen sich denselben Bestand, gebaut wird
+nur noch mit dem, was sich geändert hat. Der Cache blockiert nie einen Build:
+was er nicht liefert, lädt `build_odoo.py` wie zuvor selbst. Aufräumen erledigt
+der Wartungs-Cron (`gc`, 30 Tage), `~/odoo_build_cache.py stats` zeigt die
+Belegung pro Release.
+
+Derselbe Schritt hält die **Dockerfile des Build-Ordners** aktuell. Diese Datei
+gehört dem Kunden — `doup` überschreibt sie nie, weil sie eigene `COPY`- und
+`RUN`-Schritte tragen kann. Deshalb kam etwa der `HEALTHCHECK` vom März 2026 nie
+auf älteren Installationen an. Fehlende Image-Direktiven (`HEALTHCHECK`,
+`VOLUME`, `EXPOSE`) werden jetzt ergänzt, vorher wird eine `.bak_<Zeitstempel>`
+geschrieben. Alles, was stattdessen nur *abweicht* — etwa `ADD bin` gegenüber
+`COPY bin` —, erscheint als Warnung mit der exakten Zeile im Abschlussblock von
+`doup` und bleibt Handarbeit.
+
 <a id="de-11-schritt-9-backups-einrichten-edbkdobk"></a>
 ## 11. Schritt 9: Backups einrichten (edbk/dobk)
 
@@ -468,17 +485,18 @@ Alle Skripte des Repos (`scripts/`, Stand 16.07.2026):
 | `bootstrap.sh` (1.7.0) | Grundausstattung frischer Server (Docker, nginx, certbot, UFW, fail2ban) | `curl … bootstrap.sh -o /opt/… && /opt/myodoo-bootstrap.sh` |
 | `getScripts.py` (9.7.3) | fish-Shell, Aliase, Verwaltungsskripte nach `/root` | `./getScripts.py [--dns-check\|--proxy-check\|--reconfigure]` |
 | `server_hardening.py` (1.8.0) | Audit + Härtung (UFW, fail2ban, SSH, sysctl, auditd, AIDE) | `sudo python3 server_hardening.py [--apply] [-m MODUL …]` |
-| `deploy-nginx-base.sh` (1.1.0) | nginx-Basis: Includes, Wartungsseite, nginx.conf (mit Rollback) | `./deploy-nginx-base.sh [--dry-run] [--no-main-conf]` |
+| `deploy-nginx-base.sh` (1.3.0) | nginx-Basis: Includes, Wartungsseite, nginx.conf (mit Rollback) | `./deploy-nginx-base.sh [--dry-run] [--no-main-conf]` |
 | `ngx-conf-wizard.sh` (1.1.0) | Interaktiver YAML-Assistent für nginx-set-conf | `./ngx-conf-wizard.sh` |
 | `pg-local-deploy.sh` (1.2.1) | PostgreSQL-Container interaktiv deployen (Profile, optional SSL) | `./pg-local-deploy.sh` |
 | `fr-local-deploy.sh` | FastReport-API-Container deployen (Default `/opt/fast-report`) | `./fr-local-deploy.sh` |
-| `update_docker_odoo.py` (5.3.1) | Odoo-Container-Updates per YAML | `doup` bzw. `python3 update_docker_odoo.py [-s NAME] [--validate]` |
+| `update_docker_odoo.py` (5.8.0) | Odoo-Container-Updates per YAML | `doup` bzw. `python3 update_docker_odoo.py [-s NAME] [--validate]` |
+| `odoo_build_cache.py` (1.3.0) | Release-Archiv-Cache aller Instanzen; pflegt zusätzlich die Dockerfile des Build-Ordners | von `doup` aufgerufen; `~/odoo_build_cache.py stats\|gc [--days 30]` |
 | `container2backup.py` (4.7.1) | SQL+Filestore-Backups, Kompression/Verschlüsselung/Streaming | `dobk` bzw. `~/container2backup.py [--sql-only]` |
 | `restore-zip.sh` (2.1.0) | Backup-Restore (DB + Filestore) in Docker | siehe [Kapitel 13](#de-13-restore--notfall) |
 | `ssl-renew.sh` (1.3.0) | certbot-Renewal, nginx nur bei Bedarf angehalten | `./ssl-renew.sh` (Cron) |
 | `nginx-cert-guard.py` (1.1.0) | Defekte Vhosts quarantänisieren statt nginx zu blockieren | `--reconcile [--start]`, `--check [--apply]`, `--list`, `--restore DOMAIN` |
 | `setup-maintenance-cron.sh` (1.3.0) | Wartungs-Cron + logrotate installieren | `./setup-maintenance-cron.sh [--remove]` |
-| `server-readiness.py` (1.0.0) | Konfigurations-Drift prüfen (13 Checks, rein lesend) | `chk` bzw. `~/server-readiness.py [--brief\|--quiet]` |
+| `server-readiness.py` (1.3.0) | Konfigurations-Drift prüfen (rein lesend) | `chk` bzw. `~/server-readiness.py [--brief\|--quiet]` |
 | `nightly-cleanup.sh` (1.1.0) | Container-Neustart bei Speicherdruck | Cron; `MEMORY_THRESHOLD=90 DRY_RUN=1 ./nightly-cleanup.sh` |
 | `cleanup-weblogs.py` (2.0.0) | nginx-Log-Rotation, DSGVO-Löschung nach 7 Tagen | Cron; `python3 cleanup-weblogs.py` |
 | `dist-upgrade-debian.sh` (1.0.0) | Geführtes Debian-Major-Upgrade (z.B. bookworm→trixie) | `./dist-upgrade-debian.sh [CODENAME] [--yes]` |
@@ -1039,6 +1057,22 @@ Useful options: `doup --validate` (check config), `-s CONTAINER` (single
 container), `-v` (verbose). **Proxy customers:** `defaults.proxy` and
 `pre_build_files` in the YAML, daemon proxy via `getScripts.py --proxy-check`.
 
+**Build cache.** Before every build, `odoo_build_cache.py` fetches the release
+archives onto the host into `/opt/odoo-build-cache` and links them into the
+build folder — every instance on the same release shares one set, and a build
+downloads only what actually changed. The cache never blocks a build: whatever
+it does not supply, `build_odoo.py` fetches itself as before. The maintenance
+cron handles cleanup (`gc`, 30 days); `~/odoo_build_cache.py stats` shows the
+size per release.
+
+The same step keeps the **build folder's Dockerfile** current. That file belongs
+to the customer — `doup` never overwrites it, because it may carry its own
+`COPY` and `RUN` steps. This is why, for instance, the March 2026 `HEALTHCHECK`
+never reached older installations. Absent image directives (`HEALTHCHECK`,
+`VOLUME`, `EXPOSE`) are now filled in, with a `.bak_<timestamp>` written first.
+Anything that merely *differs* — `ADD bin` against the repository's `COPY bin` —
+is reported with its exact line in the closing block of `doup` and stays manual.
+
 <a id="en-11-step-9-set-up-backups-edbkdobk"></a>
 ## 11. Step 9: Set Up Backups (edbk/dobk)
 
@@ -1141,17 +1175,18 @@ All scripts in this repository (`scripts/`, as of 16.07.2026):
 | `bootstrap.sh` (1.7.0) | Baseline for fresh servers (Docker, nginx, certbot, UFW, fail2ban) | `curl … bootstrap.sh -o /opt/… && /opt/myodoo-bootstrap.sh` |
 | `getScripts.py` (9.7.3) | fish shell, aliases, management scripts into `/root` | `./getScripts.py [--dns-check\|--proxy-check\|--reconfigure]` |
 | `server_hardening.py` (1.8.0) | Audit + hardening (UFW, fail2ban, SSH, sysctl, auditd, AIDE) | `sudo python3 server_hardening.py [--apply] [-m MODULE …]` |
-| `deploy-nginx-base.sh` (1.1.0) | nginx base: includes, maintenance page, nginx.conf (with rollback) | `./deploy-nginx-base.sh [--dry-run] [--no-main-conf]` |
+| `deploy-nginx-base.sh` (1.3.0) | nginx base: includes, maintenance page, nginx.conf (with rollback) | `./deploy-nginx-base.sh [--dry-run] [--no-main-conf]` |
 | `ngx-conf-wizard.sh` (1.1.0) | Interactive YAML wizard for nginx-set-conf | `./ngx-conf-wizard.sh` |
 | `pg-local-deploy.sh` (1.2.1) | Deploy a PostgreSQL container interactively (profiles, optional SSL) | `./pg-local-deploy.sh` |
 | `fr-local-deploy.sh` | Deploy the FastReport API container (default `/opt/fast-report`) | `./fr-local-deploy.sh` |
-| `update_docker_odoo.py` (5.3.1) | Odoo container updates via YAML | `doup` or `python3 update_docker_odoo.py [-s NAME] [--validate]` |
+| `update_docker_odoo.py` (5.8.0) | Odoo container updates via YAML | `doup` or `python3 update_docker_odoo.py [-s NAME] [--validate]` |
+| `odoo_build_cache.py` (1.3.0) | Release archive cache shared by all instances; also maintains the build folder's Dockerfile | called by `doup`; `~/odoo_build_cache.py stats\|gc [--days 30]` |
 | `container2backup.py` (4.7.1) | SQL+filestore backups, compression/encryption/streaming | `dobk` or `~/container2backup.py [--sql-only]` |
 | `restore-zip.sh` (2.1.0) | Backup restore (DB + filestore) into Docker | see [chapter 13](#en-13-restore--emergency) |
 | `ssl-renew.sh` (1.3.0) | certbot renewal, nginx stopped only when needed | `./ssl-renew.sh` (cron) |
 | `nginx-cert-guard.py` (1.1.0) | Quarantine broken vhosts instead of blocking nginx | `--reconcile [--start]`, `--check [--apply]`, `--list`, `--restore DOMAIN` |
 | `setup-maintenance-cron.sh` (1.3.0) | Install maintenance cron + logrotate | `./setup-maintenance-cron.sh [--remove]` |
-| `server-readiness.py` (1.0.0) | Check configuration drift (13 checks, read-only) | `chk` or `~/server-readiness.py [--brief\|--quiet]` |
+| `server-readiness.py` (1.3.0) | Check configuration drift (read-only) | `chk` or `~/server-readiness.py [--brief\|--quiet]` |
 | `nightly-cleanup.sh` (1.1.0) | Container restart under memory pressure | cron; `MEMORY_THRESHOLD=90 DRY_RUN=1 ./nightly-cleanup.sh` |
 | `cleanup-weblogs.py` (2.0.0) | nginx log rotation, GDPR purge after 7 days | cron; `python3 cleanup-weblogs.py` |
 | `dist-upgrade-debian.sh` (1.0.0) | Guided Debian major upgrade (e.g. bookworm→trixie) | `./dist-upgrade-debian.sh [CODENAME] [--yes]` |
