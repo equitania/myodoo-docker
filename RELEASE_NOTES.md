@@ -1,5 +1,24 @@
 # Release Notes
 
+## Build Cache for Release Archives (04.08.2026)
+
+### Added
+- **scripts/odoo_build_cache.py v1.0.0**: image builds download only what changed. Until now every build fetched all several hundred archives named in `release.file` — ten to twenty minutes each time, even for a single changed module — because `build_odoo.py` runs *inside* the container, deletes the archives in its cleanup step, and the layer that held them is removed by the `docker system prune -f` that `update_docker_odoo.py` runs after each pass. A BuildKit cache mount would meet the same prune.
+  The archive names carry their version (`<modul>_<odoo-version>.<modul-version>.zip`), so the file name is a valid cache key: a name that is present is by definition the right content. No revalidation, no conditional GET, no metadata. `sync <build-dir>` reads the release file, fetches what is missing into `/opt/odoo-build-cache` — partitioned by release URL, so instances on the same release share every archive and two Odoo versions cannot collide — and hardlinks everything into `<build-dir>/zips/`.
+  Downloads are atomic (`.tmp` + `os.replace`) and verified with `zipfile.is_zipfile()` before entering the cache. A release server answering an error with a 200 HTML page would otherwise poison it permanently; today such a file dies with the build container.
+  Standard library only (`urllib.request` honours `http_proxy`/`https_proxy` by itself, which `build_odoo.py` had to build by hand for urllib3), so nothing new has to be installed on a customer server.
+- odoo_build_cache.py: `gc` drops archives unused for 30 days — tracked as the file's `mtime`, refreshed on every hit, so there is no index to keep consistent between parallel runs. Deliberately not "absent from the current release.file": another instance on the same server may still run an older release. It also prunes the `release.file-<timestamp>` copies that `check_dockerimage_odoo.py` has been creating on every run since commissioning and never deleting. Scheduled Sundays 03:30 via the maintenance cron; `stats` shows size per release.
+- **Dockerfiles/v{16,18,19}-odoo/.dockerignore**: none existed. The build context is the instance's build folder, which for instances without a volume holds **two** complete filestore copies — the `docker cp` backup and its `.bak` rotation — so both were shipped to the Docker daemon on every build, gigabytes for a large instance. Together with the accumulated `release.file-*` archives they are excluded now.
+- **tests/test_odoo_build_cache.py**: the first tests in this repository. `unittest` from the standard library rather than a new framework, with a local `http.server` fixture for the download paths. Run with `python3 -m unittest tests.test_odoo_build_cache`.
+
+### Changed
+- **Dockerfiles/v{16,18,19}-odoo/build_odoo.py v2.7.0**: extracts `zips/<name>` when the host provided it, downloads it otherwise. `download_and_extract()` returns `(ok, from_cache)` so the closing summary reports what the cache carried. A missing archive is not an error — the cache is an optimisation, and the existing completeness check stays the authority on whether an image is complete. All three copies remain byte-identical.
+- **scripts/update_docker_odoo.py v5.5.0**: runs `odoo_build_cache.py sync` before `docker build` when the script is present, and moves the filestore backup from `<build-dir>/<db_name>` to `<build-dir>/filestore-backup/<db_name>` (with its `.bak` rotation) so the `.dockerignore` above can exclude it by a fixed name.
+- **scripts/server-readiness.py v1.3.0**: reports the cache size. Its absence is SKIP, not a warning — a server that never built one simply has none.
+
+### Fixed
+- **build_odoo.py: path traversal in the release CSV.** `_validate_csv_filename()` checked `^[A-Za-z0-9._/-]+$`, which permits both `.` and `/` — so `../../etc/passwd` matched it. The value is the target of `open()` and the argument of `unzip -d`, i.e. a manipulated or compromised release file could write outside the build directory. Traversal segments and absolute paths are rejected explicitly now. Found by the parser tests written for the cache, which inherited the same pattern.
+
 ## Fix Hints You Can Actually Paste (04.08.2026)
 
 ### Added

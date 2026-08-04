@@ -274,6 +274,19 @@ myodoo-docker/
   - Automated restart management
   - Module updates for Odoo
 
+#### 4. odoo_build_cache.py (v1.0.0)
+- **Purpose**: Host-side cache of Odoo release archives, shared by every instance
+- **Why**: `build_odoo.py` runs inside the build container and re-downloads all
+  several hundred archives on every build; the Docker layer holding them is
+  removed by the `docker system prune -f` after each `doup`
+- **Cache key is the file name** — release archives carry their version, so a
+  name that is present is by definition the right content (no revalidation)
+- **Commands**: `sync <build-dir>` (called by update_docker_odoo.py before the
+  build), `gc [--days 30]` (weekly via cron), `stats`
+- **Location**: `/opt/odoo-build-cache`, partitioned by release URL
+- **Never blocks a build**: anything the cache did not supply is downloaded by
+  `build_odoo.py` exactly as before
+
 ### Development Patterns
 
 1. **Configuration Management**: All tools use YAML as primary configuration format
