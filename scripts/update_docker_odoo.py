@@ -1,7 +1,7 @@
 #!/usr/bin/python3
 # -*- coding: utf-8 -*-
 # This script performs an update of an Odoo database in a Docker container
-# Version 5.6.2
+# Version 5.7.0
 # Date 04.08.2026
 ##############################################################################
 #
@@ -75,7 +75,7 @@ logger = logging.getLogger(__name__)
 # Kept in sync with the header comment above. Printed at the start of every run
 # so a pasted log says which version produced it — the single most common
 # question when a report comes back from a server.
-SCRIPT_VERSION = "5.6.2"
+SCRIPT_VERSION = "5.7.0"
 SCRIPT_DATE = "04.08.2026"
 
 # Column at which the dots of a compact step line end
@@ -1311,10 +1311,22 @@ def process_container(container, proxy_settings=None, dockerfiles_source=None):
     # plain 'doup' drowned in several hundred 'Downloaded: ...' lines.
     should_filter = logger.getEffectiveLevel() > logging.INFO
     proxy_build_args = build_proxy_build_args(proxy_settings)
+
+    # The Dockerfile bind-mounts zips/ during the build step, which needs
+    # BuildKit and a source directory that exists. odoo_build_cache.py creates
+    # it, but a server without the cache script must still be able to build.
+    try:
+        os.makedirs(join(path, "zips"), exist_ok=True)
+    except OSError as e:
+        logger.warning(f"Could not create the zips directory: {e}")
+
+    build_env = dict(proxy_env or {})
+    build_env["DOCKER_BUILDKIT"] = "1"
+
     success, _, info, warn, err = run_stream(
         f"build image {image}",
         f"docker build {proxy_build_args}-t {image} .",
-        timeout=3600, env=proxy_env,
+        timeout=3600, env=build_env,
         filter_output=should_filter,
         show_progress=should_filter,
         progress_msg="  building image")

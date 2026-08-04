@@ -5,7 +5,7 @@
 # Description:      Share one host-side cache of Odoo release archives across
 #                   every instance on the server, so a build downloads only
 #                   what actually changed.
-# Version:          1.0.1
+# Version:          1.1.0
 # Date:             04.08.2026
 # Author:           Equitania Software GmbH
 # ==============================================================================
@@ -64,21 +64,28 @@ import urllib.request
 import zipfile
 from urllib.parse import urlsplit
 
-SCRIPT_VERSION = "1.0.1"
+SCRIPT_VERSION = "1.1.0"
 SCRIPT_DATE = "04.08.2026"
 
 CACHE_ROOT_DEFAULT = "/opt/odoo-build-cache"
 ZIP_DIR = "zips"
 
-# --chown is required: COPY writes as root even after `USER odoo`, while
-# build_odoo.py runs as odoo. Without it the build's cleanup `rm -rf zips`
-# fails with Permission denied on every archive and they all stay in the image.
-COPY_LINE = "COPY --chown=odoo:odoo zips/ /opt/odoo/zips/"
+# The archives are bind-mounted into the build step, not COPYed. Docker layers
+# are additive: a COPY of ~270MB stays in the image no matter what a later RUN
+# deletes, so copying would inflate every image by the full size of the release.
+# A bind mount exists only while the RUN executes and leaves no layer behind.
+MOUNT_FLAG = "--mount=type=bind,source=zips,target=/opt/odoo/zips"
+RUN_PREFIX = "RUN cd /opt/odoo/"
+RUN_LINE = f"RUN {MOUNT_FLAG} \\"
+RUN_CONTINUATION = "    cd /opt/odoo/ && \\"
 
-# Earlier forms of the line, replaced in place on servers that already have one.
+# Earlier attempts, removed from a Dockerfile that still carries them.
 # sync_build_scripts() in update_docker_odoo.py does not distribute Dockerfiles,
-# so a corrected line would otherwise never reach an existing installation.
-LEGACY_COPY_LINES = ("COPY zips/ /opt/odoo/zips/",)
+# so a correction would otherwise never reach an existing installation.
+LEGACY_COPY_LINES = (
+    "COPY zips/ /opt/odoo/zips/",
+    "COPY --chown=odoo:odoo zips/ /opt/odoo/zips/",
+)
 GC_DAYS_DEFAULT = 30
 RELEASE_ARCHIVES_KEPT = 5
 
@@ -270,39 +277,58 @@ def populate_build_dir(build_dir, root, base_url, names):
     return linked, missing
 
 
-def ensure_dockerfile_copy_line(path):
-    """Insert the COPY for the zip folder if it is not there yet.
+def ensure_dockerfile_mount(path):
+    """Make the build step bind-mount the zip folder. True when changed.
 
     sync_build_scripts() in update_docker_odoo.py distributes build_odoo.py but
-    not the Dockerfile, so on existing servers this line would never arrive and
-    the cache would stay silently ineffective. check_dockerimage_odoo.py already
-    patches this file (FROM line and date), so patching it is established here.
+    not the Dockerfile, so a correction here would never reach an existing
+    server on its own. check_dockerimage_odoo.py already patches this file (FROM
+    line and date), so patching it is established practice in this project.
+
+    Also removes the COPY line earlier versions inserted, together with the
+    comment block belonging to it — leaving it would both duplicate the archives
+    into a layer and orphan a comment describing something no longer there.
     """
     if not os.path.isfile(path):
         return False
     with open(path, encoding="utf8") as handle:
         lines = handle.read().splitlines()
-    if any(line.strip() == COPY_LINE for line in lines):
+    if any(MOUNT_FLAG in line for line in lines):
         return False
 
-    # Upgrade an outdated form of the line in place before considering an insert.
-    for index, line in enumerate(lines):
-        if line.strip() in LEGACY_COPY_LINES:
-            lines[index] = COPY_LINE
-            with open(path, "w", encoding="utf8") as handle:
-                handle.write("\n".join(lines) + "\n")
-            print(f"Updated {path}: '{COPY_LINE}'")
-            return True
+    changed = False
+
+    # Drop a legacy COPY plus its comment block (contiguous '#' lines directly
+    # above it) and a single blank line left behind.
+    for index in range(len(lines) - 1, -1, -1):
+        if lines[index].strip() not in LEGACY_COPY_LINES:
+            continue
+        start = index
+        while start > 0 and lines[start - 1].lstrip().startswith("#"):
+            start -= 1
+        end = index + 1
+        if end < len(lines) and not lines[end].strip():
+            end += 1
+        del lines[start:end]
+        changed = True
 
     for index, line in enumerate(lines):
-        if line.startswith("RUN cd /opt/odoo/"):
-            lines.insert(index, COPY_LINE)
-            lines.insert(index + 1, "")
+        if line.startswith(RUN_PREFIX):
+            # 'RUN cd /opt/odoo/ && \' becomes the mount line plus that command
+            # as a continuation, so the rest of the original RUN is untouched.
+            lines[index] = RUN_CONTINUATION
+            lines.insert(index, RUN_LINE)
             with open(path, "w", encoding="utf8") as handle:
                 handle.write("\n".join(lines) + "\n")
-            print(f"Patched {path}: added '{COPY_LINE}'")
+            print(f"Patched {path}: build step now bind-mounts {ZIP_DIR}/")
             return True
-    print(f"Could not patch {path}: no 'RUN cd /opt/odoo/' line found")
+
+    if changed:
+        with open(path, "w", encoding="utf8") as handle:
+            handle.write("\n".join(lines) + "\n")
+        print(f"Removed the obsolete COPY from {path}")
+        return True
+    print(f"Could not patch {path}: no '{RUN_PREFIX}' line found")
     return False
 
 
@@ -386,7 +412,7 @@ def cmd_sync(build_dir):
                 break
 
     linked, missing = populate_build_dir(build_dir, root, base_url, names)
-    ensure_dockerfile_copy_line(os.path.join(build_dir, "Dockerfile"))
+    ensure_dockerfile_mount(os.path.join(build_dir, "Dockerfile"))
     print(f"Cache: {linked}/{len(names)} archives ready, {missing} left for the build "
           f"({failed} download(s) failed).")
     return 0                                        # never block the build

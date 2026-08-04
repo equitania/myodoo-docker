@@ -1,5 +1,14 @@
 # Release Notes
 
+## Archives Bind-Mounted Instead of Copied (04.08.2026)
+
+### Fixed
+- **The build cache inflated every image by the size of the release (~270 MB).** `COPY zips/` created its own layer, and Docker layers are additive: the `rm -rf zips` in `build_odoo.py` could only add a deletion marker in a *later* layer, so the archives stayed in the image regardless. The `Permission denied` that made the cleanup visible (`COPY` writes as root, `build_odoo.py` runs as odoo) was the symptom; the cleanup had been pointless from the start.
+  The build step now bind-mounts the folder instead: `RUN --mount=type=bind,source=zips,target=/opt/odoo/zips`. The archives are readable for the duration of that step, leave no layer behind, and need neither `--chown` nor a cleanup — the image comes out smaller than before the cache existed.
+- **scripts/update_docker_odoo.py v5.7.0**: sets `DOCKER_BUILDKIT=1` for the build (the mount requires BuildKit) and creates `zips/` before building, so a server whose `odoo_build_cache.py` never ran can still build — a bind mount fails on a missing source directory.
+- **scripts/odoo_build_cache.py v1.1.0**: `ensure_dockerfile_mount()` replaces `ensure_dockerfile_copy_line()`. It rewrites the `RUN` step and removes a legacy `COPY zips/` line together with the comment block belonging to it. Without this the correction would never reach an existing server: `sync_build_scripts()` does not distribute Dockerfiles.
+- **build_odoo.py v2.7.1**: the `rm -rf zips` cleanup is gone — the mount is read-only, and there is nothing left to clean.
+
 ## Quiet Runs and a Closing Problem Block (04.08.2026)
 
 ### Added

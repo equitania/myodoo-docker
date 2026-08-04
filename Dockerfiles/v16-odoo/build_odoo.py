@@ -1,7 +1,7 @@
 #!/usr/bin/python3
 # -*- coding: utf-8 -*-
 # This script builds a new server using the Release Manager
-# Version 2.7.0
+# Version 2.7.1
 # Date 04.08.2026
 ##############################################################################
 #
@@ -45,9 +45,10 @@ except ImportError:
 _build_path = '/opt/odoo'
 _release_file = 'release.file'
 
-# Archives pre-fetched on the host by odoo_build_cache.py and copied in by the
-# Dockerfile. Absent on servers without the cache, where every archive is
-# downloaded exactly as before.
+# Archives pre-fetched on the host by odoo_build_cache.py, bind-mounted here by
+# the Dockerfile for the duration of this build step (read-only, no image layer).
+# Absent on servers without the cache, where every archive is downloaded exactly
+# as before.
 _local_zip_dir = 'zips'
 
 # Check if we are running on macOS or Linux
@@ -416,8 +417,9 @@ for file_pattern in files_to_remove:
         cmd = f"rm -f {file_pattern}"
     run_command(cmd)
 
-# The host-provided archives must not remain in the image either — they are
-# already extracted, and they would roughly double its size.
-run_command(f"rm -rf {_local_zip_dir}")
+# No cleanup for _local_zip_dir: it is a read-only bind mount from the build
+# context, so it leaves no trace in the image and cannot be deleted from here.
+# The earlier `rm -rf zips` was both impossible (Permission denied) and
+# pointless — a COPY layer survives any later deletion anyway.
 
 print('Cleanup and finished!')

@@ -237,33 +237,63 @@ class PopulateTest(unittest.TestCase):
         self.assertFalse(os.path.exists(stale))
 
 
-class DockerfilePatchTest(unittest.TestCase):
+class DockerfileMountTest(unittest.TestCase):
+    """The build step must bind-mount zips/ rather than COPY it: Docker layers
+    are additive, so a COPY of ~270MB stays in the image whatever a later RUN
+    deletes."""
+
+    LEGACY = """FROM registry.invalid/prepare:1.0
+USER odoo
+
+# Archives pre-fetched by odoo_build_cache.py on the host. The folder is created
+# by 'odoo_build_cache.py sync' even when empty.
+COPY --chown=odoo:odoo zips/ /opt/odoo/zips/
+
+RUN cd /opt/odoo/ && \\
+    python3 build_odoo.py
+"""
+
     def setUp(self):
         self.tmp = tempfile.mkdtemp()
         self.path = write(os.path.join(self.tmp, "Dockerfile"), DOCKERFILE)
 
-    def test_inserts_copy_line_before_run(self):
-        self.assertTrue(obc.ensure_dockerfile_copy_line(self.path))
+    def _lines(self):
         with open(self.path, encoding="utf8") as handle:
-            lines = handle.read().splitlines()
-        copy_index = lines.index(obc.COPY_LINE)
-        run_index = next(i for i, line in enumerate(lines) if line.startswith("RUN cd /opt/odoo/"))
-        self.assertLess(copy_index, run_index)
+            return handle.read().splitlines()
+
+    def test_adds_mount_to_the_run_step(self):
+        self.assertTrue(obc.ensure_dockerfile_mount(self.path))
+        lines = self._lines()
+        run_index = next(i for i, l in enumerate(lines) if l.startswith("RUN "))
+        self.assertIn(obc.MOUNT_FLAG, lines[run_index])
+        self.assertTrue(lines[run_index].endswith("\\"))
+        self.assertEqual(lines[run_index + 1], "    cd /opt/odoo/ && \\")
 
     def test_is_idempotent(self):
-        obc.ensure_dockerfile_copy_line(self.path)
+        obc.ensure_dockerfile_mount(self.path)
         first = open(self.path, encoding="utf8").read()
-        self.assertFalse(obc.ensure_dockerfile_copy_line(self.path))
+        self.assertFalse(obc.ensure_dockerfile_mount(self.path))
         self.assertEqual(open(self.path, encoding="utf8").read(), first)
 
+    def test_original_run_body_survives(self):
+        obc.ensure_dockerfile_mount(self.path)
+        self.assertIn("python3 build_odoo.py", "\n".join(self._lines()))
+
+    def test_removes_legacy_copy_and_its_comments(self):
+        path = write(os.path.join(self.tmp, "Legacy"), self.LEGACY)
+        self.assertTrue(obc.ensure_dockerfile_mount(path))
+        content = open(path, encoding="utf8").read()
+        self.assertNotIn("zips/ /opt/odoo/zips/", content)
+        self.assertNotIn("Archives pre-fetched", content)
+        self.assertIn(obc.MOUNT_FLAG, content)
+
     def test_leaves_from_line_untouched(self):
-        obc.ensure_dockerfile_copy_line(self.path)
-        with open(self.path, encoding="utf8") as handle:
-            self.assertTrue(handle.readline().startswith("FROM registry.invalid/prepare:1.0"))
+        obc.ensure_dockerfile_mount(self.path)
+        self.assertTrue(self._lines()[0].startswith("FROM registry.invalid/prepare:1.0"))
 
     def test_reports_false_when_no_run_line(self):
         path = write(os.path.join(self.tmp, "Other"), "FROM x\n")
-        self.assertFalse(obc.ensure_dockerfile_copy_line(path))
+        self.assertFalse(obc.ensure_dockerfile_mount(path))
 
 
 class GcTest(unittest.TestCase):
@@ -334,7 +364,7 @@ class CliTest(HttpFixture):
         finally:
             del os.environ["ODOO_BUILD_CACHE"]
         self.assertTrue(os.path.isfile(os.path.join(build, "zips", "mod_b.zip")))
-        self.assertIn(obc.COPY_LINE, open(os.path.join(build, "Dockerfile"), encoding="utf8").read())
+        self.assertIn(obc.MOUNT_FLAG, open(os.path.join(build, "Dockerfile"), encoding="utf8").read())
 
     def test_sync_returns_zero_when_server_is_gone(self):
         build = os.path.join(self.tmp, "build")
