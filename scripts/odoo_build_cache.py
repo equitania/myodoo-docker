@@ -5,7 +5,7 @@
 # Description:      Share one host-side cache of Odoo release archives across
 #                   every instance on the server, so a build downloads only
 #                   what actually changed.
-# Version:          1.1.0
+# Version:          1.1.1
 # Date:             04.08.2026
 # Author:           Equitania Software GmbH
 # ==============================================================================
@@ -64,7 +64,7 @@ import urllib.request
 import zipfile
 from urllib.parse import urlsplit
 
-SCRIPT_VERSION = "1.1.0"
+SCRIPT_VERSION = "1.1.1"
 SCRIPT_DATE = "04.08.2026"
 
 CACHE_ROOT_DEFAULT = "/opt/odoo-build-cache"
@@ -76,8 +76,6 @@ ZIP_DIR = "zips"
 # A bind mount exists only while the RUN executes and leaves no layer behind.
 MOUNT_FLAG = "--mount=type=bind,source=zips,target=/opt/odoo/zips"
 RUN_PREFIX = "RUN cd /opt/odoo/"
-RUN_LINE = f"RUN {MOUNT_FLAG} \\"
-RUN_CONTINUATION = "    cd /opt/odoo/ && \\"
 
 # Earlier attempts, removed from a Dockerfile that still carries them.
 # sync_build_scripts() in update_docker_odoo.py does not distribute Dockerfiles,
@@ -86,6 +84,12 @@ LEGACY_COPY_LINES = (
     "COPY zips/ /opt/odoo/zips/",
     "COPY --chown=odoo:odoo zips/ /opt/odoo/zips/",
 )
+
+# Only comments this script wrote itself are removed along with a legacy COPY.
+# A customer's own comment above that line must survive — losing an instruction
+# note is a real cost, an orphaned comment of ours is not.
+OWN_COMMENT_MARKERS = ("odoo_build_cache.py", "build_odoo.py downloads",
+                       "--chown is required")
 GC_DAYS_DEFAULT = 30
 RELEASE_ARCHIVES_KEPT = 5
 
@@ -285,26 +289,33 @@ def ensure_dockerfile_mount(path):
     server on its own. check_dockerimage_odoo.py already patches this file (FROM
     line and date), so patching it is established practice in this project.
 
-    Also removes the COPY line earlier versions inserted, together with the
-    comment block belonging to it — leaving it would both duplicate the archives
-    into a layer and orphan a comment describing something no longer there.
+    Also removes the COPY line earlier versions inserted, together with OUR
+    comments above it — a customer's own comment is left alone.
+
+    This file belongs to the customer: it can carry extra COPY steps, an
+    adjusted base image, or additional commands inside the very RUN this
+    patches. Nothing here rewrites a line's content — the `RUN ` keyword is
+    replaced by the mount, everything after it is carried over verbatim — and
+    the result is checked instruction by instruction before it is written.
     """
     if not os.path.isfile(path):
         return False
     with open(path, encoding="utf8") as handle:
-        lines = handle.read().splitlines()
+        original = handle.read()
+    lines = original.splitlines()
     if any(MOUNT_FLAG in line for line in lines):
         return False
 
     changed = False
 
-    # Drop a legacy COPY plus its comment block (contiguous '#' lines directly
-    # above it) and a single blank line left behind.
+    # Drop a legacy COPY, plus a comment block above it that this script wrote.
     for index in range(len(lines) - 1, -1, -1):
         if lines[index].strip() not in LEGACY_COPY_LINES:
             continue
         start = index
         while start > 0 and lines[start - 1].lstrip().startswith("#"):
+            if not any(marker in lines[start - 1] for marker in OWN_COMMENT_MARKERS):
+                break                      # a customer comment — stop here
             start -= 1
         end = index + 1
         if end < len(lines) and not lines[end].strip():
@@ -314,22 +325,92 @@ def ensure_dockerfile_mount(path):
 
     for index, line in enumerate(lines):
         if line.startswith(RUN_PREFIX):
-            # 'RUN cd /opt/odoo/ && \' becomes the mount line plus that command
-            # as a continuation, so the rest of the original RUN is untouched.
-            lines[index] = RUN_CONTINUATION
-            lines.insert(index, RUN_LINE)
-            with open(path, "w", encoding="utf8") as handle:
-                handle.write("\n".join(lines) + "\n")
-            print(f"Patched {path}: build step now bind-mounts {ZIP_DIR}/")
-            return True
+            # Replace only the 'RUN ' keyword and keep the rest of the line as a
+            # continuation, so an instruction the customer added to this step
+            # (`&& pip install ...`) survives untouched.
+            lines[index] = "    " + line[len("RUN "):]
+            lines.insert(index, f"RUN {MOUNT_FLAG} \\")
+            changed = True
+            break
+    else:
+        if not changed:
+            print(f"Could not patch {path}: no '{RUN_PREFIX}' line found")
+            return False
 
-    if changed:
-        with open(path, "w", encoding="utf8") as handle:
-            handle.write("\n".join(lines) + "\n")
-        print(f"Removed the obsolete COPY from {path}")
-        return True
-    print(f"Could not patch {path}: no '{RUN_PREFIX}' line found")
-    return False
+    patched = "\n".join(lines) + "\n"
+    problem = _dockerfile_regression(original, patched)
+    if problem:
+        print(f"Refusing to patch {path}: {problem}")
+        return False
+
+    backup = f"{path}.bak_{time.strftime('%Y%m%d_%H%M%S')}"
+    try:
+        with open(backup, "w", encoding="utf8") as handle:
+            handle.write(original)
+    except OSError as error:
+        print(f"Refusing to patch {path}: cannot write backup ({error})")
+        return False
+
+    with open(path, "w", encoding="utf8") as handle:
+        handle.write(patched)
+    print(f"Patched {path}: build step now bind-mounts {ZIP_DIR}/ "
+          f"(backup: {os.path.basename(backup)})")
+    return True
+
+
+def _instructions(text):
+    """Dockerfile instructions in order, continuations folded into one entry.
+
+    Comments and blank lines are ignored — they carry no build behaviour, and
+    the comparison is about what the build *does*.
+    """
+    folded = []
+    pending = ""
+    for raw in text.splitlines():
+        line = raw.strip()
+        if not line or line.startswith("#"):
+            continue
+        if pending:
+            pending += " " + line.rstrip("\\").strip()
+        else:
+            pending = line.rstrip("\\").strip()
+        if not raw.rstrip().endswith("\\"):
+            folded.append(" ".join(pending.split()))
+            pending = ""
+    if pending:
+        folded.append(" ".join(pending.split()))
+    return folded
+
+
+def _dockerfile_regression(original, patched):
+    """Return a reason to refuse the patch, or None when it is safe.
+
+    The Dockerfile is the customer's: it may carry extra COPY steps, a modified
+    base image or additional commands. The only permitted differences are the
+    added mount and a removed `COPY zips/`.
+    """
+    def without_mount(instruction):
+        """The mount is the one difference this patch is allowed to make, so it
+        is removed before comparing — everything else must match exactly."""
+        return " ".join(instruction.replace(MOUNT_FLAG, "").split())
+
+    before = [without_mount(i) for i in _instructions(original)]
+    after = [without_mount(i) for i in _instructions(patched)]
+
+    expected_removals = [i for i in before
+                         if i.replace("--chown=odoo:odoo ", "").startswith("COPY zips/")]
+    remaining = list(after)
+    lost = []
+    for instruction in before:
+        if instruction in remaining:
+            remaining.remove(instruction)
+        elif instruction not in expected_removals:
+            lost.append(instruction)
+    if lost:
+        return f"would drop instruction(s): {'; '.join(lost[:3])}"
+    if remaining:
+        return f"would add unexpected instruction(s): {'; '.join(remaining[:3])}"
+    return None
 
 
 def gc_cache(root, days):

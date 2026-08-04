@@ -295,6 +295,95 @@ RUN cd /opt/odoo/ && \\
         path = write(os.path.join(self.tmp, "Other"), "FROM x\n")
         self.assertFalse(obc.ensure_dockerfile_mount(path))
 
+    # --- the Dockerfile belongs to the customer -------------------------------
+
+    CUSTOMISED = """FROM registry.invalid/prepare:1.0
+USER odoo
+COPY requirements-custom.txt /opt/odoo/
+
+# Customer note: extra packages for the interface
+RUN cd /opt/odoo/ && pip install --user -r requirements-custom.txt && python3 build_odoo.py
+"""
+
+    def test_extra_command_inside_the_run_step_survives(self):
+        """The customer may add to this very RUN. Only the 'RUN ' keyword is
+        replaced; everything after it is carried over verbatim."""
+        path = write(os.path.join(self.tmp, "Custom"), self.CUSTOMISED)
+        self.assertTrue(obc.ensure_dockerfile_mount(path))
+        content = open(path, encoding="utf8").read()
+        self.assertIn("pip install --user -r requirements-custom.txt", content)
+        self.assertIn("python3 build_odoo.py", content)
+        self.assertIn(obc.MOUNT_FLAG, content)
+
+    def test_customer_comment_above_a_legacy_copy_is_kept(self):
+        path = write(os.path.join(self.tmp, "Commented"), """FROM x:1
+USER odoo
+
+# Customer note: do not remove
+COPY zips/ /opt/odoo/zips/
+
+RUN cd /opt/odoo/ && \\
+    python3 build_odoo.py
+""")
+        self.assertTrue(obc.ensure_dockerfile_mount(path))
+        content = open(path, encoding="utf8").read()
+        self.assertIn("# Customer note: do not remove", content)
+        self.assertNotIn("zips/ /opt/odoo/zips/", content.replace(obc.MOUNT_FLAG, ""))
+
+    def test_a_backup_is_written(self):
+        obc.ensure_dockerfile_mount(self.path)
+        backups = [n for n in os.listdir(self.tmp) if n.startswith("Dockerfile.bak_")]
+        self.assertEqual(len(backups), 1)
+        self.assertEqual(open(os.path.join(self.tmp, backups[0]), encoding="utf8").read(),
+                         DOCKERFILE)
+
+    def test_every_other_instruction_is_preserved(self):
+        path = write(os.path.join(self.tmp, "Many"), """FROM x:1
+USER odoo
+COPY a.py /opt/odoo/
+RUN cd /opt/odoo/ && python3 build_odoo.py
+RUN mkdir -p /opt/odoo/extra
+VOLUME ["/opt/odoo/data"]
+EXPOSE 8069
+""")
+        before = obc._instructions(open(path, encoding="utf8").read())
+        obc.ensure_dockerfile_mount(path)
+        after = obc._instructions(open(path, encoding="utf8").read())
+        self.assertEqual(len(before), len(after))
+        for instruction in ("COPY a.py /opt/odoo/", "RUN mkdir -p /opt/odoo/extra",
+                            'VOLUME ["/opt/odoo/data"]', "EXPOSE 8069"):
+            self.assertIn(instruction, after)
+
+
+class DockerfileGuardTest(unittest.TestCase):
+    """_dockerfile_regression is the last line of defence: it compares the
+    instructions before and after and refuses anything but the intended change."""
+
+    STOCK = "FROM x:1\nRUN cd /opt/odoo/ && python3 build_odoo.py\n"
+
+    def test_accepts_the_intended_change(self):
+        patched = f"FROM x:1\nRUN {obc.MOUNT_FLAG} \\\n    cd /opt/odoo/ && python3 build_odoo.py\n"
+        self.assertIsNone(obc._dockerfile_regression(self.STOCK, patched))
+
+    def test_refuses_a_dropped_command(self):
+        patched = f"FROM x:1\nRUN {obc.MOUNT_FLAG} \\\n    cd /opt/odoo/ && \\\n"
+        self.assertIn("would drop", obc._dockerfile_regression(self.STOCK, patched))
+
+    def test_refuses_a_dropped_unrelated_instruction(self):
+        stock = self.STOCK + "EXPOSE 8069\n"
+        patched = f"FROM x:1\nRUN {obc.MOUNT_FLAG} \\\n    cd /opt/odoo/ && python3 build_odoo.py\n"
+        self.assertIn("would drop", obc._dockerfile_regression(stock, patched))
+
+    def test_refuses_an_unexpected_addition(self):
+        patched = (f"FROM x:1\nRUN {obc.MOUNT_FLAG} \\\n"
+                   "    cd /opt/odoo/ && python3 build_odoo.py\nRUN rm -rf /\n")
+        self.assertIn("would add", obc._dockerfile_regression(self.STOCK, patched))
+
+    def test_allows_the_legacy_copy_to_disappear(self):
+        stock = "FROM x:1\nCOPY zips/ /opt/odoo/zips/\nRUN cd /opt/odoo/ && python3 build_odoo.py\n"
+        patched = f"FROM x:1\nRUN {obc.MOUNT_FLAG} \\\n    cd /opt/odoo/ && python3 build_odoo.py\n"
+        self.assertIsNone(obc._dockerfile_regression(stock, patched))
+
 
 class GcTest(unittest.TestCase):
     def setUp(self):

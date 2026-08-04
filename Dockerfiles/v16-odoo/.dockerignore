@@ -4,6 +4,8 @@
 # build for a large instance.
 filestore-backup/
 release.file-*
+# Backups odoo_build_cache.py writes before patching the Dockerfile
+Dockerfile.bak_*
 __pycache__/
 *.log
 *.tmp
