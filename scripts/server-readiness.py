@@ -4,7 +4,7 @@
 # Title:            server-readiness.py
 # Description:      Report whether this server matches the state myodoo-docker
 #                   expects, and name the exact command that closes each gap.
-# Version:          1.1.1
+# Version:          1.2.0
 # Date:             04.08.2026
 # Author:           Equitania Software GmbH
 # ==============================================================================
@@ -62,7 +62,7 @@ from dataclasses import dataclass
 from enum import Enum
 from typing import Callable, List, Optional, Tuple
 
-SCRIPT_VERSION = "1.1.1"
+SCRIPT_VERSION = "1.2.0"
 SCRIPT_DATE = "04.08.2026"
 
 # Installed locations managed by setup-maintenance-cron.sh.
@@ -571,33 +571,15 @@ def check_nginx_unit_dropin(ctx: HealthContext) -> Finding:
     if has_mainpid and has_restart:
         return _ok("nginx_unit_dropin", "nginx unit", "reload + restart drop-in present")
 
-    # Name the commands that actually close the gap. deploy-nginx-base.sh only
-    # repairs an empty /run/nginx.pid at runtime; it writes no unit drop-in, and
-    # bootstrap.sh writes the Restart one but not the ExecReload one.
     lacking = []
-    fix_lines = ["mkdir -p /etc/systemd/system/nginx.service.d"]
     if not has_mainpid:
-        lacking.append("$MAINPID reload (reloads fail silently after nginx -t)")
-        fix_lines.append(
-            "printf '[Service]\\nExecReload=\\n"
-            "ExecReload=/bin/kill -s HUP $MAINPID\\n' > "
-            "/etc/systemd/system/nginx.service.d/10-reload-mainpid.conf"
-        )
+        lacking.append("$MAINPID reload")
     if not has_restart:
-        lacking.append("Restart=on-failure (stays down after an apt upgrade)")
-        fix_lines.append(
-            "printf '[Unit]\\nStartLimitIntervalSec=300\\nStartLimitBurst=5\\n\\n"
-            "[Service]\\nRestart=on-failure\\nRestartSec=10\\n' > "
-            "/etc/systemd/system/nginx.service.d/10-restart.conf"
-        )
-        fix_lines.append(
-            "(the Restart drop-in is also written by myodoo-docker/scripts/bootstrap.sh)"
-        )
-    fix_lines.append("systemctl daemon-reload")
+        lacking.append("Restart=on-failure")
     return Finding(
         "nginx_unit_dropin", Severity.WARN, "nginx unit",
-        "drop-in incomplete: " + "; ".join(lacking),
-        "\n".join(fix_lines),
+        "drop-in missing: " + ", ".join(lacking),
+        f"bash {ctx.repo}/scripts/bootstrap.sh --harden",
     )
 
 
@@ -618,17 +600,8 @@ def check_certbot_timer_window(ctx: HealthContext) -> Finding:
         return _ok("certbot_timer_window", "certbot timer", "pinned to the 03:00 slot")
     return Finding(
         "certbot_timer_window", Severity.WARN, "certbot timer",
-        f"stock schedule ({calendar}) — renewal can collide with the apt window; "
-        f"expected OnCalendar=*-*-* 03:00:00",
-        "mkdir -p /etc/systemd/system/certbot.timer.d\n"
-        "printf '[Timer]\\nOnCalendar=\\nOnCalendar=*-*-* 03:00:00\\n"
-        "RandomizedDelaySec=1800\\n' > "
-        "/etc/systemd/system/certbot.timer.d/10-offpeak.conf\n"
-        "systemctl daemon-reload && systemctl restart certbot.timer\n"
-        "The empty 'OnCalendar=' line is mandatory: it clears the stock schedule.\n"
-        "Without it systemd ADDS 03:00 instead of replacing 00,12:00:00.\n"
-        "Alternative: re-run myodoo-docker/scripts/bootstrap.sh — it writes this "
-        "drop-in itself.",
+        "stock schedule — a renewal can land in the 06:00-07:00 apt window",
+        f"bash {ctx.repo}/scripts/bootstrap.sh --harden",
     )
 
 
@@ -773,8 +746,13 @@ def print_report(findings: List[Finding], mode: str = "full", stream=None) -> No
             fix_lines = finding.fix.split("\n")
             emit(f"{indent}{colors['dim']}Fix:{colors['reset']} {fix_lines[0]}")
             # Continuation lines line up under the first one (past the "Fix: " label).
-            # A fix that spells out a file's exact content must survive copy & paste
-            # verbatim — squeezing it into one line invites pasting the prose too.
+            #
+            # Keep every fix SHORT — one command, ideally under 60 characters. With
+            # this indent a longer one exceeds the terminal width, wraps, and the
+            # wrapped fragments run together when copied, which is worse than the
+            # single-line hint it replaced. A fix that needs several commands belongs
+            # in a script that can be named in one line (see bootstrap.sh --harden),
+            # not spelled out here.
             for fix_line in fix_lines[1:]:
                 emit(f"{indent}     {fix_line}")
 

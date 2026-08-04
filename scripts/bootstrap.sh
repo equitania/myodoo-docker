@@ -76,7 +76,7 @@ set -Eeuo pipefail
 # Configuration
 # ──────────────────────────────────────────
 
-SCRIPT_VERSION="1.10.0"
+SCRIPT_VERSION="1.11.0"
 SCRIPT_DATE="04.08.2026"
 
 REPO_URL="${REPO_URL:-https://github.com/equitania/myodoo-docker.git}"
@@ -714,6 +714,28 @@ print_summary() {
 # ──────────────────────────────────────────
 
 main() {
+    # --harden runs only the two systemd hardening steps. It exists so a report
+    # like server-readiness.py can name ONE short command instead of printing a
+    # multi-line printf that has to survive copy & paste through a terminal.
+    case "${1:-}" in
+        --harden)
+            section "myodoo-docker Bootstrap v${SCRIPT_VERSION} — hardening only"
+            resolve_privilege
+            harden_nginx_service
+            harden_certbot_timer
+            log "Hardening applied. Nothing else was touched."
+            return 0
+            ;;
+        --help|-h)
+            echo "Usage: $0 [--harden]"
+            echo "  (no option)  full bootstrap: packages, Docker, nginx, certbot, hardening"
+            echo "  --harden     only the nginx unit drop-ins and the certbot.timer pin"
+            return 0
+            ;;
+        "") : ;;
+        *)  die "Unknown option: $1 (use --harden or --help)" ;;
+    esac
+
     section "myodoo-docker Bootstrap v${SCRIPT_VERSION} (${SCRIPT_DATE})"
 
     resolve_privilege
