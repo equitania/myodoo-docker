@@ -227,6 +227,24 @@ class PopulateTest(unittest.TestCase):
         obc.populate_build_dir(self.build, self.cache, self.base_url, [])
         self.assertTrue(os.path.isdir(os.path.join(self.build, "zips")))
 
+    def test_custom_module_archives_are_linked_too(self):
+        """They are not part of a release and never enter the cache, but they
+        must reach the build through the mount so no COPY has to keep them in
+        an image layer."""
+        self._put("mod_b.zip")
+        for name in ("custom_modules.zip", "xy_custom_modules.zip"):
+            with open(os.path.join(self.build, name), "wb") as handle:
+                handle.write(make_zip_bytes())
+        obc.populate_build_dir(self.build, self.cache, self.base_url, ["mod_b.zip"])
+        listed = sorted(os.listdir(os.path.join(self.build, "zips")))
+        self.assertEqual(listed, ["custom_modules.zip", "mod_b.zip", "xy_custom_modules.zip"])
+
+    def test_custom_archives_do_not_count_as_release_archives(self):
+        with open(os.path.join(self.build, "custom_modules.zip"), "wb") as handle:
+            handle.write(make_zip_bytes())
+        linked, missing = obc.populate_build_dir(self.build, self.cache, self.base_url, [])
+        self.assertEqual((linked, missing), (0, 0))
+
     def test_stale_archive_from_previous_release_is_removed(self):
         os.makedirs(os.path.join(self.build, "zips"))
         stale = os.path.join(self.build, "zips", "old_release.zip")

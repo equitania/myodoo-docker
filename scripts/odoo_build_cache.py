@@ -5,7 +5,7 @@
 # Description:      Share one host-side cache of Odoo release archives across
 #                   every instance on the server, so a build downloads only
 #                   what actually changed.
-# Version:          1.1.1
+# Version:          1.2.0
 # Date:             04.08.2026
 # Author:           Equitania Software GmbH
 # ==============================================================================
@@ -64,7 +64,7 @@ import urllib.request
 import zipfile
 from urllib.parse import urlsplit
 
-SCRIPT_VERSION = "1.1.1"
+SCRIPT_VERSION = "1.2.0"
 SCRIPT_DATE = "04.08.2026"
 
 CACHE_ROOT_DEFAULT = "/opt/odoo-build-cache"
@@ -278,6 +278,27 @@ def populate_build_dir(build_dir, root, base_url, names):
         except OSError:                              # EXDEV: different filesystem
             shutil.copy2(source, destination)
         linked += 1
+
+    # Customer module archives are not part of a release and never enter the
+    # cache — they are built by the customer and live in the build folder. They
+    # are linked into the same directory so the build reaches them through the
+    # bind mount as well; a `COPY *custom_modules.*` would otherwise keep them
+    # in an image layer that no later cleanup can shrink.
+    custom = 0
+    for entry in sorted(os.listdir(build_dir)):
+        if not entry.endswith("custom_modules.zip"):
+            continue
+        source = os.path.join(build_dir, entry)
+        if not os.path.isfile(source):
+            continue
+        destination = os.path.join(target_dir, entry)
+        try:
+            os.link(source, destination)
+        except OSError:
+            shutil.copy2(source, destination)
+        custom += 1
+    if custom:
+        print(f"Custom module archive(s) available through the mount: {custom}")
     return linked, missing
 
 

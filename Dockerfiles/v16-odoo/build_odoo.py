@@ -1,7 +1,7 @@
 #!/usr/bin/python3
 # -*- coding: utf-8 -*-
 # This script builds a new server using the Release Manager
-# Version 2.7.1
+# Version 2.7.2
 # Date 04.08.2026
 ##############################################################################
 #
@@ -389,18 +389,32 @@ if failed_modules:
         print("set BUILD_ODOO_ALLOW_PARTIAL=1.")
         sys.exit(1)
 
-# Check for custom modules: process every *custom_modules.zip in the build
-# context (custom_modules.zip plus customer-specific archives like
-# xy_custom_modules.zip). The generic archive is extracted first so
-# customer-specific archives can override modules from it.
-custom_zips = sorted(f for f in os.listdir('.') if f.endswith('custom_modules.zip'))
+# Check for custom modules: process every *custom_modules.zip (custom_modules.zip
+# plus customer-specific archives like xy_custom_modules.zip). The generic
+# archive is extracted first so customer-specific archives can override it.
+#
+# Two possible locations. A Dockerfile with `COPY *custom_modules.* /opt/odoo/`
+# puts them in the working directory — but that COPY keeps them in an image
+# layer forever, since a later `rm` cannot shrink a previous layer. Placing them
+# in the build folder instead lets odoo_build_cache.py link them into zips/,
+# which arrives as a bind mount and leaves no layer behind. The working
+# directory takes precedence so an existing COPY keeps behaving as before.
+_custom_sources = {}
+for _directory in ('.', _local_zip_dir):
+    if not os.path.isdir(_directory):
+        continue
+    for _name in os.listdir(_directory):
+        if _name.endswith('custom_modules.zip'):
+            _custom_sources.setdefault(_name, os.path.join(_directory, _name))
+
+custom_zips = sorted(_custom_sources)
 if 'custom_modules.zip' in custom_zips:
     custom_zips.remove('custom_modules.zip')
     custom_zips.insert(0, 'custom_modules.zip')
 if custom_zips:
     print("\nProcessing custom modules...")
     for custom_modules in custom_zips:
-        if extract_zip(custom_modules, 'odoo-server/addons'):
+        if extract_zip(_custom_sources[custom_modules], 'odoo-server/addons'):
             print(f'file: {custom_modules} loaded and installed..')
         else:
             print(f'Failed to extract custom modules: {custom_modules}')

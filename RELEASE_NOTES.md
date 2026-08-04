@@ -2,6 +2,9 @@
 
 ## Archives Bind-Mounted Instead of Copied (04.08.2026)
 
+### Added
+- **Customer module archives take the same route.** `COPY *custom_modules.* /opt/odoo/` has the identical layer problem as the release archives, only smaller: the archives stay in the image no matter that `build_odoo.py` deletes them after extracting. `populate_build_dir()` (odoo_build_cache.py v1.2.0) now links every `*custom_modules.zip` from the build folder into `zips/` as well, and `build_odoo.py` v2.7.2 looks for them in the working directory **and** in `zips/`. The working directory keeps precedence, so an existing `COPY` behaves exactly as before — but it can now be commented out, and the modules stop inflating the image. That last step stays manual: the patch never removes a line the customer put there.
+
 ### Fixed
 - **odoo_build_cache.py v1.1.1: the Dockerfile patch destroyed customer changes.** It replaced the content of the `RUN` line with a fixed string, so a step the customer had extended — `RUN cd /opt/odoo/ && pip install --user -r requirements-custom.txt && python3 build_odoo.py` — lost everything after `cd /opt/odoo/ &&`. On a customer server that would have produced an image missing their packages, silently. Only the `RUN ` keyword is replaced now; the rest of the line is carried over verbatim. Three further guards: a customer comment above a legacy `COPY` is no longer swept away with it (only comments this script wrote itself are, recognised by marker), a `.bak_<timestamp>` copy is written before any change, and `_dockerfile_regression()` compares the instructions before and after and refuses to write when anything but the intended mount would change. The Dockerfile belongs to the customer — an extra `COPY`, a different base image or an additional command must all survive.
 
