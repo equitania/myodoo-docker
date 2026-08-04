@@ -1,7 +1,7 @@
 #!/usr/bin/python3
 # -*- coding: utf-8 -*-
 # This script performs an update of an Odoo database in a Docker container
-# Version 5.6.1
+# Version 5.6.2
 # Date 04.08.2026
 ##############################################################################
 #
@@ -71,6 +71,12 @@ logger = logging.getLogger(__name__)
 # '<date> - INFO - ' prefix. Progress spinners only run on a TTY - under cron
 # their carriage returns would end up in the log file.
 ##############################################################################
+
+# Kept in sync with the header comment above. Printed at the start of every run
+# so a pasted log says which version produced it — the single most common
+# question when a report comes back from a server.
+SCRIPT_VERSION = "5.6.2"
+SCRIPT_DATE = "04.08.2026"
 
 # Column at which the dots of a compact step line end
 STEP_WIDTH = 44
@@ -1517,9 +1523,11 @@ def main():
     if args.verbose:
         logger.setLevel(logging.INFO)
         logger.info("Verbose output enabled")
-    
-    if logger.getEffectiveLevel() <= logging.INFO:
-        logger.info("Starting Odoo Docker container update process")
+
+    # First line of every run: a pasted log should say which version produced it.
+    mode = "verbose" if logger.getEffectiveLevel() <= logging.INFO else "quiet, -v for details"
+    print(f"{CR}update_docker_odoo.py {SCRIPT_VERSION} ({SCRIPT_DATE}) · {mode}")
+    sys.stdout.flush()
     
     # Check if PyYAML is installed
     try:

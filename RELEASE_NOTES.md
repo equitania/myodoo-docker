@@ -2,7 +2,11 @@
 
 ## Quiet Runs and a Closing Problem Block (04.08.2026)
 
+### Added
+- **update_docker_odoo.py v5.6.2**: prints `update_docker_odoo.py <version> (<date>) · quiet, -v for details` as the first line of every run. A pasted log now says which version produced it, and whether the output was filtered — the two things always asked back first when a report comes in from a server. The constants are kept next to the header comment they mirror.
+
 ### Fixed
+- **odoo_build_cache.py v1.0.1**: `ensure_dockerfile_copy_line()` also *updates* an outdated form of the line, not just inserts a missing one. The `--chown` correction below would otherwise never reach an existing installation: `sync_build_scripts()` does not distribute Dockerfiles, and the old line was already present, so the insert branch never ran.
 - **scripts/update_docker_odoo.py v5.6.1**, from the first live run: `should_filter` was **always false**, with or without `-v`, so the whole verbosity distinction had been dead for as long as it existed. `logging.basicConfig()` configures the *root* logger; the module's own `logger.level` stays at `NOTSET` (0), and `0 > logging.INFO` is false. The `-v` path fared no better: it sets the level to `INFO`, and `20 > 20` is false too. Every `logger.level` comparison now uses `logger.getEffectiveLevel()`, which resolves through the root logger and returns the 30 that was intended. Wiring `docker build` into the same condition in v5.6.0 therefore changed nothing visible — this is what actually makes it quiet.
 - **Dockerfiles/v{16,18,19}-odoo**: `COPY zips/` now carries `--chown=odoo:odoo`. `COPY` writes as root even after `USER odoo`, while `build_odoo.py` runs as odoo, so its cleanup `rm -rf zips` failed with `Permission denied` on every archive — and all 273 MB of them stayed in the finished image.
 - **scripts/update_docker_odoo.py v5.6.0**: there was effectively no non-verbose mode left. `docker build` was the one long-running step invoked without `filter_output`, so a plain `doup` streamed every line of a ten-to-twenty-minute build — several hundred `Downloaded: …` lines per container — while the Odoo update runs next to it already honoured the setting. It now filters like the rest: without `-v` only warnings and errors appear, with `-v` the full stream as before.

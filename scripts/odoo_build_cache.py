@@ -5,7 +5,7 @@
 # Description:      Share one host-side cache of Odoo release archives across
 #                   every instance on the server, so a build downloads only
 #                   what actually changed.
-# Version:          1.0.0
+# Version:          1.0.1
 # Date:             04.08.2026
 # Author:           Equitania Software GmbH
 # ==============================================================================
@@ -64,12 +64,21 @@ import urllib.request
 import zipfile
 from urllib.parse import urlsplit
 
-SCRIPT_VERSION = "1.0.0"
+SCRIPT_VERSION = "1.0.1"
 SCRIPT_DATE = "04.08.2026"
 
 CACHE_ROOT_DEFAULT = "/opt/odoo-build-cache"
 ZIP_DIR = "zips"
-COPY_LINE = "COPY zips/ /opt/odoo/zips/"
+
+# --chown is required: COPY writes as root even after `USER odoo`, while
+# build_odoo.py runs as odoo. Without it the build's cleanup `rm -rf zips`
+# fails with Permission denied on every archive and they all stay in the image.
+COPY_LINE = "COPY --chown=odoo:odoo zips/ /opt/odoo/zips/"
+
+# Earlier forms of the line, replaced in place on servers that already have one.
+# sync_build_scripts() in update_docker_odoo.py does not distribute Dockerfiles,
+# so a corrected line would otherwise never reach an existing installation.
+LEGACY_COPY_LINES = ("COPY zips/ /opt/odoo/zips/",)
 GC_DAYS_DEFAULT = 30
 RELEASE_ARCHIVES_KEPT = 5
 
@@ -275,6 +284,16 @@ def ensure_dockerfile_copy_line(path):
         lines = handle.read().splitlines()
     if any(line.strip() == COPY_LINE for line in lines):
         return False
+
+    # Upgrade an outdated form of the line in place before considering an insert.
+    for index, line in enumerate(lines):
+        if line.strip() in LEGACY_COPY_LINES:
+            lines[index] = COPY_LINE
+            with open(path, "w", encoding="utf8") as handle:
+                handle.write("\n".join(lines) + "\n")
+            print(f"Updated {path}: '{COPY_LINE}'")
+            return True
+
     for index, line in enumerate(lines):
         if line.startswith("RUN cd /opt/odoo/"):
             lines.insert(index, COPY_LINE)
