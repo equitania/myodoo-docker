@@ -51,14 +51,32 @@ an editor is a warning everybody learns to scroll past.
   `.bak_<timestamp>` is taken first, as with the Dockerfile. Keys outside the
   managed list are never added — what else the template contains (`workers`,
   `list_db`) are examples, not policy.
-- The test suite grew from 60 to 101 cases, all stdlib `unittest`. Beyond the
+- **v19-odoo/bin/boot v2.4.0: the warning in the `doup` report came from
+  somewhere else entirely.** `odoo.conf` only reaches the process that `start`
+  launches — `update` and `neutralize` run `odoo-bin` bare, on purpose, so they
+  cannot inherit the customer's `addons_path`, `db_host` or worker count. That
+  run therefore kept reporting the missing `http_interface` no matter what the
+  config said, which is what made the correction look like it had not worked.
+  Both now pass `--http-interface=0.0.0.0` explicitly, ahead of the caller's own
+  arguments so an explicit one still wins. Nothing about the run changes: with
+  `--stop-after-init` there is no HTTP server to bind. Adding `-c "$file"`
+  instead would have been the tempting fix and the wrong one — it would hand the
+  update run the customer's configuration, a real behaviour change to buy a
+  cosmetic line. v16 and v18 keep their boot scripts unchanged; neither version
+  emits the warning, so the argument would be a change to a customer image for
+  nothing.
+- The test suite grew from 60 to 110 cases, all stdlib `unittest`. Beyond the
   happy paths they pin down what must *not* happen: a tar/URL/wildcard source
   stays an `ADD`, an unknown flag stays an `ADD`, a customer's own `ADD` and their
   own config values stay untouched, passwords are never written. Two guards check
   the repository's own files — that every `Dockerfiles/v*/Dockerfile` carries the
   additive directives, and that every `Dockerfiles/v*/odoo.conf` has a value for
   each managed key. Without the second one, a managed key missing from a template
-  would quietly do nothing on every server.
+  would quietly do nothing on every server. The nine `boot` cases run the script
+  for real against a recording stand-in for `odoo-bin`, rather than grepping it:
+  they pin down that `update` gained the argument, that `start` did not (its
+  config supplies it), that `update` still does *not* read the config file, and
+  that the v16/v18 scripts stayed clean.
 
 ## The Dockerfile Update Reaches Existing Installations (04.08.2026)
 

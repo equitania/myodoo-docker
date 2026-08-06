@@ -284,6 +284,12 @@ Das Boot-Skript im Container akzeptiert genau drei Kommandos:
 `start` (Normalbetrieb), `update` (Modul-Update, genutzt von `doup`),
 `neutralize` (DB neutralisieren, z.B. nach Restore auf test).
 
+> **Nur `start` liest die `odoo.conf`.** `update` und `neutralize` starten
+> `odoo-bin` bewusst ohne `-c`, damit ein Update nicht den `addons_path`, den
+> `db_host` und die Worker-Zahl der Instanz erbt. Eine Änderung an der
+> `odoo.conf` wirkt sich deshalb erst auf den laufenden Container aus, nicht auf
+> die Log-Ausgabe des `update odoo`-Schritts von `doup`.
+
 ### 8.3 Verifizieren
 
 ```fish
@@ -986,6 +992,12 @@ docker run -d -p 127.0.0.1:13000:8069 -p 127.0.0.1:14000:8072 \
 The boot script inside the container accepts exactly three commands:
 `start` (normal operation), `update` (module update, used by `doup`),
 `neutralize` (neutralize the DB, e.g. after restoring onto test).
+
+> **Only `start` reads `odoo.conf`.** `update` and `neutralize` launch
+> `odoo-bin` without `-c` on purpose, so an update cannot inherit the instance's
+> `addons_path`, `db_host` and worker count. A change to `odoo.conf` therefore
+> takes effect on the running container only — not on the log output of `doup`'s
+> `update odoo` step.
 
 ### 8.3 Verify
 

@@ -1,8 +1,8 @@
 #!/bin/bash
 ##############################################################################
 # This script is designed to be run inside the container
-# Version 2.3.0
-# Date 14.07.2026
+# Version 2.4.0
+# Date 06.08.2026
 ##############################################################################
 #
 #    Shell Script for Odoo Docker Container
@@ -28,6 +28,15 @@ echo "Odoo Container starting now: $currentdate"
 
 # Configuration file path
 file="/opt/odoo/etc/odoo.conf"
+
+# Only 'start' reads the configuration file. 'update' and 'neutralize' run
+# odoo-bin bare, on purpose: they must not inherit the customer's addons_path,
+# db_host or worker count. The price is that http_interface is unset for them,
+# which Odoo 19 reports on every run - noise in the doup report for a process
+# that never serves HTTP (--stop-after-init). Passing the value the running
+# container uses anyway silences it without changing what the run does. It goes
+# before "$@" so an explicit argument from the caller still wins.
+interface_argument="--http-interface=0.0.0.0"
 
 # Fail hard and fast even on pipelines
 set -eo pipefail
@@ -67,10 +76,10 @@ function update {
 
     # Check if current user is already odoo
     if [ "$(whoami)" = "odoo" ]; then
-        python3 /opt/odoo/odoo-server/odoo-bin --update=all --workers=0 --stop-after-init $*
+        python3 /opt/odoo/odoo-server/odoo-bin --update=all --workers=0 --stop-after-init $interface_argument $*
     else
         # Use su instead of sudo for user switching
-        su - odoo --whitelist-environment=PGPASSWORD -c "python3 /opt/odoo/odoo-server/odoo-bin --update=all --workers=0 --stop-after-init $*"
+        su - odoo --whitelist-environment=PGPASSWORD -c "python3 /opt/odoo/odoo-server/odoo-bin --update=all --workers=0 --stop-after-init $interface_argument $*"
     fi
 
     SERVICE_PID=$!
@@ -90,10 +99,10 @@ function neutralize {
 
     # Check if current user is already odoo
     if [ "$(whoami)" = "odoo" ]; then
-        python3 /opt/odoo/odoo-server/odoo-bin neutralize --workers=0 --stop-after-init $*
+        python3 /opt/odoo/odoo-server/odoo-bin neutralize --workers=0 --stop-after-init $interface_argument $*
     else
         # Use su instead of sudo for user switching
-        su - odoo --whitelist-environment=PGPASSWORD -c "python3 /opt/odoo/odoo-server/odoo-bin neutralize --workers=0 --stop-after-init $*"
+        su - odoo --whitelist-environment=PGPASSWORD -c "python3 /opt/odoo/odoo-server/odoo-bin neutralize --workers=0 --stop-after-init $interface_argument $*"
     fi
 
     SERVICE_PID=$!
