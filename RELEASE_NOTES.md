@@ -1,5 +1,42 @@
 # Release Notes
 
+## Every Run Leaves a Log Behind (06.08.2026)
+
+### Added
+- **update_docker_odoo.py v5.9.0: a full run log per container**, written to the
+  instance's own build folder as `update_<YYYYMMDD>_<HHMMSS>.log`. The console
+  output is deliberately lossy — without `-v` every INFO line of a twenty-minute
+  update is dropped, and what survives scrolls away. That is the right trade-off
+  while watching a run and the wrong one the morning after, when the question is
+  what the cron job did at three. The file is written regardless of `-v` and
+  keeps what the screen dropped: the section header, every step with its
+  timing, and **every** child line at every level, recorded before the filter
+  rather than after it.
+- **The paths are named at exit**, via `atexit` rather than from the summary
+  block — a run that was interrupted or died is exactly the one whose log
+  matters, and it never reaches the summary.
+- **`.dockerignore` is kept in shape.** The build folder *is* the build context,
+  so a year of daily logs would be shipped to the daemon on every build. The
+  repository's own `.dockerignore` has excluded `*.log` for a while, but that
+  file is the customer's and is distributed by nothing, so an installation may
+  have none at all. Opening a log now makes sure the pattern is present —
+  appended, never replacing what is there, and a commented-out `# *.log` does
+  not count as covered.
+- Losing the log never costs the update: a build folder that has vanished or
+  cannot be written to produces one warning and the run continues. Every
+  function in the block swallows its own I/O errors for that reason, and a test
+  pins each case down.
+- The suite grew from 110 to 128 cases. The new file is the first coverage
+  `update_docker_odoo.py` has ever had; PyYAML is imported at module level but
+  used by nothing under test, so a placeholder stands in where it is absent
+  rather than adding a dependency to a repository that has none.
+
+### Known limitation
+- Nothing removes old logs — a daily `doup` leaves a file per instance per day.
+  They are small next to a filestore and out of the build context, but a
+  retention rule is a deliberate decision, not something a logging change should
+  make on its own.
+
 ## Corrections That No Longer Need a Human (06.08.2026)
 
 Both changes close the same gap from the other side: v1.3.0 made the repository's

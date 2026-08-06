@@ -1,8 +1,8 @@
 #!/usr/bin/python3
 # -*- coding: utf-8 -*-
 # This script performs an update of an Odoo database in a Docker container
-# Version 5.8.0
-# Date 04.08.2026
+# Version 5.9.0
+# Date 06.08.2026
 ##############################################################################
 #
 #    Shell Script for Odoo, Open Source Management Solution
@@ -27,6 +27,7 @@ import re
 import sys
 import time
 import yaml
+import atexit
 import shutil
 import platform
 import logging
@@ -75,8 +76,8 @@ logger = logging.getLogger(__name__)
 # Kept in sync with the header comment above. Printed at the start of every run
 # so a pasted log says which version produced it — the single most common
 # question when a report comes back from a server.
-SCRIPT_VERSION = "5.8.0"
-SCRIPT_DATE = "04.08.2026"
+SCRIPT_VERSION = "5.9.0"
+SCRIPT_DATE = "06.08.2026"
 
 # Column at which the dots of a compact step line end
 STEP_WIDTH = 44
@@ -113,6 +114,135 @@ ISSUE_KEY_RE = re.compile(r'^\d{2}:\d{2}:\d{2}\s+\d+\s+\S+\s+|^\S+\s+')
 # repeating it is worth anything - otherwise the recap sits directly below the
 # line it repeats
 ERROR_RECAP_DISTANCE = 20
+
+
+##############################################################################
+# Run log
+#
+# The console output is deliberately lossy: without -v every INFO line of a
+# twenty-minute update is dropped, and what is left scrolls away. That is the
+# right trade-off while watching a run and the wrong one afterwards, when the
+# question is what a cron job did at three in the morning. The file written
+# here keeps the whole run - steps, timings and every child line regardless of
+# level - next to the instance it belongs to.
+#
+# It is a convenience, never a precondition: a folder that cannot be written to
+# costs the log, not the update. Every function here swallows its own I/O
+# errors for that reason.
+##############################################################################
+
+# Every log file written this run, listed once at exit.
+RUN_LOG_FILES = []
+
+_RUN_LOG_HANDLE = None
+
+# The build folder is the build context, so a year of daily logs would be sent
+# to the daemon on every build. The repository's .dockerignore has excluded
+# them since the filestore backups made the context huge - but that file is the
+# customer's and is distributed by nothing, so an installation may have none.
+LOG_IGNORE_PATTERN = "*.log"
+
+
+def ensure_log_ignored(build_dir):
+    """Keep the run logs out of the build context."""
+    path = join(build_dir, ".dockerignore")
+    try:
+        existing = ""
+        if isfile(path):
+            with open(path, encoding="utf8") as handle:
+                existing = handle.read()
+            # A commented-out pattern excludes nothing, so compare the whole
+            # stripped line rather than searching for the text.
+            if any(line.strip() == LOG_IGNORE_PATTERN
+                   for line in existing.splitlines()):
+                return
+        with open(path, "a", encoding="utf8") as handle:
+            if not existing:
+                handle.write("# Run logs written by update_docker_odoo.py. This folder is the\n"
+                             "# build context - without this line they would be sent to the\n"
+                             "# daemon on every build.\n")
+            elif not existing.endswith("\n"):
+                handle.write("\n")
+            handle.write(LOG_IGNORE_PATTERN + "\n")
+    except OSError as exc:
+        logger.warning(f"Could not update {path}: {exc}")
+
+
+def open_run_log(build_dir, container_name, header_lines=()):
+    """Start the run log for one container in its build folder.
+
+    Returns:
+        str: Path of the log file, or None when it could not be created.
+    """
+    global _RUN_LOG_HANDLE
+    close_run_log()
+    if not isdir(build_dir):
+        logger.warning(f"No run log: build folder not found: {build_dir}")
+        return None
+    path = join(build_dir, time.strftime("update_%Y%m%d_%H%M%S.log"))
+    try:
+        _RUN_LOG_HANDLE = open(path, "w", encoding="utf8")
+    except OSError as exc:
+        logger.warning(f"No run log: {exc}")
+        return None
+    ensure_log_ignored(build_dir)
+    run_log_write(f"update_docker_odoo.py {SCRIPT_VERSION} ({SCRIPT_DATE})")
+    run_log_write(f"container: {container_name}")
+    run_log_write(f"started:   {time.strftime('%d.%m.%Y %H:%M:%S')}")
+    for line in header_lines:
+        run_log_write(line)
+    RUN_LOG_FILES.append(path)
+    return path
+
+
+def run_log_write(text):
+    """Append one line to the run log. A no-op when no log is open.
+
+    Flushes on every line: a run killed mid-build must still leave behind
+    everything up to the moment it died - that is when the file matters most.
+    """
+    if _RUN_LOG_HANDLE is None:
+        return
+    try:
+        # The carriage returns that repair a terminal left in raw mode would
+        # only be stray ^M bytes here.
+        _RUN_LOG_HANDLE.write(text.replace("\r", "") + "\n")
+        _RUN_LOG_HANDLE.flush()
+    except (OSError, ValueError):
+        pass
+
+
+def close_run_log():
+    """Finish the current run log, if any."""
+    global _RUN_LOG_HANDLE
+    if _RUN_LOG_HANDLE is None:
+        return
+    try:
+        _RUN_LOG_HANDLE.write(
+            f"\nfinished:  {time.strftime('%d.%m.%Y %H:%M:%S')}\n")
+        _RUN_LOG_HANDLE.close()
+    except (OSError, ValueError):
+        pass
+    _RUN_LOG_HANDLE = None
+
+
+def print_run_log_files():
+    """Name the log files this run produced.
+
+    Registered with atexit rather than printed from the summary block, so an
+    interrupted or failed run - the case where the file is worth the most -
+    still says where to look.
+    """
+    close_run_log()
+    if not RUN_LOG_FILES:
+        return
+    print(f"\n{CR}run log{'s' if len(RUN_LOG_FILES) > 1 else ''}:")
+    for path in RUN_LOG_FILES:
+        print(f"{CR}  {path}")
+    sys.stdout.flush()
+
+
+atexit.register(print_run_log_files)
 
 
 def note_issue(level, text):
@@ -213,6 +343,7 @@ def print_section(title, rune='─'):
     prefix = f"{rune * 2} {title} "
     padding = max(3, SECTION_WIDTH - len(prefix))
     print(f"\n{CR}{prefix}{rune * padding}")
+    run_log_write(f"\n{prefix}{rune * padding}")
     sys.stdout.flush()
 
 
@@ -221,6 +352,7 @@ def print_step(label, status, duration=None):
     dots = '.' * max(3, STEP_WIDTH - len(label))
     suffix = f" ({format_duration(duration)})" if duration is not None else ""
     print(f"{CR}  {label} {dots} {status}{suffix}")
+    run_log_write(f"  {label} {dots} {status}{suffix}")
     sys.stdout.flush()
 
 
@@ -660,6 +792,11 @@ def run_command(command, show_output=True, filter_output=False, show_progress=Fa
                 # see there for why substring matching on the raw line is wrong.
                 level, display = classify_line(line)
 
+                # Before any filtering: the console drops INFO without -v, the
+                # file keeps everything. Reconstructing a build from a log that
+                # was filtered the same way as the screen is impossible.
+                run_log_write(f"    {display}")
+
                 if level == 'ERROR':
                     errors_count += 1
                     all_errors.append(display)
@@ -782,6 +919,7 @@ def run_stream(label, command, **kwargs):
     global CURRENT_STEP
     started = time.time()
     print(f"{CR}  {label}")
+    run_log_write(f"  {label}")
     sys.stdout.flush()
     CURRENT_STEP = label
     try:
@@ -1095,6 +1233,19 @@ def clean_docker_system():
     return info, warn, err
 
 def process_container(container, proxy_settings=None, dockerfiles_source=None):
+    """Process a single container update, with its run log closed on any exit.
+
+    A thin wrapper around _process_container, which returns from a dozen
+    different places - a try/finally around the call is the only way to close
+    the log on all of them without touching every one.
+    """
+    try:
+        return _process_container(container, proxy_settings, dockerfiles_source)
+    finally:
+        close_run_log()
+
+
+def _process_container(container, proxy_settings=None, dockerfiles_source=None):
     """Process a single container update.
 
     Args:
@@ -1150,9 +1301,18 @@ def process_container(container, proxy_settings=None, dockerfiles_source=None):
     update_label = ('Full update' if update_type == 'F'
                     else 'Module copy' if update_type == 'M'
                     else 'Neutralize and update')
+    context_line = (f"  {update_label} · db {db_name} · ports {port}/{poll_port}"
+                    + (f" · odoo {version}" if version else ""))
+    # Opened before the header so the file holds the section from its first
+    # line. The context that only -v puts on screen goes in unconditionally:
+    # a log that does not say which image it built from which folder is half
+    # a log.
+    open_run_log(path, container_name,
+                 header_lines=[f"image:     {image}", f"path:      {path}"]
+                 + ([f"volume:    {volume}"] if volume else []))
     print_section(container_name)
-    print(f"  {update_label} · db {db_name} · ports {port}/{poll_port}"
-          + (f" · odoo {version}" if version else ""))
+    print(context_line)
+    run_log_write(context_line)
     logger.info(f"Dockerfile path: {path}")
     logger.info(f"Docker image: {image}")
     if volume:
