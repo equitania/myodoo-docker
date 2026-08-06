@@ -15,6 +15,7 @@ import os
 import re
 import sys
 import tempfile
+import time
 import types
 import unittest
 
@@ -102,6 +103,122 @@ class RunLogTest(unittest.TestCase):
         missing = os.path.join(self.tmp, "does", "not", "exist")
         self.assertIsNone(udo.open_run_log(missing, "ivy-odoo"))
         udo.run_log_write("still fine")  # must not raise
+
+
+def age_log(directory, days, name_only=False):
+    """Create a run log whose name puts it `days` days in the past."""
+    stamp = time.strftime("%Y%m%d_%H%M%S",
+                          time.localtime(time.time() - days * 86400))
+    path = os.path.join(directory, f"update_{stamp}.log")
+    if not name_only:
+        with open(path, "w", encoding="utf8") as handle:
+            handle.write("old run\n")
+    return path
+
+
+class PruneRunLogsTest(unittest.TestCase):
+    """Deleting files needs a narrower target than a glob. Age comes from the
+    name, which is also what proves the file is ours to delete."""
+
+    def setUp(self):
+        self.tmp = tempfile.mkdtemp()
+        self.addCleanup(udo.close_run_log)
+        self.addCleanup(udo.RUN_LOG_FILES.clear)
+
+    def test_a_log_older_than_the_limit_is_removed(self):
+        old = age_log(self.tmp, 120)
+        self.assertEqual(udo.prune_run_logs(self.tmp, 90), 1)
+        self.assertFalse(os.path.exists(old))
+
+    def test_a_log_within_the_limit_survives(self):
+        recent = age_log(self.tmp, 10)
+        udo.prune_run_logs(self.tmp, 90)
+        self.assertTrue(os.path.exists(recent))
+
+    def test_the_boundary_sits_where_it_was_configured(self):
+        """Not testable at exactly N days - the clock moves on between building
+        the name and comparing it. A day either side is what matters."""
+        just_inside = age_log(self.tmp, 89)
+        just_outside = age_log(self.tmp, 91)
+        self.assertEqual(udo.prune_run_logs(self.tmp, 90), 1)
+        self.assertTrue(os.path.exists(just_inside))
+        self.assertFalse(os.path.exists(just_outside))
+
+    def test_only_this_script_s_own_log_names_are_touched(self):
+        strangers = []
+        for name in ("odoo.conf", "Dockerfile", "build.log", "update.log",
+                     "update_2026.log", "update_20260101_120000.log.bak",
+                     "release.file"):
+            path = os.path.join(self.tmp, name)
+            with open(path, "w", encoding="utf8") as handle:
+                handle.write("not a run log\n")
+            strangers.append(path)
+        udo.prune_run_logs(self.tmp, 0.0001)
+        for path in strangers:
+            self.assertTrue(os.path.exists(path), f"deleted {path}")
+
+    def test_a_directory_with_a_matching_name_is_left_alone(self):
+        trap = os.path.join(self.tmp, "update_20200101_120000.log")
+        os.makedirs(trap)
+        udo.prune_run_logs(self.tmp, 1)
+        self.assertTrue(os.path.isdir(trap))
+
+    def test_subfolders_are_not_searched(self):
+        nested = os.path.join(self.tmp, "filestore-backup")
+        os.makedirs(nested)
+        buried = age_log(nested, 999)
+        udo.prune_run_logs(self.tmp, 1)
+        self.assertTrue(os.path.exists(buried))
+
+    def test_the_log_of_the_running_update_is_never_deleted(self):
+        """Its name is minutes old, but a clock skew or a zero limit must not
+        be able to delete the file currently being written."""
+        current = udo.open_run_log(self.tmp, "ivy-odoo")
+        udo.prune_run_logs(self.tmp, 0.0001, keep=current)
+        self.assertTrue(os.path.exists(current))
+
+    def test_zero_days_disables_pruning(self):
+        old = age_log(self.tmp, 3650)
+        self.assertEqual(udo.prune_run_logs(self.tmp, 0), 0)
+        self.assertTrue(os.path.exists(old))
+
+    def test_no_setting_disables_pruning(self):
+        old = age_log(self.tmp, 3650)
+        self.assertEqual(udo.prune_run_logs(self.tmp, None), 0)
+        self.assertTrue(os.path.exists(old))
+
+    def test_a_missing_folder_never_stops_the_run(self):
+        self.assertEqual(
+            udo.prune_run_logs(os.path.join(self.tmp, "gone"), 90), 0)
+
+
+class LogRetentionSettingTest(unittest.TestCase):
+    def test_the_container_setting_wins(self):
+        config = {"defaults": {"log_retention_days": 90}}
+        container = {"log_retention_days": 7}
+        self.assertEqual(udo.resolve_log_retention(config, container), 7)
+
+    def test_the_defaults_block_applies_without_a_container_setting(self):
+        config = {"defaults": {"log_retention_days": 30}}
+        self.assertEqual(udo.resolve_log_retention(config, {}), 30)
+
+    def test_without_any_setting_the_built_in_default_applies(self):
+        self.assertEqual(udo.resolve_log_retention({}, {}),
+                         udo.DEFAULT_LOG_RETENTION_DAYS)
+
+    def test_zero_is_kept_rather_than_treated_as_missing(self):
+        """0 means 'never delete' - it must not fall through to the default."""
+        config = {"defaults": {"log_retention_days": 0}}
+        self.assertEqual(udo.resolve_log_retention(config, {}), 0)
+
+    def test_an_unusable_value_falls_back_to_the_default_instead_of_raising(self):
+        config = {"defaults": {"log_retention_days": "ninety"}}
+        self.assertEqual(udo.resolve_log_retention(config, {}),
+                         udo.DEFAULT_LOG_RETENTION_DAYS)
+
+    def test_a_negative_value_is_treated_as_disabled(self):
+        config = {"defaults": {"log_retention_days": -5}}
+        self.assertEqual(udo.resolve_log_retention(config, {}), 0)
 
 
 class DockerignoreTest(unittest.TestCase):

@@ -377,10 +377,17 @@ vollständige Logdatei in den Build-Ordner der Instanz:
 INFO-Zeilen, die die Konsole ohne `-v` verschweigt — für die Frage, was der
 nächtliche Cron-Lauf getan hat, ist genau das der interessante Teil. Die Pfade
 werden am Ende genannt, auch wenn der Lauf abgebrochen ist oder gescheitert.
-Aufgeräumt wird nichts: bei täglichem `doup` sammelt sich eine Datei pro Instanz
-und Tag an. Sie liegen dank `.dockerignore` außerhalb des Build-Kontexts, kosten
-also keine Build-Zeit — aber ein `find ~/docker-builds -name 'update_*.log'
--mtime +90 -delete` im Wartungs-Cron ist eine Überlegung wert.
+Dank `.dockerignore` liegen sie außerhalb des Build-Kontexts und kosten keine
+Build-Zeit.
+
+Aufgeräumt wird beim jeweils nächsten Lauf derselben Instanz: Standard sind
+**90 Tage**, einstellbar über `defaults.log_retention_days` in der YAML oder
+`log_retention_days` am einzelnen Container; `0` behält alles. Gelöscht werden
+ausschließlich Dateien, deren Name exakt dem Muster `update_JJJJMMTT_HHMMSS.log`
+folgt — eine eigene `build.log` im selben Ordner bleibt unangetastet, und
+Unterordner wie `filestore-backup/` werden nicht durchsucht. Das Alter stammt
+aus dem Dateinamen, nicht aus der mtime: der Name sagt, wann der Lauf war, die
+mtime nur, wann die Datei zuletzt angefasst wurde.
 
 **Build-Cache.** Vor jedem Build lädt `odoo_build_cache.py` die Release-Archive
 auf den Host nach `/opt/odoo-build-cache` und verlinkt sie in den Build-Ordner
@@ -518,7 +525,7 @@ Alle Skripte des Repos (`scripts/`, Stand 16.07.2026):
 | `ngx-conf-wizard.sh` (1.1.0) | Interaktiver YAML-Assistent für nginx-set-conf | `./ngx-conf-wizard.sh` |
 | `pg-local-deploy.sh` (1.2.1) | PostgreSQL-Container interaktiv deployen (Profile, optional SSL) | `./pg-local-deploy.sh` |
 | `fr-local-deploy.sh` | FastReport-API-Container deployen (Default `/opt/fast-report`) | `./fr-local-deploy.sh` |
-| `update_docker_odoo.py` (5.9.0) | Odoo-Container-Updates per YAML | `doup` bzw. `python3 update_docker_odoo.py [-s NAME] [--validate]` |
+| `update_docker_odoo.py` (5.10.0) | Odoo-Container-Updates per YAML | `doup` bzw. `python3 update_docker_odoo.py [-s NAME] [--validate]` |
 | `odoo_build_cache.py` (1.5.0) | Release-Archiv-Cache aller Instanzen; pflegt zusätzlich Dockerfile und `odoo.conf` des Build-Ordners | von `doup` aufgerufen; `~/odoo_build_cache.py stats\|gc [--days 30]` |
 | `container2backup.py` (4.7.1) | SQL+Filestore-Backups, Kompression/Verschlüsselung/Streaming | `dobk` bzw. `~/container2backup.py [--sql-only]` |
 | `restore-zip.sh` (2.1.0) | Backup-Restore (DB + Filestore) in Docker | siehe [Kapitel 13](#de-13-restore--notfall) |
@@ -1096,11 +1103,17 @@ container), `-v` (verbose). **Proxy customers:** `defaults.proxy` and
 the instance's build folder: `~/docker-builds/<name>/update_YYYYMMDD_HHMMSS.log`.
 It includes the INFO lines the console withholds without `-v` — which is exactly
 the interesting part when the question is what last night's cron run did. The
-paths are named at the end, after an abort or a failure too. Nothing is cleaned
-up: a daily `doup` leaves one file per instance per day. Thanks to
-`.dockerignore` they sit outside the build context and cost no build time — but
-a `find ~/docker-builds -name 'update_*.log' -mtime +90 -delete` in the
-maintenance cron is worth considering.
+paths are named at the end, after an abort or a failure too. Thanks to
+`.dockerignore` they sit outside the build context and cost no build time.
+
+Cleanup happens on that instance's next run: **90 days** by default, adjustable
+via `defaults.log_retention_days` in the YAML or `log_retention_days` on the
+individual container; `0` keeps everything. Only files whose name matches
+`update_YYYYMMDD_HHMMSS.log` exactly are ever deleted — a `build.log` of your
+own in the same folder stays untouched, and subfolders such as
+`filestore-backup/` are not searched. The age comes from the file name, not the
+mtime: the name says when the run happened, the mtime only says when the file
+was last touched.
 
 **Build cache.** Before every build, `odoo_build_cache.py` fetches the release
 archives onto the host into `/opt/odoo-build-cache` and links them into the
@@ -1237,7 +1250,7 @@ All scripts in this repository (`scripts/`, as of 16.07.2026):
 | `ngx-conf-wizard.sh` (1.1.0) | Interactive YAML wizard for nginx-set-conf | `./ngx-conf-wizard.sh` |
 | `pg-local-deploy.sh` (1.2.1) | Deploy a PostgreSQL container interactively (profiles, optional SSL) | `./pg-local-deploy.sh` |
 | `fr-local-deploy.sh` | Deploy the FastReport API container (default `/opt/fast-report`) | `./fr-local-deploy.sh` |
-| `update_docker_odoo.py` (5.9.0) | Odoo container updates via YAML | `doup` or `python3 update_docker_odoo.py [-s NAME] [--validate]` |
+| `update_docker_odoo.py` (5.10.0) | Odoo container updates via YAML | `doup` or `python3 update_docker_odoo.py [-s NAME] [--validate]` |
 | `odoo_build_cache.py` (1.5.0) | Release archive cache shared by all instances; also maintains the build folder's Dockerfile and `odoo.conf` | called by `doup`; `~/odoo_build_cache.py stats\|gc [--days 30]` |
 | `container2backup.py` (4.7.1) | SQL+filestore backups, compression/encryption/streaming | `dobk` or `~/container2backup.py [--sql-only]` |
 | `restore-zip.sh` (2.1.0) | Backup restore (DB + filestore) into Docker | see [chapter 13](#en-13-restore--emergency) |

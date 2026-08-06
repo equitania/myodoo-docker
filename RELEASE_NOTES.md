@@ -2,6 +2,8 @@
 
 ## Every Run Leaves a Log Behind (06.08.2026)
 
+*update_docker_odoo.py v5.10.0*
+
 ### Added
 - **update_docker_odoo.py v5.9.0: a full run log per container**, written to the
   instance's own build folder as `update_<YYYYMMDD>_<HHMMSS>.log`. The console
@@ -26,16 +28,26 @@
   cannot be written to produces one warning and the run continues. Every
   function in the block swallows its own I/O errors for that reason, and a test
   pins each case down.
-- The suite grew from 110 to 128 cases. The new file is the first coverage
+- The suite grew from 110 to 144 cases, 16 of them on the retention alone. The new file is the first coverage
   `update_docker_odoo.py` has ever had; PyYAML is imported at module level but
   used by nothing under test, so a placeholder stands in where it is absent
   rather than adding a dependency to a repository that has none.
 
-### Known limitation
-- Nothing removes old logs — a daily `doup` leaves a file per instance per day.
-  They are small next to a filestore and out of the build context, but a
-  retention rule is a deliberate decision, not something a logging change should
-  make on its own.
+- **Retention, configurable in `docker2update.yaml`.** A daily `doup` would
+  otherwise leave a file per instance per day forever. Old logs are removed on
+  that instance's next run: `defaults.log_retention_days` for the installation,
+  `log_retention_days` on a container to override it, `0` to keep everything,
+  90 days when nothing says otherwise. An unusable value falls back to the
+  default with a warning instead of raising — a typo in the YAML must not be
+  able to stop an update, and refusing to delete is the safe direction.
+- **The deletion is deliberately narrow**, because the folder is the customer's
+  and this is the one part of the feature that destroys something. Only names
+  matching `update_<YYYYMMDD>_<HHMMSS>.log` exactly are candidates — not a glob
+  on `*.log`, so a `build.log` of their own survives. Directories with a
+  matching name are skipped, subfolders are not searched, the log of the running
+  update is excluded by path no matter what the clock says, and the age comes
+  from the name rather than the mtime: the name records when the run happened,
+  an mtime records when something last touched the file.
 
 ## Corrections That No Longer Need a Human (06.08.2026)
 

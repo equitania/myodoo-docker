@@ -1,7 +1,7 @@
 #!/usr/bin/python3
 # -*- coding: utf-8 -*-
 # This script performs an update of an Odoo database in a Docker container
-# Version 5.9.0
+# Version 5.10.0
 # Date 06.08.2026
 ##############################################################################
 #
@@ -76,7 +76,7 @@ logger = logging.getLogger(__name__)
 # Kept in sync with the header comment above. Printed at the start of every run
 # so a pasted log says which version produced it — the single most common
 # question when a report comes back from a server.
-SCRIPT_VERSION = "5.9.0"
+SCRIPT_VERSION = "5.10.0"
 SCRIPT_DATE = "06.08.2026"
 
 # Column at which the dots of a compact step line end
@@ -142,6 +142,17 @@ _RUN_LOG_HANDLE = None
 # customer's and is distributed by nothing, so an installation may have none.
 LOG_IGNORE_PATTERN = "*.log"
 
+# How long a run log is kept, in days. Override per installation with
+# 'defaults.log_retention_days' in docker2update.yaml, or per instance with
+# 'log_retention_days' on the container. 0 disables the cleanup entirely.
+DEFAULT_LOG_RETENTION_DAYS = 90
+
+# The only names prune_run_logs() will ever delete. Deliberately not a glob on
+# '*.log': this folder belongs to the customer and may hold logs of their own.
+# The timestamp doubles as the age - the file name is what the run wrote, while
+# an mtime can be changed by anything that touches the file afterwards.
+RUN_LOG_NAME_RE = re.compile(r'^update_(\d{8}_\d{6})\.log$')
+
 
 def ensure_log_ignored(build_dir):
     """Keep the run logs out of the build context."""
@@ -168,7 +179,77 @@ def ensure_log_ignored(build_dir):
         logger.warning(f"Could not update {path}: {exc}")
 
 
-def open_run_log(build_dir, container_name, header_lines=()):
+def resolve_log_retention(config, container):
+    """Days to keep run logs: container setting, else defaults, else built-in.
+
+    An unusable value falls back to the default rather than raising - a typo in
+    the YAML must not be able to stop an update, and refusing to delete is the
+    safe direction. A negative value is read as 'disabled'.
+    """
+    defaults = (config or {}).get('defaults') or {}
+    for source in ((container or {}), defaults):
+        if 'log_retention_days' not in source:
+            continue
+        # Present but empty reads as 'not configured', the same way the rest of
+        # the YAML is treated. 0 does NOT - it is the explicit 'never delete'.
+        value = source.get('log_retention_days')
+        if value is None or value == "":
+            continue
+        try:
+            days = float(value)
+        except (TypeError, ValueError):
+            logger.warning(f"Ignoring unusable log_retention_days: {value!r}")
+            return DEFAULT_LOG_RETENTION_DAYS
+        return max(0, days)
+    return DEFAULT_LOG_RETENTION_DAYS
+
+
+def prune_run_logs(build_dir, retention_days, keep=None):
+    """Delete run logs in build_dir older than retention_days.
+
+    Only files whose name this script produced itself are candidates - the
+    folder is the customer's and may hold logs of their own. Directories are
+    skipped, subfolders are not searched, and the log of the running update is
+    never a candidate no matter what the clock says.
+
+    Args:
+        keep: Path that must survive regardless of its age.
+
+    Returns:
+        int: Number of files removed.
+    """
+    if not retention_days or retention_days <= 0:
+        return 0
+    cutoff = time.time() - retention_days * 86400
+    removed = 0
+    try:
+        names = os.listdir(build_dir)
+    except OSError:
+        return 0
+    for name in names:
+        match = RUN_LOG_NAME_RE.match(name)
+        if not match:
+            continue
+        path = join(build_dir, name)
+        if not isfile(path) or (keep and os.path.abspath(path) == os.path.abspath(keep)):
+            continue
+        try:
+            written = time.mktime(time.strptime(match.group(1), "%Y%m%d_%H%M%S"))
+        except ValueError:
+            # A name that matches the pattern but holds an impossible date is
+            # not ours to interpret, let alone delete.
+            continue
+        if written >= cutoff:
+            continue
+        try:
+            os.remove(path)
+            removed += 1
+        except OSError as exc:
+            logger.warning(f"Could not remove old run log {path}: {exc}")
+    return removed
+
+
+def open_run_log(build_dir, container_name, header_lines=(), retention_days=None):
     """Start the run log for one container in its build folder.
 
     Returns:
@@ -192,6 +273,14 @@ def open_run_log(build_dir, container_name, header_lines=()):
     for line in header_lines:
         run_log_write(line)
     RUN_LOG_FILES.append(path)
+    # After opening, so the new file is protected by 'keep' and the result is
+    # recorded in the log that reports it.
+    removed = prune_run_logs(build_dir, retention_days, keep=path)
+    if removed:
+        message = (f"retention: removed {removed} run log(s) older than "
+                   f"{retention_days:g} day(s)")
+        run_log_write(message)
+        logger.info(message)
     return path
 
 
@@ -1232,7 +1321,8 @@ def clean_docker_system():
     print_step("docker system prune", status, time.time() - started)
     return info, warn, err
 
-def process_container(container, proxy_settings=None, dockerfiles_source=None):
+def process_container(container, proxy_settings=None, dockerfiles_source=None,
+                      log_retention_days=None):
     """Process a single container update, with its run log closed on any exit.
 
     A thin wrapper around _process_container, which returns from a dozen
@@ -1240,12 +1330,14 @@ def process_container(container, proxy_settings=None, dockerfiles_source=None):
     the log on all of them without touching every one.
     """
     try:
-        return _process_container(container, proxy_settings, dockerfiles_source)
+        return _process_container(container, proxy_settings, dockerfiles_source,
+                                  log_retention_days)
     finally:
         close_run_log()
 
 
-def _process_container(container, proxy_settings=None, dockerfiles_source=None):
+def _process_container(container, proxy_settings=None, dockerfiles_source=None,
+                       log_retention_days=None):
     """Process a single container update.
 
     Args:
@@ -1253,6 +1345,8 @@ def _process_container(container, proxy_settings=None, dockerfiles_source=None):
         proxy_settings: Optional resolved proxy dict (see resolve_proxy_settings)
         dockerfiles_source: Base directory with the v{version}-odoo script
             sources (default: DEFAULT_DOCKERFILES_SOURCE)
+        log_retention_days: Days to keep run logs in the build folder
+            (see resolve_log_retention); None uses the built-in default
     """
     # Set default values if missing
     container.setdefault('delay_time', 30)
@@ -1309,7 +1403,10 @@ def _process_container(container, proxy_settings=None, dockerfiles_source=None):
     # a log.
     open_run_log(path, container_name,
                  header_lines=[f"image:     {image}", f"path:      {path}"]
-                 + ([f"volume:    {volume}"] if volume else []))
+                 + ([f"volume:    {volume}"] if volume else []),
+                 retention_days=(DEFAULT_LOG_RETENTION_DAYS
+                                 if log_retention_days is None
+                                 else log_retention_days))
     print_section(container_name)
     print(context_line)
     run_log_write(context_line)
@@ -1800,7 +1897,8 @@ def main():
             dockerfiles_source = expand_path(
                 defaults.get('dockerfiles_source') or DEFAULT_DOCKERFILES_SOURCE)
             result = process_container(container, resolve_proxy_settings(config, container),
-                                       dockerfiles_source)
+                                       dockerfiles_source,
+                                       resolve_log_retention(config, container))
             if isinstance(result, tuple):
                 success, info_count, warning_count, error_count = result
                 total_info_count += info_count

@@ -27,11 +27,28 @@
 #   pre_build_files: (optional, per container) files/directories copied into
 #     dockerfile_path BEFORE docker build - e.g. customer-specific modules that
 #     cannot be fetched during the Docker build itself
+#   log_retention_days: (optional, per container) override of
+#     defaults.log_retention_days, see below
 #
 # Notes:
 #   - [M]odule update: Only copies new modules to container without updating all (2-3 minutes)
 #   - [F]ull update: Updates all modules (10-20 minutes)
 #   - [N]eutralize: First neutralizes the DB, then updates all (10-20 minutes)
+
+# Run logs
+# ---------
+# Every run writes a full log into the container's dockerfile_path, named
+# update_<YYYYMMDD>_<HHMMSS>.log. It holds what the console drops without -v,
+# and its path is printed at the end of the run.
+#
+# Old ones are removed on the next run of the same instance. Only files this
+# script wrote itself are ever candidates - a log of your own in that folder is
+# never touched, and neither is anything in a subfolder.
+#
+# Default: 90 days. Set 0 to keep them forever. Per container:
+# log_retention_days on the container itself. To change it globally, uncomment
+# the line in the defaults block below - there is only one such block, do not
+# add a second.
 
 # Optional global defaults (uncomment for customers behind a proxy).
 # The proxy is applied to wget downloads and passed to docker build as
@@ -50,6 +67,8 @@
 #  # (compared via the '# Version X.Y.Z' header). Default shown below; the
 #  # repository is kept current via 'ups' (getScripts.py).
 #  dockerfiles_source: "~/myodoo-docker/Dockerfiles"
+#  # Days to keep the run logs described above (0 = keep forever).
+#  log_retention_days: 90
 
 containers:
   - active: true
