@@ -378,9 +378,21 @@ gehört dem Kunden — `doup` überschreibt sie nie, weil sie eigene `COPY`- und
 `RUN`-Schritte tragen kann. Deshalb kam etwa der `HEALTHCHECK` vom März 2026 nie
 auf älteren Installationen an. Fehlende Image-Direktiven (`HEALTHCHECK`,
 `VOLUME`, `EXPOSE`) werden jetzt ergänzt, vorher wird eine `.bak_<Zeitstempel>`
-geschrieben. Alles, was stattdessen nur *abweicht* — etwa `ADD bin` gegenüber
-`COPY bin` —, erscheint als Warnung mit der exakten Zeile im Abschlussblock von
-`doup` und bleibt Handarbeit.
+geschrieben. Zusätzlich wird ein `ADD` an das `COPY` der Repository-Vorlage
+angeglichen, sofern beides nachweislich dasselbe tut (einfacher lokaler Pfad —
+niemals bei URL, Archiv oder Platzhalter, weil `ADD` dort lädt bzw. entpackt).
+Alles, was darüber hinaus nur *abweicht*, erscheint als Warnung mit der exakten
+Zeile im Abschlussblock von `doup` und bleibt Handarbeit.
+
+Genauso wird die **`odoo.conf` des Build-Ordners** gepflegt, die aus demselben
+Grund nie verteilt wird: sie enthält `admin_passwd` und `db_password`. Ergänzt
+werden ausschließlich zentral verwaltete Schlüssel und nur dort, wo der Kunde
+keinen eigenen Wert gesetzt hat — ein leerer Wert zählt dabei als nicht gesetzt,
+weil Odoo ihn selbst so behandelt. Erster Schlüssel ist `http_interface`: Odoo 19
+warnt, wenn er fehlt, und **Odoo 20 stellt den Vorgabewert auf `127.0.0.1` um**,
+womit jeder Container über seinen veröffentlichten Port unerreichbar wäre. Auch
+hier wird vorher eine `.bak_<Zeitstempel>` geschrieben, und der Schreibvorgang
+wird verweigert, sobald sich sonst irgendeine Einstellung ändern würde.
 
 <a id="de-11-schritt-9-backups-einrichten-edbkdobk"></a>
 ## 11. Schritt 9: Backups einrichten (edbk/dobk)
@@ -490,7 +502,7 @@ Alle Skripte des Repos (`scripts/`, Stand 16.07.2026):
 | `pg-local-deploy.sh` (1.2.1) | PostgreSQL-Container interaktiv deployen (Profile, optional SSL) | `./pg-local-deploy.sh` |
 | `fr-local-deploy.sh` | FastReport-API-Container deployen (Default `/opt/fast-report`) | `./fr-local-deploy.sh` |
 | `update_docker_odoo.py` (5.8.0) | Odoo-Container-Updates per YAML | `doup` bzw. `python3 update_docker_odoo.py [-s NAME] [--validate]` |
-| `odoo_build_cache.py` (1.3.0) | Release-Archiv-Cache aller Instanzen; pflegt zusätzlich die Dockerfile des Build-Ordners | von `doup` aufgerufen; `~/odoo_build_cache.py stats\|gc [--days 30]` |
+| `odoo_build_cache.py` (1.5.0) | Release-Archiv-Cache aller Instanzen; pflegt zusätzlich Dockerfile und `odoo.conf` des Build-Ordners | von `doup` aufgerufen; `~/odoo_build_cache.py stats\|gc [--days 30]` |
 | `container2backup.py` (4.7.1) | SQL+Filestore-Backups, Kompression/Verschlüsselung/Streaming | `dobk` bzw. `~/container2backup.py [--sql-only]` |
 | `restore-zip.sh` (2.1.0) | Backup-Restore (DB + Filestore) in Docker | siehe [Kapitel 13](#de-13-restore--notfall) |
 | `ssl-renew.sh` (1.3.0) | certbot-Renewal, nginx nur bei Bedarf angehalten | `./ssl-renew.sh` (Cron) |
@@ -1070,8 +1082,21 @@ to the customer — `doup` never overwrites it, because it may carry its own
 `COPY` and `RUN` steps. This is why, for instance, the March 2026 `HEALTHCHECK`
 never reached older installations. Absent image directives (`HEALTHCHECK`,
 `VOLUME`, `EXPOSE`) are now filled in, with a `.bak_<timestamp>` written first.
-Anything that merely *differs* — `ADD bin` against the repository's `COPY bin` —
-is reported with its exact line in the closing block of `doup` and stays manual.
+An `ADD` is additionally aligned with the reference's `COPY` where the two
+provably do the same thing (a plain local path — never a URL, an archive or a
+wildcard, since `ADD` fetches or unpacks those). Anything that merely *differs*
+beyond that is reported with its exact line in the closing block of `doup` and
+stays manual.
+
+The **build folder's `odoo.conf`** is maintained the same way and for the same
+reason: it is never distributed either, because it holds `admin_passwd` and
+`db_password`. Only centrally managed keys are filled in, and only where the
+customer set no value of their own — an empty value counts as none, because Odoo
+itself treats it that way. The first managed key is `http_interface`: Odoo 19
+warns when it is unset, and **Odoo 20 changes the default to `127.0.0.1`**, which
+would leave every container unreachable through its published port. A
+`.bak_<timestamp>` is written first here too, and the write is refused as soon as
+any other setting would change.
 
 <a id="en-11-step-9-set-up-backups-edbkdobk"></a>
 ## 11. Step 9: Set Up Backups (edbk/dobk)
@@ -1180,7 +1205,7 @@ All scripts in this repository (`scripts/`, as of 16.07.2026):
 | `pg-local-deploy.sh` (1.2.1) | Deploy a PostgreSQL container interactively (profiles, optional SSL) | `./pg-local-deploy.sh` |
 | `fr-local-deploy.sh` | Deploy the FastReport API container (default `/opt/fast-report`) | `./fr-local-deploy.sh` |
 | `update_docker_odoo.py` (5.8.0) | Odoo container updates via YAML | `doup` or `python3 update_docker_odoo.py [-s NAME] [--validate]` |
-| `odoo_build_cache.py` (1.3.0) | Release archive cache shared by all instances; also maintains the build folder's Dockerfile | called by `doup`; `~/odoo_build_cache.py stats\|gc [--days 30]` |
+| `odoo_build_cache.py` (1.5.0) | Release archive cache shared by all instances; also maintains the build folder's Dockerfile and `odoo.conf` | called by `doup`; `~/odoo_build_cache.py stats\|gc [--days 30]` |
 | `container2backup.py` (4.7.1) | SQL+filestore backups, compression/encryption/streaming | `dobk` or `~/container2backup.py [--sql-only]` |
 | `restore-zip.sh` (2.1.0) | Backup restore (DB + filestore) into Docker | see [chapter 13](#en-13-restore--emergency) |
 | `ssl-renew.sh` (1.3.0) | certbot renewal, nginx stopped only when needed | `./ssl-renew.sh` (cron) |

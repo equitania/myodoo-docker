@@ -274,7 +274,7 @@ myodoo-docker/
   - Automated restart management
   - Module updates for Odoo
 
-#### 4. odoo_build_cache.py (v1.3.0)
+#### 4. odoo_build_cache.py (v1.5.0)
 - **Purpose**: Host-side cache of Odoo release archives, shared by every instance
 - **Why**: `build_odoo.py` runs inside the build container and re-downloads all
   several hundred archives on every build; the Docker layer holding them is
@@ -293,10 +293,29 @@ myodoo-docker/
   repository later (the March 2026 `HEALTHCHECK`) never reaches an installation
   created before it. With `--reference` it inserts image directives that are
   **entirely absent** (`VOLUME`, `HEALTHCHECK`, `EXPOSE`) ahead of the
-  `ENTRYPOINT`, and only reports anything else that differs. It never rewrites a
-  line's content, never touches `FROM` (owned by `check_dockerimage_odoo.py`),
-  takes a `.bak_<timestamp>` first, and refuses the write when the
-  before/after instruction comparison shows an unintended change
+  `ENTRYPOINT`, aligns an `ADD` with the reference's `COPY` where the two are
+  the same operation (v1.4.0, see below), and only reports anything else that
+  differs. It never touches `FROM` (owned by `check_dockerimage_odoo.py`), takes
+  a `.bak_<timestamp>` first, and refuses the write when the before/after
+  instruction comparison shows an unintended change
+- **The one content rewrite: `ADD` → `COPY`** (v1.4.0). The repository moved
+  `bin/` from `ADD` to `COPY` in July 2026 (ADD auto-extracts tar archives), and
+  every older installation reported that difference on every `doup` forever.
+  Applied only when the source is a plain local path — **never** for a remote
+  URL (ADD fetches it), a local archive (ADD unpacks it), a glob (may be
+  either), or an unknown flag — **and** the reference carries exactly that
+  `COPY`. The rewrite must be announced to `_dockerfile_regression()`, which
+  accepts only that exact pair
+- **Also maintains the build folder's `odoo.conf`** (v1.5.0), which is never
+  distributed either — it holds `admin_passwd` and `db_password`. Only
+  `MANAGED_CONF_KEYS` are filled in, only from the repository template beside
+  the reference Dockerfile, and only where the customer set no value of their
+  own (**an empty value counts as none** — Odoo's `config.py` deletes an empty
+  entry and falls through to its default). `_conf_regression()` refuses the
+  write if any other setting would change, vanish or appear.
+  `http_interface` is the first managed key: Odoo 19 warns when it is unset and
+  **Odoo 20 defaults it to `127.0.0.1`**, which would leave every container
+  unreachable through its published port
 
 ### Development Patterns
 

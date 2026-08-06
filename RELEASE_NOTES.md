@@ -1,5 +1,65 @@
 # Release Notes
 
+## Corrections That No Longer Need a Human (06.08.2026)
+
+Both changes close the same gap from the other side: v1.3.0 made the repository's
+Dockerfile improvements reach existing installations, but only for directives it
+could *add*. Anything that merely differed was reported — correctly, and then
+forever, on every single `doup`. A warning that nobody can act on without opening
+an editor is a warning everybody learns to scroll past.
+
+### Added
+- **odoo_build_cache.py v1.4.0: `ADD` is aligned with the reference's `COPY`.**
+  The repository moved `bin/` from `ADD` to `COPY` in July 2026 (`ADD`
+  auto-extracts tar archives), and every installation older than that reported
+  `missing a repository instruction, add it by hand: COPY bin /app/bin/` on every
+  run. The two are the same operation for a plain local path, which makes this
+  the one rewrite of a line's content whose effect on the build is provably nil —
+  so it is applied instead of reported. Deliberately narrow: the source must not
+  be a remote URL (`ADD` fetches it), a local archive (`ADD` unpacks it), a
+  wildcard (may be either) or carry a flag beyond `--chown`/`--chmod`/`--link`,
+  and the reference must carry *exactly* that `COPY`. An `ADD` the customer added
+  themselves is never touched. `_dockerfile_regression()` has to be told about the
+  rewrite and accepts only that exact pair — an unannounced one still counts as a
+  dropped instruction and refuses the write.
+- **odoo_build_cache.py v1.5.0: the build folder's `odoo.conf` is maintained too.**
+  It is never distributed for the same reason as the Dockerfile — it carries
+  `admin_passwd` and `db_password` — so a setting added to the repository template
+  never arrives either. `sync --reference` now also reads the `odoo.conf` beside
+  that Dockerfile and fills in `MANAGED_CONF_KEYS`, currently `http_interface`.
+  Only where the customer set no value of their own, and an **empty value counts
+  as none**: Odoo's `config.py` deletes an empty entry and falls through to its
+  default, which is precisely why the warning appeared despite the key being
+  present. The value always comes from the template, never hardcoded, and the
+  comments explaining it come along — a setting that arrives without the sentence
+  saying why it is there invites the next person to remove it.
+
+### Fixed
+- **`http_interface` is not cosmetic — it is an Odoo 20 time bomb.** Odoo 19 logs
+  `missing --http-interface/http_interface, using 0.0.0.0 by default, will change
+  to 127.0.0.1 in 20.0` on every start (v16 and v18 do not: they have no such
+  check). The warning names the real problem: on Odoo 20 a container that sets
+  nothing will listen on loopback *inside its own namespace*, so the published
+  port `127.0.0.1:<port>:8069` leads nowhere and the instance is simply
+  unreachable. All three repository templates set the value explicitly since
+  03.08.2026; from now on existing installations get it as well, v16 and v18
+  included, so the upgrade to Odoo 20 does not walk into a dead instance.
+- **A config file is worse to get wrong than a Dockerfile**, because a silently
+  changed `db_password` takes the instance down at runtime with no build failing
+  first. `_conf_regression()` therefore compares every setting before and after
+  and refuses the write if any of them would change, vanish or appear; a
+  `.bak_<timestamp>` is taken first, as with the Dockerfile. Keys outside the
+  managed list are never added — what else the template contains (`workers`,
+  `list_db`) are examples, not policy.
+- The test suite grew from 60 to 101 cases, all stdlib `unittest`. Beyond the
+  happy paths they pin down what must *not* happen: a tar/URL/wildcard source
+  stays an `ADD`, an unknown flag stays an `ADD`, a customer's own `ADD` and their
+  own config values stay untouched, passwords are never written. Two guards check
+  the repository's own files — that every `Dockerfiles/v*/Dockerfile` carries the
+  additive directives, and that every `Dockerfiles/v*/odoo.conf` has a value for
+  each managed key. Without the second one, a managed key missing from a template
+  would quietly do nothing on every server.
+
 ## The Dockerfile Update Reaches Existing Installations (04.08.2026)
 
 ### Fixed

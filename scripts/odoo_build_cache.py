@@ -5,8 +5,8 @@
 # Description:      Share one host-side cache of Odoo release archives across
 #                   every instance on the server, so a build downloads only
 #                   what actually changed.
-# Version:          1.3.0
-# Date:             04.08.2026
+# Version:          1.5.0
+# Date:             06.08.2026
 # Author:           Equitania Software GmbH
 # ==============================================================================
 # Why this exists:
@@ -25,7 +25,8 @@
 # What it does:
 #   sync <build-dir>   read release.file, fetch what is missing into the cache,
 #                      hardlink everything into <build-dir>/zips/, and bring the
-#                      build folder's Dockerfile up to date (--reference)
+#                      build folder's Dockerfile and odoo.conf up to date
+#                      (--reference)
 #   gc [--days N]      drop archives unused for N days, plus old release.file-*
 #   stats              size and file count per release
 #
@@ -34,8 +35,15 @@
 # the repository, but a build folder's Dockerfile is the customer's file and is
 # never overwritten. A directive added to the repository after that folder was
 # created — HEALTHCHECK, March 2026 — therefore never arrives. `sync
-# --reference <repo Dockerfile>` inserts the image directives that are missing
-# and reports everything else it finds instead of touching it.
+# --reference <repo Dockerfile>` inserts the image directives that are missing,
+# aligns an ADD with the COPY the reference carries where the two are the same
+# operation, and reports everything else it finds instead of touching it.
+#
+# The odoo.conf beside that reference is treated the same way and for the same
+# reason: it is never distributed either — it holds the customer's passwords —
+# so http_interface, which Odoo 19 warns about and Odoo 20 will default to
+# 127.0.0.1, would stay unset on every installation that predates it. Only the
+# keys in MANAGED_CONF_KEYS are filled in, and only where nothing is set.
 #
 # The cache is an OPTIMISATION and never a new point of failure: every failure
 # path leaves the archives to build_odoo.py, which downloads them exactly as it
@@ -73,8 +81,8 @@ import urllib.request
 import zipfile
 from urllib.parse import urlsplit
 
-SCRIPT_VERSION = "1.3.0"
-SCRIPT_DATE = "04.08.2026"
+SCRIPT_VERSION = "1.5.0"
+SCRIPT_DATE = "06.08.2026"
 
 CACHE_ROOT_DEFAULT = "/opt/odoo-build-cache"
 ZIP_DIR = "zips"
@@ -112,6 +120,34 @@ ADDITIVE_KEYWORDS = ("VOLUME", "HEALTHCHECK", "EXPOSE")
 # run) and the label carries no build behaviour.
 UNCOMPARED_KEYWORDS = ("FROM", "LABEL")
 MISSING_REPORTED_MAX = 5
+
+# ADD and COPY are the same operation for a plain local path, which makes the
+# July 2026 move of bin/ from ADD to COPY the one rewrite of a line's content
+# that can be applied without changing what the build does. They stop being the
+# same when ADD would unpack a local archive or fetch a remote source, so those
+# stay untouched — as does a glob, which may resolve to either.
+ADD_ARCHIVE_SUFFIXES = (".tar", ".tar.gz", ".tgz", ".tar.bz2", ".tbz", ".tbz2",
+                        ".tar.xz", ".txz", ".tar.zst", ".tzst", ".gz", ".bz2",
+                        ".xz", ".zst", ".zip")
+ADD_REMOTE_PREFIXES = ("http://", "https://", "git://", "git@", "ssh://")
+# Everything ADD accepts beyond these changes what it fetches or verifies, so a
+# line carrying one of them is not a plain file copy any more.
+ADD_KEPT_FLAGS = ("--chown=", "--chmod=", "--link")
+ADD_GLOB_CHARACTERS = "*?["
+
+# odoo.conf is the customer's file — it carries their admin and database
+# passwords, their worker count, their dbfilter — so update_docker_odoo.py never
+# distributes it, and a setting the repository adds later never arrives. These
+# are the keys that may be filled in from the template, at the same bar as the
+# Dockerfile: a value whose effect on a running instance is nil, written only
+# where the customer has set none of their own.
+#
+# http_interface is the case that prompted this. Odoo 19 warns when it is unset,
+# and Odoo 20 will default it to 127.0.0.1 — which leaves a container
+# unreachable through its published port. Writing the value Odoo uses today
+# changes nothing today and prevents that.
+MANAGED_CONF_KEYS = ("http_interface",)
+CONF_COMMENT_PREFIXES = (";", "#")
 
 GC_DAYS_DEFAULT = 30
 RELEASE_ARCHIVES_KEPT = 5
@@ -410,6 +446,61 @@ def _apply_mount(lines):
     return changed, changed
 
 
+def _copy_equivalent(line):
+    """`line` rewritten as COPY, or None when ADD is not equivalent here.
+
+    None is the answer for everything that is not provably the same operation:
+    a remote source ADD would fetch, a local archive it would unpack, a glob
+    that may be either, a flag beyond the ones a plain copy uses, and the JSON
+    form — worth parsing only if it ever shows up in a build folder.
+    """
+    if _keyword(line) != "ADD":
+        return None
+    body = line.strip()[len("ADD"):].strip()
+    if body.startswith("["):
+        return None
+    tokens = body.split()
+    flags = [token for token in tokens if token.startswith("-")]
+    if any(not flag.startswith(ADD_KEPT_FLAGS) for flag in flags):
+        return None
+    operands = [token for token in tokens if not token.startswith("-")]
+    if len(operands) < 2:
+        return None
+    for source in operands[:-1]:
+        lowered = source.lower()
+        if lowered.startswith(ADD_REMOTE_PREFIXES):
+            return None
+        if lowered.endswith(ADD_ARCHIVE_SUFFIXES):
+            return None
+        if any(character in source for character in ADD_GLOB_CHARACTERS):
+            return None
+    indent = line[:len(line) - len(line.lstrip())]
+    return f"{indent}COPY {body}"
+
+
+def _apply_add_to_copy(lines, reference_lines):
+    """Align an ADD with the COPY the reference carries. Returns the rewrites.
+
+    Narrow on purpose: the instruction must be equivalent as a copy (see
+    _copy_equivalent) AND the reference must carry exactly it as a COPY. So
+    this corrects what the repository itself has moved — bin/ in July 2026 —
+    and nothing the customer added on their own.
+    """
+    wanted = {_normalise(instruction)
+              for instruction in _instructions("\n".join(reference_lines))
+              if _keyword(instruction) == "COPY"}
+    rewrites = []
+    for index, line in enumerate(lines):
+        if line.rstrip().endswith("\\"):        # continuation: out of scope
+            continue
+        candidate = _copy_equivalent(line)
+        if candidate is None or _normalise(candidate) not in wanted:
+            continue
+        rewrites.append((line.strip(), candidate.strip()))
+        lines[index] = candidate
+    return rewrites
+
+
 def _apply_reference(lines, reference_lines):
     """Fill in image directives the reference has and this file lacks.
 
@@ -453,10 +544,12 @@ def ensure_dockerfile_mount(path):
 def ensure_dockerfile_current(path, reference=None):
     """Bring a build folder's Dockerfile up to date. True when changed.
 
-    Two jobs, one write:
+    Three jobs, one write:
 
       * the build step must bind-mount the zip folder instead of COPYing it
       * every image directive the reference Dockerfile carries must be present
+      * an ADD the reference carries as COPY is aligned where the two do the
+        same thing
 
     The second job exists because sync_build_scripts() in update_docker_odoo.py
     distributes build_odoo.py, check_dockerimage_odoo.py and bin/ but never the
@@ -466,11 +559,14 @@ def ensure_dockerfile_current(path, reference=None):
     server is updated. check_dockerimage_odoo.py already patches this file (FROM
     line and date), so patching it is established practice in this project.
 
-    This file belongs to the customer. Nothing here rewrites a line's content:
-    the `RUN ` keyword is replaced by the mount and the rest of the line is
-    carried over verbatim, only entirely absent image directives are inserted,
-    and the result is compared instruction by instruction against the original
-    before it is written. Whatever cannot be added safely is reported.
+    This file belongs to the customer, so every change here is one whose effect
+    on the build is provably nil: the `RUN ` keyword is replaced by the mount
+    and the rest of the line is carried over verbatim, only entirely absent
+    image directives are inserted, and the sole rewrite of a line's content is
+    ADD→COPY where the two are the same operation and the reference already
+    carries exactly that COPY. The result is compared instruction by
+    instruction against the original before it is written. Whatever cannot be
+    changed safely is reported instead.
     """
     if not os.path.isfile(path):
         return False
@@ -483,11 +579,15 @@ def ensure_dockerfile_current(path, reference=None):
         print(f"Could not patch {path}: no '{RUN_PREFIX}' line found")
 
     added = []
+    rewrites = []
     if reference and os.path.isfile(reference):
         with open(reference, encoding="utf8") as handle:
             reference_lines = handle.read().splitlines()
+        # Before the comparison, so an ADD that only needs its keyword aligned
+        # is corrected instead of reported for the rest of time.
+        rewrites = _apply_add_to_copy(lines, reference_lines)
         added, missing = _apply_reference(lines, reference_lines)
-        if added:
+        if added or rewrites:
             changed = True
         for instruction in missing[:MISSING_REPORTED_MAX]:
             if len(instruction) > 90:
@@ -502,7 +602,7 @@ def ensure_dockerfile_current(path, reference=None):
         return False
 
     patched = "\n".join(lines) + "\n"
-    problem = _dockerfile_regression(original, patched, added)
+    problem = _dockerfile_regression(original, patched, added, rewrites)
     if problem:
         print(f"Refusing to patch {path}: {problem}")
         return False
@@ -522,6 +622,9 @@ def ensure_dockerfile_current(path, reference=None):
         done.append(f"build step now bind-mounts {ZIP_DIR}/")
     if added:
         done.append("added " + ", ".join(sorted({_keyword(i) for i in added})))
+    if rewrites:
+        done.append("aligned with the reference: "
+                    + ", ".join(after for _before, after in rewrites))
     print(f"Patched {path}: {'; '.join(done)} "
           f"(backup: {os.path.basename(backup)})")
     return True
@@ -561,25 +664,32 @@ def _normalise(instruction):
     return " ".join(instruction.replace(MOUNT_FLAG, "").split())
 
 
-def _dockerfile_regression(original, patched, allowed_additions=()):
+def _dockerfile_regression(original, patched, allowed_additions=(),
+                           allowed_rewrites=()):
     """Return a reason to refuse the patch, or None when it is safe.
 
     The Dockerfile is the customer's: it may carry extra COPY steps, a modified
     base image or additional commands. The permitted differences are the added
-    mount, a removed `COPY zips/`, and the image directives taken verbatim from
-    the reference — nothing may be dropped, and nothing may appear that this
-    script did not deliberately insert.
+    mount, a removed `COPY zips/`, the image directives taken verbatim from the
+    reference, and the ADD→COPY alignments announced in `allowed_rewrites` —
+    nothing else may be dropped, and nothing may appear that this script did
+    not deliberately insert. An alignment counts only as the exact pair that
+    was announced: any other reading of it is a dropped instruction.
     """
     before = [_normalise(i) for i in _instructions(original)]
     after = [_normalise(i) for i in _instructions(patched)]
 
     expected_removals = [i for i in before
                          if i.replace("--chown=odoo:odoo ", "").startswith("COPY zips/")]
+    rewritten = {_normalise(source): _normalise(target)
+                 for source, target in allowed_rewrites}
     remaining = list(after)
     lost = []
     for instruction in before:
         if instruction in remaining:
             remaining.remove(instruction)
+        elif rewritten.get(instruction) in remaining:
+            remaining.remove(rewritten[instruction])
         elif instruction not in expected_removals:
             lost.append(instruction)
     if lost:
@@ -591,6 +701,134 @@ def _dockerfile_regression(original, patched, allowed_additions=()):
     if remaining:
         return f"would add unexpected instruction(s): {'; '.join(remaining[:3])}"
     return None
+
+
+def _conf_key_index(lines, key):
+    """Index of the line that sets `key`, or None. A comment does not set it."""
+    for index, line in enumerate(lines):
+        stripped = line.strip()
+        if not stripped or stripped.startswith(CONF_COMMENT_PREFIXES) or stripped.startswith("["):
+            continue
+        name, separator, _value = stripped.partition("=")
+        if separator and name.strip() == key:
+            return index
+    return None
+
+
+def _conf_values(lines):
+    """The settings an odoo.conf makes, as {key: value}.
+
+    An empty value is kept as the empty string rather than dropped, because
+    that is a distinction Odoo itself makes: config.py deletes an empty
+    http_interface from the file options and falls through to its default.
+    """
+    values = {}
+    for line in lines:
+        stripped = line.strip()
+        if not stripped or stripped.startswith(CONF_COMMENT_PREFIXES) or stripped.startswith("["):
+            continue
+        name, separator, value = stripped.partition("=")
+        if separator:
+            values[name.strip()] = value.strip()
+    return values
+
+
+def _conf_block(reference_lines, key):
+    """The template's line for `key` plus the comments explaining it.
+
+    Same reasoning as for the Dockerfile: a setting that arrives without the
+    sentence saying why it is there invites the next person to remove it.
+    """
+    index = _conf_key_index(reference_lines, key)
+    if index is None:
+        return []
+    start = index
+    while start > 0 and reference_lines[start - 1].strip().startswith(CONF_COMMENT_PREFIXES):
+        start -= 1
+    return reference_lines[start:index + 1]
+
+
+def _conf_regression(original, patched, allowed_keys=()):
+    """Return a reason to refuse the config patch, or None when it is safe.
+
+    Getting this wrong is worse than getting the Dockerfile wrong: a silently
+    changed db_password takes the instance down at runtime, with no build to
+    fail first. So every setting must survive with its value, and the only
+    permitted difference is a value for one of the announced keys.
+    """
+    before = _conf_values(original.splitlines())
+    after = _conf_values(patched.splitlines())
+    allowed = set(allowed_keys)
+
+    for key, value in before.items():
+        if key in allowed:
+            continue
+        if key not in after:
+            return f"would drop setting: {key}"
+        if after[key] != value:
+            return f"would change setting: {key}"
+    unexpected = sorted(set(after) - set(before) - allowed)
+    if unexpected:
+        return f"would add setting(s): {', '.join(unexpected)}"
+    return None
+
+
+def ensure_odoo_conf_current(path, reference):
+    """Fill in managed settings the installed odoo.conf leaves unset.
+
+    True when the file was changed. Only MANAGED_CONF_KEYS are considered, only
+    where the customer has no value of their own — an empty value counts as
+    none, because Odoo treats it that way — and only the template's value is
+    ever written. Everything else in the file, passwords included, is carried
+    over untouched, and a backup is taken before the write.
+    """
+    if not os.path.isfile(path) or not reference or not os.path.isfile(reference):
+        return False
+    with open(path, encoding="utf8") as handle:
+        original = handle.read()
+    with open(reference, encoding="utf8") as handle:
+        reference_lines = handle.read().splitlines()
+
+    lines = original.splitlines()
+    installed = _conf_values(lines)
+    template = _conf_values(reference_lines)
+
+    applied = []
+    for key in MANAGED_CONF_KEYS:
+        if not template.get(key) or installed.get(key):
+            continue
+        block = _conf_block(reference_lines, key)
+        if not block:
+            continue
+        index = _conf_key_index(lines, key)
+        if index is None:
+            lines.extend([""] + block)
+        else:
+            lines[index:index + 1] = block
+        applied.append(key)
+
+    if not applied:
+        return False
+
+    patched = "\n".join(lines) + "\n"
+    problem = _conf_regression(original, patched, applied)
+    if problem:
+        print(f"Refusing to patch {path}: {problem}")
+        return False
+
+    backup = f"{path}.bak_{time.strftime('%Y%m%d_%H%M%S')}"
+    try:
+        with open(backup, "w", encoding="utf8") as handle:
+            handle.write(original)
+    except OSError as error:
+        print(f"Refusing to patch {path}: cannot write backup ({error})")
+        return False
+
+    with open(path, "w", encoding="utf8") as handle:
+        handle.write(patched)
+    print(f"Patched {path}: set {', '.join(applied)} "
+          f"(backup: {os.path.basename(backup)})")
+    return True
 
 
 def gc_cache(root, days):
@@ -650,8 +888,14 @@ def cmd_sync(build_dir, reference=None):
     root = cache_root()
 
     # Independent of the cache, and therefore done first: a folder without a
-    # release.file still has a Dockerfile that may be missing its HEALTHCHECK.
+    # release.file still has a Dockerfile that may be missing its HEALTHCHECK,
+    # and an odoo.conf that may be missing a setting the repository has since
+    # added. The conf template is the reference Dockerfile's neighbour — both
+    # live in the repository's v{N}-odoo folder.
     ensure_dockerfile_current(os.path.join(build_dir, "Dockerfile"), reference)
+    if reference:
+        ensure_odoo_conf_current(os.path.join(build_dir, "odoo.conf"),
+                                 os.path.join(os.path.dirname(reference), "odoo.conf"))
 
     release = os.path.join(build_dir, "release.file")
     if not os.path.isfile(release):
@@ -728,7 +972,8 @@ def main(argv=None):
     sync.add_argument("--reference", metavar="DOCKERFILE",
                       help="reference Dockerfile from the repository; image "
                            "directives it carries and the build folder lacks "
-                           "(HEALTHCHECK above all) are filled in")
+                           "(HEALTHCHECK above all) are filled in, and the "
+                           "odoo.conf beside it fills in managed settings")
     collect = sub.add_parser("gc", help="remove archives unused for a while")
     collect.add_argument("--days", type=int, default=GC_DAYS_DEFAULT)
     collect.add_argument("build_dir", nargs="*")

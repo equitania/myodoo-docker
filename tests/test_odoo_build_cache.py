@@ -486,11 +486,21 @@ ADD bin /app/bin/
         self.assertFalse([m for m in missing if "build_odoo.py" in m])
 
     def test_an_instruction_that_really_differs_is_reported(self):
-        """ADD was replaced by COPY for bin/ in July 2026 (tar auto-extraction).
-        That cannot be patched in safely, so it has to be said out loud."""
-        lines = self.LEGACY_INSTALL.splitlines()
+        """A COPY the reference carries and this file does not have at all
+        cannot be patched in safely, so it has to be said out loud."""
+        lines = [l for l in self.LEGACY_INSTALL.splitlines()
+                 if not l.startswith("COPY build_odoo.py")]
         _added, missing = obc._apply_reference(lines, self.REFERENCE.splitlines())
-        self.assertIn("COPY bin /app/bin/", missing)
+        self.assertIn("COPY build_odoo.py /opt/odoo/", missing)
+
+    def test_the_add_for_bin_is_aligned_instead_of_reported(self):
+        """ADD bin/ was replaced by COPY in July 2026. The two are the same
+        operation for a plain directory, so this one is corrected, not reported
+        — every installation older than that would need it by hand otherwise."""
+        lines = self.LEGACY_INSTALL.splitlines()
+        obc._apply_add_to_copy(lines, self.REFERENCE.splitlines())
+        _added, missing = obc._apply_reference(lines, self.REFERENCE.splitlines())
+        self.assertNotIn("COPY bin /app/bin/", missing)
 
     def test_nothing_is_reported_for_a_matching_file(self):
         lines = self.REFERENCE.splitlines()
@@ -531,6 +541,310 @@ ADD bin /app/bin/
                 self.assertIn(keyword, content, f"v{version} lacks {keyword}")
 
 
+class AddToCopyTest(unittest.TestCase):
+    """The one rewrite of a line's content this script performs: ADD becomes the
+    COPY the reference carries. ADD and COPY do the same thing for a plain local
+    path — they stop being the same when ADD would unpack an archive or fetch a
+    URL, and those cases stay the customer's to decide on."""
+
+    REFERENCE = """FROM registry.invalid/prepare:9.9
+USER odoo
+RUN cd /opt/odoo/ && python3 build_odoo.py
+ENTRYPOINT ["/app/bin/boot"]
+EXPOSE 8069
+VOLUME ["/opt/odoo/data"]
+HEALTHCHECK CMD wget -q --spider http://localhost:8069/web/health || exit 1
+COPY bin /app/bin/
+COPY --chown=odoo:odoo tools /opt/odoo/tools/
+COPY payload.tar.gz /opt/odoo/
+COPY *custom_modules.zip /opt/odoo/
+"""
+
+    def setUp(self):
+        self.tmp = tempfile.mkdtemp()
+        self.reference = write(os.path.join(self.tmp, "reference"), self.REFERENCE)
+
+    def _run(self, body):
+        """Patch a Dockerfile carrying `body` and return its content."""
+        source = ("FROM registry.invalid/prepare:1.0\n"
+                  "USER odoo\n"
+                  "RUN cd /opt/odoo/ && python3 build_odoo.py\n"
+                  "ENTRYPOINT [\"/app/bin/boot\"]\n"
+                  "EXPOSE 8069\n"
+                  "VOLUME [\"/opt/odoo/data\"]\n"
+                  "HEALTHCHECK CMD wget -q --spider "
+                  "http://localhost:8069/web/health || exit 1\n"
+                  f"{body}\n")
+        path = write(os.path.join(self.tmp, "Dockerfile"), source)
+        obc.ensure_dockerfile_current(path, self.reference)
+        return open(path, encoding="utf8").read()
+
+    def test_a_plain_directory_is_aligned(self):
+        self.assertIn("COPY bin /app/bin/", self._run("ADD bin /app/bin/"))
+
+    def test_the_add_is_gone_afterwards(self):
+        self.assertNotIn("ADD bin", self._run("ADD bin /app/bin/"))
+
+    def test_a_flag_survives_the_rewrite(self):
+        content = self._run("ADD --chown=odoo:odoo tools /opt/odoo/tools/")
+        self.assertIn("COPY --chown=odoo:odoo tools /opt/odoo/tools/", content)
+
+    def test_a_tar_source_is_left_alone(self):
+        """ADD unpacks a local tar archive and COPY does not — rewriting this
+        would silently change what ends up in the image."""
+        self.assertIn("ADD payload.tar.gz /opt/odoo/",
+                      self._run("ADD payload.tar.gz /opt/odoo/"))
+
+    def test_a_wildcard_source_is_left_alone(self):
+        """A glob may resolve to an archive, so it counts as unknown."""
+        self.assertIn("ADD *custom_modules.zip /opt/odoo/",
+                      self._run("ADD *custom_modules.zip /opt/odoo/"))
+
+    def test_a_url_source_is_left_alone(self):
+        body = "ADD https://example.invalid/bin /app/bin/"
+        self.assertIn(body, self._run(body))
+
+    def test_an_unknown_flag_is_left_alone(self):
+        body = "ADD --checksum=sha256:abc bin /app/bin/"
+        self.assertIn(body, self._run(body))
+
+    def test_the_json_form_is_left_alone(self):
+        body = 'ADD ["bin", "/app/bin/"]'
+        self.assertIn(body, self._run(body))
+
+    def test_an_add_the_reference_does_not_carry_is_left_alone(self):
+        """Only what the repository itself has moved to COPY is aligned."""
+        body = "ADD customer_extra /opt/odoo/extra/"
+        self.assertIn(body, self._run(body))
+
+    def test_a_different_target_is_left_alone(self):
+        body = "ADD bin /opt/odoo/bin/"
+        self.assertIn(body, self._run(body))
+
+    def test_nothing_is_rewritten_without_a_reference(self):
+        path = write(os.path.join(self.tmp, "NoRef"),
+                     "FROM x:1\nRUN cd /opt/odoo/ && python3 build_odoo.py\n"
+                     "ADD bin /app/bin/\n")
+        obc.ensure_dockerfile_current(path)
+        self.assertIn("ADD bin /app/bin/", open(path, encoding="utf8").read())
+
+    def test_is_idempotent(self):
+        path = write(os.path.join(self.tmp, "Twice"),
+                     "FROM x:1\nRUN cd /opt/odoo/ && python3 build_odoo.py\n"
+                     "ADD bin /app/bin/\n")
+        self.assertTrue(obc.ensure_dockerfile_current(path, self.reference))
+        self.assertFalse(obc.ensure_dockerfile_current(path, self.reference))
+
+    def test_the_rest_of_the_file_is_untouched(self):
+        content = self._run("ADD bin /app/bin/\nCOPY customer.conf /opt/odoo/etc/")
+        self.assertIn("COPY customer.conf /opt/odoo/etc/", content)
+        self.assertTrue(content.startswith("FROM registry.invalid/prepare:1.0"))
+
+
+class OdooConfTest(unittest.TestCase):
+    """odoo.conf is never distributed — it carries the customer's passwords and
+    tuning. So a setting the repository adds later never arrives either, and
+    http_interface is the one where that hurts: Odoo 19 warns about it and Odoo
+    20 will default it to 127.0.0.1, which silences a container behind its
+    published port. Only keys whose value is provably harmless are filled in,
+    and only where the customer has set none."""
+
+    TEMPLATE = """[options]
+admin_passwd = CHANGE_ME_ADMIN_PASSWORD
+db_password = CHANGE_ME_BEFORE_PRODUCTION
+db_host = live-db
+http_port = 8069
+workers = 3
+; MUST stay set - unset triggers "missing --http-interface/http_interface" and
+; Odoo 20.0 will default to 127.0.0.1, which breaks published container ports.
+http_interface = 0.0.0.0
+list_db = False
+"""
+
+    INSTALLED = """[options]
+admin_passwd = the-customers-own-secret
+db_password = the-customers-db-secret
+db_host = live-db
+http_port = 8069
+workers = 6
+http_interface =
+list_db = False
+"""
+
+    def setUp(self):
+        self.tmp = tempfile.mkdtemp()
+        self.reference = write(os.path.join(self.tmp, "template.conf"), self.TEMPLATE)
+        self.path = write(os.path.join(self.tmp, "odoo.conf"), self.INSTALLED)
+
+    def _content(self):
+        return open(self.path, encoding="utf8").read()
+
+    def test_an_empty_value_is_filled_in(self):
+        """Odoo treats an empty value as unset — config.py deletes the entry and
+        falls through to the default, so the warning appears either way."""
+        self.assertTrue(obc.ensure_odoo_conf_current(self.path, self.reference))
+        self.assertIn("http_interface = 0.0.0.0", self._content())
+
+    def test_a_missing_key_is_added(self):
+        path = write(os.path.join(self.tmp, "without.conf"),
+                     "[options]\nadmin_passwd = secret\nworkers = 6\n")
+        self.assertTrue(obc.ensure_odoo_conf_current(path, self.reference))
+        self.assertIn("http_interface = 0.0.0.0", open(path, encoding="utf8").read())
+
+    def test_a_commented_out_key_counts_as_unset(self):
+        path = write(os.path.join(self.tmp, "commented.conf"),
+                     "[options]\n; http_interface = 1.2.3.4\nworkers = 6\n")
+        self.assertTrue(obc.ensure_odoo_conf_current(path, self.reference))
+        content = open(path, encoding="utf8").read()
+        self.assertIn("\nhttp_interface = 0.0.0.0", content)
+        self.assertIn("; http_interface = 1.2.3.4", content)
+
+    def test_a_value_the_customer_set_is_left_alone(self):
+        """Theirs may be deliberate — host networking, a second interface."""
+        path = write(os.path.join(self.tmp, "own.conf"),
+                     "[options]\nhttp_interface = 10.0.0.5\n")
+        self.assertFalse(obc.ensure_odoo_conf_current(path, self.reference))
+        self.assertIn("http_interface = 10.0.0.5", open(path, encoding="utf8").read())
+
+    def test_passwords_are_never_written(self):
+        obc.ensure_odoo_conf_current(self.path, self.reference)
+        content = self._content()
+        self.assertNotIn("CHANGE_ME", content)
+        self.assertIn("admin_passwd = the-customers-own-secret", content)
+        self.assertIn("db_password = the-customers-db-secret", content)
+
+    def test_an_unmanaged_key_is_not_added(self):
+        """The template's workers/list_db are examples, not policy."""
+        path = write(os.path.join(self.tmp, "sparse.conf"),
+                     "[options]\nhttp_interface = 0.0.0.0\n")
+        self.assertFalse(obc.ensure_odoo_conf_current(path, self.reference))
+        self.assertNotIn("workers", open(path, encoding="utf8").read())
+
+    def test_customer_tuning_survives(self):
+        obc.ensure_odoo_conf_current(self.path, self.reference)
+        self.assertIn("workers = 6", self._content())
+
+    def test_the_explaining_comment_comes_along(self):
+        obc.ensure_odoo_conf_current(self.path, self.reference)
+        self.assertIn("Odoo 20.0 will default to 127.0.0.1", self._content())
+
+    def test_the_value_comes_from_the_template(self):
+        reference = write(os.path.join(self.tmp, "other.conf"),
+                          "[options]\nhttp_interface = 192.168.0.1\n")
+        obc.ensure_odoo_conf_current(self.path, reference)
+        self.assertIn("http_interface = 192.168.0.1", self._content())
+
+    def test_an_empty_template_value_is_not_propagated(self):
+        reference = write(os.path.join(self.tmp, "empty.conf"),
+                          "[options]\nhttp_interface =\n")
+        self.assertFalse(obc.ensure_odoo_conf_current(self.path, reference))
+
+    def test_is_idempotent(self):
+        self.assertTrue(obc.ensure_odoo_conf_current(self.path, self.reference))
+        first = self._content()
+        self.assertFalse(obc.ensure_odoo_conf_current(self.path, self.reference))
+        self.assertEqual(self._content(), first)
+
+    def test_a_backup_is_written(self):
+        obc.ensure_odoo_conf_current(self.path, self.reference)
+        backups = [n for n in os.listdir(self.tmp) if n.startswith("odoo.conf.bak_")]
+        self.assertEqual(len(backups), 1)
+        self.assertEqual(open(os.path.join(self.tmp, backups[0]),
+                              encoding="utf8").read(), self.INSTALLED)
+
+    def test_a_missing_reference_is_not_fatal(self):
+        self.assertFalse(obc.ensure_odoo_conf_current(
+            self.path, os.path.join(self.tmp, "nope.conf")))
+        self.assertEqual(self._content(), self.INSTALLED)
+
+    def test_a_missing_target_is_not_fatal(self):
+        self.assertFalse(obc.ensure_odoo_conf_current(
+            os.path.join(self.tmp, "nope.conf"), self.reference))
+
+    def test_every_other_line_is_preserved(self):
+        obc.ensure_odoo_conf_current(self.path, self.reference)
+        after = self._content().splitlines()
+        for line in self.INSTALLED.splitlines():
+            if line.startswith("http_interface"):
+                continue
+            self.assertIn(line, after)
+
+    def test_sync_finds_the_template_next_to_the_reference_dockerfile(self):
+        """update_docker_odoo.py passes the repository Dockerfile as --reference;
+        the odoo.conf template is its neighbour in the same v{N}-odoo folder."""
+        build = os.path.join(self.tmp, "build")
+        source = os.path.join(self.tmp, "v19-odoo")
+        os.makedirs(build)
+        os.makedirs(source)
+        write(os.path.join(build, "Dockerfile"), "FROM x:1\n")
+        write(os.path.join(build, "odoo.conf"), self.INSTALLED)
+        write(os.path.join(source, "odoo.conf"), self.TEMPLATE)
+        dockerfile = write(os.path.join(source, "Dockerfile"), "FROM y:2\n")
+
+        obc.cmd_sync(build, dockerfile)
+
+        content = open(os.path.join(build, "odoo.conf"), encoding="utf8").read()
+        self.assertIn("http_interface = 0.0.0.0", content)
+        self.assertIn("admin_passwd = the-customers-own-secret", content)
+
+    def test_sync_without_a_reference_leaves_the_conf_alone(self):
+        build = os.path.join(self.tmp, "build2")
+        os.makedirs(build)
+        write(os.path.join(build, "odoo.conf"), self.INSTALLED)
+        obc.cmd_sync(build)
+        self.assertEqual(open(os.path.join(build, "odoo.conf"),
+                              encoding="utf8").read(), self.INSTALLED)
+
+    def test_the_repository_templates_carry_every_managed_key(self):
+        """Guards the templates themselves: a key managed here but missing from
+        a repository odoo.conf would quietly do nothing on every server."""
+        root = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
+                            "Dockerfiles")
+        for version in ("16", "18", "19"):
+            path = os.path.join(root, f"v{version}-odoo", "odoo.conf")
+            if not os.path.isfile(path):
+                continue
+            values = obc._conf_values(open(path, encoding="utf8").read().splitlines())
+            for key in obc.MANAGED_CONF_KEYS:
+                self.assertTrue(values.get(key),
+                                f"v{version} odoo.conf has no value for {key}")
+
+
+class OdooConfGuardTest(unittest.TestCase):
+    """The same last line of defence the Dockerfile has: compare the settings
+    before and after and refuse anything but the announced fill-in. A config
+    file is worse to get wrong than a Dockerfile — a silently changed
+    db_password takes the instance down without a build failing first."""
+
+    STOCK = "[options]\nadmin_passwd = secret\nworkers = 6\nhttp_interface =\n"
+
+    def test_accepts_the_intended_change(self):
+        patched = self.STOCK.replace("http_interface =", "http_interface = 0.0.0.0")
+        self.assertIsNone(obc._conf_regression(self.STOCK, patched, ["http_interface"]))
+
+    def test_accepts_an_unchanged_file(self):
+        self.assertIsNone(obc._conf_regression(self.STOCK, self.STOCK))
+
+    def test_refuses_a_changed_password(self):
+        patched = self.STOCK.replace("secret", "something-else")
+        self.assertIn("admin_passwd",
+                      obc._conf_regression(self.STOCK, patched, ["http_interface"]))
+
+    def test_refuses_a_dropped_setting(self):
+        patched = self.STOCK.replace("workers = 6\n", "")
+        self.assertIn("workers",
+                      obc._conf_regression(self.STOCK, patched, ["http_interface"]))
+
+    def test_refuses_an_unannounced_setting(self):
+        patched = self.STOCK + "list_db = True\n"
+        self.assertIn("list_db",
+                      obc._conf_regression(self.STOCK, patched, ["http_interface"]))
+
+    def test_refuses_a_change_that_was_not_announced(self):
+        patched = self.STOCK.replace("http_interface =", "http_interface = 0.0.0.0")
+        self.assertIsNotNone(obc._conf_regression(self.STOCK, patched))
+
+
 class DockerfileGuardTest(unittest.TestCase):
     """_dockerfile_regression is the last line of defence: it compares the
     instructions before and after and refuses anything but the intended change."""
@@ -554,6 +868,25 @@ class DockerfileGuardTest(unittest.TestCase):
         patched = (f"FROM x:1\nRUN {obc.MOUNT_FLAG} \\\n"
                    "    cd /opt/odoo/ && python3 build_odoo.py\nRUN rm -rf /\n")
         self.assertIn("would add", obc._dockerfile_regression(self.STOCK, patched))
+
+    def test_accepts_an_announced_add_to_copy_rewrite(self):
+        stock = self.STOCK + "ADD bin /app/bin/\n"
+        patched = self.STOCK + "COPY bin /app/bin/\n"
+        self.assertIsNone(obc._dockerfile_regression(
+            stock, patched, allowed_rewrites=[("ADD bin /app/bin/",
+                                               "COPY bin /app/bin/")]))
+
+    def test_refuses_an_unannounced_rewrite(self):
+        stock = self.STOCK + "ADD bin /app/bin/\n"
+        patched = self.STOCK + "COPY bin /app/bin/\n"
+        self.assertIn("would drop", obc._dockerfile_regression(stock, patched))
+
+    def test_refuses_a_rewrite_that_is_not_the_announced_one(self):
+        stock = self.STOCK + "ADD bin /app/bin/\n"
+        patched = self.STOCK + "COPY bin /opt/odoo/bin/\n"
+        self.assertIsNotNone(obc._dockerfile_regression(
+            stock, patched, allowed_rewrites=[("ADD bin /app/bin/",
+                                               "COPY bin /app/bin/")]))
 
     def test_allows_the_legacy_copy_to_disappear(self):
         stock = "FROM x:1\nCOPY zips/ /opt/odoo/zips/\nRUN cd /opt/odoo/ && python3 build_odoo.py\n"
