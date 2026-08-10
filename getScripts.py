@@ -32,6 +32,7 @@ import time
 import platform
 import re
 import socket
+import stat
 import tempfile
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from datetime import datetime, timedelta
@@ -55,8 +56,8 @@ if os.environ.get('GETSCRIPTS_DEBUG', '').lower() in ('1', 'true', 'yes'):
     logger.debug("Debug logging enabled")
 
 # Script version and date
-SCRIPT_VERSION = "9.9.0"
-SCRIPT_DATE = "02.08.2026"
+SCRIPT_VERSION = "9.9.1"
+SCRIPT_DATE = "10.08.2026"
 
 # ─────────────────────────────────────────────────────────────────────────────
 # Install report
@@ -413,6 +414,40 @@ def is_fish_repo_key_present() -> bool:
     return any(os.path.isfile(key) and os.path.getsize(key) > 0 for key in key_files)
 
 
+def fix_apt_keyring_permissions() -> None:
+    """Make the Fish repository signing key readable by apt's '_apt' user.
+
+    apt drops privileges to '_apt' before verifying repository signatures. A
+    keyring file without world-read permission is silently ignored, and apt
+    warns about it once per configured repository:
+
+        W: ... The key(s) in the keyring /etc/apt/trusted.gpg.d/<key> are
+           ignored as the file is not readable by user '_apt'
+
+    The key is staged via tempfile.mkstemp(), which always creates the file
+    with 0600 regardless of umask, and 'mv' preserves that mode - so every
+    installation using this code path ends up with an unreadable keyring.
+
+    Runs on every invocation, not only on key import, so installations created
+    by earlier versions are repaired as well. Never raises - a failed chmod
+    leaves cosmetic warnings, it must not abort the Fish setup.
+    """
+    for key_file in (
+        "/etc/apt/trusted.gpg.d/shells_fish_release_4.asc",
+        "/etc/apt/trusted.gpg.d/shells_fish_release_4.gpg",
+    ):
+        try:
+            if not os.path.isfile(key_file):
+                continue
+            # Only touch keys that are actually unreadable for others
+            if os.stat(key_file).st_mode & stat.S_IROTH:
+                continue
+            logger.info(f"Fixing apt keyring permissions: {key_file}")
+            run_command(f"sudo chmod 644 {key_file}")
+        except OSError as e:
+            logger.warning(f"Could not check/fix permissions of {key_file}: {e}")
+
+
 def cleanup_duplicate_fish_repo() -> None:
     """Remove duplicate Fish repository entries.
     If both .list and .sources files exist, remove the .list file
@@ -575,6 +610,11 @@ def install_fish_if_needed() -> Tuple[bool, bool]:
 
                 repo_was_added = True
                 needs_migration = True  # Migration from system packages
+
+            # mkstemp() creates the staged key with 0600 and 'mv' keeps that
+            # mode - unreadable for '_apt'. Runs unconditionally so hosts set
+            # up by earlier versions are repaired too; they never re-import.
+            fix_apt_keyring_permissions()
 
             # Always update and upgrade to get latest version
             run_command("sudo apt update", check=True)

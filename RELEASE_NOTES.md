@@ -1,5 +1,33 @@
 # Release Notes
 
+## The Keyring apt Was Not Allowed to Read (10.08.2026)
+
+*getScripts.py v9.9.1*
+
+### Fixed
+- **The Fish signing key is now readable by `_apt`.** apt drops privileges to
+  the unprivileged `_apt` user before it verifies repository signatures, and it
+  silently ignores any keyring that user cannot read — warning about it once per
+  *configured repository*, so a single unreadable key produced seven warnings on
+  every `apt update` and pointed at the innocent Debian mirrors rather than at
+  itself. The key is staged through `tempfile.mkstemp()`, which always creates
+  its file with `0600` regardless of umask, and the `sudo mv` into
+  `/etc/apt/trusted.gpg.d/` preserves that mode. The hardening that made the
+  temp file unpredictable (a deliberate fix against symlink races) is what made
+  the keyring unreadable — every installation on this code path was affected,
+  not just hardened hosts.
+- **Existing installations repair themselves.** `fix_apt_keyring_permissions()`
+  runs on every invocation, not only when the key is imported, because the hosts
+  that already have the wrong mode are precisely the ones that never re-import.
+  It touches only keys that are actually unreadable and never aborts the Fish
+  setup — a failed `chmod` costs cosmetic warnings, not the install.
+
+### Notes
+- The fix lives in `getScripts.py` itself. `scripts/lib/fish_setup.py` carries a
+  near-identical copy of the same code and was left untouched: nothing imports
+  `scripts/lib/`, so a fix applied there would pass every check and reach no
+  server. See the dead-code note under v9.9.0.
+
 ## Every Run Leaves a Log Behind (06.08.2026)
 
 *update_docker_odoo.py v5.10.0*
