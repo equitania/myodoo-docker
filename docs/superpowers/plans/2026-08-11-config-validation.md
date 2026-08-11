@@ -274,12 +274,16 @@ class PositionedDict(dict):
 
 
 def line_of(mapping, key=None):
-    """Return the 1-based line of `key` inside `mapping`, or of the mapping."""
-    if key is not None:
-        lines = getattr(mapping, "key_lines", None) or {}
-        if key in lines:
-            return lines[key]
-    return getattr(mapping, "line", 0)
+    """Return the 1-based line of `key` inside `mapping`, or of the mapping.
+
+    An unknown key returns 0, not the mapping's line: callers use
+    'line_of(data, key) or line_of(data)' to fall back deliberately, and a
+    non-zero answer here would take that choice away from them.
+    """
+    if key is None:
+        return getattr(mapping, "line", 0)
+    lines = getattr(mapping, "key_lines", None) or {}
+    return lines.get(key, 0)
 
 
 _LOADER = None
