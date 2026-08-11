@@ -27,6 +27,7 @@ import re
 import sys
 import time
 import yaml
+import json
 import atexit
 import shutil
 import platform
@@ -332,6 +333,114 @@ def print_run_log_files():
 
 
 atexit.register(print_run_log_files)
+
+
+##############################################################################
+# Run history
+#
+# One JSON line per container run, in the operator's home rather than in a
+# build folder: the point of this file is the view across all instances, which
+# is exactly what a per-instance log cannot give. Written by the runner and not
+# by its callers, so runs started classically or from cron are recorded too.
+#
+# It is a convenience, never a precondition. Every function here swallows its
+# own I/O errors - a history that cannot be written costs a log line, not an
+# update.
+##############################################################################
+
+HISTORY_FILE = join(expanduser("~"), "update-history.jsonl")
+
+HISTORY_TS_FORMAT = "%Y-%m-%dT%H:%M:%S"
+
+# How long an entry is kept, in days. Override with
+# 'defaults.history_retention_days' in docker2update.yaml. 0 keeps everything.
+DEFAULT_HISTORY_RETENTION_DAYS = 365
+
+
+def resolve_history_retention(config):
+    """Days to keep history entries: defaults block, else built-in.
+
+    An unusable value falls back to the default rather than raising, the same
+    way resolve_log_retention() treats one: a typo in the YAML must not be able
+    to stop an update, and refusing to delete is the safe direction.
+    """
+    defaults = (config or {}).get('defaults') or {}
+    value = defaults.get('history_retention_days')
+    # Present but empty reads as 'not configured'. 0 does NOT - it is the
+    # explicit 'never delete'.
+    if value is None or value == "":
+        return DEFAULT_HISTORY_RETENTION_DAYS
+    try:
+        days = float(value)
+    except (TypeError, ValueError):
+        logger.warning(f"Ignoring unusable history_retention_days: {value!r}")
+        return DEFAULT_HISTORY_RETENTION_DAYS
+    return max(0, days)
+
+
+def read_history(path=None, limit=None):
+    """Return history entries, newest first.
+
+    A line that cannot be parsed is skipped rather than reported: the only way
+    one gets there is a write cut short by a crash, and the reader's job is to
+    survive that, not to explain it.
+    """
+    entries = []
+    try:
+        with open(path or HISTORY_FILE, encoding="utf8") as handle:
+            for line in handle:
+                line = line.strip()
+                if not line:
+                    continue
+                try:
+                    entries.append(json.loads(line))
+                except ValueError:
+                    continue
+    except OSError:
+        return []
+    entries.reverse()
+    return entries[:limit] if limit else entries
+
+
+def write_history(entry, path=None, retention_days=DEFAULT_HISTORY_RETENTION_DAYS):
+    """Append one entry, dropping what has expired. Never raises.
+
+    The file is rewritten through a temp file and os.replace() so a crash
+    mid-write cannot leave a truncated history behind - the old file stays
+    intact until the new one is complete.
+    """
+    path = path or HISTORY_FILE
+    try:
+        cutoff = (time.time() - retention_days * 86400) if retention_days else None
+        kept = []
+        try:
+            with open(path, encoding="utf8") as handle:
+                for line in handle:
+                    line = line.strip()
+                    if not line:
+                        continue
+                    if cutoff is None:
+                        kept.append(line)
+                        continue
+                    try:
+                        written = time.mktime(time.strptime(
+                            json.loads(line).get("ts", ""), HISTORY_TS_FORMAT))
+                    except (ValueError, TypeError, AttributeError):
+                        # An entry we cannot date is not ours to delete.
+                        kept.append(line)
+                        continue
+                    if written >= cutoff:
+                        kept.append(line)
+        except OSError:
+            pass  # no history yet, or unreadable - either way, start fresh
+
+        kept.append(json.dumps(entry, ensure_ascii=False, sort_keys=True))
+        tmp = f"{path}.tmp"
+        with open(tmp, "w", encoding="utf8") as handle:
+            handle.write("\n".join(kept) + "\n")
+        os.replace(tmp, path)
+    except OSError as exc:
+        logger.warning(f"Could not write run history: {exc}")
 
 
 def note_issue(level, text):
