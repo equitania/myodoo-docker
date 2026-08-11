@@ -142,7 +142,9 @@ class HistoryTest(unittest.TestCase):
         self.assertEqual(len(udo.read_history(self.path)), 2)
 
     def test_an_unwritable_path_costs_the_history_not_an_exception(self):
-        udo.write_history(entry(), path="/proc/definitely/not/writable/history.jsonl")
+        unwritable = "/proc/definitely/not/writable/history.jsonl"
+        udo.write_history(entry(), path=unwritable)   # must not raise
+        self.assertEqual(udo.read_history(unwritable), [])
 
     def test_no_temp_file_is_left_behind(self):
         udo.write_history(entry(), path=self.path)
@@ -882,8 +884,10 @@ class NavigationTest(unittest.TestCase):
         self.selection.move(99)
         self.assertEqual(self.selection.cursor, len(CONTAINERS) - 1)
 
-    def test_moving_an_empty_list_does_not_raise(self):
-        tui.UpdateSelection([]).move(1)
+    def test_moving_an_empty_list_leaves_the_cursor_alone(self):
+        selection = tui.UpdateSelection([])
+        selection.move(1)                             # must not raise
+        self.assertEqual(selection.cursor, 0)
 
 
 class SelectionTest(unittest.TestCase):
@@ -1247,9 +1251,11 @@ class LastRunFormatTest(unittest.TestCase):
     def test_nothing_known_shows_a_dash(self):
         self.assertEqual(tui.format_last_run(None), "—")
 
-    def test_an_unparsable_timestamp_does_not_raise(self):
-        tui.format_last_run({"ts": "yesterday", "mode": "F", "result": "ok",
-                             "comment": ""})
+    def test_an_unparsable_timestamp_becomes_a_question_mark(self):
+        text = tui.format_last_run({"ts": "yesterday", "mode": "F",
+                                    "result": "ok", "comment": ""})
+        self.assertTrue(text.startswith("?"))
+        self.assertIn("ok", text)
 
 
 class DefaultMarkerTest(unittest.TestCase):
@@ -1270,7 +1276,8 @@ class DefaultMarkerTest(unittest.TestCase):
         self.assertFalse(tui.tui_is_default(self.marker))
 
     def test_clearing_an_absent_marker_is_not_an_error(self):
-        tui.set_tui_default(False, self.marker)
+        tui.set_tui_default(False, self.marker)       # must not raise
+        self.assertFalse(tui.tui_is_default(self.marker))
 ```
 
 - [ ] **Step 2: Run the test to verify it fails**
