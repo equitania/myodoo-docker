@@ -167,6 +167,31 @@ class RunnerInvocationTest(unittest.TestCase):
         selection.rows[0]["selected"] = False
         self.assertEqual(selection.runner_invocations(self.SCRIPT), [])
 
+    def test_a_mode_reappearing_after_another_still_joins_its_first_group(self):
+        # F, M, F: the two F rows must share one invocation in first-
+        # appearance order, and M gets its own - this is the for...else
+        # grouping loop's only case not already covered by an adjacent-rows
+        # or two-mode test.
+        containers = [
+            {"container_name": "a", "type": "F", "active": True},
+            {"container_name": "b", "type": "M", "active": True},
+            {"container_name": "c", "type": "F", "active": True},
+        ]
+        selection = tui.UpdateSelection(containers)
+        self.assertEqual(selection.runner_invocations(self.SCRIPT), [
+            [self.SCRIPT, "-s", "a,c", "--type", "F"],
+            [self.SCRIPT, "-s", "b", "--type", "M"],
+        ])
+
+    def test_a_non_default_config_is_forwarded(self):
+        selection = tui.UpdateSelection(CONTAINERS)
+        argv = selection.runner_invocations(self.SCRIPT, config="/opt/other.yaml")[0]
+        self.assertEqual(argv[:3], [self.SCRIPT, "-c", "/opt/other.yaml"])
+
+    def test_no_config_means_no_c_flag(self):
+        argv = tui.UpdateSelection(CONTAINERS).runner_invocations(self.SCRIPT)[0]
+        self.assertNotIn("-c", argv)
+
 
 class LastRunTest(unittest.TestCase):
     ENTRIES = [                                 # newest first, as read_history returns
@@ -191,26 +216,45 @@ class LastRunTest(unittest.TestCase):
 
 
 class PreflightTest(unittest.TestCase):
-    """The refusals that must happen before curses is ever initialised."""
+    """The refusals that must happen before curses is ever initialised.
+
+    stdin_tty is always passed explicitly (True unless it is the thing under
+    test) so these do not depend on whether the test runner's own stdin
+    happens to be a terminal.
+    """
 
     def test_no_tty_is_refused(self):
-        reason = tui.preflight(is_tty=False, size=(120, 40), term="xterm")
+        reason = tui.preflight(is_tty=False, size=(120, 40), term="xterm",
+                                stdin_tty=True)
         self.assertIn("terminal", reason.lower())
 
+    def test_no_stdin_tty_is_refused(self):
+        # stdout can be a terminal while stdin is redirected (e.g. from a
+        # file or a pipe) - curses reads keys from stdin, so this must be
+        # refused just as clearly as a missing stdout terminal.
+        reason = tui.preflight(is_tty=True, size=(120, 40), term="xterm",
+                                stdin_tty=False)
+        self.assertIn("stdin", reason.lower())
+        self.assertIn("update_docker_odoo.py", reason)
+
     def test_a_dumb_terminal_is_refused(self):
-        reason = tui.preflight(is_tty=True, size=(120, 40), term="dumb")
+        reason = tui.preflight(is_tty=True, size=(120, 40), term="dumb",
+                                stdin_tty=True)
         self.assertIn("TERM", reason)
 
     def test_a_small_window_is_refused_and_says_the_actual_size(self):
-        reason = tui.preflight(is_tty=True, size=(71, 18), term="xterm")
+        reason = tui.preflight(is_tty=True, size=(71, 18), term="xterm",
+                                stdin_tty=True)
         self.assertIn("71", reason)
         self.assertIn("18", reason)
 
     def test_a_usable_terminal_passes(self):
-        self.assertIsNone(tui.preflight(is_tty=True, size=(80, 20), term="xterm"))
+        self.assertIsNone(tui.preflight(is_tty=True, size=(80, 20), term="xterm",
+                                        stdin_tty=True))
 
     def test_the_minimum_is_inclusive(self):
-        self.assertIsNone(tui.preflight(is_tty=True, size=tui.MIN_SIZE, term="xterm"))
+        self.assertIsNone(tui.preflight(is_tty=True, size=tui.MIN_SIZE, term="xterm",
+                                        stdin_tty=True))
 
 
 class LastRunFormatTest(unittest.TestCase):

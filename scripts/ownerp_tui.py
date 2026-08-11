@@ -149,13 +149,19 @@ class UpdateSelection:
         """
         return any(row["mode"] == "N" for row in self.selected_rows)
 
-    def runner_invocations(self, script):
+    def runner_invocations(self, script, config=None):
         """One argument list per mode group, in the order of the list.
 
         --type applies to a whole invocation, so a selection with mixed modes
         becomes several runs. Grouping here rather than inventing a
         per-container flag syntax keeps -s the same thing an operator types by
         hand.
+
+        config: the TUI's own -c/--config path, forwarded as -c so the runner
+        reads the same file the operator was looking at. None (the default,
+        used whenever the TUI runs on its own default config) adds nothing -
+        the runner's default already matches, and every existing invocation
+        stays exactly as it was.
         """
         groups = []                        # [(mode, [names])], first appearance wins
         for row in self.selected_rows:
@@ -168,23 +174,34 @@ class UpdateSelection:
 
         invocations = []
         for mode, names in groups:
-            argv = [script, "-s", ",".join(names), "--type", mode]
+            argv = [script]
+            if config:
+                argv += ["-c", config]
+            argv += ["-s", ",".join(names), "--type", mode]
             if self.comment:
                 argv += ["--comment", self.comment]
             invocations.append(argv)
         return invocations
 
 
-def preflight(is_tty=None, size=None, term=None):
+def preflight(is_tty=None, size=None, term=None, stdin_tty=None):
     """Why this terminal cannot host the TUI, or None when it can.
 
     Checked before curses is initialised, so a refusal is a plain sentence on
     stderr rather than a traceback from a half-set-up screen. Split out from
-    main() because these three refusals are the ones worth asserting.
+    main() because these refusals are the ones worth asserting.
     """
     is_tty = sys.stdout.isatty() if is_tty is None else is_tty
     if not is_tty:
         return ("No terminal on stdout - the TUI needs one. "
+                "Use update_docker_odoo.py directly (see --help).")
+
+    # curses reads keys from stdin, not stdout - a stdout terminal with
+    # stdin redirected (e.g. from a file or a pipe) passes the check above
+    # and then spins forever in getch() waiting for input that never comes.
+    stdin_tty = sys.stdin.isatty() if stdin_tty is None else stdin_tty
+    if not stdin_tty:
+        return ("No terminal on stdin - the TUI needs one to read keys. "
                 "Use update_docker_odoo.py directly (see --help).")
 
     term = os.environ.get("TERM", "") if term is None else term
@@ -388,8 +405,14 @@ def run_outside_curses(stdscr, invocations):
     return worst
 
 
-def loop(stdscr, selection, latest):
-    """The key loop. Returns the worst exit code of everything it started."""
+def loop(stdscr, selection, latest, config=None):
+    """The key loop. Returns the worst exit code of everything it started.
+
+    config: the TUI's own -c/--config path when it differs from the runner's
+    default, forwarded to every invocation the loop builds (see
+    UpdateSelection.runner_invocations) so the runner reads the same file the
+    operator was looking at.
+    """
     curses.curs_set(0)
     message = ""
     worst = 0
@@ -424,8 +447,11 @@ def loop(stdscr, selection, latest):
         elif key in (ord("?"), ord("h")):
             show_block(stdscr, HELP_LINES)
         elif key == ord("v"):
-            worst = max(worst, run_outside_curses(
-                stdscr, [[RUNNER_SCRIPT, "--validate"]]))
+            argv = [RUNNER_SCRIPT]
+            if config:
+                argv += ["-c", config]
+            argv += ["--validate"]
+            worst = max(worst, run_outside_curses(stdscr, [argv]))
         elif key in (curses.KEY_ENTER, 10, 13):
             if not selection.can_start():
                 message = "Nothing selected - Space ticks a system."
@@ -451,7 +477,7 @@ def loop(stdscr, selection, latest):
                     message = "Cancelled."
                     continue
             worst = max(worst, run_outside_curses(
-                stdscr, selection.runner_invocations(RUNNER_SCRIPT)))
+                stdscr, selection.runner_invocations(RUNNER_SCRIPT, config)))
             latest = last_run_by_container(runner.read_history() if runner else [])
 
 
@@ -486,9 +512,13 @@ def main(argv=None):
 
     selection = UpdateSelection(containers)
     latest = last_run_by_container(runner.read_history() if runner else [])
+    # Only forward -c when it differs from the TUI's own default - the
+    # runner's default already matches otherwise, and every invocation stays
+    # exactly what it is today.
+    config_arg = args.config if args.config != CONFIG_FILE else None
     # curses.wrapper restores the terminal on any exit, exception included - a
     # wrecked terminal after a crash is what operators hold against TUIs.
-    return curses.wrapper(loop, selection, latest)
+    return curses.wrapper(loop, selection, latest, config_arg)
 
 
 if __name__ == "__main__":

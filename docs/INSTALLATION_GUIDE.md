@@ -548,6 +548,7 @@ Alle Skripte des Repos (`scripts/`, Stand 16.07.2026):
 | `pg-local-deploy.sh` (1.2.1) | PostgreSQL-Container interaktiv deployen (Profile, optional SSL) | `./pg-local-deploy.sh` |
 | `fr-local-deploy.sh` | FastReport-API-Container deployen (Default `/opt/fast-report`) | `./fr-local-deploy.sh` |
 | `update_docker_odoo.py` (5.11.0) | Odoo-Container-Updates per YAML | `doup` bzw. `python3 update_docker_odoo.py [-s NAME] [--validate]` |
+| `ownerp_tui.py` (1.0.0) | Curses-Auswahlmaske für Odoo-Container-Updates, übergibt an `update_docker_odoo.py` | `tui` bzw. `python3 ownerp_tui.py [-c DATEI]` |
 | `odoo_build_cache.py` (1.5.0) | Release-Archiv-Cache aller Instanzen; pflegt zusätzlich Dockerfile und `odoo.conf` des Build-Ordners | von `doup` aufgerufen; `~/odoo_build_cache.py stats\|gc [--days 30]` |
 | `container2backup.py` (4.7.1) | SQL+Filestore-Backups, Kompression/Verschlüsselung/Streaming | `dobk` bzw. `~/container2backup.py [--sql-only]` |
 | `restore-zip.sh` (2.1.0) | Backup-Restore (DB + Filestore) in Docker | siehe [Kapitel 13](#de-13-restore--notfall) |
@@ -1295,6 +1296,7 @@ All scripts in this repository (`scripts/`, as of 16.07.2026):
 | `pg-local-deploy.sh` (1.2.1) | Deploy a PostgreSQL container interactively (profiles, optional SSL) | `./pg-local-deploy.sh` |
 | `fr-local-deploy.sh` | Deploy the FastReport API container (default `/opt/fast-report`) | `./fr-local-deploy.sh` |
 | `update_docker_odoo.py` (5.11.0) | Odoo container updates via YAML | `doup` or `python3 update_docker_odoo.py [-s NAME] [--validate]` |
+| `ownerp_tui.py` (1.0.0) | Curses selection screen for Odoo container updates, hands off to `update_docker_odoo.py` | `tui` or `python3 ownerp_tui.py [-c FILE]` |
 | `odoo_build_cache.py` (1.5.0) | Release archive cache shared by all instances; also maintains the build folder's Dockerfile and `odoo.conf` | called by `doup`; `~/odoo_build_cache.py stats\|gc [--days 30]` |
 | `container2backup.py` (4.7.1) | SQL+filestore backups, compression/encryption/streaming | `dobk` or `~/container2backup.py [--sql-only]` |
 | `restore-zip.sh` (2.1.0) | Backup restore (DB + filestore) into Docker | see [chapter 13](#en-13-restore--emergency) |

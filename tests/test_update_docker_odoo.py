@@ -28,6 +28,10 @@ import update_docker_odoo as udo  # noqa: E402
 
 LOG_NAME_PATTERN = re.compile(r"^update_\d{8}_\d{6}\.log$")
 
+# True only when the real PyYAML is on sys.path; the two tests below need it
+# to actually load a config file from disk, not just parse argv.
+HAS_REAL_YAML = hasattr(sys.modules.get("yaml"), "safe_load")
+
 
 def read(path):
     with open(path, encoding="utf8") as handle:
@@ -360,6 +364,77 @@ class RuntimeOverrideTest(unittest.TestCase):
         args = self.parse([])
         self.assertIsNone(args.update_type)
         self.assertIsNone(args.comment)
+
+
+@unittest.skipUnless(HAS_REAL_YAML, "needs real PyYAML to load a config file from disk")
+class MainAgainstARealConfigFileTest(unittest.TestCase):
+    """Drives udo.main() end to end against a real YAML file on disk.
+
+    Skipped without real PyYAML: main() cannot get past load_config() to
+    reach any of the code these tests are actually about, so there would be
+    nothing left to regress-test.
+    """
+
+    def setUp(self):
+        self.tmp = tempfile.mkdtemp()
+        self.dockerfile_dir = os.path.join(self.tmp, "build")
+        os.makedirs(self.dockerfile_dir)
+        self.config_path = os.path.join(self.tmp, "docker2update.yaml")
+        # volume already carries --dns so the always-on DNS optimisation step
+        # in main() finds nothing to change and never rewrites the file for
+        # a reason unrelated to what is under test here.
+        self.config_text = (
+            "containers:\n"
+            "  - container_name: web1\n"
+            "    database_name: web1_db\n"
+            "    type: F\n"
+            "    active: true\n"
+            f"    dockerfile_path: {self.dockerfile_dir}\n"
+            "    docker_image_name: myodoo:19\n"
+            "    port: 8069\n"
+            "    longpolling_port: 8072\n"
+            "    db_user: ownerp\n"
+            "    db_password: secret\n"
+            "    db_host: db\n"
+            "    volume: \"-v /vol:/vol --dns 1.1.1.1 --dns 8.8.8.8\"\n"
+        )
+        with open(self.config_path, "w", encoding="utf8") as handle:
+            handle.write(self.config_text)
+
+    def run_main(self, argv):
+        original = sys.argv
+        sys.argv = ["update_docker_odoo.py", "-c", self.config_path] + argv
+        try:
+            return udo.main()
+        finally:
+            sys.argv = original
+
+    def test_a_type_override_never_reaches_the_config_file_on_disk(self):
+        """--type overrides the YAML value for this run only.
+
+        A regression guard for main()/_process_container() ever writing the
+        runtime override back into the customer's config - today the
+        override lives on a dict copy (see the comment above the override in
+        main()) and the file is never touched for it. This is the test that
+        would fail the day that stops being true.
+        """
+        with open(self.config_path, "rb") as handle:
+            before = handle.read()
+
+        exit_code = self.run_main(["--type", "M", "--validate"])
+
+        with open(self.config_path, "rb") as handle:
+            after = handle.read()
+
+        self.assertEqual(exit_code, 0)
+        self.assertEqual(before, after)
+
+    def test_an_unknown_specific_container_exits_non_zero(self):
+        # Drives the real unknown-name check in main() rather than
+        # re-implementing it: a typo in -s must not look like a successful
+        # run that quietly updated nothing.
+        exit_code = self.run_main(["-s", "does-not-exist"])
+        self.assertNotEqual(exit_code, 0)
 
 
 class HistoryEntryTest(unittest.TestCase):

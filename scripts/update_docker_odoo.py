@@ -1522,6 +1522,8 @@ def _process_container(container, proxy_settings=None, dockerfiles_source=None,
             sources (default: DEFAULT_DOCKERFILES_SOURCE)
         log_retention_days: Days to keep run logs in the build folder
             (see resolve_log_retention); None uses the built-in default
+        run_comment: Optional operator comment for this run, recorded in the
+            run log header and the run history (see --comment)
     """
     # Set default values if missing
     container.setdefault('delay_time', 30)
