@@ -394,11 +394,24 @@ class CollisionTest(UpdateSchemaTest):
 
     def test_a_duplicate_container_name_is_an_error(self):
         errors = self.errors(self.TWO.replace('"test-odoo"', '"live-odoo"'))
-        self.assertTrue(any("container_name" in f.path for f in errors))
+        self.assertEqual(len(errors), 1)
+        self.assertIn("container_name", errors[0].path)
 
     def test_a_duplicate_database_name_is_an_error(self):
         errors = self.errors(self.TWO.replace('"test_db"', '"live_odoo"'))
-        self.assertTrue(any("database_name" in f.path for f in errors))
+        self.assertEqual(len(errors), 1)
+        self.assertIn("database_name", errors[0].path)
+
+    def test_an_unhashable_container_name_produces_a_finding_not_a_crash(self):
+        # container_name: [a, b] used to blow up _duplicates() with
+        # "TypeError: unhashable type: 'list'" - the schema's own {"type":
+        # str} rule must report it instead, and the duplicate check must
+        # step around it without raising.
+        text = GOOD_UPDATE.replace(
+            'container_name: "live-odoo"',
+            "container_name:\n          - a\n          - b")
+        findings = self.check(text)
+        self.assertTrue(any("container_name" in f.path for f in findings))
 
     def test_a_duplicate_port_is_an_error_naming_the_other_line(self):
         errors = self.errors(self.TWO.replace('"127.0.0.1:13000"',
@@ -526,6 +539,15 @@ class BackupSchemaTest(unittest.TestCase):
         errors = self.errors(GOOD_BACKUP.replace(
             "        sql_container: live-db\n", ""))
         self.assertTrue(any("sql_container" in f.path for f in errors))
+
+    def test_an_unhashable_database_name_produces_a_finding_not_a_crash(self):
+        # databases[].name: [a, b] routes through the same _duplicates() as
+        # container_name/database_name above and used to crash the same way.
+        text = GOOD_BACKUP.replace(
+            "- name: live_db",
+            "- name:\n            - a\n            - b", 1)
+        findings = self.check(text)
+        self.assertTrue(any("name" in f.path for f in findings))
 
     def test_a_duplicate_database_name_is_an_error(self):
         # Inserted ahead of "rsync:" (i.e. still inside the databases list,

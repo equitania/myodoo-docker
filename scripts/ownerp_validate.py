@@ -447,6 +447,15 @@ def _duplicates(findings, entries, field, file_path, label):
         value = mapping.get(field)
         if is_empty(value):
             continue
+        if isinstance(value, (list, dict)):
+            # Not a valid value for this field to begin with - the schema's
+            # own {"type": str} rule already reports that through
+            # validate_mapping, and reporting it again here would duplicate
+            # the finding. Unlike every valid value, a list or dict cannot be
+            # used as a dict key at all, so this must be skipped rather than
+            # compared - this tool survives malformed input, it does not
+            # crash on it (see the min/max guard above for the same stance).
+            continue
         if value in seen:
             first_map, first_name = seen[value]
             findings.append(Finding(
