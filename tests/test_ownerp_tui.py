@@ -181,5 +181,73 @@ class LastRunTest(unittest.TestCase):
         self.assertEqual(tui.last_run_by_container([]), {})
 
 
+class PreflightTest(unittest.TestCase):
+    """The refusals that must happen before curses is ever initialised."""
+
+    def test_no_tty_is_refused(self):
+        reason = tui.preflight(is_tty=False, size=(120, 40), term="xterm")
+        self.assertIn("terminal", reason.lower())
+
+    def test_a_dumb_terminal_is_refused(self):
+        reason = tui.preflight(is_tty=True, size=(120, 40), term="dumb")
+        self.assertIn("TERM", reason)
+
+    def test_a_small_window_is_refused_and_says_the_actual_size(self):
+        reason = tui.preflight(is_tty=True, size=(71, 18), term="xterm")
+        self.assertIn("71", reason)
+        self.assertIn("18", reason)
+
+    def test_a_usable_terminal_passes(self):
+        self.assertIsNone(tui.preflight(is_tty=True, size=(80, 20), term="xterm"))
+
+    def test_the_minimum_is_inclusive(self):
+        self.assertIsNone(tui.preflight(is_tty=True, size=tui.MIN_SIZE, term="xterm"))
+
+
+class LastRunFormatTest(unittest.TestCase):
+    def test_a_run_is_summarised_as_date_mode_result(self):
+        text = tui.format_last_run({"ts": "2026-08-03T10:00:00", "mode": "F",
+                                    "result": "ok", "comment": ""})
+        self.assertTrue(text.startswith("03.08."))
+        self.assertIn("F", text)
+        self.assertIn("ok", text)
+
+    def test_a_comment_is_quoted_after_the_result(self):
+        text = tui.format_last_run({"ts": "2026-08-03T10:00:00", "mode": "F",
+                                    "result": "ok", "comment": "eq_stock"})
+        self.assertIn('"eq_stock"', text)
+
+    def test_nothing_known_shows_a_dash(self):
+        self.assertEqual(tui.format_last_run(None), "—")
+
+    def test_an_unparsable_timestamp_becomes_a_question_mark(self):
+        text = tui.format_last_run({"ts": "yesterday", "mode": "F",
+                                    "result": "ok", "comment": ""})
+        self.assertTrue(text.startswith("?"))
+        self.assertIn("ok", text)
+
+
+class DefaultMarkerTest(unittest.TestCase):
+    def setUp(self):
+        import tempfile
+        self.marker = os.path.join(tempfile.mkdtemp(), ".ownerp_tui_default")
+
+    def test_it_is_off_until_the_marker_exists(self):
+        self.assertFalse(tui.tui_is_default(self.marker))
+
+    def test_setting_it_creates_the_marker(self):
+        tui.set_tui_default(True, self.marker)
+        self.assertTrue(tui.tui_is_default(self.marker))
+
+    def test_clearing_it_removes_the_marker(self):
+        tui.set_tui_default(True, self.marker)
+        tui.set_tui_default(False, self.marker)
+        self.assertFalse(tui.tui_is_default(self.marker))
+
+    def test_clearing_an_absent_marker_is_not_an_error(self):
+        tui.set_tui_default(False, self.marker)       # must not raise
+        self.assertFalse(tui.tui_is_default(self.marker))
+
+
 if __name__ == "__main__":
     unittest.main()
