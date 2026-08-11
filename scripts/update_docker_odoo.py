@@ -1,7 +1,7 @@
 #!/usr/bin/python3
 # -*- coding: utf-8 -*-
 # This script performs an update of an Odoo database in a Docker container
-# Version 5.11.0
+# Version 5.12.0
 # Date 11.08.2026
 ##############################################################################
 #
@@ -77,7 +77,7 @@ logger = logging.getLogger(__name__)
 # Kept in sync with the header comment above. Printed at the start of every run
 # so a pasted log says which version produced it — the single most common
 # question when a report comes back from a server.
-SCRIPT_VERSION = "5.11.0"
+SCRIPT_VERSION = "5.12.0"
 SCRIPT_DATE = "11.08.2026"
 
 # Column at which the dots of a compact step line end
@@ -1216,6 +1216,31 @@ def load_config(config_file):
         logger.error(f"Error loading configuration: {e}")
         return None
 
+VALIDATOR_SCRIPT = "ownerp_validate.py"
+
+
+def validator_path():
+    """The validator that ships beside this script."""
+    return join(os.path.dirname(os.path.abspath(__file__)), VALIDATOR_SCRIPT)
+
+
+def run_external_validation(config_file):
+    """Hand --validate to ownerp_validate.py.
+
+    Returns (handled, exit_code). handled is False when the validator is not
+    installed - an older installation keeps the flag it always had, with the
+    built-in per-container check behind it, rather than losing it to a hard
+    failure.
+    """
+    validator = validator_path()
+    if not isfile(validator):
+        logger.warning(
+            f"{VALIDATOR_SCRIPT} not found beside this script - falling back "
+            "to the built-in configuration check. Run 'ups' to install it.")
+        return False, 0
+    result = subprocess.run([sys.executable, validator, "--update", config_file])
+    return True, result.returncode
+
 def resolve_proxy_settings(config, container):
     """Resolve proxy settings for a container.
 
@@ -1996,7 +2021,14 @@ def main():
     except ImportError:
         logger.error("PyYAML is not installed. Run 'pip install pyyaml' to install it.")
         return 1
-    
+
+    # --validate is strictly read-only, and delegating before load_config()
+    # means broken YAML gets a line number instead of a generic message.
+    if args.validate:
+        handled, code = run_external_validation(args.config)
+        if handled:
+            return code
+
     # Load configuration
     config = load_config(args.config)
     if not config:
@@ -2026,7 +2058,12 @@ def main():
             print(f"DNS configuration already optimal for container: {container_name}")
     
     # Save updated configuration if modifications were made
-    if config_modified:
+    if config_modified and args.validate:
+        # The fallback path lands here when the validator is not installed.
+        # --validate never writes, so report what a real run would change.
+        print("DNS optimizations would be applied (not written: "
+              "--validate is read-only)")
+    elif config_modified:
         if save_updated_config(config, args.config):
             # Always show this message
             print("Configuration updated with DNS optimizations")

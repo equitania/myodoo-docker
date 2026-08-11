@@ -481,5 +481,59 @@ class HistoryEntryTest(unittest.TestCase):
         self.assertEqual(self.entry(comment=None)["comment"], "")
 
 
+class ExternalValidationTest(unittest.TestCase):
+    """--validate delegates to ownerp_validate.py, and never writes."""
+
+    def setUp(self):
+        import tempfile
+        self.tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(self.tmp.cleanup)
+
+    # NOTE: update_docker_odoo.py does 'from os.path import ... isfile ...',
+    # so the name to patch is udo.isfile - patching udo.os.path.isfile would
+    # leave the module-level name untouched and the test would pass by
+    # accident against the real filesystem.
+
+    def test_it_delegates_when_the_validator_sits_beside_the_script(self):
+        import subprocess
+        from unittest import mock
+        recorded = {}
+
+        def fake_run(argv, **kwargs):
+            recorded["argv"] = argv
+            return subprocess.CompletedProcess(argv, 0)
+
+        with mock.patch.object(udo, "isfile", return_value=True), \
+             mock.patch.object(udo.subprocess, "run", side_effect=fake_run):
+            handled, code = udo.run_external_validation("/etc/my.yaml")
+
+        self.assertTrue(handled)
+        self.assertEqual(code, 0)
+        self.assertIn("--update", recorded["argv"])
+        self.assertIn("/etc/my.yaml", recorded["argv"])
+        self.assertTrue(recorded["argv"][1].endswith("ownerp_validate.py"))
+
+    def test_it_passes_the_validators_exit_code_through(self):
+        import subprocess
+        from unittest import mock
+        with mock.patch.object(udo, "isfile", return_value=True), \
+             mock.patch.object(udo.subprocess, "run",
+                               return_value=subprocess.CompletedProcess([], 1)):
+            handled, code = udo.run_external_validation("/etc/my.yaml")
+        self.assertEqual((handled, code), (True, 1))
+
+    def test_it_falls_back_when_the_validator_is_absent(self):
+        from unittest import mock
+        with mock.patch.object(udo, "isfile", return_value=False):
+            handled, code = udo.run_external_validation("/etc/my.yaml")
+        self.assertFalse(handled)
+
+    def test_the_validator_is_looked_for_beside_this_script(self):
+        self.assertEqual(
+            udo.validator_path(),
+            os.path.join(os.path.dirname(os.path.abspath(udo.__file__)),
+                         "ownerp_validate.py"))
+
+
 if __name__ == "__main__":
     unittest.main()
