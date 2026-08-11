@@ -285,3 +285,310 @@ class PathRuleTest(unittest.TestCase):
         ov.validate_mapping({"where": os.path.dirname(__file__)}, self.SCHEMA,
                             "root", "f.yaml", findings)
         self.assertEqual(findings, [])
+
+
+GOOD_UPDATE = """
+    defaults:
+      log_retention_days: 90
+      history_retention_days: 365
+    containers:
+      - active: true
+        type: "F"
+        delay_time: 10
+        container_name: "live-odoo"
+        database_name: "live_odoo"
+        port: "127.0.0.1:11000"
+        longpolling_port: "127.0.0.1:12000"
+        dockerfile_path: "{here}"
+        docker_image_name: "odoo/live"
+        db_user: "ownerp"
+        db_password: "secret"
+        db_host: "live-db"
+        volume: "-v /opt/odoo/live:/opt/odoo/data"
+        odoo_version: "18"
+        translate: "Y"
+        db_password_via_env: true
+"""
+
+
+class UpdateSchemaTest(unittest.TestCase):
+    def setUp(self):
+        import tempfile
+        self.tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(self.tmp.cleanup)
+        self.here = os.path.dirname(os.path.abspath(__file__))
+
+    def check(self, text):
+        path = write(self.tmp.name, "u.yaml", text.format(here=self.here))
+        findings, fatal = ov.validate_update(path)
+        self.assertIsNone(fatal, fatal and fatal.message)
+        return findings
+
+    def errors(self, text):
+        return [f for f in self.check(text) if f.severity == ov.ERROR]
+
+    def test_a_good_configuration_produces_no_errors(self):
+        self.assertEqual(self.errors(GOOD_UPDATE), [])
+
+    def test_a_good_configuration_produces_no_unknown_keys(self):
+        self.assertEqual(
+            [f for f in self.check(GOOD_UPDATE) if "unknown key" in f.message],
+            [])
+
+    def test_a_missing_containers_section_is_an_error(self):
+        errors = self.errors("defaults:\n  log_retention_days: 90\n")
+        self.assertTrue(any("containers" in f.path for f in errors))
+
+    def test_an_empty_containers_list_is_an_error(self):
+        self.assertTrue(self.errors("containers: []\n"))
+
+    def test_a_bad_type_letter_is_an_error(self):
+        errors = self.errors(GOOD_UPDATE.replace('type: "F"', 'type: "X"'))
+        self.assertEqual(len(errors), 1)
+        self.assertIn("M, F, N", errors[0].message)
+
+    def test_a_non_numeric_delay_time_is_an_error(self):
+        errors = self.errors(GOOD_UPDATE.replace("delay_time: 10",
+                                                 'delay_time: "zehn"'))
+        self.assertEqual(len(errors), 1)
+
+    def test_a_bad_retention_in_defaults_is_an_error(self):
+        errors = self.errors(GOOD_UPDATE.replace("log_retention_days: 90",
+                                                 'log_retention_days: "90 days"'))
+        self.assertTrue(any("log_retention_days" in f.path for f in errors))
+
+    def test_a_missing_dockerfile_path_is_a_warning_not_an_error(self):
+        text = GOOD_UPDATE.replace('dockerfile_path: "{here}"',
+                                   'dockerfile_path: "/definitely/not/here"')
+        findings = self.check(text)
+        self.assertEqual([f for f in findings if f.severity == ov.ERROR], [])
+        self.assertTrue(any("dockerfile_path" in f.path for f in findings))
+
+    def test_a_typo_in_a_container_key_is_a_warning_with_a_suggestion(self):
+        findings = self.check(GOOD_UPDATE.replace('odoo_version: "18"',
+                                                  'odoo_versoin: "18"'))
+        hits = [f for f in findings if "unknown key" in f.message]
+        self.assertEqual(len(hits), 1)
+        self.assertIn("odoo_version", hits[0].message)
+        self.assertEqual(hits[0].severity, ov.WARNING)
+
+
+class CollisionTest(UpdateSchemaTest):
+    TWO = GOOD_UPDATE + """
+      - active: true
+        type: "M"
+        delay_time: 10
+        container_name: "test-odoo"
+        database_name: "test_db"
+        port: "127.0.0.1:13000"
+        longpolling_port: "127.0.0.1:14000"
+        dockerfile_path: "{here}"
+        docker_image_name: "odoo/test"
+        db_user: "ownerp"
+        db_password: "secret"
+        db_host: "test-db"
+"""
+
+    def test_two_distinct_containers_do_not_collide(self):
+        self.assertEqual(self.errors(self.TWO), [])
+
+    def test_a_duplicate_container_name_is_an_error(self):
+        errors = self.errors(self.TWO.replace('"test-odoo"', '"live-odoo"'))
+        self.assertTrue(any("container_name" in f.path for f in errors))
+
+    def test_a_duplicate_database_name_is_an_error(self):
+        errors = self.errors(self.TWO.replace('"test_db"', '"live_odoo"'))
+        self.assertTrue(any("database_name" in f.path for f in errors))
+
+    def test_a_duplicate_port_is_an_error_naming_the_other_line(self):
+        errors = self.errors(self.TWO.replace('"127.0.0.1:13000"',
+                                              '"127.0.0.1:11000"'))
+        self.assertEqual(len(errors), 1)
+        self.assertIn("live-odoo", errors[0].message)
+        self.assertIn("line", errors[0].message)
+
+    def test_a_port_colliding_with_a_longpolling_port_is_an_error(self):
+        # Both are host ports and share one namespace.
+        errors = self.errors(self.TWO.replace('"127.0.0.1:13000"',
+                                              '"127.0.0.1:12000"'))
+        self.assertEqual(len(errors), 1)
+
+    def test_the_same_port_on_a_different_bind_address_is_still_a_collision(self):
+        errors = self.errors(self.TWO.replace('"127.0.0.1:13000"',
+                                              '"0.0.0.0:11000"'))
+        self.assertEqual(len(errors), 1)
+
+    def test_an_inactive_container_never_collides(self):
+        # The second block reuses the first block's port, but cannot run.
+        text = (self.TWO
+                .replace('"127.0.0.1:13000"', '"127.0.0.1:11000"')
+                .replace('- active: true\n        type: "M"',
+                         '- active: false\n        type: "M"'))
+        self.assertIn('active: false', text)   # the replace really matched
+        self.assertEqual(self.errors(text), [])
+
+
+class InactiveDowngradeTest(UpdateSchemaTest):
+    BROKEN = GOOD_UPDATE.replace('type: "F"', 'type: "X"')
+
+    def test_a_broken_active_block_yields_errors(self):
+        self.assertTrue(self.errors(self.BROKEN))
+
+    def test_the_same_block_inactive_yields_warnings_only(self):
+        findings = self.check(self.BROKEN.replace("active: true",
+                                                  "active: false"))
+        self.assertEqual([f for f in findings if f.severity == ov.ERROR], [])
+        self.assertTrue(any("(inactive)" in f.message for f in findings))
+
+
+GOOD_BACKUP = """
+    defaults:
+      retention_days: 14
+      db_user: ownerp
+      backup_path: "{here}"
+      temp_path: "{here}"
+      stream: false
+      compression:
+        format: "7z"
+        level: 5
+    services:
+      nginx:
+        enabled: true
+        source_path: "{here}"
+        backup_path: nginx
+        retention_days: 7
+    databases:
+      - name: live_db
+        sql_container: live-db
+        data_container: live-odoo
+        retention_days: 7
+        only_sql_dump: false
+        fast_report:
+          enabled: false
+          path: "{here}"
+    rsync:
+      enabled: false
+      commands: []
+"""
+
+
+class BackupSchemaTest(unittest.TestCase):
+    def setUp(self):
+        import tempfile
+        self.tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(self.tmp.cleanup)
+        self.here = os.path.dirname(os.path.abspath(__file__))
+
+    def check(self, text):
+        path = write(self.tmp.name, "b.yaml", text.format(here=self.here))
+        findings, fatal = ov.validate_backup(path)
+        self.assertIsNone(fatal, fatal and fatal.message)
+        return findings
+
+    def errors(self, text):
+        return [f for f in self.check(text) if f.severity == ov.ERROR]
+
+    def test_a_good_configuration_produces_no_errors(self):
+        self.assertEqual(self.errors(GOOD_BACKUP), [])
+
+    def test_a_good_configuration_produces_no_unknown_keys(self):
+        self.assertEqual(
+            [f for f in self.check(GOOD_BACKUP) if "unknown key" in f.message],
+            [])
+
+    def test_an_unknown_compression_format_is_an_error(self):
+        errors = self.errors(GOOD_BACKUP.replace('format: "7z"',
+                                                 'format: "rar"'))
+        self.assertEqual(len(errors), 1)
+
+    def test_a_compression_level_above_nine_is_an_error(self):
+        self.assertTrue(self.errors(GOOD_BACKUP.replace("level: 5",
+                                                        "level: 11")))
+
+    def test_a_service_without_a_source_path_is_an_error(self):
+        errors = self.errors(GOOD_BACKUP.replace(
+            'source_path: "{here}"\n        backup_path: nginx',
+            'backup_path: nginx'))
+        self.assertTrue(any("source_path" in f.path for f in errors))
+
+    def test_a_service_without_a_backup_path_is_an_error(self):
+        # This one is a KeyError at runtime today, not a message.
+        # The replacement must remove the whole indented line - leaving the
+        # leading spaces behind merges into the next line's indentation and
+        # turns this into a YAML syntax error instead of the missing-key
+        # scenario the test is after.
+        errors = self.errors(GOOD_BACKUP.replace(
+            "        backup_path: nginx\n", ""))
+        self.assertTrue(any("services.nginx.backup_path" in f.path
+                            for f in errors))
+
+    def test_a_database_without_a_sql_container_is_an_error(self):
+        errors = self.errors(GOOD_BACKUP.replace(
+            "        sql_container: live-db\n", ""))
+        self.assertTrue(any("sql_container" in f.path for f in errors))
+
+    def test_a_duplicate_database_name_is_an_error(self):
+        # Inserted ahead of "rsync:" (i.e. still inside the databases list,
+        # at the same indentation as the existing entry) - appending after
+        # the whole fixture would land the block below "rsync:", outside
+        # "databases:" entirely, and break YAML parsing.
+        text = GOOD_BACKUP.replace(
+            "    rsync:",
+            "      - name: live_db\n"
+            "        sql_container: other-db\n"
+            "        data_container: other-odoo\n"
+            "    rsync:")
+        errors = self.errors(text)
+        self.assertTrue(any("name" in f.path for f in errors))
+
+    def test_additional_paths_is_known_and_not_inspected(self):
+        text = GOOD_BACKUP.replace("        only_sql_dump: false",
+                                   "        only_sql_dump: false\n"
+                                   "        additional_paths:\n"
+                                   "          whatever:\n"
+                                   "            anything: 1")
+        self.assertEqual(
+            [f for f in self.check(text) if "unknown key" in f.message], [])
+
+    def test_a_typo_in_defaults_is_a_warning_with_a_suggestion(self):
+        findings = self.check(GOOD_BACKUP.replace("retention_days: 14",
+                                                  "retention_day: 14"))
+        hits = [f for f in findings if "unknown key" in f.message]
+        self.assertEqual(len(hits), 1)
+        self.assertIn("retention_days", hits[0].message)
+
+
+class ShippedTemplateTest(unittest.TestCase):
+    """The schema must know every key the shipped templates carry.
+
+    Without this, a key added to a template a year from now silently becomes a
+    false 'unknown key' on every customer server, and the typo check is the
+    first thing operators learn to ignore. Path warnings are expected here -
+    the templates point at paths that only exist on a real server.
+    """
+
+    def assert_clean(self, findings, path):
+        errors = [f for f in findings if f.severity == ov.ERROR]
+        self.assertEqual(errors, [], f"{path}: {[f.message for f in errors]}")
+        unknown = [f for f in findings if "unknown key" in f.message]
+        self.assertEqual(unknown, [],
+                         f"{path}: {[f.message for f in unknown]}")
+
+    def test_the_update_template_validates(self):
+        path = os.path.join(REPO_ROOT, "scripts", "docker2update.yaml")
+        findings, fatal = ov.validate_update(path)
+        self.assertIsNone(fatal)
+        self.assert_clean(findings, path)
+
+    def test_the_proxy_example_validates(self):
+        path = os.path.join(REPO_ROOT, "scripts",
+                            "docker2update-proxy-example.yaml")
+        findings, fatal = ov.validate_update(path)
+        self.assertIsNone(fatal)
+        self.assert_clean(findings, path)
+
+    def test_the_backup_template_validates(self):
+        path = os.path.join(REPO_ROOT, "scripts", "container2backup.yaml")
+        findings, fatal = ov.validate_backup(path)
+        self.assertIsNone(fatal)
+        self.assert_clean(findings, path)
