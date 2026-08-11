@@ -561,7 +561,8 @@ class BackupSchemaTest(unittest.TestCase):
             "        data_container: other-odoo\n"
             "    rsync:")
         errors = self.errors(text)
-        self.assertTrue(any("name" in f.path for f in errors))
+        self.assertEqual(len(errors), 1)
+        self.assertIn("name", errors[0].path)
 
     def test_additional_paths_is_known_and_not_inspected(self):
         text = GOOD_BACKUP.replace("        only_sql_dump: false",
