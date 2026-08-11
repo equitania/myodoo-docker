@@ -38,14 +38,15 @@ All commands run as **root** on the target server. The interactive login shell i
 | Command | Alias | Purpose | Args / Flags |
 |---|---|---|---|
 | `bootstrap.sh` | — | Fresh-server baseline init (idempotent) | env: `REPO_BRANCH=2026` `REPO_URL=…` `INSTALL_NGINX=1` `INSTALL_CERTBOT=1` `INSTALL_DOCKER=1` `INSTALL_UFW=1` `INSTALL_FAIL2BAN=1` `INSTALL_UNATTENDED=1` `INSTALL_PYTHON_DEPS=1` `RUN_GETSCRIPTS=1` `SELF_INSTALL=1` (set `0` to skip) |
-| `getScripts.py` | `ups` (re-run) | Deploy fish config, aliases, management scripts to `/root` | `--clear-cache` · `--no-cache` · `--debug` · `--dns-check` · `--proxy-check` · `--first-run` · `--reconfigure` |
+| `getScripts.py` | `ups` (re-run) | Deploy fish config, aliases, management scripts to `/root`. Console is lean: without `-v` only server-optimization status, warnings and errors appear; every INFO line and all child output (apt, git, curl) goes to `~/getscripts.log`, and a failed command's output tail comes back on screen | `-v/--verbose` · `--clear-cache` · `--no-cache` · `--debug` · `--dns-check` · `--proxy-check` · `--first-run` · `--reconfigure` |
 | `server_hardening.py` | — | Audit (default) / apply server hardening | `-c/--config CONFIG` · `-a/--apply` · `-f/--force` · `-m/--module {ufw,fail2ban,ssh,sysctl,sysctl_persist,kernel_modules,docker,auto_updates,auditd,aide,nginx,ports}…` |
 | `deploy-nginx-base.sh` | — | Roll out shared nginx includes + maintenance page + nginx.conf (backup/validate/rollback) | `--no-main-conf` · `--dry-run` · `--src DIR` · `--dest DIR` · `--help` |
 | `ngx-conf-wizard.sh` | — | Interactive builder for the `nginx-set-conf` YAML (`$HOME/docker-builds/ngx-conf/`) | interactive only (template, domain, cert, ports, "one more?" loop, optional deploy) |
 | `nginx-set-conf` | `ngxset` | Generate + deploy vhosts from the wizard YAML (PyPI tool) | `--config_path=$HOME/docker-builds/ngx-conf/` (alias preset) |
 | `pg-local-deploy.sh` | — | Deploy a PostgreSQL container (compose file, network, profile, optional SSL) | interactive only (container name, base dir, db user/name, password, PG version, profile `2cpu4gb|2cpu8gb|4cpu16gb|8cpu32gb`, optional host port, optional self-signed SSL) |
 | `fr-local-deploy.sh` | — | Deploy the FastReport API container (`/opt/fast-report/<name>/…`) | interactive only (container name, port, image tag, registry token, optional secrets) |
-| `update_docker_odoo.py` | `doup` (config: `edup`) | Update Odoo containers from `~/docker2update.yaml` (rebuild image, update DB, restart). Writes a full run log per container to `<build folder>/update_<YYYYMMDD>_<HHMMSS>.log` regardless of `-v`; the paths are listed at exit. Logs older than `log_retention_days` (YAML `defaults` or per container, 90 days default, `0` = keep forever) are removed on that instance's next run | `-c/--config CONFIG` · `-v/--verbose` · `-s/--specific-container NAME` · `--validate` · `--dns-optimize` |
+| `update_docker_odoo.py` | `doup` (config: `edup`) | Update Odoo containers from `~/docker2update.yaml` (rebuild image, update DB, restart). Writes a full run log per container to `<build folder>/update_<YYYYMMDD>_<HHMMSS>.log` regardless of `-v`; the paths are listed at exit. Logs older than `log_retention_days` (YAML `defaults` or per container, 90 days default, `0` = keep forever) are removed on that instance's next run. Each container run also appends one line to `~/update-history.jsonl` (`defaults.history_retention_days`, 365 default, `0` = forever) | `-c/--config CONFIG` · `-v/--verbose` · `-s/--specific-container NAME` (repeatable, also comma-separated; **overrides `active: false`**) · `--type {M,F,N}` (runtime mode override, never written to the YAML) · `--comment TEXT` (into the run log header and the history) · `--validate` · `--dns-optimize` |
+| `ownerp_tui.py` | `tui` | curses selection screen for ad-hoc updates: lists every system from `docker2update.yaml` with its mode and its last run, then hands the selection to `update_docker_odoo.py` — one invocation per mode group, sequential, worst exit code wins. **Never writes to the YAML.** Keys: Space select · `a` all/none · `m` mode M→F→N · `c` comment · `Enter` start · `v` validate · `d` make it `doup`'s default · `?` help · `q`/`Esc` quit | `-c/--config CONFIG` · `--make-default` · `--no-default` |
 | `container2backup.py` | `dobk` (config: `edbk`) | Back up Odoo DBs (SQL + filestore) + service dirs per `~/container2backup.yaml` | `--sql-only` |
 | `restore-zip.sh` | — | Restore a backup archive (auto-detects `.zip/.7z/.7z.gpg/.tar.gz/.tar.zst`) | positional: `backup_kind(1\|2)` `runsql(v10…v16)` `orig_dbname` `new_dbname` `drop_db(Y/n)` `zip_file` `odoo_volume` `pg_container` `pg_password` |
 | `ssl-renew.sh` | — | `certbot renew`; nginx bounced only when a cert is actually due | no flags (daily cron) |
@@ -96,6 +97,19 @@ python3 ~/update_docker_odoo.py -s live-odoo -v  # single container, verbose
 ```
 Per-container `type`: `F` full update · `M` modules only · `N` neutralize then update.
 
+### Update one system ad hoc, without editing the YAML
+```bash
+tui                                              # pick systems, mode and comment on screen
+# the same thing typed out, which is what the screen runs:
+python3 ~/update_docker_odoo.py -s live-odoo,test-odoo --type F --comment "eq_stock"
+tail -3 ~/update-history.jsonl                   # what ran where, and why
+```
+Changing the mode on screen changes nothing on disk — `active:` and `type:` in the YAML are
+only the pre-selection. `-s` beats `active: false`, so a parked system runs when it is named.
+`doup` keeps starting the runner directly until `~/.ownerp_tui_default` exists (`d` in the
+screen, or `ownerp_tui.py --make-default`), and even then only for an interactive shell
+with no arguments.
+
 ### Run / restrict a backup
 ```bash
 python3 ~/container2backup.py                    # or: dobk — full SQL+filestore per YAML
@@ -130,6 +144,14 @@ independent of the shell environment. Full walkthrough: INSTALLATION_GUIDE chapt
   removes its image before rebuilding — a failed run leaves the system down until re-run.
   `restore-zip.sh` with `drop_db=Y` drops the target DB. Fish aliases `dkprfa`/`dkrmv` wipe
   Docker volumes (data loss) — never use them for cleanup.
+- **`--type N` on the command line asks nothing.** Neutralizing rewrites the database's mail
+  servers, cron jobs and outgoing interfaces; on a live system that is an outage of everything
+  that sends. The second confirmation exists only inside the TUI, which names the affected
+  databases before it starts. `update_docker_odoo.py -s live-odoo --type N` runs immediately.
+  Never pass `--type N` against a production database without the operator saying so in that turn.
+- **`-s` overrides `active: false`.** A container parked in the YAML runs when it is named — that
+  is deliberate, and it means `-s` is not a filter over the active set but a selection in its own
+  right. Check the name against `docker2update.yaml` before running, not against what is running.
 - **Prerequisites:** run everything as root on the server. `deploy-nginx-base.sh` must run before
   the first vhost. `container2backup.yaml`/`docker2update.yaml` live in `/root/` (edit via
   `edbk`/`edup`). Hardening needs `/root/.config/myodoo-docker/.env` with `SSH_PORT` (mandatory).
@@ -174,7 +196,13 @@ independent of the shell environment. Full walkthrough: INSTALLATION_GUIDE chapt
   only way to ship an image with modules missing.
 
 ## Machine-readable outputs
-- None of the tools emit JSON. Use exit codes: `update_docker_odoo.py --validate` (0 = config OK),
+- `~/update-history.jsonl` is the one machine-readable artefact: JSON Lines, one object per
+  container run, newest last. Keys: `ts` (`%Y-%m-%dT%H:%M:%S`, local time), `container`,
+  `database`, `mode` (`M`/`F`/`N`), `comment`, `result` (`ok`/`warnings`/`errors`/`failed`),
+  `warnings`, `errors`, `duration_s`, `log` (path of that run's log, empty when it could not be
+  written), `script_version`. Written after each container, so an interrupted run still leaves
+  behind what it did. Read it with `jq` or `python3 -c` — never parse the console output.
+- Everything else: use exit codes. `update_docker_odoo.py --validate` (0 = config OK),
   `nginx -t`, `deploy-nginx-base.sh` (non-zero on failed reload),
   `server-readiness.py` (0 = no FAIL, 1 = at least one FAIL; WARN/SKIP do not affect it).
   Logs land in

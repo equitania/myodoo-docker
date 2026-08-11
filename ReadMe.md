@@ -68,6 +68,7 @@ Die Tools sind auf einen klaren Ablauf abgestimmt:
   - Hauptinstallationsskript: Fish Shell mit Starship Prompt, alle Werkzeuge/Abhängigkeiten
   - Aktualisiert bestehende Installationen, verteilt die Verwaltungsskripte nach `/root`
   - DNS-Konfigurationsprüfung und -optimierung (erkennt u. a. Hetzner-DNS-Probleme mit DigitalOcean)
+  - Schlanke Ausgabe: ohne `-v` erscheinen nur Status zu Serveroptimierungen, Warnungen und Fehler auf dem Schirm. Alles Übrige — jede INFO-Zeile und die gesamte Ausgabe der aufgerufenen Programme (apt, git, curl) — steht in `~/getscripts.log`; scheitert ein Befehl, kommt das Ende seiner Ausgabe zurück auf den Schirm. `ups -v` reicht das Flag durch
 
 - **container2backup.py** (v4.6.x)
   - Automatisches Backup-System für Odoo-Datenbanken (SQL + Filestore + zusätzliche Pfade)
@@ -85,7 +86,11 @@ Die Tools sind auf einen klaren Ablauf abgestimmt:
   → Ausführliche Doku: [scripts/README_BackUp.md](scripts/README_BackUp.md)
 
 - **restore-zip.sh** (v2.x) — Wiederherstellung aus den von container2backup.py erzeugten Backups; erkennt das Format automatisch (`.zip`, `.7z`, `.7z.gpg`, `.tar.gz`, `.tar.zst`)
-- **update_docker_odoo.py** (v5.10.x) — automatisierte Aktualisierung von Docker-Containern inkl. Neustart-Management; Option `db_password_via_env: true` pro Container in `docker2update.yaml` übergibt das DB-Passwort via `PGPASSWORD`-Umgebungsvariable statt als `--db_password=...` in argv (verhindert Sichtbarkeit in `ps aux`); Standard: `false` (Legacy-Modus für ältere Images). Ohne `-v` bleibt die Ausgabe knapp; Warnungen und Fehler des gesamten Laufs stehen gesammelt im Abschlussblock. Unabhängig davon schreibt jeder Lauf ein vollständiges Protokoll in den Build-Ordner der Instanz (`update_JJJJMMTT_HHMMSS.log`) — mit allen INFO-Zeilen, die die Konsole verschweigt; die Pfade werden zum Schluss genannt, auch nach Abbruch oder Fehler
+- **update_docker_odoo.py** (v5.11.x) — automatisierte Aktualisierung von Docker-Containern inkl. Neustart-Management; Option `db_password_via_env: true` pro Container in `docker2update.yaml` übergibt das DB-Passwort via `PGPASSWORD`-Umgebungsvariable statt als `--db_password=...` in argv (verhindert Sichtbarkeit in `ps aux`); Standard: `false` (Legacy-Modus für ältere Images). Ohne `-v` bleibt die Ausgabe knapp; Warnungen und Fehler des gesamten Laufs stehen gesammelt im Abschlussblock. Unabhängig davon schreibt jeder Lauf ein vollständiges Protokoll in den Build-Ordner der Instanz (`update_JJJJMMTT_HHMMSS.log`) — mit allen INFO-Zeilen, die die Konsole verschweigt; die Pfade werden zum Schluss genannt, auch nach Abbruch oder Fehler
+  - Auswahl für einen einzelnen Lauf, ohne die YAML anzufassen: `-s` nimmt mehrere Namen (wiederholt oder kommagetrennt), `--type M|F|N` überschreibt den Modus dieses Laufs, `--comment "…"` hält fest, warum er stattfand. **`-s` sticht `active: false`** — ein ausdrücklich benannter Container läuft, auch wenn er in der Konfiguration geparkt ist; ein unbekannter Name bricht ab, statt stillschweigend nichts zu tun
+  - Jeder Container-Lauf hinterlässt eine Zeile in `~/update-history.jsonl`: wann, welches System, welcher Modus, Ergebnis, Dauer, Protokollpfad und Kommentar. Geschrieben vom Skript selbst, also auch bei klassischen und Cron-Läufen. Aufbewahrung über `defaults.history_retention_days` (Standard 365 Tage, `0` = unbegrenzt)
+
+- **ownerp_tui.py** (v1.0.0) — Auswahlmaske für Ad-hoc-Updates, gestartet mit `tui`. Listet alle Systeme aus `docker2update.yaml` mit Modus und letztem Lauf; Space wählt aus, `m` schaltet den Modus (M/F/N), `c` hinterlegt einen Kommentar, Enter startet. **Die YAML wird nie verändert** — `active:` und `type:` sind die Vorauswahl, der Lauf selbst geht als Argumente an `update_docker_odoo.py`; es gibt danach nichts zurückzustellen. Ein Neutralize (`N`) in der Auswahl verlangt eine zweite Bestätigung mit Nennung der betroffenen Datenbanken. Ohne Terminal, bei `TERM=dumb` oder unter 80×20 Zeichen verweigert die Maske den Start mit einem klaren Satz — ein Cronjob bleibt nie in ihr hängen
 - **odoo_build_cache.py** (v1.5.x) — Host-Cache der Release-Archive unter `/opt/odoo-build-cache`, den sich alle Instanzen desselben Release teilen: ein Build lädt nur noch, was sich geändert hat. Blockiert nie einen Build — was der Cache nicht liefert, holt `build_odoo.py` wie zuvor selbst. Pflegt zusätzlich Dockerfile und `odoo.conf` des Build-Ordners, die sonst nichts aktualisiert: fehlende Image-Direktiven (`HEALTHCHECK`, `VOLUME`, `EXPOSE`) werden ergänzt, ein `ADD` an das `COPY` der Vorlage angeglichen, wo beides dasselbe tut, und ungesetzte verwaltete Konfigurationsschlüssel (`http_interface`) aus der Vorlage gefüllt — Passwörter bleiben unberührt, alles nur Abweichende wird gemeldet. `stats` zeigt die Belegung, `gc` räumt nach 30 Tagen auf (Wartungs-Cron)
 - **cleanup-weblogs.py** (v2.x) — DSGVO-konforme nginx-Log-Rotation: rotiert `/var/log/nginx/*.log` und löscht `.bak` älter als 7 Tage (Access-Logs enthalten personenbezogene IP-Adressen)
 - **nightly-cleanup.sh** — speicherbasierter Container-Neustart bei Überschreiten einer Schwelle → [scripts/NIGHTLY_CLEANUP.md](scripts/NIGHTLY_CLEANUP.md)
@@ -146,7 +151,8 @@ Die Fish-Konfiguration enthält ~80 Aliase und Funktionen. Unten die wichtigsten
 ##### ownERP / Backup
 - `dobk` — Backup-Skript ausführen (`container2backup.py`)
 - `edbk` — Backup-Konfiguration bearbeiten (`container2backup.yaml`)
-- `doup` — Docker-Container aktualisieren (`update_docker_odoo.py`)
+- `tui` — Auswahlmaske für Updates (`ownerp_tui.py`): System, Modus und Kommentar wählen, dann starten
+- `doup` *(Funktion)* — Docker-Container aktualisieren (`update_docker_odoo.py`). Startet die Maske statt des Skripts, sobald `~/.ownerp_tui_default` existiert (in der Maske mit `d` umschaltbar) — aber nur ohne Argumente und nur in einer interaktiven Shell. Mit Argumenten oder ohne Terminal läuft immer das Skript
 - `edup` — Update-Konfiguration bearbeiten (`docker2update.yaml`)
 - `llbk` / `cdbk` / `cpbk` — Backup-Verzeichnis `/opt/backups/docker` auflisten / hineinwechseln / kopieren
 
@@ -212,7 +218,7 @@ cd $HOME && rm -rf myodoo-docker && rm -rf nginx-conf && \
 | nginx-Basis + Vhosts | `deploy-nginx-base.sh`, `ngx-conf-wizard.sh`, `ngxset` | [Guide Kap. 6](docs/INSTALLATION_GUIDE.md#de-6-schritt-4-nginx-basis--vhosts) |
 | PostgreSQL deployen | `pg-local-deploy.sh` | [Guide Kap. 7](docs/INSTALLATION_GUIDE.md#de-7-schritt-5-postgresql-live-dbtest-db) |
 | Odoo-Container starten | `docker run … start` | [Guide Kap. 8](docs/INSTALLATION_GUIDE.md#de-8-schritt-6-odoo-container-erststarten) |
-| Updates | `edup` (Config) / `doup` (Lauf) | [Guide Kap. 10](docs/INSTALLATION_GUIDE.md#de-10-schritt-8-updates-einrichten-edupdoup) |
+| Updates | `edup` (Config) / `doup` (Lauf) / `tui` (Auswahlmaske) | [Guide Kap. 10](docs/INSTALLATION_GUIDE.md#de-10-schritt-8-updates-einrichten-edupdoup) |
 | Backups | `edbk` (Config) / `dobk` (Lauf) / `llbk` | [Guide Kap. 11](docs/INSTALLATION_GUIDE.md#de-11-schritt-9-backups-einrichten-edbkdobk) |
 | Wartungs-Cron | `setup-maintenance-cron.sh` | [Guide Kap. 12](docs/INSTALLATION_GUIDE.md#de-12-schritt-10-wartung-automatisieren) |
 | Restore | `restore-zip.sh` | [Guide Kap. 13](docs/INSTALLATION_GUIDE.md#de-13-restore--notfall) |
@@ -285,6 +291,7 @@ The tools follow a clear sequence:
   - Main installation script: Fish shell with Starship prompt, all tools/dependencies
   - Updates existing installations, deploys the management scripts to `/root`
   - DNS configuration check and optimization (detects e.g. Hetzner DNS issues with DigitalOcean)
+  - Lean output: without `-v` only server-optimization status, warnings and errors reach the screen. Everything else — every INFO line and all output of the programs it calls (apt, git, curl) — goes to `~/getscripts.log`; when a command fails, the tail of its output comes back on screen. `ups -v` forwards the flag
 
 - **container2backup.py** (v4.6.x)
   - Automatic backup system for Odoo databases (SQL + filestore + additional paths)
@@ -302,7 +309,11 @@ The tools follow a clear sequence:
   → Detailed docs: [scripts/README_BackUp.md](scripts/README_BackUp.md)
 
 - **restore-zip.sh** (v2.x) — restore from the backups produced by container2backup.py; auto-detects the format (`.zip`, `.7z`, `.7z.gpg`, `.tar.gz`, `.tar.zst`)
-- **update_docker_odoo.py** (v5.10.x) — automated Docker container updates incl. restart management; per-container option `db_password_via_env: true` in `docker2update.yaml` passes the DB password via `PGPASSWORD` environment variable instead of `--db_password=...` in argv (prevents exposure in `ps aux`); default: `false` (legacy mode for older images). Without `-v` the output stays terse; every warning and error of the whole run is collected in a closing block. Independently of that, every run writes a full log into the instance's build folder (`update_YYYYMMDD_HHMMSS.log`) — including the INFO lines the console withholds; the paths are named at the end, after an abort or a failure too
+- **update_docker_odoo.py** (v5.11.x) — automated Docker container updates incl. restart management; per-container option `db_password_via_env: true` in `docker2update.yaml` passes the DB password via `PGPASSWORD` environment variable instead of `--db_password=...` in argv (prevents exposure in `ps aux`); default: `false` (legacy mode for older images). Without `-v` the output stays terse; every warning and error of the whole run is collected in a closing block. Independently of that, every run writes a full log into the instance's build folder (`update_YYYYMMDD_HHMMSS.log`) — including the INFO lines the console withholds; the paths are named at the end, after an abort or a failure too
+  - Picking systems for a single run without touching the YAML: `-s` takes several names (repeated or comma-separated), `--type M|F|N` overrides the mode for that run, `--comment "…"` records why it happened. **`-s` overrides `active: false`** — a container named explicitly runs even when the configuration has it parked; an unknown name aborts instead of silently doing nothing
+  - Every container run appends a line to `~/update-history.jsonl`: when, which system, which mode, result, duration, log path and comment. Written by the script itself, so classic and cron runs are recorded too. Retention via `defaults.history_retention_days` (365 days by default, `0` = keep forever)
+
+- **ownerp_tui.py** (v1.0.0) — selection screen for ad-hoc updates, started with `tui`. Lists every system from `docker2update.yaml` with its mode and its last run; Space selects, `m` cycles the mode (M/F/N), `c` records a comment, Enter starts. **The YAML is never modified** — `active:` and `type:` are the pre-selection, the run itself is passed as arguments to `update_docker_odoo.py`; there is nothing to turn back afterwards. A Neutralize (`N`) in the selection requires a second confirmation naming the affected databases. Without a terminal, on `TERM=dumb`, or below 80×20 characters the screen refuses to start with a plain sentence — no cron job can end up waiting in it
 - **odoo_build_cache.py** (v1.5.x) — host-side cache of the release archives under `/opt/odoo-build-cache`, shared by every instance on the same release: a build downloads only what actually changed. Never blocks a build — whatever the cache does not supply, `build_odoo.py` fetches itself as before. Also maintains the build folder's Dockerfile and `odoo.conf`, which nothing else updates: absent image directives (`HEALTHCHECK`, `VOLUME`, `EXPOSE`) are filled in, an `ADD` is aligned with the reference's `COPY` where the two do the same thing, and unset managed config keys (`http_interface`) are taken from the template — passwords are never touched, anything that merely differs is reported. `stats` shows the size, `gc` cleans up after 30 days (maintenance cron)
 - **cleanup-weblogs.py** (v2.x) — DSGVO-compliant nginx log rotation: rotates `/var/log/nginx/*.log` and deletes `.bak` older than 7 days (access logs contain personal IP data)
 - **nightly-cleanup.sh** — memory-based container restart above a threshold → [scripts/NIGHTLY_CLEANUP.md](scripts/NIGHTLY_CLEANUP.md)
@@ -363,7 +374,8 @@ The Fish configuration ships ~80 aliases and functions. The most important are b
 ##### ownERP / Backup
 - `dobk` — run the backup script (`container2backup.py`)
 - `edbk` — edit the backup configuration (`container2backup.yaml`)
-- `doup` — update Docker containers (`update_docker_odoo.py`)
+- `tui` — selection screen for updates (`ownerp_tui.py`): pick system, mode and comment, then start
+- `doup` *(function)* — update Docker containers (`update_docker_odoo.py`). Starts the screen instead of the script once `~/.ownerp_tui_default` exists (toggled with `d` inside the screen) — but only without arguments and only in an interactive shell. With arguments, or without a terminal, the script always runs
 - `edup` — edit the update configuration (`docker2update.yaml`)
 - `llbk` / `cdbk` / `cpbk` — list / cd into / copy from the backup directory `/opt/backups/docker`
 
@@ -429,7 +441,7 @@ cd $HOME && rm -rf myodoo-docker && rm -rf nginx-conf && \
 | nginx base + vhosts | `deploy-nginx-base.sh`, `ngx-conf-wizard.sh`, `ngxset` | [Guide ch. 6](docs/INSTALLATION_GUIDE.md#en-6-step-4-nginx-base--vhosts) |
 | Deploy PostgreSQL | `pg-local-deploy.sh` | [Guide ch. 7](docs/INSTALLATION_GUIDE.md#en-7-step-5-postgresql-live-dbtest-db) |
 | Start Odoo containers | `docker run … start` | [Guide ch. 8](docs/INSTALLATION_GUIDE.md#en-8-step-6-first-start-of-the-odoo-containers) |
-| Updates | `edup` (config) / `doup` (run) | [Guide ch. 10](docs/INSTALLATION_GUIDE.md#en-10-step-8-set-up-updates-edupdoup) |
+| Updates | `edup` (config) / `doup` (run) / `tui` (selection screen) | [Guide ch. 10](docs/INSTALLATION_GUIDE.md#en-10-step-8-set-up-updates-edupdoup) |
 | Backups | `edbk` (config) / `dobk` (run) / `llbk` | [Guide ch. 11](docs/INSTALLATION_GUIDE.md#en-11-step-9-set-up-backups-edbkdobk) |
 | Maintenance cron | `setup-maintenance-cron.sh` | [Guide ch. 12](docs/INSTALLATION_GUIDE.md#en-12-step-10-automate-maintenance) |
 | Restore | `restore-zip.sh` | [Guide ch. 13](docs/INSTALLATION_GUIDE.md#en-13-restore--emergency) |
