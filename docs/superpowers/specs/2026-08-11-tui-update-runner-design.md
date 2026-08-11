@@ -50,7 +50,7 @@ The TUI executes nothing. It selects, leaves curses, and runs
 `update_docker_odoo.py` as a subprocess.
 
 ```
-ownerp-tui.py (curses)          update_docker_odoo.py         ~/update-history.jsonl
+ownerp_tui.py (curses)          update_docker_odoo.py         ~/update-history.jsonl
       │                                   │                            │
   reads docker2update.yaml (read-only)    │                            │
   reads history ────────────────────────────────────────────────────── ┤
@@ -150,7 +150,7 @@ starts one runner invocation per group**, in the order the modes appear in the
 list:
 
 ```
-ownerp-tui.py → update_docker_odoo.py -s live-odoo,demo-odoo --type F --comment "..."
+ownerp_tui.py → update_docker_odoo.py -s live-odoo,demo-odoo --type F --comment "..."
               → update_docker_odoo.py -s test-odoo            --type M --comment "..."
 ```
 
@@ -193,7 +193,7 @@ started classically or from cron appear as well:
 ## Making the TUI the default
 
 A marker file, `~/.ownerp_tui_default`, toggled from inside the TUI (`d`) or
-with `ownerp-tui.py --make-default` / `--no-default`. Per server, in the style of
+with `ownerp_tui.py --make-default` / `--no-default`. Per server, in the style of
 the existing `~/.getscripts_configured` and `~/.dns_optimized_by_getscripts`.
 
 `doup` becomes a Fish function with two hard exceptions:
@@ -201,7 +201,7 @@ the existing `~/.getscripts_configured` and `~/.dns_optimized_by_getscripts`.
 ```fish
 function doup --description "Update Odoo containers (TUI when enabled)"
     if test (count $argv) -eq 0; and status is-interactive; and test -f $HOME/.ownerp_tui_default
-        $HOME/ownerp-tui.py
+        $HOME/ownerp_tui.py
     else
         $HOME/update_docker_odoo.py $argv
     end
@@ -209,7 +209,7 @@ end
 ```
 
 Called with arguments → always the classic runner. **No TTY → always the classic
-runner**, so no cron job can ever end up waiting inside a TUI. `ownerp-tui.py`
+runner**, so no cron job can ever end up waiting inside a TUI. `ownerp_tui.py`
 checks for a TTY itself as well; the belt does not rely on the braces.
 
 The existing `doup` alias in `fish/conf.d/33-aliases-backup.fish` is removed —
@@ -247,7 +247,8 @@ screen:
   mode group, mixed modes produce several, a single mode produces exactly one
 - A selection containing `N` is flagged as requiring extra confirmation
 
-`tests/test_update_docker_odoo.py` (extended):
+`tests/test_update_history.py` (new) and `tests/test_update_docker_odoo.py`
+(extended):
 
 - `-s` repeated and comma-separated
 - `--type` overrides the YAML value, and the YAML file is byte-identical
@@ -265,7 +266,7 @@ The curses drawing layer is not tested.
 |---|---|
 | `scripts/ownerp_tui.py` | new, v1.0.0 |
 | `scripts/update_docker_odoo.py` | v5.11.0: flags, history, `-s` precedence |
-| `getScripts.py` | distribute `ownerp-tui.py` via `copy_scripts()` |
+| `getScripts.py` | distribute `ownerp_tui.py` via `copy_scripts()` |
 | `fish/functions/linux/doup.fish` | new: the TTY/argument switch |
 | `fish/conf.d/33-aliases-backup.fish` | remove the `doup` alias, add `tui` |
 | `tests/test_ownerp_tui.py` | new |
