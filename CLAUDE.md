@@ -264,7 +264,7 @@ myodoo-docker/
   - Detects Hetzner DNS issues with DigitalOcean
   - Supports systemd-resolved, resolvconf, and direct DNS config
 
-#### 2. container2backup.py (v4.3.0)
+#### 2. container2backup.py (v4.8.0)
 - **Purpose**: Automated backup system for Odoo deployments
 - **Features**:
   - SQL + Filestore backup
@@ -273,6 +273,8 @@ myodoo-docker/
   - Automatic retention management
   - Service backups (nginx, letsencrypt)
   - FastReport integration
+  - `--validate` delegates to `ownerp_validate.py` (exit 2 when it is not
+    installed — a backup tool must never report "cannot check" as success)
 
 #### 3. update_docker_myodoo.py (v4.0.6)
 - **Purpose**: Automated Docker container updates

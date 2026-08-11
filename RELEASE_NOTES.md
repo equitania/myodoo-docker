@@ -41,6 +41,16 @@ container2backup.py v4.8.0, getScripts.py v9.12.0*
 - **`container2backup.py`**: `service_config['backup_path']` no longer raises
   `KeyError` mid-backup when a `services` entry omits it — a config problem
   that `doval`/`--validate` now catches before a backup run gets there.
+- **`container2backup.py`**: a `services` entry without `source_path` is now
+  skipped with a message naming the service, instead of raising `KeyError`.
+  `check_paths()` already warned about it before the run, but an operator who
+  answered `y` to its "continue anyway?" prompt reached the crash anyway. No
+  fallback path is guessed here — backing up the wrong directory is worse than
+  backing up nothing.
+- **`ownerp_validate.py`**: a YAML file containing an unhashable mapping key is
+  now reported as a syntax error with its line number and exit 2. It used to be
+  dropped silently, so the validator could report "no findings" for a file that
+  `update_docker_odoo.py` itself refuses to load.
 
 ### Notes
 - `getScripts.py` 9.12.0 distributes `ownerp_validate.py` alongside the other
