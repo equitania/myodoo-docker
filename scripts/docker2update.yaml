@@ -69,6 +69,10 @@
 #  dockerfiles_source: "~/myodoo-docker/Dockerfiles"
 #  # Days to keep the run logs described above (0 = keep forever).
 #  log_retention_days: 90
+#  # Days to keep entries in ~/update-history.jsonl (0 = keep forever). The
+#  # history holds one line per container run - what ran when, in which mode,
+#  # with which result and comment - and is what the TUI shows while you pick.
+#  history_retention_days: 365
 
 containers:
   - active: true

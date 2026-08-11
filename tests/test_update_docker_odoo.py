@@ -362,5 +362,49 @@ class RuntimeOverrideTest(unittest.TestCase):
         self.assertIsNone(args.comment)
 
 
+class HistoryEntryTest(unittest.TestCase):
+    """The mapping from a finished container run to its history line."""
+
+    CONTAINER = {"container_name": "live-odoo", "database_name": "live_db", "type": "F"}
+
+    def entry(self, **kwargs):
+        params = dict(container=self.CONTAINER, comment="eq_stock nachgezogen",
+                      success=True, warnings=0, errors=0, duration=812.4,
+                      log_path="/opt/odoo/live/update_20260811_143207.log")
+        params.update(kwargs)
+        return udo.history_entry(**params)
+
+    def test_a_clean_run_is_ok(self):
+        self.assertEqual(self.entry()["result"], "ok")
+
+    def test_warnings_are_reported_as_such(self):
+        self.assertEqual(self.entry(warnings=3)["result"], "warnings")
+
+    def test_errors_outrank_warnings(self):
+        self.assertEqual(self.entry(warnings=3, errors=1)["result"], "errors")
+
+    def test_a_failed_run_is_failed_regardless_of_counts(self):
+        self.assertEqual(self.entry(success=False, errors=0)["result"], "failed")
+
+    def test_the_fields_the_tui_reads_are_present(self):
+        item = self.entry()
+        self.assertEqual(item["container"], "live-odoo")
+        self.assertEqual(item["database"], "live_db")
+        self.assertEqual(item["mode"], "F")
+        self.assertEqual(item["comment"], "eq_stock nachgezogen")
+        self.assertEqual(item["duration_s"], 812)
+        self.assertEqual(item["script_version"], udo.SCRIPT_VERSION)
+        self.assertEqual(item["log"], "/opt/odoo/live/update_20260811_143207.log")
+
+    def test_the_timestamp_round_trips_through_the_history_format(self):
+        import time as _time
+        _time.strptime(self.entry()["ts"], udo.HISTORY_TS_FORMAT)
+
+    def test_a_missing_comment_becomes_an_empty_string(self):
+        # json.dumps of None would be 'null' and every reader would need a
+        # special case; the empty string is what "no comment" means here.
+        self.assertEqual(self.entry(comment=None)["comment"], "")
+
+
 if __name__ == "__main__":
     unittest.main()

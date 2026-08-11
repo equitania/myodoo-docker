@@ -1,8 +1,8 @@
 #!/usr/bin/python3
 # -*- coding: utf-8 -*-
 # This script performs an update of an Odoo database in a Docker container
-# Version 5.10.0
-# Date 06.08.2026
+# Version 5.11.0
+# Date 11.08.2026
 ##############################################################################
 #
 #    Shell Script for Odoo, Open Source Management Solution
@@ -77,8 +77,8 @@ logger = logging.getLogger(__name__)
 # Kept in sync with the header comment above. Printed at the start of every run
 # so a pasted log says which version produced it — the single most common
 # question when a report comes back from a server.
-SCRIPT_VERSION = "5.10.0"
-SCRIPT_DATE = "06.08.2026"
+SCRIPT_VERSION = "5.11.0"
+SCRIPT_DATE = "11.08.2026"
 
 # Column at which the dots of a compact step line end
 STEP_WIDTH = 44
@@ -441,6 +441,35 @@ def write_history(entry, path=None, retention_days=DEFAULT_HISTORY_RETENTION_DAY
         os.replace(tmp, path)
     except OSError as exc:
         logger.warning(f"Could not write run history: {exc}")
+
+
+def history_entry(container, comment, success, warnings, errors, duration, log_path):
+    """Build the history line for one finished container run.
+
+    Kept apart from write_history() so the classification - which is the only
+    judgement in the whole file - can be asserted without touching the disk.
+    """
+    if not success:
+        result = "failed"
+    elif errors:
+        result = "errors"
+    elif warnings:
+        result = "warnings"
+    else:
+        result = "ok"
+    return {
+        "ts": time.strftime(HISTORY_TS_FORMAT),
+        "container": container.get('container_name', 'unknown'),
+        "database": container.get('database_name', ''),
+        "mode": container.get('type', ''),
+        "comment": comment or "",
+        "result": result,
+        "warnings": warnings,
+        "errors": errors,
+        "duration_s": int(duration),
+        "log": log_path or "",
+        "script_version": SCRIPT_VERSION,
+    }
 
 
 def note_issue(level, text):
@@ -1468,7 +1497,7 @@ def clean_docker_system():
     return info, warn, err
 
 def process_container(container, proxy_settings=None, dockerfiles_source=None,
-                      log_retention_days=None):
+                      log_retention_days=None, run_comment=None):
     """Process a single container update, with its run log closed on any exit.
 
     A thin wrapper around _process_container, which returns from a dozen
@@ -1477,13 +1506,13 @@ def process_container(container, proxy_settings=None, dockerfiles_source=None,
     """
     try:
         return _process_container(container, proxy_settings, dockerfiles_source,
-                                  log_retention_days)
+                                  log_retention_days, run_comment)
     finally:
         close_run_log()
 
 
 def _process_container(container, proxy_settings=None, dockerfiles_source=None,
-                       log_retention_days=None):
+                       log_retention_days=None, run_comment=None):
     """Process a single container update.
 
     Args:
@@ -1549,7 +1578,8 @@ def _process_container(container, proxy_settings=None, dockerfiles_source=None,
     # a log.
     open_run_log(path, container_name,
                  header_lines=[f"image:     {image}", f"path:      {path}"]
-                 + ([f"volume:    {volume}"] if volume else []),
+                 + ([f"volume:    {volume}"] if volume else [])
+                 + ([f"comment:   {run_comment}"] if run_comment else []),
                  retention_days=(DEFAULT_LOG_RETENTION_DAYS
                                  if log_retention_days is None
                                  else log_retention_days))
@@ -2022,6 +2052,8 @@ def main():
         logger.error(f"Known containers: {', '.join(n for n in known if n)}")
         return 1
 
+    history_retention = resolve_history_retention(config)
+
     for container in config['containers']:
         container_name = container.get('container_name', 'unknown')
 
@@ -2053,12 +2085,23 @@ def main():
         
         # Process container
         try:
+            # First statement in the try, so the except branch below can always
+            # read it: an exception from expand_path() would otherwise leave it
+            # holding the previous container's start time - or nothing at all on
+            # the first iteration.
+            container_started = time.time()
             defaults = config.get('defaults') or {}
             dockerfiles_source = expand_path(
                 defaults.get('dockerfiles_source') or DEFAULT_DOCKERFILES_SOURCE)
+            # The log path is read by index rather than from the return value:
+            # open_run_log() may fail (unwritable folder) and then RUN_LOG_FILES
+            # still holds the *previous* container's log, which would be a lie.
+            logs_before = len(RUN_LOG_FILES)
             result = process_container(container, resolve_proxy_settings(config, container),
                                        dockerfiles_source,
-                                       resolve_log_retention(config, container))
+                                       resolve_log_retention(config, container),
+                                       args.comment)
+            warning_count = error_count = 0
             if isinstance(result, tuple):
                 success, info_count, warning_count, error_count = result
                 total_info_count += info_count
@@ -2066,7 +2109,13 @@ def main():
                 total_error_count += error_count
             else:
                 success = result
-            
+
+            write_history(history_entry(
+                container, args.comment, bool(success), warning_count, error_count,
+                time.time() - container_started,
+                RUN_LOG_FILES[-1] if len(RUN_LOG_FILES) > logs_before else ""),
+                retention_days=history_retention)
+
             if success:
                 success_count += 1
             else:
@@ -2075,6 +2124,10 @@ def main():
             logger.error(f"Exception processing container {container_name}: {e}")
             failure_count += 1
             total_error_count += 1
+            write_history(history_entry(
+                container, args.comment, False, 0, 1,
+                time.time() - container_started, ""),
+                retention_days=history_retention)
     
     # Every warning and error of the run, collected in one place. Printed
     # before the summary so its counts refer to the block right above them.
