@@ -592,3 +592,74 @@ class ShippedTemplateTest(unittest.TestCase):
         findings, fatal = ov.validate_backup(path)
         self.assertIsNone(fatal)
         self.assert_clean(findings, path)
+
+
+class CommandLineTest(unittest.TestCase):
+    def setUp(self):
+        import tempfile
+        self.tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(self.tmp.cleanup)
+        self.here = os.path.dirname(os.path.abspath(__file__))
+
+    def run_main(self, argv):
+        import contextlib
+        import io
+        buffer = io.StringIO()
+        with contextlib.redirect_stdout(buffer):
+            code = ov.main(argv)
+        return code, buffer.getvalue()
+
+    def test_a_clean_file_exits_zero(self):
+        path = write(self.tmp.name, "u.yaml", GOOD_UPDATE.format(here=self.here))
+        code, output = self.run_main(["--update", path])
+        self.assertEqual(code, 0)
+        self.assertIn("no findings", output)
+
+    def test_an_error_exits_one(self):
+        text = GOOD_UPDATE.format(here=self.here).replace('type: "F"', 'type: "X"')
+        path = write(self.tmp.name, "u.yaml", text)
+        code, output = self.run_main(["--update", path])
+        self.assertEqual(code, 1)
+        self.assertIn("1 error", output)
+
+    def test_a_warning_alone_still_exits_zero(self):
+        text = GOOD_UPDATE.format(here=self.here).replace(
+            f'dockerfile_path: "{self.here}"', 'dockerfile_path: "/nope/nope"')
+        path = write(self.tmp.name, "u.yaml", text)
+        code, output = self.run_main(["--update", path])
+        self.assertEqual(code, 0)
+        self.assertIn("warning", output)
+
+    def test_unparseable_yaml_exits_two(self):
+        path = write(self.tmp.name, "u.yaml",
+                     "containers:\n  - active: true\n   type: F\n")
+        code, _ = self.run_main(["--update", path])
+        self.assertEqual(code, 2)
+
+    def test_a_file_named_explicitly_but_missing_exits_two(self):
+        code, output = self.run_main(
+            ["--update", os.path.join(self.tmp.name, "nope.yaml")])
+        self.assertEqual(code, 2)
+        self.assertIn("not found", output)
+
+    def test_a_default_file_that_is_absent_is_skipped_not_fatal(self):
+        # The default paths are computed at import time, so patching HOME here
+        # would change nothing and the test would silently read the real ~.
+        from unittest import mock
+        absent = os.path.join(self.tmp.name, "absent.yaml")
+        with mock.patch.object(ov, "DEFAULT_UPDATE_CONFIG", absent), \
+             mock.patch.object(ov, "DEFAULT_BACKUP_CONFIG", absent):
+            code, output = self.run_main([])
+        self.assertEqual(code, 0)
+        self.assertIn("skipped", output)
+
+    def test_the_report_names_the_line(self):
+        text = GOOD_UPDATE.format(here=self.here).replace('type: "F"', 'type: "X"')
+        path = write(self.tmp.name, "u.yaml", text)
+        _, output = self.run_main(["--update", path])
+        self.assertRegex(output, r"\s6\s")   # 'type:' sits on line 6
+
+    def test_version_prints_and_exits_zero(self):
+        code, output = self.run_main(["--version"])
+        self.assertEqual(code, 0)
+        self.assertIn(ov.SCRIPT_VERSION, output)

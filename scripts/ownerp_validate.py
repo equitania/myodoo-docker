@@ -538,3 +538,110 @@ def validate_backup(path):
 def _sorted(findings):
     """Findings in file order, errors before warnings on the same line."""
     return sorted(findings, key=lambda f: (f.line, f.severity != ERROR))
+
+
+MARK = {ERROR: "✗", WARNING: "⚠"}
+
+
+def _line(finding):
+    """One report line: mark, line number, dotted path, message."""
+    where = f"{finding.path}: " if finding.path else ""
+    return (f"  {MARK[finding.severity]}  {finding.line or '':>3}  "
+            f"{where}{finding.message}\n")
+
+
+def render(path, findings, fatal, stream=None):
+    """Write one file's block. Returns (errors, warnings)."""
+    out = stream or sys.stdout
+    if fatal is not None:
+        out.write(f"\n{path}\n" + _line(fatal))
+        return 1, 0
+    if not findings:
+        out.write(f"\n{path} - no findings\n")
+        return 0, 0
+
+    out.write(f"\n{path}\n")
+    for finding in findings:
+        out.write(_line(finding))
+    errors = sum(1 for f in findings if f.severity == ERROR)
+    return errors, len(findings) - errors
+
+
+def parse_arguments(argv):
+    parser = argparse.ArgumentParser(
+        prog="ownerp_validate.py",
+        description="Read-only validation of the ownERP YAML configurations.")
+    parser.add_argument("--update", nargs="?", const=DEFAULT_UPDATE_CONFIG,
+                        metavar="PATH",
+                        help="validate docker2update.yaml "
+                             f"(default: {DEFAULT_UPDATE_CONFIG})")
+    parser.add_argument("--backup", nargs="?", const=DEFAULT_BACKUP_CONFIG,
+                        metavar="PATH",
+                        help="validate container2backup.yaml "
+                             f"(default: {DEFAULT_BACKUP_CONFIG})")
+    # Not argparse's own version action: it calls sys.exit() and would escape
+    # main()'s return-code contract, which the tests and the callers rely on.
+    parser.add_argument("--version", action="store_true",
+                        help="print the version and exit")
+    return parser.parse_args(argv)
+
+
+def main(argv=None):
+    args = parse_arguments(argv)
+
+    if args.version:
+        print(f"ownerp_validate.py {SCRIPT_VERSION} ({SCRIPT_DATE})")
+        return 0
+
+    if yaml is None:
+        print("PyYAML is not installed. Install it with:\n"
+              "  apt install python3-yaml", file=sys.stderr)
+        return 2
+
+    print(f"ownerp_validate.py {SCRIPT_VERSION} ({SCRIPT_DATE})")
+
+    # With no flag both files are checked at their default paths. A file that
+    # was not asked for by name and is simply not there is a legitimate
+    # installation - a server that runs updates but no backups - so it is
+    # skipped rather than failed.
+    jobs = []
+    if args.update or args.backup:
+        if args.update:
+            jobs.append((args.update, validate_update, True))
+        if args.backup:
+            jobs.append((args.backup, validate_backup, True))
+    else:
+        jobs.append((DEFAULT_UPDATE_CONFIG, validate_update, False))
+        jobs.append((DEFAULT_BACKUP_CONFIG, validate_backup, False))
+
+    errors = warnings = 0
+    unreadable = False
+    for path, check, named in jobs:
+        if not named and not os.path.isfile(path):
+            print(f"\n{path} - skipped, not present")
+            continue
+        findings, fatal = check(path)
+        if fatal is not None:
+            unreadable = True
+        file_errors, file_warnings = render(path, findings, fatal)
+        if fatal is None:
+            errors += file_errors
+            warnings += file_warnings
+
+    print()
+    if unreadable:
+        print("configuration could not be read")
+        return 2
+    if errors or warnings:
+        print(f"{errors} error{'s' if errors != 1 else ''}, "
+              f"{warnings} warning{'s' if warnings != 1 else ''}")
+    else:
+        print("no findings")
+    return 1 if errors else 0
+
+
+if __name__ == "__main__":
+    try:
+        sys.exit(main())
+    except KeyboardInterrupt:
+        sys.exit(130)
