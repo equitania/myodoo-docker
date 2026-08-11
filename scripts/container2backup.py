@@ -3,8 +3,8 @@
 # ==============================================================================
 # Title:            container2backup.py
 # Description:      Script to backup Odoo database including FileStore under Docker
-# Version:          4.7.1
-# Date:             14.07.2026
+# Version:          4.8.0
+# Date:             11.08.2026
 # Author:           Equitania Software GmbH
 # ==============================================================================
 # Feature Overview:
@@ -61,8 +61,8 @@ import signal  # Decode negative subprocess returncodes (signal kills) for diagn
 # Single source of truth for the version banner printed at runtime. Keep these
 # in sync with the header comment above. The __main__ banner is derived from
 # these constants so it cannot silently drift out of date again.
-SCRIPT_VERSION = "4.7.1"
-SCRIPT_DATE = "14.07.2026"
+SCRIPT_VERSION = "4.8.0"
+SCRIPT_DATE = "11.08.2026"
 
 # Whitelist for database names and Docker container names. Both propagate
 # into filesystem paths and subprocess argv, so restrict to shell-inert chars.
@@ -766,7 +766,7 @@ def create_backup(db_name, db_user, sql_container, data_container, backup_path, 
             shutil.rmtree(temp_dir)
             print(f"Cleaned up temporary directory: {temp_dir}")
 
-def backup_additional_service(service_config, base_backup_path, timestamp):
+def backup_additional_service(service_config, base_backup_path, timestamp, service_name):
     """
     Creates backup for additional services like nginx, letsencrypt, etc.
     """
@@ -778,7 +778,9 @@ def backup_additional_service(service_config, base_backup_path, timestamp):
         print(f"Source path {source_path} does not exist, skipping backup.")
         return
 
-    backup_subdir = service_config['backup_path']
+    # A missing backup_path used to raise KeyError mid-run. The service name
+    # is the obvious subdirectory, and the validator reports the omission.
+    backup_subdir = service_config.get('backup_path') or service_name
     backup_path = os.path.join(base_backup_path, backup_subdir)
     
     if not os.path.exists(backup_path):
@@ -1183,15 +1185,52 @@ def compress_directory(source_dir, output_file_base, config, only_sql_dump=False
         _remove_partial_archive(output_file)
         return None
 
+VALIDATOR_SCRIPT = "ownerp_validate.py"
+
+
+def validator_path():
+    """The validator that ships beside this script."""
+    return os.path.join(os.path.dirname(os.path.abspath(__file__)), VALIDATOR_SCRIPT)
+
+
+def run_external_validation(config_file):
+    """Hand --validate to ownerp_validate.py beside this script.
+
+    Unlike update_docker_odoo.py there is no older behaviour to fall back to,
+    so a missing validator is reported as 'cannot check' (exit 2) rather than
+    as a clean configuration.
+    """
+    validator = validator_path()
+    if not os.path.isfile(validator):
+        print(f"{VALIDATOR_SCRIPT} not found beside this script. "
+              "Run 'ups' to install it.")
+        return 2
+    result = subprocess.run([sys.executable, validator, "--backup", config_file])
+    return result.returncode
+
 # Main script
 if __name__ == "__main__":
+    # Parse command line arguments
+    parser = argparse.ArgumentParser(description='Backup Odoo databases with Docker')
+    parser.add_argument('--sql-only', action='store_true',
+                        help='Force SQL dump only mode for all databases (overrides YAML settings)')
+    parser.add_argument('--validate', action='store_true',
+                        help='Only validate the configuration, then exit')
+    args = parser.parse_args()
+
+    base_path = expanduser("~")
+    backup_config = base_path + '/container2backup.yaml'
+
+    if args.validate:
+        sys.exit(run_external_validation(backup_config))
+
     # Display version information
     print("===================================================")
     print("Odoo Docker Backup System")
     print(f"Version: {SCRIPT_VERSION}")
     print(f"Date: {SCRIPT_DATE}")
     print("===================================================")
-    
+
     # Display system information
     print(f"Operating System: {platform.system()} {platform.release()}")
     print(f"Python Version: {platform.python_version()}")
@@ -1205,15 +1244,6 @@ if __name__ == "__main__":
     except Exception as e:
         print(f"Could not get detailed system information: {str(e)}")
     print("===================================================")
-    
-    # Parse command line arguments
-    parser = argparse.ArgumentParser(description='Backup Odoo databases with Docker')
-    parser.add_argument('--sql-only', action='store_true', 
-                        help='Force SQL dump only mode for all databases (overrides YAML settings)')
-    args = parser.parse_args()
-    
-    base_path = expanduser("~")
-    backup_config = base_path + '/container2backup.yaml'
 
     # Read YAML config file and create backups
     if not os.path.exists(backup_config):
@@ -1373,10 +1403,14 @@ if __name__ == "__main__":
         additional_backups = config.get('services', {})
 
         for service_name, service_config in additional_backups.items():
-            backup_additional_service(service_config, backup_path, timestamp)
-            
+            backup_additional_service(service_config, backup_path, timestamp, service_name)
+
             # Clean up old backups for this service
-            service_backup_path = os.path.join(backup_path, service_config['backup_path'])
+            # A missing backup_path used to raise KeyError mid-run. The service
+            # name is the obvious subdirectory, and the validator reports the omission.
+            service_backup_path = os.path.join(
+                backup_path, service_config.get('backup_path') or service_name
+            )
             service_retention = service_config.get('retention_days', default_retention)
             service_cutoff = time.time() - (float(service_retention) * 86400)
             cleanup_backups(service_backup_path, service_cutoff)
