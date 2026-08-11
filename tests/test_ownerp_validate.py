@@ -180,9 +180,36 @@ class SchemaWalkerTest(unittest.TestCase):
         findings = self.walk({"name": "live", "count": True})
         self.assertEqual(findings[0].path, "root.count")
 
+    def test_a_bool_is_not_accepted_where_a_tuple_type_includes_int(self):
+        # "expected is int" is an identity check and misses a tuple like
+        # (int, float) - a bool must still be rejected in that case.
+        schema = {"count": {"type": (int, float)}}
+        findings = []
+        ov.validate_mapping({"count": True}, schema, "root", "f.yaml", findings)
+        self.assertEqual(len(findings), 1)
+        self.assertEqual(findings[0].path, "root.count")
+
     def test_a_value_below_min_is_an_error(self):
         findings = self.walk({"name": "live", "count": -1})
         self.assertIn("0", findings[0].message)
+
+    def test_min_without_a_type_rule_reports_a_finding_not_a_crash(self):
+        # A schema may declare min/max without type; a non-numeric value must
+        # not raise TypeError out of the comparison.
+        schema = {"count": {"min": 0}}
+        findings = []
+        ov.validate_mapping({"count": "drei"}, schema, "root", "f.yaml", findings)
+        self.assertEqual(findings[0].severity, ov.ERROR)
+        self.assertEqual(findings[0].path, "root.count")
+
+    def test_min_items_is_checked_without_an_item_schema(self):
+        # min_items and item are independent rules - this must not depend on
+        # an "item" branch being present.
+        schema = {"tags": {"type": list, "min_items": 2}}
+        findings = []
+        ov.validate_mapping({"tags": ["one"]}, schema, "root", "f.yaml", findings)
+        self.assertEqual(findings[0].severity, ov.ERROR)
+        self.assertIn("2", findings[0].message)
 
     def test_a_value_outside_the_enum_is_an_error(self):
         findings = self.walk({"name": "live", "mode": "X"})
@@ -232,6 +259,16 @@ class RedactionTest(unittest.TestCase):
         self.assertTrue(ov.redacted("DB_PASSWORD"))
         self.assertTrue(ov.redacted("admin_passwd"))
         self.assertFalse(ov.redacted("db_user"))
+
+    def test_a_password_value_never_appears_via_the_path_rule(self):
+        # The path branch builds its own message and must go through the same
+        # redaction guard as every other branch (type, enum, port).
+        schema = {"db_password": {"type": str, "path": "file"}}
+        findings = []
+        ov.validate_mapping({"db_password": "/definitely/not/here"}, schema,
+                            "root", "f.yaml", findings)
+        self.assertTrue(findings)
+        self.assertNotIn("/definitely/not/here", findings[0].message)
 
 
 class PathRuleTest(unittest.TestCase):

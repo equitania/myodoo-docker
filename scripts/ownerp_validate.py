@@ -253,8 +253,11 @@ def validate_mapping(data, fields, path_prefix, file_path, findings,
         expected = rule.get("type")
         if expected is not None:
             wrong = not isinstance(value, expected)
-            # bool is a subclass of int: 'delay_time: true' must not pass.
-            if not wrong and expected is int and isinstance(value, bool):
+            # bool is a subclass of int: 'delay_time: true' must not pass,
+            # whether the rule names int directly or as part of a tuple
+            # ("type": (int, float), used by odoo_version-style rules).
+            expected_types = expected if isinstance(expected, tuple) else (expected,)
+            if not wrong and int in expected_types and isinstance(value, bool):
                 wrong = True
             if wrong:
                 _add(findings, ERROR, file_path, line, path,
@@ -276,14 +279,23 @@ def validate_mapping(data, fields, path_prefix, file_path, findings,
                      'in the range 1-65535', downgrade)
             continue
 
-        if "min" in rule and value < rule["min"]:
-            _add(findings, ERROR, file_path, line, path,
-                 f"must be at least {rule['min']}", downgrade)
-            continue
-        if "max" in rule and value > rule["max"]:
-            _add(findings, ERROR, file_path, line, path,
-                 f"must be at most {rule['max']}", downgrade)
-            continue
+        if "min" in rule or "max" in rule:
+            # A schema may declare min/max without a type rule (or with a
+            # type that still admits non-numeric values); comparing a string
+            # against a number raises TypeError, and this tool exists to
+            # survive malformed customer input, not to crash on it.
+            if isinstance(value, bool) or not isinstance(value, (int, float)):
+                _add(findings, ERROR, file_path, line, path,
+                     f'must be a number, not "{_shown(key, value)}"', downgrade)
+                continue
+            if "min" in rule and value < rule["min"]:
+                _add(findings, ERROR, file_path, line, path,
+                     f"must be at least {rule['min']}", downgrade)
+                continue
+            if "max" in rule and value > rule["max"]:
+                _add(findings, ERROR, file_path, line, path,
+                     f"must be at most {rule['max']}", downgrade)
+                continue
 
         if "fields" in rule:
             validate_mapping(value, rule["fields"], path, file_path, findings,
@@ -303,12 +315,15 @@ def validate_mapping(data, fields, path_prefix, file_path, findings,
 
         if "path" in rule:
             target = expand(value)
+            # Route through _shown, same as every other branch: a path rule
+            # paired with a password-named key must not print the value.
+            shown = _shown(key, target)
             if not os.path.exists(target):
                 _add(findings, WARNING, file_path, line, path,
-                     f"{target} does not exist", downgrade)
+                     f"{shown} does not exist", downgrade)
             elif rule["path"] == "dir" and not os.path.isdir(target):
                 _add(findings, WARNING, file_path, line, path,
-                     f"{target} exists but is not a directory", downgrade)
+                     f"{shown} exists but is not a directory", downgrade)
 
     known = list(fields)
     for key in data:
