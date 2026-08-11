@@ -1,5 +1,5 @@
 # Backup and Update Aliases
-# Version 1.0.1 | 05.03.2026
+# Version 1.1.0 | 11.08.2026
 
 # Backup operations
 alias dobk='$HOME/container2backup.py'
@@ -9,5 +9,7 @@ alias cpbk='cp /opt/backups/docker/'
 alias cdbk='cd /opt/backups/docker'
 
 # Update operations
-alias doup='$HOME/update_docker_odoo.py'
+# NOTE: `doup` is a function (functions/linux/doup.fish), not an alias - it
+# picks between the TUI and the runner. An alias here would shadow it.
+alias tui='$HOME/ownerp_tui.py'
 alias edup='mcedit $HOME/docker2update.yaml'

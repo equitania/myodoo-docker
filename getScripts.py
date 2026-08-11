@@ -136,7 +136,7 @@ if os.environ.get('GETSCRIPTS_DEBUG', '').lower() in ('1', 'true', 'yes'):
     logger.debug("Debug logging enabled")
 
 # Script version and date
-SCRIPT_VERSION = "9.10.0"
+SCRIPT_VERSION = "9.11.0"
 SCRIPT_DATE = "11.08.2026"
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -3877,6 +3877,7 @@ def copy_scripts(_myhome: str, myodoo_docker: str) -> None:
     """Copy utility scripts to home directory."""
     scripts = [
         "update_docker_odoo.py",
+        "ownerp_tui.py",
         "cleanup-weblogs.py",
         "container2backup.py",
         "restore-zip.sh",
