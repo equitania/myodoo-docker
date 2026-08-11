@@ -4,7 +4,7 @@
 # Title:            ownerp_validate.py
 # Description:      Read-only validation of docker2update.yaml and
 #                   container2backup.yaml against declared schemas
-# Version:          1.0.0
+# Version:          1.1.0
 # Date:             11.08.2026
 # Author:           Equitania Software GmbH
 # ==============================================================================
@@ -35,7 +35,7 @@ try:
 except ImportError:  # pragma: no cover - depends on the machine
     yaml = None
 
-SCRIPT_VERSION = "1.0.0"
+SCRIPT_VERSION = "1.1.0"
 SCRIPT_DATE = "11.08.2026"
 
 ERROR = "error"
@@ -149,3 +149,172 @@ def load_positioned(path):
         return None, Finding(ERROR, path, 0, "",
                              "top level must be a mapping of settings")
     return data, None
+
+
+# Ports are configured as strings with an optional bind address - the shipped
+# templates use "127.0.0.1:11000". A plain integer rule would flag every real
+# customer configuration, so the form is parsed instead of typed.
+PORT_RE = re.compile(
+    r"^(?:\[(?P<v6>[0-9A-Fa-f:]+)\]:|(?P<v4>[0-9.]+):)?(?P<port>\d{1,5})$")
+
+
+def parse_port(value):
+    """Return the port number of an accepted form, or None."""
+    if isinstance(value, bool):
+        # True == 1 in Python, and a port of 1 is not what anybody wrote.
+        return None
+    match = PORT_RE.match(str(value).strip())
+    if not match:
+        return None
+    port = int(match.group("port"))
+    return port if 1 <= port <= 65535 else None
+
+
+def is_empty(value):
+    """Empty for the purposes of a required field.
+
+    False and 0 are values, not omissions - 'active: false' and
+    'delay_time: 0' are both legitimate settings.
+    """
+    if value is None:
+        return True
+    return isinstance(value, (str, list, dict)) and not value
+
+
+def redacted(key):
+    """True for keys whose value must never reach a finding."""
+    lowered = str(key).lower()
+    return lowered.endswith("password") or lowered == "admin_passwd"
+
+
+def expand(path):
+    """Expand ~ and $VARS the way the scripts themselves do."""
+    return os.path.expandvars(os.path.expanduser(str(path)))
+
+
+def _shown(key, value):
+    """The value as it may appear in a finding."""
+    if redacted(key):
+        return "<redacted>"
+    text = str(value)
+    return text if len(text) <= 60 else text[:57] + "..."
+
+
+def _type_name(expected):
+    names = {str: "a string", int: "a whole number", bool: "true or false",
+             dict: "a mapping", list: "a list", float: "a number"}
+    if isinstance(expected, tuple):
+        return " or ".join(names.get(item, item.__name__) for item in expected)
+    return names.get(expected, expected.__name__)
+
+
+def _join(prefix, key):
+    """Dotted schema path, without a leading dot at the top level."""
+    return f"{prefix}.{key}" if prefix else str(key)
+
+
+def _add(findings, severity, file_path, line, path, message, downgrade):
+    """Append a finding, downgrading it when the block is inactive.
+
+    A parked 'active: false' block stops no run. Keeping the exit code red for
+    it would teach operators to ignore the exit code, so its findings are
+    reported in full but never block.
+    """
+    if downgrade and severity == ERROR:
+        severity = WARNING
+        message = f"(inactive) {message}"
+    findings.append(Finding(severity, file_path, line, path, message))
+
+
+def validate_mapping(data, fields, path_prefix, file_path, findings,
+                     downgrade=False):
+    """Walk one mapping against a field schema, appending findings."""
+    if not isinstance(data, dict):
+        _add(findings, ERROR, file_path, line_of(data), path_prefix,
+             f"must be {_type_name(dict)}", downgrade)
+        return
+
+    for key, rule in fields.items():
+        line = line_of(data, key)
+        path = _join(path_prefix, key)
+        present = key in data
+        value = data.get(key)
+
+        if not present or is_empty(value):
+            if rule.get("required"):
+                what = "is missing" if not present else "is empty"
+                _add(findings, ERROR, file_path, line or line_of(data), path,
+                     what, downgrade)
+            continue
+
+        if rule.get("free"):
+            continue
+
+        expected = rule.get("type")
+        if expected is not None:
+            wrong = not isinstance(value, expected)
+            # bool is a subclass of int: 'delay_time: true' must not pass.
+            if not wrong and expected is int and isinstance(value, bool):
+                wrong = True
+            if wrong:
+                _add(findings, ERROR, file_path, line, path,
+                     f"must be {_type_name(expected)}, not "
+                     f'"{_shown(key, value)}"', downgrade)
+                continue
+
+        if "enum" in rule and value not in rule["enum"]:
+            allowed = ", ".join(str(item) for item in rule["enum"])
+            _add(findings, ERROR, file_path, line, path,
+                 f'"{_shown(key, value)}" is not one of {allowed}', downgrade)
+            continue
+
+        if rule.get("port"):
+            if parse_port(value) is None:
+                _add(findings, ERROR, file_path, line, path,
+                     f'"{_shown(key, value)}" is not a valid port - use 11000, '
+                     '"11000", "127.0.0.1:11000" or "[::1]:11000", '
+                     'in the range 1-65535', downgrade)
+            continue
+
+        if "min" in rule and value < rule["min"]:
+            _add(findings, ERROR, file_path, line, path,
+                 f"must be at least {rule['min']}", downgrade)
+            continue
+        if "max" in rule and value > rule["max"]:
+            _add(findings, ERROR, file_path, line, path,
+                 f"must be at most {rule['max']}", downgrade)
+            continue
+
+        if "fields" in rule:
+            validate_mapping(value, rule["fields"], path, file_path, findings,
+                             downgrade)
+
+        # A list rule may carry min_items without an item schema - the two are
+        # independent, so this check must not live inside the item branch.
+        if "min_items" in rule and len(value) < rule["min_items"]:
+            _add(findings, ERROR, file_path, line, path,
+                 f"must hold at least {rule['min_items']} entries", downgrade)
+
+        if "item" in rule:
+            for index, entry in enumerate(value):
+                validate_mapping(entry, rule["item"]["fields"],
+                                 f"{path}[{index}]", file_path, findings,
+                                 downgrade)
+
+        if "path" in rule:
+            target = expand(value)
+            if not os.path.exists(target):
+                _add(findings, WARNING, file_path, line, path,
+                     f"{target} does not exist", downgrade)
+            elif rule["path"] == "dir" and not os.path.isdir(target):
+                _add(findings, WARNING, file_path, line, path,
+                     f"{target} exists but is not a directory", downgrade)
+
+    known = list(fields)
+    for key in data:
+        if key in fields:
+            continue
+        close = difflib.get_close_matches(str(key), known, n=1, cutoff=0.6)
+        hint = f' - did you mean "{close[0]}"?' if close else ""
+        _add(findings, WARNING, file_path, line_of(data, key),
+             _join(path_prefix, key), f"unknown key{hint}", downgrade)
