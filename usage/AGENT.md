@@ -47,7 +47,8 @@ All commands run as **root** on the target server. The interactive login shell i
 | `fr-local-deploy.sh` | — | Deploy the FastReport API container (`/opt/fast-report/<name>/…`) | interactive only (container name, port, image tag, registry token, optional secrets) |
 | `update_docker_odoo.py` | `doup` (config: `edup`) | Update Odoo containers from `~/docker2update.yaml` (rebuild image, update DB, restart). Writes a full run log per container to `<build folder>/update_<YYYYMMDD>_<HHMMSS>.log` regardless of `-v`; the paths are listed at exit. Logs older than `log_retention_days` (YAML `defaults` or per container, 90 days default, `0` = keep forever) are removed on that instance's next run. Each container run also appends one line to `~/update-history.jsonl` (`defaults.history_retention_days`, 365 default, `0` = forever) | `-c/--config CONFIG` · `-v/--verbose` · `-s/--specific-container NAME` (repeatable, also comma-separated; **overrides `active: false`**) · `--type {M,F,N}` (runtime mode override, never written to the YAML) · `--comment TEXT` (into the run log header and the history) · `--validate` · `--dns-optimize` |
 | `ownerp_tui.py` | `tui` | curses selection screen for ad-hoc updates: lists every system from `docker2update.yaml` with its mode and its last run, then hands the selection to `update_docker_odoo.py` — one invocation per mode group, sequential, worst exit code wins. **Never writes to the YAML.** Keys: Space select · `a` all/none · `m` mode M→F→N · `c` comment · `Enter` start · `v` validate · `d` make it `doup`'s default · `?` help · `q`/`Esc` quit | `-c/--config CONFIG` · `--make-default` · `--no-default` |
-| `container2backup.py` | `dobk` (config: `edbk`) | Back up Odoo DBs (SQL + filestore) + service dirs per `~/container2backup.yaml` | `--sql-only` |
+| `container2backup.py` | `dobk` (config: `edbk`) | Back up Odoo DBs (SQL + filestore) + service dirs per `~/container2backup.yaml` | `--sql-only` · `--validate` |
+| `ownerp_validate.py` | `doval` | Read-only schema validation of `docker2update.yaml` and/or `container2backup.yaml` — structure, required fields, types, enums, port form, duplicate container/database names and host ports (active entries only), path existence (warning), unknown keys with a suggestion (warning). Findings name the file and line number; never prints a `*password` value; never writes | `--update [PATH]` (default `~/docker2update.yaml`) · `--backup [PATH]` (default `~/container2backup.yaml`) · `--version` (no flag = both, at default paths) |
 | `restore-zip.sh` | — | Restore a backup archive (auto-detects `.zip/.7z/.7z.gpg/.tar.gz/.tar.zst`) | positional: `backup_kind(1\|2)` `runsql(v10…v16)` `orig_dbname` `new_dbname` `drop_db(Y/n)` `zip_file` `odoo_volume` `pg_container` `pg_password` |
 | `ssl-renew.sh` | — | `certbot renew`; nginx bounced only when a cert is actually due | no flags (daily cron) |
 | `nginx-cert-guard.py` | — | Keep nginx up when one vhost breaks; DNS-drift early warning | mode (required): `--reconcile` \| `--check` \| `--list` \| `--restore DOMAIN` · `--start` (with --reconcile) · `--apply` (with --check) · `--dry-run` · `--nginx-conf-dir DIR` · `--state-file FILE` |
@@ -109,6 +110,16 @@ only the pre-selection. `-s` beats `active: false`, so a parked system runs when
 `doup` keeps starting the runner directly until `~/.ownerp_tui_default` exists (`d` in the
 screen, or `ownerp_tui.py --make-default`), and even then only for an interactive shell
 with no arguments.
+
+### Validate configuration after editing either YAML
+```bash
+doval                                            # both configs at their default paths
+python3 ~/ownerp_validate.py --update ~/docker2update.yaml
+python3 ~/ownerp_validate.py --backup ~/container2backup.yaml
+echo $status                                     # fish; 0 = no errors, 1 = error(s), 2 = unreadable
+```
+Read-only, never writes. Check the exit code, not the presence of output — warnings print on a
+clean (`0`) exit too.
 
 ### Run / restrict a backup
 ```bash
@@ -181,6 +192,14 @@ independent of the shell environment. Full walkthrough: INSTALLATION_GUIDE chapt
   fastfetch's `publicip` module ignores `http_proxy` and is stripped automatically on proxy hosts;
   ~1 s fastfetch runtime is normal (NetIO/DiskIO sampling). Corporate firewalls often drop
   outbound traffic silently — "hangs" usually means missing proxy env, not a slow server.
+- **`doval`/`ownerp_validate.py` warnings never flip the exit code.** Exit `0`
+  means zero *errors* — warnings (missing path, unknown key, an `(inactive)`
+  finding inside a parked `active: false` block) can still be printed on a
+  clean exit. A script or cron job that gates on the validator must check
+  `$status`/`$?` `!= 0`, never "no output" or "output contains nothing
+  alarming". Exit `1` is at least one error; exit `2` means the file itself
+  could not be read (missing, unparseable, or PyYAML absent) — nothing was
+  actually checked.
 - **Custom modules:** every `*custom_modules.zip` in the build folder is extracted into the image
   (build_odoo ≥ 2.4.0; the generic `custom_modules.zip` first, customer-specific archives
   override). Stage archives via `pre_build_files` in `docker2update.yaml`.
@@ -202,9 +221,13 @@ independent of the shell environment. Full walkthrough: INSTALLATION_GUIDE chapt
   `warnings`, `errors`, `duration_s`, `log` (path of that run's log, empty when it could not be
   written), `script_version`. Written after each container, so an interrupted run still leaves
   behind what it did. Read it with `jq` or `python3 -c` — never parse the console output.
-- Everything else: use exit codes. `update_docker_odoo.py --validate` (0 = config OK),
-  `nginx -t`, `deploy-nginx-base.sh` (non-zero on failed reload),
-  `server-readiness.py` (0 = no FAIL, 1 = at least one FAIL; WARN/SKIP do not affect it).
+- Everything else: use exit codes. `ownerp_validate.py`/`doval` (0 = no errors,
+  1 = at least one error, 2 = file missing/unreadable/unparseable or PyYAML
+  absent — **warnings never affect the exit code**), `update_docker_odoo.py
+  --validate` and `container2backup.py --validate` (both delegate to it and
+  inherit that contract), `nginx -t`, `deploy-nginx-base.sh` (non-zero on
+  failed reload), `server-readiness.py` (0 = no FAIL, 1 = at least one FAIL;
+  WARN/SKIP do not affect it).
   Logs land in
   `/var/log/{container2backup,ssl-renew,cleanup-weblogs,nightly-cleanup,nginx-cert-guard}.log`.
   `server-readiness.py` deliberately writes no log — it reports to stdout so cron mails it.

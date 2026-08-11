@@ -480,6 +480,35 @@ databases:
 > komprimiert). Details, Verschlüsselung (AES-256/GPG) und Restore je Format:
 > [scripts/README_BackUp.md](../scripts/README_BackUp.md).
 
+### Konfiguration prüfen (doval)
+
+Nach jeder manuellen Änderung an `docker2update.yaml` oder
+`container2backup.yaml` lohnt sich ein kurzer Check, bevor der nächste `doup`
+oder `dobk` darauf läuft:
+
+```bash
+doval                # beide Konfigurationen an ihren Standardpfaden prüfen
+doval --update       # nur docker2update.yaml
+doval --backup       # nur container2backup.yaml
+```
+
+`ownerp_validate.py` ist **rein lesend** — es schreibt nie in die YAML — und
+prüft Pflichtfelder, Typen, Portform, doppelte Container-/Datenbanknamen und
+-Ports (nur unter aktiven Einträgen) sowie unbekannte Schlüssel. Jeder Befund
+nennt Datei und Zeilennummer.
+
+**Die drei Exitcodes:**
+
+| Exitcode | Bedeutung |
+|---|---|
+| `0` | keine Fehler. **Warnungen können trotzdem ausgegeben worden sein** — sie zählen für den Exitcode nicht |
+| `1` | mindestens ein Fehler |
+| `2` | eine Datei fehlt, ist unlesbar, nicht parsebar, oder PyYAML ist nicht installiert |
+
+Ein Cronjob oder Wrapper-Skript, das auf `doval` aufsetzt, muss also den
+Exitcode prüfen (`$status` in fish) — nicht, ob überhaupt etwas ausgegeben
+wurde, denn Warnungen erscheinen auch bei Exitcode `0`.
+
 <a id="de-12-schritt-10-wartung-automatisieren"></a>
 ## 12. Schritt 10: Wartung automatisieren
 
@@ -547,10 +576,11 @@ Alle Skripte des Repos (`scripts/`, Stand 16.07.2026):
 | `ngx-conf-wizard.sh` (1.1.0) | Interaktiver YAML-Assistent für nginx-set-conf | `./ngx-conf-wizard.sh` |
 | `pg-local-deploy.sh` (1.2.1) | PostgreSQL-Container interaktiv deployen (Profile, optional SSL) | `./pg-local-deploy.sh` |
 | `fr-local-deploy.sh` | FastReport-API-Container deployen (Default `/opt/fast-report`) | `./fr-local-deploy.sh` |
-| `update_docker_odoo.py` (5.11.0) | Odoo-Container-Updates per YAML | `doup` bzw. `python3 update_docker_odoo.py [-s NAME] [--validate]` |
+| `update_docker_odoo.py` (5.12.0) | Odoo-Container-Updates per YAML | `doup` bzw. `python3 update_docker_odoo.py [-s NAME] [--validate]` |
 | `ownerp_tui.py` (1.0.0) | Curses-Auswahlmaske für Odoo-Container-Updates, übergibt an `update_docker_odoo.py` | `tui` bzw. `python3 ownerp_tui.py [-c DATEI]` |
 | `odoo_build_cache.py` (1.5.0) | Release-Archiv-Cache aller Instanzen; pflegt zusätzlich Dockerfile und `odoo.conf` des Build-Ordners | von `doup` aufgerufen; `~/odoo_build_cache.py stats\|gc [--days 30]` |
-| `container2backup.py` (4.7.1) | SQL+Filestore-Backups, Kompression/Verschlüsselung/Streaming | `dobk` bzw. `~/container2backup.py [--sql-only]` |
+| `container2backup.py` (4.8.0) | SQL+Filestore-Backups, Kompression/Verschlüsselung/Streaming | `dobk` bzw. `~/container2backup.py [--sql-only\|--validate]` |
+| `ownerp_validate.py` (1.0.0) | Rein lesende Schema-Prüfung von `docker2update.yaml`/`container2backup.yaml` | `doval` bzw. `~/ownerp_validate.py [--update PATH\|--backup PATH]` |
 | `restore-zip.sh` (2.1.0) | Backup-Restore (DB + Filestore) in Docker | siehe [Kapitel 13](#de-13-restore--notfall) |
 | `ssl-renew.sh` (1.3.0) | certbot-Renewal, nginx nur bei Bedarf angehalten | `./ssl-renew.sh` (Cron) |
 | `nginx-cert-guard.py` (1.1.0) | Defekte Vhosts quarantänisieren statt nginx zu blockieren | `--reconcile [--start]`, `--check [--apply]`, `--list`, `--restore DOMAIN` |
@@ -1229,6 +1259,34 @@ databases:
 > compressed). Details, encryption (AES-256/GPG) and per-format restore:
 > [scripts/README_BackUp.md](../scripts/README_BackUp.md).
 
+### Validate the configuration (doval)
+
+After any manual edit to `docker2update.yaml` or `container2backup.yaml`, a
+quick check before the next `doup` or `dobk` run is worth it:
+
+```bash
+doval                # validate both configurations at their default paths
+doval --update       # only docker2update.yaml
+doval --backup       # only container2backup.yaml
+```
+
+`ownerp_validate.py` is **read-only** — it never writes to the YAML — and
+checks required fields, types, port form, duplicate container/database names
+and ports (among active entries only), and unknown keys. Every finding names
+the file and the line number.
+
+**The three exit codes:**
+
+| Exit code | Meaning |
+|---|---|
+| `0` | no errors. **Warnings may still have been printed** — they do not count against the exit code |
+| `1` | at least one error |
+| `2` | a file is missing, unreadable, unparseable, or PyYAML is not installed |
+
+A cron job or wrapper script built on top of `doval` must therefore check the
+exit code (`$status` in fish) — not whether anything was printed at all,
+since warnings appear on exit code `0` too.
+
 <a id="en-12-step-10-automate-maintenance"></a>
 ## 12. Step 10: Automate Maintenance
 
@@ -1295,10 +1353,11 @@ All scripts in this repository (`scripts/`, as of 16.07.2026):
 | `ngx-conf-wizard.sh` (1.1.0) | Interactive YAML wizard for nginx-set-conf | `./ngx-conf-wizard.sh` |
 | `pg-local-deploy.sh` (1.2.1) | Deploy a PostgreSQL container interactively (profiles, optional SSL) | `./pg-local-deploy.sh` |
 | `fr-local-deploy.sh` | Deploy the FastReport API container (default `/opt/fast-report`) | `./fr-local-deploy.sh` |
-| `update_docker_odoo.py` (5.11.0) | Odoo container updates via YAML | `doup` or `python3 update_docker_odoo.py [-s NAME] [--validate]` |
+| `update_docker_odoo.py` (5.12.0) | Odoo container updates via YAML | `doup` or `python3 update_docker_odoo.py [-s NAME] [--validate]` |
 | `ownerp_tui.py` (1.0.0) | Curses selection screen for Odoo container updates, hands off to `update_docker_odoo.py` | `tui` or `python3 ownerp_tui.py [-c FILE]` |
 | `odoo_build_cache.py` (1.5.0) | Release archive cache shared by all instances; also maintains the build folder's Dockerfile and `odoo.conf` | called by `doup`; `~/odoo_build_cache.py stats\|gc [--days 30]` |
-| `container2backup.py` (4.7.1) | SQL+filestore backups, compression/encryption/streaming | `dobk` or `~/container2backup.py [--sql-only]` |
+| `container2backup.py` (4.8.0) | SQL+filestore backups, compression/encryption/streaming | `dobk` or `~/container2backup.py [--sql-only\|--validate]` |
+| `ownerp_validate.py` (1.0.0) | Read-only schema validation of `docker2update.yaml`/`container2backup.yaml` | `doval` or `~/ownerp_validate.py [--update PATH\|--backup PATH]` |
 | `restore-zip.sh` (2.1.0) | Backup restore (DB + filestore) into Docker | see [chapter 13](#en-13-restore--emergency) |
 | `ssl-renew.sh` (1.3.0) | certbot renewal, nginx stopped only when needed | `./ssl-renew.sh` (cron) |
 | `nginx-cert-guard.py` (1.1.0) | Quarantine broken vhosts instead of blocking nginx | `--reconcile [--start]`, `--check [--apply]`, `--list`, `--restore DOMAIN` |

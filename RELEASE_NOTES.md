@@ -1,5 +1,51 @@
 # Release Notes
 
+## One Validator for Both Configurations (11.08.2026)
+
+*ownerp_validate.py v1.0.0, update_docker_odoo.py v5.12.0,
+container2backup.py v4.8.0, getScripts.py v9.12.0*
+
+### Added
+- **`ownerp_validate.py`**, started with `doval`. Read-only validation of both
+  `docker2update.yaml` and `container2backup.yaml` against their declared
+  schemas — structure, required fields, types, enums, port form (`11000`,
+  `"11000"`, `"127.0.0.1:11000"`, `"[::1]:11000"`), duplicate container/database
+  names and duplicate host ports **among active entries only**, whether
+  configured paths exist, and unknown keys with a suggestion from the closest
+  known name. Findings name the file and the line number. A block with
+  `active: false` is checked in full, but its findings are downgraded to
+  warnings prefixed `(inactive)`, so a parked block never turns the exit code
+  red. It never writes, and never prints the value of a key whose name ends in
+  `password`.
+  ```
+  ownerp_validate.py                  # both configurations at their default paths
+  ownerp_validate.py --update [PATH]  # only docker2update.yaml
+  ownerp_validate.py --backup [PATH]  # only container2backup.yaml
+  ownerp_validate.py --version
+  ```
+  Exit codes: `0` no errors (**warnings may be present and do not affect the
+  exit code**), `1` at least one error, `2` a file is missing, unreadable,
+  unparseable, or PyYAML is absent.
+- **`container2backup.py --validate`** delegates to `ownerp_validate.py`.
+
+### Changed
+- **`update_docker_odoo.py --validate`** now delegates to `ownerp_validate.py`
+  instead of the old built-in per-container check. When the validator is not
+  yet installed beside the script (older installation), it falls back to the
+  built-in check rather than failing hard — run `ups` to install it.
+- **`update_docker_odoo.py --validate` is read-only again.** The DNS
+  optimisation step used to rewrite `volume:` entries in the YAML even during
+  a validation-only run; it is now skipped under `--validate`.
+
+### Fixed
+- **`container2backup.py`**: `service_config['backup_path']` no longer raises
+  `KeyError` mid-backup when a `services` entry omits it — a config problem
+  that `doval`/`--validate` now catches before a backup run gets there.
+
+### Notes
+- `getScripts.py` 9.12.0 distributes `ownerp_validate.py` alongside the other
+  management scripts.
+
 ## Picking Systems Instead of Editing YAML (11.08.2026)
 
 *ownerp_tui.py v1.0.0, update_docker_odoo.py v5.11.0, getScripts.py v9.11.0*

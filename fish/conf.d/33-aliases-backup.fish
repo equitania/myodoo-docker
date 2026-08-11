@@ -1,5 +1,5 @@
 # Backup and Update Aliases
-# Version 1.1.0 | 11.08.2026
+# Version 1.2.0 | 11.08.2026
 
 # Backup operations
 alias dobk='$HOME/container2backup.py'
@@ -13,3 +13,4 @@ alias cdbk='cd /opt/backups/docker'
 # picks between the TUI and the runner. An alias here would shadow it.
 alias tui='$HOME/ownerp_tui.py'
 alias edup='mcedit $HOME/docker2update.yaml'
+alias doval='$HOME/ownerp_validate.py'

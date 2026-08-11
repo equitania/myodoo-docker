@@ -158,6 +158,10 @@ edup  # Edit YAML configuration
 
 # Manual update
 python3 ~/update_docker_myodoo.py
+
+# Validate both YAML configurations (read-only, never writes)
+doval  # ~/ownerp_validate.py — exit 0 = no errors, 1 = at least one error,
+       # 2 = file missing/unreadable/unparseable or PyYAML absent
 ```
 
 ### Docker Management Aliases
@@ -344,6 +348,27 @@ myodoo-docker/
   `http_interface` is the first managed key: Odoo 19 warns when it is unset and
   **Odoo 20 defaults it to `127.0.0.1`**, which would leave every container
   unreachable through its published port
+
+#### 7. ownerp_validate.py (v1.0.0)
+- **Purpose**: Read-only validation of `docker2update.yaml` and
+  `container2backup.yaml` against their declared schemas — no other script
+  writes as much unattended config as these two, so a typo surfaces at `doval`
+  time, not mid-run
+- **Checks**: structure, required fields, types, enums, port form (`11000`,
+  `"11000"`, `"127.0.0.1:11000"`, `"[::1]:11000"`), duplicate container/database
+  names and duplicate host ports **among active entries only**, whether
+  configured paths exist (a warning, not an error), and unknown keys with a
+  suggestion from the closest known name (also a warning)
+- **`active: false` blocks are checked in full**, but their findings are
+  downgraded to warnings prefixed `(inactive)` — a parked block never turns
+  the exit code red
+- **Exit codes**: `0` no errors (**warnings may be present and never affect the
+  exit code**), `1` at least one error, `2` a file is missing, unreadable,
+  unparseable, or PyYAML is absent
+- **Never writes**, and never prints the value of a key whose name ends in
+  `password`
+- **`update_docker_odoo.py --validate` and `container2backup.py --validate`**
+  both delegate to it
 
 ### Development Patterns
 
