@@ -834,9 +834,17 @@ Run from the repository root:
 
 import os
 import sys
+import types
 import unittest
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "scripts"))
+# The stub goes in BEFORE the import below: importing ownerp_tui pulls in
+# update_docker_odoo, which imports yaml at module level while none of the
+# functions under test touch it. Same convention as the sibling test files.
+try:
+    import yaml  # noqa: F401
+except ImportError:
+    sys.modules["yaml"] = types.ModuleType("yaml")
 import ownerp_tui as tui  # noqa: E402
 
 CONTAINERS = [
