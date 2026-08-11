@@ -5,6 +5,10 @@ The curses drawing layer is deliberately not tested - it is kept thin enough
 that there is nothing in it to assert. Everything worth asserting lives in
 UpdateSelection, which never touches a terminal.
 
+Standard library only, like the rest of the suite. PyYAML is imported at module
+level by update_docker_odoo.py, which ownerp_tui.py in turn imports, so a
+placeholder module stands in when it is absent.
+
 Run from the repository root:
 
     python3 -m unittest tests.test_ownerp_tui -v
@@ -12,9 +16,14 @@ Run from the repository root:
 
 import os
 import sys
+import types
 import unittest
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "scripts"))
+try:
+    import yaml  # noqa: F401
+except ImportError:
+    sys.modules["yaml"] = types.ModuleType("yaml")
 import ownerp_tui as tui  # noqa: E402
 
 CONTAINERS = [
