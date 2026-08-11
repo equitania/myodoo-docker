@@ -286,5 +286,81 @@ class RunLogCaptureTest(unittest.TestCase):
         self.assertIn("something is off", read(path))
 
 
+class SelectionTest(unittest.TestCase):
+    """The -s flag: repeatable, comma-separated, and stronger than 'active'."""
+
+    def parse(self, argv):
+        original = sys.argv
+        sys.argv = ["update_docker_odoo.py"] + argv
+        try:
+            return udo.parse_arguments()
+        finally:
+            sys.argv = original
+
+    def test_a_single_name_still_works(self):
+        args = self.parse(["-s", "live-odoo"])
+        self.assertEqual(udo.selected_container_names(args), ["live-odoo"])
+
+    def test_the_flag_can_be_repeated(self):
+        args = self.parse(["-s", "live-odoo", "-s", "test-odoo"])
+        self.assertEqual(udo.selected_container_names(args),
+                         ["live-odoo", "test-odoo"])
+
+    def test_a_comma_separated_list_is_split(self):
+        args = self.parse(["-s", "live-odoo,test-odoo"])
+        self.assertEqual(udo.selected_container_names(args),
+                         ["live-odoo", "test-odoo"])
+
+    def test_whitespace_and_empty_parts_are_dropped(self):
+        args = self.parse(["-s", " live-odoo , , test-odoo "])
+        self.assertEqual(udo.selected_container_names(args),
+                         ["live-odoo", "test-odoo"])
+
+    def test_without_the_flag_the_selection_is_empty(self):
+        self.assertEqual(udo.selected_container_names(self.parse([])), [])
+
+    def test_a_named_container_runs_even_when_inactive(self):
+        container = {"container_name": "parked-odoo", "active": False}
+        self.assertTrue(udo.container_matches_selection(container, ["parked-odoo"]))
+
+    def test_an_unnamed_container_is_skipped_when_a_selection_exists(self):
+        container = {"container_name": "other-odoo", "active": True}
+        self.assertFalse(udo.container_matches_selection(container, ["parked-odoo"]))
+
+    def test_without_a_selection_active_decides(self):
+        self.assertTrue(udo.container_matches_selection(
+            {"container_name": "a", "active": True}, []))
+        self.assertFalse(udo.container_matches_selection(
+            {"container_name": "b", "active": False}, []))
+
+    def test_a_container_without_an_active_key_takes_part(self):
+        self.assertTrue(udo.container_matches_selection({"container_name": "a"}, []))
+
+
+class RuntimeOverrideTest(unittest.TestCase):
+    def parse(self, argv):
+        original = sys.argv
+        sys.argv = ["update_docker_odoo.py"] + argv
+        try:
+            return udo.parse_arguments()
+        finally:
+            sys.argv = original
+
+    def test_the_type_override_is_parsed(self):
+        self.assertEqual(self.parse(["--type", "F"]).update_type, "F")
+
+    def test_an_invalid_type_is_rejected(self):
+        with self.assertRaises(SystemExit):
+            self.parse(["--type", "X"])
+
+    def test_the_comment_is_parsed(self):
+        self.assertEqual(self.parse(["--comment", "eq_stock"]).comment, "eq_stock")
+
+    def test_both_default_to_none(self):
+        args = self.parse([])
+        self.assertIsNone(args.update_type)
+        self.assertIsNone(args.comment)
+
+
 if __name__ == "__main__":
     unittest.main()

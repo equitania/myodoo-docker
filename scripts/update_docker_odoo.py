@@ -786,6 +786,31 @@ def save_updated_config(config, config_file):
             logger.error(f"Failed to restore backup: {restore_error}")
         return False
 
+def selected_container_names(args):
+    """Flatten -s into a list of names; empty when the flag was not given.
+
+    Both spellings are accepted because both are natural: repeating the flag is
+    what a script does, a comma-separated list is what a person types.
+    """
+    names = []
+    for value in (getattr(args, 'specific_container', None) or []):
+        names.extend(part.strip() for part in str(value).split(',') if part.strip())
+    return names
+
+
+def container_matches_selection(container, selected):
+    """Whether this container takes part in the run.
+
+    An explicit selection wins over 'active'. Naming a container is a deliberate
+    act; skipping it because the YAML has it parked is the opposite of what was
+    asked - and from the TUI, where the operator just ticked it, it would look
+    like the tool ignored the click.
+    """
+    if selected:
+        return container.get('container_name') in selected
+    return bool(container.get('active', True))
+
+
 def parse_arguments():
     """Parse command line arguments."""
     parser = argparse.ArgumentParser(
@@ -797,6 +822,9 @@ Examples:
   python3 update_docker_odoo.py -c my_config.yaml     # Use custom config file
   python3 update_docker_odoo.py -v                    # Verbose output
   python3 update_docker_odoo.py -s live-odoo          # Update only specified container
+  python3 update_docker_odoo.py -s live-odoo,test-odoo  # Update several containers
+  python3 update_docker_odoo.py -s live-odoo --type F   # Override the YAML 'type' once
+  python3 update_docker_odoo.py -s live-odoo --comment "eq_stock"   # Note it in the log/history
   python3 update_docker_odoo.py --validate            # Only validate config, don't update
   python3 update_docker_odoo.py --dns-optimize        # Only optimize DNS configuration
   
@@ -851,10 +879,19 @@ Note: DNS optimization is automatically applied to containers if host DNS is not
                         action='store_true',
                         help='Increase output verbosity')
     
-    parser.add_argument('-s', '--specific-container',
-                        help='Update only the specified container')
-    
-    parser.add_argument('--validate', 
+    parser.add_argument('-s', '--specific-container', action='append', metavar='NAME',
+                        help='Update only the named container. Repeatable, and '
+                             'accepts a comma-separated list. A named container '
+                             'runs even when its "active" is false.')
+
+    parser.add_argument('--type', dest='update_type', choices=['M', 'F', 'N'],
+                        help="Runtime override of the container's 'type' for this "
+                             "run. The YAML file is not modified.")
+
+    parser.add_argument('--comment', metavar='TEXT',
+                        help='Recorded in the run log header and the run history')
+
+    parser.add_argument('--validate',
                         action='store_true',
                         help='Only validate the configuration without performing updates')
     
@@ -1975,23 +2012,37 @@ def main():
     total_warning_count = 0
     total_error_count = 0
     
+    # An unknown name is an error, not a silent no-op: a typo in `-s` would
+    # otherwise look exactly like a successful run that updated nothing.
+    selected = selected_container_names(args)
+    known = [c.get('container_name') for c in config['containers']]
+    unknown = [name for name in selected if name not in known]
+    if unknown:
+        logger.error(f"Unknown container(s) in --specific-container: {', '.join(unknown)}")
+        logger.error(f"Known containers: {', '.join(n for n in known if n)}")
+        return 1
+
     for container in config['containers']:
-        # Skip inactive containers
-        if not container.get('active', True):
-            logger.info(f"Skipping inactive container: {container.get('container_name', 'unknown')}")
+        container_name = container.get('container_name', 'unknown')
+
+        if not container_matches_selection(container, selected):
+            if selected:
+                logger.info(f"Skipping container {container_name} (not selected)")
+            else:
+                logger.info(f"Skipping inactive container: {container_name}")
             continue
-        
-        # Skip if specific container was specified and this isn't it
-        if args.specific_container and args.specific_container != container.get('container_name'):
-            logger.info(f"Skipping container {container.get('container_name')} (not specified in --specific-container)")
-            continue
-        
+
+        # A copy, so the override cannot reach the structure that
+        # save_updated_config() writes back.
+        if args.update_type:
+            container = dict(container, type=args.update_type)
+
         # Validate container configuration
         if validate_container_config(container):
             validate_count += 1
-            logger.info(f"Container configuration is valid: {container.get('container_name')}")
+            logger.info(f"Container configuration is valid: {container_name}")
         else:
-            logger.error(f"Invalid configuration for container: {container.get('container_name', 'unknown')}")
+            logger.error(f"Invalid configuration for container: {container_name}")
             failure_count += 1
             total_error_count += 1
             continue
@@ -2021,7 +2072,7 @@ def main():
             else:
                 failure_count += 1
         except Exception as e:
-            logger.error(f"Exception processing container {container.get('container_name', 'unknown')}: {e}")
+            logger.error(f"Exception processing container {container_name}: {e}")
             failure_count += 1
             total_error_count += 1
     
