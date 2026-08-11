@@ -120,6 +120,18 @@ class BackupAdditionalServiceTest(unittest.TestCase):
             c2b.compress_directory.call_args[0][1],
             "/opt/backups/custom-subdir/custom-subdir_2026-08-11_00-00-00")
 
+    def test_a_missing_source_path_is_skipped_not_a_keyerror(self):
+        # check_paths() warns about this before the run and aborts under cron
+        # or on the interactive default, but an operator answering 'y' to
+        # "continue anyway?" used to reach a bare service_config['source_path']
+        # here and get an unhandled KeyError instead of the clean skip the
+        # earlier warning implied.
+        service_config = {"backup_path": "nginx"}
+        c2b.backup_additional_service(
+            service_config, "/opt/backups", "2026-08-11_00-00-00", "nginx")
+
+        c2b.compress_directory.assert_not_called()
+
 
 if __name__ == "__main__":
     unittest.main()

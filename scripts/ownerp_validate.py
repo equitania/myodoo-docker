@@ -109,10 +109,18 @@ def positioned_loader():
             # dict first and fills it later, which would defeat the subclass.
             for key_node, value_node in node.value:
                 key = self.construct_object(key_node, deep=True)
-                try:
-                    data.key_lines[key] = key_node.start_mark.line + 1
-                except TypeError:      # an unhashable key - YAML allows it
-                    continue
+                if not isinstance(key, collections.abc.Hashable):
+                    # Same shape as PyYAML's own SafeConstructor.construct_
+                    # mapping(): a ConstructorError (a yaml.YAMLError
+                    # subclass) so load_positioned()'s existing
+                    # "except yaml.YAMLError" renders it like any other
+                    # syntax error, with a line number, instead of this
+                    # loader silently dropping the pair and reporting a
+                    # clean file that yaml.safe_load() cannot parse.
+                    raise yaml.constructor.ConstructorError(
+                        "while constructing a mapping", node.start_mark,
+                        "found unhashable key", key_node.start_mark)
+                data.key_lines[key] = key_node.start_mark.line + 1
                 data[key] = self.construct_object(value_node, deep=True)
             return data
 

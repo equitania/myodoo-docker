@@ -248,7 +248,7 @@ myodoo-docker/
 
 ### Key Components
 
-#### 1. getScripts.py (v9.11.0)
+#### 1. getScripts.py (v9.12.0)
 - **Purpose**: Main installation and update script
 - **Features**:
   - Lean console output: without `-v` only server-optimization status,
@@ -282,7 +282,7 @@ myodoo-docker/
   - Automated restart management
   - Module updates for Odoo
 
-#### 4. update_docker_odoo.py (v5.11.0)
+#### 4. update_docker_odoo.py (v5.12.0)
 - **Purpose**: Automated Docker container updates for v16+ Odoo instances
   (image rebuild, container re-creation, module update), driven by
   `docker2update.yaml`

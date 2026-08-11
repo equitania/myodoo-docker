@@ -113,6 +113,21 @@ class PositionedLoadingTest(unittest.TestCase):
         self.assertIsNone(data)
         self.assertIsNotNone(fatal)
 
+    def test_an_unhashable_key_is_a_fatal_finding_with_a_line(self):
+        # A key like "{a: 1}" is a mapping and cannot be a dict key.
+        # yaml.safe_load() raises ConstructorError for this (a YAMLError
+        # subclass), and load_positioned() must report the same fatal
+        # finding instead of silently dropping the key/value pair - a
+        # dropped pair here previously produced clean data where safe_load()
+        # (what update_docker_odoo.py actually calls) raises.
+        path = write(self.tmp.name, "c.yaml", "{a: 1}: stray\n")
+        data, fatal = ov.load_positioned(path)
+        self.assertIsNone(data)
+        self.assertIsNotNone(fatal)
+        self.assertEqual(fatal.severity, ov.ERROR)
+        self.assertGreater(fatal.line, 0)
+        self.assertIn("unhashable", fatal.message)
+
 
 class PortParsingTest(unittest.TestCase):
     def test_the_four_accepted_forms(self):

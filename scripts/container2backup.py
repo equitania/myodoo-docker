@@ -773,7 +773,15 @@ def backup_additional_service(service_config, base_backup_path, timestamp, servi
     if not service_config.get('enabled', True):
         return
 
-    source_path = os.path.expandvars(os.path.expanduser(service_config['source_path']))
+    # No safe default exists for an unknown source directory - backing up the
+    # wrong path is worse than backing up nothing, so this is a skip, not a
+    # fallback (unlike backup_path above, which has an obvious subdirectory).
+    raw_source_path = service_config.get('source_path')
+    if raw_source_path is None:
+        print(f"No source_path configured for service {service_name}, skipping backup.")
+        return
+
+    source_path = os.path.expandvars(os.path.expanduser(raw_source_path))
     if not os.path.exists(source_path):
         print(f"Source path {source_path} does not exist, skipping backup.")
         return
