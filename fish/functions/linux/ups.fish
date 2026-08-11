@@ -1,12 +1,13 @@
 # Update ownERP Scripts Function
-# Version 1.0.0 | 28.01.2026
+# Version 1.1.0 | 11.08.2026
 
-function ups --description "Update ownERP scripts from repository"
+function ups --description "Update ownERP scripts from repository (-v for full output)"
     echo "🔄 Updating ownERP scripts..."
     echo ""
 
-    # Run getScripts.py
-    sudo $HOME/getScripts.py
+    # Run getScripts.py - arguments are forwarded, so `ups -v` reaches the
+    # script's verbose mode instead of being swallowed here
+    sudo $HOME/getScripts.py $argv
 
     # Copy the updated getScripts.py
     sudo cp $HOME/myodoo-docker/getScripts.py $HOME/

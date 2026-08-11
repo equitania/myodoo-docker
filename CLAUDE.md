@@ -244,9 +244,13 @@ myodoo-docker/
 
 ### Key Components
 
-#### 1. getScripts.py (v6.7.1)
+#### 1. getScripts.py (v9.10.0)
 - **Purpose**: Main installation and update script
 - **Features**:
+  - Lean console output: without `-v` only server-optimization status,
+    warnings and errors reach the screen; every INFO line and all child
+    process output (apt, git, curl) go to `~/getscripts.log`. A failed command
+    puts the tail of its output back on screen. `ups -v` forwards the flag
   - Installs all dependencies and tools
   - Configures ZSH with extensive aliases
   - Sets up Docker management environment

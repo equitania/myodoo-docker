@@ -132,7 +132,8 @@ Verwaltungsskripte (inkl. `container2backup.py`, `update_docker_odoo.py`)
 nach `/root`. Wird vom Bootstrap automatisch ausgeführt; manuell:
 
 ```bash
-/root/getScripts.py                 # Installation / Update
+/root/getScripts.py                 # Installation / Update (schlanke Ausgabe)
+/root/getScripts.py -v              # dasselbe, mit jedem Schritt und jeder Befehlsausgabe
 /root/getScripts.py --dns-check     # DNS-Konfiguration pruefen/optimieren
 /root/getScripts.py --proxy-check   # Docker-Daemon-Proxy einrichten (Proxy-Kunden)
 /root/getScripts.py --reconfigure   # First-Run-Einstellungen erneut abfragen
@@ -858,7 +859,8 @@ management scripts (including `container2backup.py`, `update_docker_odoo.py`)
 into `/root`. Executed automatically by bootstrap; manually:
 
 ```bash
-/root/getScripts.py                 # install / update
+/root/getScripts.py                 # install / update (lean output)
+/root/getScripts.py -v              # the same, with every step and all command output
 /root/getScripts.py --dns-check     # check/optimize DNS configuration
 /root/getScripts.py --proxy-check   # set up Docker daemon proxy (proxy customers)
 /root/getScripts.py --reconfigure   # re-run first-run configuration

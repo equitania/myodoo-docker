@@ -38,26 +38,106 @@ from concurrent.futures import ThreadPoolExecutor, as_completed
 from datetime import datetime, timedelta
 import json
 
+##############################################################################
+# Logging and console verbosity
+#
+# The console output is deliberately lossy, the same trade-off
+# update_docker_odoo.py makes: an `ups` run touches a dozen tools and every one
+# of them has something to say, which buries the handful of lines an operator
+# actually needs. Without -v the console keeps server-optimization status,
+# warnings and errors; every INFO line and all child process output still go to
+# ~/getscripts.log, so a lean run stays diagnosable afterwards.
+#
+# STATUS sits between INFO and WARNING, so one handler level selects it
+# together with warnings and errors - no filter needed.
+##############################################################################
+
+STATUS = 25
+logging.addLevelName(STATUS, "STATUS")
+
+# Set from -v/--verbose (see set_verbosity). run_command() reads it to decide
+# whether a child process writes to the terminal or only to the log file.
+VERBOSE = False
+
+
+class ConsoleFormatter(logging.Formatter):
+    """Lean console format: the message alone, prefixed only when it is a
+    problem.
+
+    The timestamped format stays in the log file, where a pasted excerpt needs
+    to say when something happened. On screen the timestamp is the same column
+    on every line and carries nothing.
+    """
+
+    def format(self, record: logging.LogRecord) -> str:
+        message = record.getMessage()
+        if record.levelno < logging.WARNING:
+            return message
+        # Many messages start with blank lines for spacing - keep those in
+        # front of the marker instead of behind it.
+        body = message.lstrip('\n')
+        leading = message[:len(message) - len(body)]
+        return f"{leading}{record.levelname}: {body}"
+
+
 # Configure logging - always log to home directory to avoid polluting system dirs
 _log_file = os.path.join(os.path.expanduser("~"), "getscripts.log")
+
+# stdout, not the StreamHandler default: the install summary and the readiness
+# report are print()ed, so a handler on stderr would put the two halves of the
+# same run into two differently buffered streams - `ups > run.log 2>&1` then
+# reports things in an order they did not happen in. One stream, one order. The
+# level prefix is what marks a problem line now, not the file descriptor.
+_console_handler = logging.StreamHandler(sys.stdout)
+_console_handler.setFormatter(ConsoleFormatter())
+_console_handler.setLevel(STATUS)  # lean by default, lowered by -v
+
+_file_handler = logging.FileHandler(_log_file)
+_file_handler.setFormatter(logging.Formatter('%(asctime)s - %(levelname)s - %(message)s'))
+
 logging.basicConfig(
     level=logging.INFO,  # Default to INFO level
-    format='%(asctime)s - %(levelname)s - %(message)s',
-    handlers=[
-        logging.StreamHandler(),
-        logging.FileHandler(_log_file)
-    ]
+    handlers=[_console_handler, _file_handler]
 )
 logger = logging.getLogger(__name__)
 
+
+def set_verbosity(verbose: bool = False, debug: bool = False) -> None:
+    """Switch the console between lean and full output.
+
+    Only the console handler moves. The file handler is left alone on purpose:
+    the log file records the whole run either way, which is what makes dropping
+    lines from the screen safe.
+    """
+    global VERBOSE
+    VERBOSE = verbose or debug
+    if debug:
+        logger.setLevel(logging.DEBUG)
+        _console_handler.setLevel(logging.DEBUG)
+    elif verbose:
+        _console_handler.setLevel(logging.INFO)
+    else:
+        _console_handler.setLevel(STATUS)
+
+
+def status(message: str) -> None:
+    """Log a line that stays on the console in lean mode.
+
+    Reserved for what an operator needs to see without asking: the outcome of
+    a server optimization (DNS, proxy) and the few phase markers that say a run
+    is progressing. Everything else belongs on logger.info.
+    """
+    logger.log(STATUS, message)
+
+
 # Enable debug logging if environment variable is set
 if os.environ.get('GETSCRIPTS_DEBUG', '').lower() in ('1', 'true', 'yes'):
-    logger.setLevel(logging.DEBUG)
+    set_verbosity(debug=True)
     logger.debug("Debug logging enabled")
 
 # Script version and date
-SCRIPT_VERSION = "9.9.1"
-SCRIPT_DATE = "10.08.2026"
+SCRIPT_VERSION = "9.10.0"
+SCRIPT_DATE = "11.08.2026"
 
 # ─────────────────────────────────────────────────────────────────────────────
 # Install report
@@ -233,6 +313,10 @@ def print_header() -> None:
 ╚══════════════════════════════════════════════════════════════╝
 """
     print(header)
+    # First line of every run: a pasted log should say which version produced
+    # it and whether anything was left out of the screen.
+    mode = "verbose" if VERBOSE else "lean, -v for details"
+    print(f"  Mode: {mode}  ·  full log: {_log_file}\n")
     logger.info(f"Running getScripts.py version {SCRIPT_VERSION} ({SCRIPT_DATE})")
 
 def retry_on_exception(retries: int = 3, delay: int = 1):
@@ -1040,7 +1124,9 @@ def prompt_shell_change(_myhome: str) -> bool:
 
                 # Change shell
                 logger.info(f"Changing default shell to {fish_path}")
-                run_command(f"chsh -s {fish_path}", check=True)
+                # interactive: chsh asks for a password when the script is not
+                # run as root, and a captured prompt is an invisible prompt.
+                run_command(f"chsh -s {fish_path}", check=True, interactive=True)
                 logger.info("Default shell changed to Fish!")
                 print()
                 print("Please log out and log back in for the change to take effect.")
@@ -1397,26 +1483,97 @@ class InstallationError(Exception):
     """Custom exception for installation errors."""
     pass
 
-def run_command(command: str, check: bool = False, shell: bool = False, capture_output: bool = False, retries: int = 0) -> subprocess.CompletedProcess:
+# Cap for the failure excerpt: a failed `apt install` can emit hundreds of
+# lines, and a warning that scrolls is no better than no warning. The full
+# output is in the log file either way.
+CHILD_OUTPUT_EXCERPT_LINES = 20
+
+# Memoized: _may_capture() is consulted for every command and each miss would
+# otherwise cost a `sudo -n true` subprocess.
+_sudo_capture_ok: Optional[bool] = None
+
+
+def _decode_stream(raw) -> str:
+    """Decode a captured stdout/stderr stream, bytes or str."""
+    if not raw:
+        return ""
+    if isinstance(raw, bytes):
+        return raw.decode('utf-8', errors='replace')
+    return str(raw)
+
+
+def _may_capture(command: str) -> bool:
+    """Whether a command's output can be swallowed without hiding a prompt.
+
+    A captured password prompt is an invisible prompt: sudo still reads from
+    the terminal, so the run only appears to hang. Commands that may ask are
+    therefore streamed even in lean mode.
+    """
+    global _sudo_capture_ok
+    if not command.strip().startswith("sudo "):
+        return True
+    if _sudo_capture_ok is None:
+        _sudo_capture_ok = is_root_or_has_sudo()
+    return _sudo_capture_ok
+
+
+def _log_child_output(command: str, result: subprocess.CompletedProcess) -> None:
+    """Record a swallowed child's output in the log file.
+
+    Only called when this function did the capturing (lean mode). Under -v the
+    child writes to the terminal directly and nothing is captured, so there is
+    nothing here to duplicate.
+    """
+    for name in ("stdout", "stderr"):
+        text = _decode_stream(getattr(result, name, None)).strip()
+        if text:
+            logger.info(f"[{command}] {name}:\n{text}")
+
+
+def _child_output_excerpt(result: subprocess.CompletedProcess) -> str:
+    """The tail of a failed command's output, for the warning that reports it."""
+    lines: List[str] = []
+    for name in ("stdout", "stderr"):
+        lines.extend(_decode_stream(getattr(result, name, None)).strip().splitlines())
+    lines = [line for line in lines if line.strip()]
+    if not lines:
+        return ""
+    if len(lines) > CHILD_OUTPUT_EXCERPT_LINES:
+        dropped = len(lines) - CHILD_OUTPUT_EXCERPT_LINES
+        lines = [f"... {dropped} earlier line(s) in {_log_file}"] + lines[-CHILD_OUTPUT_EXCERPT_LINES:]
+    return "\n".join(lines)
+
+
+def run_command(command: str, check: bool = False, shell: bool = False, capture_output: bool = False, retries: int = 0, interactive: bool = False) -> subprocess.CompletedProcess:
     """Run a shell command with optional error checking and retry logic.
-    
+
     Args:
         command: Command to run
         check: Whether to raise exception on non-zero exit
         shell: Whether to run through shell
         capture_output: Whether to capture stdout/stderr
         retries: Number of retry attempts for transient failures
-        
+        interactive: Never swallow this command's output, even in lean mode -
+            for commands that talk to the operator (chsh)
+
     Returns:
         subprocess.CompletedProcess: Result of the command
-        
+
     Raises:
         CommandError: If command fails and check=True
     """
     # If the command contains shell operators like |, &&, ||, >, <, etc., force shell=True
     if any(op in command for op in ['|', '&&', '||', '>', '<', '>>', '<<']):
         shell = True
-    
+
+    # Child output (apt, git, curl, tar) is the bulk of what an `ups` run puts
+    # on screen, and none of it passes through the logger. In lean mode capture
+    # it so it lands in the log file instead, and put it back on screen only
+    # when the command failed - that is when it is worth reading.
+    quiet = (not capture_output and not interactive and not VERBOSE
+             and _may_capture(command))
+    do_capture = capture_output or quiet
+
     # Check if we're in a valid directory before running command
     try:
         os.getcwd()
@@ -1429,15 +1586,20 @@ def run_command(command: str, check: bool = False, shell: bool = False, capture_
         try:
             if shell:
                 logger.debug(f"Running shell command (attempt {attempt + 1}): {command}")
-                result = subprocess.run(command, shell=True, check=False, capture_output=capture_output)
+                result = subprocess.run(command, shell=True, check=False, capture_output=do_capture)
             else:
                 logger.debug(f"Running command (attempt {attempt + 1}): {command}")
-                result = subprocess.run(command.split(), check=False, capture_output=capture_output)
+                result = subprocess.run(command.split(), check=False, capture_output=do_capture)
+
+            if quiet:
+                _log_child_output(command, result)
 
             if result.returncode != 0:
                 error_msg = f"Command returned non-zero exit code: {result.returncode}"
-                if capture_output and result.stderr:
-                    error_msg += f"\nError output: {result.stderr.decode('utf-8', errors='replace')}"
+                if do_capture:
+                    excerpt = _child_output_excerpt(result)
+                    if excerpt:
+                        error_msg += f"\nOutput:\n{excerpt}"
 
                 if check:
                     raise CommandError(error_msg)
@@ -3079,9 +3241,9 @@ def optimize_dns_configuration(explicit_request: bool = False) -> bool:
     Returns:
         bool: True if optimization was applied, False otherwise
     """
-    logger.info("\n" + "="*60)
-    logger.info("DNS Configuration Check and Optimization")
-    logger.info("="*60)
+    status("\n" + "="*60)
+    status("DNS Configuration Check and Optimization")
+    status("="*60)
 
     # If explicitly requested via --dns-check, clear any previous decline marker
     if explicit_request:
@@ -3089,8 +3251,8 @@ def optimize_dns_configuration(explicit_request: bool = False) -> bool:
 
     # Check if optimization was previously declined (unless explicitly requested)
     if not explicit_request and is_dns_optimization_declined():
-        logger.info("\n✅ DNS optimization was previously declined")
-        logger.info("To reconsider, run: ./getScripts.py --dns-check")
+        status("\n✅ DNS optimization was previously declined")
+        status("To reconsider, run: ./getScripts.py --dns-check")
         return False
 
     # Get current DNS configuration
@@ -3100,23 +3262,23 @@ def optimize_dns_configuration(explicit_request: bool = False) -> bool:
     on_hetzner = is_hetzner_server()
     if on_hetzner:
         recommended_dns = ["185.12.64.2", "1.1.1.1", "9.9.9.9"]
-        logger.info("🏢 Hetzner server detected — using Hetzner DNS as primary (lowest latency)")
+        status("🏢 Hetzner server detected — using Hetzner DNS as primary (lowest latency)")
     else:
         recommended_dns = ["1.1.1.1", "8.8.8.8", "9.9.9.9"]
 
     # Display current configuration
-    logger.info("\nCurrent DNS Configuration:")
-    logger.info(f"- Nameservers: {', '.join(dns_info['resolv_conf']) if dns_info['resolv_conf'] else 'None'}")
-    logger.info(f"- systemd-resolved: {'Active' if dns_info['systemd_resolved'] else 'Inactive'}")
-    logger.info(f"- resolvconf: {'Active' if dns_info['resolvconf'] else 'Inactive'}")
-    logger.info(f"- NetworkManager: {'Active' if dns_info['networkmanager'] else 'Inactive'}")
+    status("\nCurrent DNS Configuration:")
+    status(f"- Nameservers: {', '.join(dns_info['resolv_conf']) if dns_info['resolv_conf'] else 'None'}")
+    status(f"- systemd-resolved: {'Active' if dns_info['systemd_resolved'] else 'Inactive'}")
+    status(f"- resolvconf: {'Active' if dns_info['resolvconf'] else 'Inactive'}")
+    status(f"- NetworkManager: {'Active' if dns_info['networkmanager'] else 'Inactive'}")
 
     # Display DNS performance results
     if dns_info["dns_performance"]:
-        logger.info("\nDNS Performance Test Results:")
+        status("\nDNS Performance Test Results:")
         for server_name, perf_data in dns_info["dns_performance"].items():
-            logger.info(f"- {server_name} ({perf_data['server']}): "
-                       f"{perf_data['avg_query_time_ms']}ms avg query time")
+            status(f"- {server_name} ({perf_data['server']}): "
+                   f"{perf_data['avg_query_time_ms']}ms avg query time")
 
     # Check if optimization is needed
     needs_optimization = False
@@ -3138,20 +3300,20 @@ def optimize_dns_configuration(explicit_request: bool = False) -> bool:
         if on_hetzner:
             # On Hetzner: Hetzner DNS as primary is OPTIMAL
             if primary_dns in hetzner_dns and already_optimized:
-                logger.info(f"\n✅ DNS is already optimized with Hetzner DNS ({primary_dns}) as primary")
+                status(f"\n✅ DNS is already optimized with Hetzner DNS ({primary_dns}) as primary")
             elif primary_dns in hetzner_dns and not already_optimized:
-                logger.info(f"\n✅ Hetzner DNS ({primary_dns}) is already primary (good for Hetzner servers)")
+                status(f"\n✅ Hetzner DNS ({primary_dns}) is already primary (good for Hetzner servers)")
                 # Check if secondary/tertiary are public DNS for redundancy
                 public_dns_present = any(dns in ["1.1.1.1", "8.8.8.8", "9.9.9.9"] for dns in current_dns[1:3])
                 if not public_dns_present:
-                    logger.info("ℹ️  Consider adding public DNS (Cloudflare/Quad9) as fallback for redundancy")
+                    status("ℹ️  Consider adding public DNS (Cloudflare/Quad9) as fallback for redundancy")
                     needs_optimization = True
             elif primary_dns in recommended_dns and already_optimized:
-                logger.info(f"\n✅ DNS is already optimized with {primary_dns} as primary")
+                status(f"\n✅ DNS is already optimized with {primary_dns} as primary")
             elif primary_dns in ["1.1.1.1", "8.8.8.8", "9.9.9.9"]:
                 # Public DNS is primary on Hetzner — recommend Hetzner as primary for better latency
-                logger.info(f"\nℹ️  Public DNS ({primary_dns}) is primary, but Hetzner DNS would be faster")
-                logger.info("   Hetzner DNS (185.12.64.2) has lowest latency on Hetzner infrastructure")
+                status(f"\nℹ️  Public DNS ({primary_dns}) is primary, but Hetzner DNS would be faster")
+                status("   Hetzner DNS (185.12.64.2) has lowest latency on Hetzner infrastructure")
                 needs_optimization = True
             else:
                 logger.warning("\n⚠️  Non-optimal DNS configuration detected on Hetzner server")
@@ -3159,9 +3321,9 @@ def optimize_dns_configuration(explicit_request: bool = False) -> bool:
         else:
             # Not on Hetzner: Hetzner DNS is a problem (e.g. DigitalOcean)
             if primary_dns in recommended_dns and already_optimized:
-                logger.info(f"\n✅ DNS is already optimized with {primary_dns} as primary DNS server")
+                status(f"\n✅ DNS is already optimized with {primary_dns} as primary DNS server")
             elif primary_dns in recommended_dns and not already_optimized:
-                logger.info(f"\n✅ DNS appears to be manually optimized with {primary_dns} as primary DNS server")
+                status(f"\n✅ DNS appears to be manually optimized with {primary_dns} as primary DNS server")
                 if any(dns in hetzner_dns for dns in current_dns[:2]):
                     logger.warning("\n⚠️  Detected Hetzner DNS servers in primary/secondary positions")
                     needs_optimization = True
@@ -3173,7 +3335,7 @@ def optimize_dns_configuration(explicit_request: bool = False) -> bool:
         # needs_optimization already True (e.g. MAXNS violation)
         # Provide additional context but skip "already optimized" messages
         if on_hetzner and primary_dns not in ["185.12.64.2"]:
-            logger.info("ℹ️  Hetzner DNS (185.12.64.2) would provide lowest latency as primary")
+            status("ℹ️  Hetzner DNS (185.12.64.2) would provide lowest latency as primary")
 
     # Check if current DNS is slow
     if dns_info["dns_performance"]:
@@ -3184,11 +3346,11 @@ def optimize_dns_configuration(explicit_request: bool = False) -> bool:
 
     # Check if Docker DNS (127.0.0.11) is being used
     if "127.0.0.11" in current_dns:
-        logger.info("\n📦 Detected Docker container environment (DNS: 127.0.0.11)")
-        logger.info("For Docker containers, DNS should be configured in docker-compose.yml or docker run command")
+        status("\n📦 Detected Docker container environment (DNS: 127.0.0.11)")
+        status("For Docker containers, DNS should be configured in docker-compose.yml or docker run command")
 
     if not needs_optimization and "127.0.0.11" not in current_dns:
-        logger.info("\n✅ DNS configuration appears to be optimal")
+        status("\n✅ DNS configuration appears to be optimal")
         return False
 
     # Build DNS description strings for display
@@ -3201,13 +3363,13 @@ def optimize_dns_configuration(explicit_request: bool = False) -> bool:
     dns_labels = ["Primary", "Secondary", "Tertiary"]
 
     # Ask user if they want to optimize
-    logger.info("\n" + "-"*60)
-    logger.info("DNS Optimization Recommended")
-    logger.info("-"*60)
-    logger.info("\nRecommended DNS servers for better performance:")
+    status("\n" + "-"*60)
+    status("DNS Optimization Recommended")
+    status("-"*60)
+    status("\nRecommended DNS servers for better performance:")
     for i, dns in enumerate(recommended_dns[:3]):
         desc = dns_descriptions.get(dns, dns)
-        logger.info(f"- {dns_labels[i]}: {dns} ({desc})")
+        status(f"- {dns_labels[i]}: {dns} ({desc})")
 
     # Build FallbackDNS based on context
     fallback_dns = "8.8.4.4 1.0.0.1"
@@ -3218,7 +3380,7 @@ def optimize_dns_configuration(explicit_request: bool = False) -> bool:
 
     # Different optimization based on DNS management system
     if dns_info["systemd_resolved"]:
-        logger.info("\nOptimization method: systemd-resolved configuration")
+        status("\nOptimization method: systemd-resolved configuration")
         optimization_commands = [
             "sudo mkdir -p /etc/systemd/resolved.conf.d",
             f'''sudo tee /etc/systemd/resolved.conf.d/dns-optimization.conf > /dev/null << EOF
@@ -3233,7 +3395,7 @@ EOF''',
             "sudo systemctl restart systemd-resolved"
         ]
     elif dns_info["resolvconf"]:
-        logger.info("\nOptimization method: resolvconf configuration")
+        status("\nOptimization method: resolvconf configuration")
         optimization_commands = [
             f'''sudo tee /etc/resolvconf/resolv.conf.d/head > /dev/null << EOF
 # Optimized DNS servers - managed by getScripts.py
@@ -3242,9 +3404,9 @@ EOF''',
             "sudo resolvconf -u"
         ]
     else:
-        logger.info("\nOptimization method: direct resolv.conf modification")
-        logger.info("\nNote: /etc/resolv.conf will be made immutable to prevent automatic changes")
-        logger.info("To manually edit later, first run: sudo chattr -i /etc/resolv.conf")
+        status("\nOptimization method: direct resolv.conf modification")
+        status("\nNote: /etc/resolv.conf will be made immutable to prevent automatic changes")
+        status("To manually edit later, first run: sudo chattr -i /etc/resolv.conf")
         optimization_commands = [
             # Backup existing resolv.conf
             "sudo cp /etc/resolv.conf /etc/resolv.conf.backup.$(date +%Y%m%d_%H%M%S)",
@@ -3268,59 +3430,59 @@ EOF''',
     if "127.0.0.11" in current_dns:
         docker_dns_flags = ' '.join([f"--dns {dns}" for dns in recommended_dns[:3]])
         docker_dns_yaml = '\n'.join([f"      - {dns}" for dns in recommended_dns[:3]])
-        logger.info("\n📋 For Docker containers, add this to your docker-compose.yml:")
-        logger.info(f"""
+        status("\n📋 For Docker containers, add this to your docker-compose.yml:")
+        status(f"""
 services:
   your-service:
     dns:
 {docker_dns_yaml}
 """)
-        logger.info("\n📋 Or use these flags with docker run:")
-        logger.info(f"docker run {docker_dns_flags} ...")
+        status("\n📋 Or use these flags with docker run:")
+        status(f"docker run {docker_dns_flags} ...")
         return False
 
     # Ask for confirmation
     try:
         response = input("\nDo you want to apply DNS optimization? (y/N): ").strip().lower()
         if response != 'y':
-            logger.info("DNS optimization skipped")
+            status("DNS optimization skipped")
             # Remember this decision (unless explicitly requested with --dns-check)
             if not explicit_request:
                 mark_dns_optimization_declined()
-                logger.info("This decision has been saved. To reconsider, run: ./getScripts.py --dns-check")
+                status("This decision has been saved. To reconsider, run: ./getScripts.py --dns-check")
             return False
     except KeyboardInterrupt:
-        logger.info("\nDNS optimization cancelled")
+        status("\nDNS optimization cancelled")
         # Remember this decision (unless explicitly requested with --dns-check)
         if not explicit_request:
             mark_dns_optimization_declined()
-            logger.info("\nThis decision has been saved. To reconsider, run: ./getScripts.py --dns-check")
+            status("\nThis decision has been saved. To reconsider, run: ./getScripts.py --dns-check")
         return False
 
     # Apply optimization
-    logger.info("\nApplying DNS optimization...")
+    status("\nApplying DNS optimization...")
     try:
         for cmd in optimization_commands:
             logger.info(f"Running: {cmd[:50]}...")
             run_command(cmd, shell=True, check=True)
 
         # Test new configuration
-        logger.info("\nTesting new DNS configuration...")
+        status("\nTesting new DNS configuration...")
         time.sleep(2)  # Wait for changes to take effect
 
         new_dns_info = check_dns_configuration()
         if new_dns_info["dns_performance"]:
             new_perf = new_dns_info["dns_performance"].get("current", {})
             if new_perf:
-                logger.info(f"New DNS query time: {new_perf['avg_query_time_ms']}ms")
+                status(f"New DNS query time: {new_perf['avg_query_time_ms']}ms")
 
-        logger.info("\n✅ DNS optimization completed successfully!")
-        logger.info("Note: For containers, remember to add DNS configuration to docker-compose.yml")
+        status("\n✅ DNS optimization completed successfully!")
+        status("Note: For containers, remember to add DNS configuration to docker-compose.yml")
         return True
 
     except Exception as e:
         logger.error(f"Error applying DNS optimization: {e}")
-        logger.info("You can manually optimize DNS by editing the appropriate configuration files")
+        status("You can manually optimize DNS by editing the appropriate configuration files")
         return False
 
 
@@ -3617,8 +3779,14 @@ def update_repository(myodoo_docker: str, server_version: str) -> None:
     after_pull = subprocess.check_output(["git", "rev-parse", "HEAD"], text=True).strip()
 
     if before_pull != after_pull:
-        logger.info("Repository updated, new changes downloaded")
-        run_command("git --no-pager log --oneline --no-decorate HEAD@{1}..HEAD")
+        status("Repository updated, new changes downloaded")
+        # Kept on screen in lean mode: the commit subjects are what an operator
+        # reads to know what this run actually brought in, and there are only
+        # ever a handful of them.
+        log_result = run_command("git --no-pager log --oneline --no-decorate HEAD@{1}..HEAD",
+                                 capture_output=True)
+        for line in _decode_stream(log_result.stdout).strip().splitlines():
+            status(f"  {line}")
 
     # Clean pyc files
     run_command("find . -name '*.pyc' -type f -delete")
@@ -3792,6 +3960,10 @@ def update_uv_via_self_update() -> None:
 
 def install_packages(package_info: Dict[str, Any]) -> None:
     """Install all required packages."""
+    # A phase marker, not a detail: in lean mode apt/uv output no longer
+    # reaches the screen, and this is the longest silence of the run.
+    status("Installing and updating tools and packages...")
+
     # Install required system packages for Python virtual environments
     if not is_package_installed("python3-venv"):
         logger.info("Installing python3-venv...")
@@ -3895,7 +4067,7 @@ def main() -> None:
         # FISH SHELL SETUP (New in v7.0.0)
         # =====================================================================
         logger.info("=" * 60)
-        logger.info("Setting up Fish shell environment...")
+        status("Setting up Fish shell environment...")
         logger.info("=" * 60)
 
         # Install Fish shell 4.0+ from official repository
@@ -4003,10 +4175,10 @@ def main() -> None:
         # Server readiness: what is installed vs. what this server still needs.
         print_readiness_report(_myhome)
 
-        logger.info("")
-        logger.info("=" * 60)
-        logger.info("Script completed successfully!")
-        logger.info("=" * 60)
+        status("")
+        status("=" * 60)
+        status("Script completed successfully!")
+        status("=" * 60)
         if fish_installed:
             logger.info("Fish shell is now configured. Start it with: fish")
             logger.info("Or log out and back in if you changed your default shell.")
@@ -4130,7 +4302,7 @@ def apply_proxy_settings(config: dict) -> bool:
             f.write(f"http_proxy={http_proxy}\n")
             f.write(f"https_proxy={https_proxy}\n")
             f.write(f"no_proxy={no_proxy}\n")
-        logger.info("Proxy configuration saved")
+        status("Proxy configuration saved")
     except Exception as e:
         logger.error(f"Failed to save proxy configuration: {e}")
         success = False
@@ -4161,7 +4333,7 @@ set -gx NO_PROXY "{no_proxy}"
     try:
         with open(proxy_fish, 'w') as f:
             f.write(fish_content)
-        logger.info("Fish proxy configuration applied")
+        status("Fish proxy configuration applied")
     except Exception as e:
         logger.error(f"Failed to apply Fish proxy configuration: {e}")
         success = False
@@ -4192,7 +4364,7 @@ set -gx NO_PROXY "{no_proxy}"
             new_content = '\n'.join(line for line in lines if line.strip())
 
             subprocess.run(["sudo", "tee", env_file], input=new_content.encode(), check=True, stdout=subprocess.DEVNULL)
-            logger.info("System environment proxy configuration applied")
+            status("System environment proxy configuration applied")
         except Exception as e:
             logger.warning(f"Could not apply system-wide proxy: {e}")
 
@@ -4218,7 +4390,7 @@ set -gx NO_PROXY "{no_proxy}"
             subprocess.run(["sudo", "mkdir", "-p", dropin_dir], check=True)
             subprocess.run(["sudo", "tee", dropin_file], input=dropin_content.encode(), check=True, stdout=subprocess.DEVNULL)
             subprocess.run(["sudo", "systemctl", "daemon-reload"], check=True)
-            logger.info("Docker daemon proxy drop-in written")
+            status("Docker daemon proxy drop-in written")
             # Deliberately no automatic restart: restarting dockerd restarts
             # all containers. The operator must schedule this.
             print("\n⚠️  Docker-Daemon-Proxy geschrieben - wird erst nach")
@@ -4340,7 +4512,7 @@ def apply_dns_servers(dns_servers: List[str]) -> bool:
         logger.warning(f"Truncating {len(dns_servers)} DNS servers to max 3 (Linux MAXNS limit)")
         dns_servers = dns_servers[:3]
 
-    logger.info(f"\nKonfiguriere DNS-Server: {', '.join(dns_servers)}")
+    status(f"\nKonfiguriere DNS-Server: {', '.join(dns_servers)}")
 
     # Get current DNS configuration to determine method
     dns_info = check_dns_configuration()
@@ -4351,7 +4523,7 @@ def apply_dns_servers(dns_servers: List[str]) -> bool:
 
     try:
         if dns_info["systemd_resolved"]:
-            logger.info("Methode: systemd-resolved")
+            status("Methode: systemd-resolved")
             config_content = f"""[Resolve]
 DNS={dns_list}
 FallbackDNS=8.8.4.4 1.0.0.1
@@ -4365,7 +4537,7 @@ CacheFromLocalhost=yes
             run_command("sudo systemctl restart systemd-resolved", check=True)
 
         elif dns_info["resolvconf"]:
-            logger.info("Methode: resolvconf")
+            status("Methode: resolvconf")
             config_content = f"""# DNS servers - managed by getScripts.py
 {dns_nameservers}
 """
@@ -4373,7 +4545,7 @@ CacheFromLocalhost=yes
             run_command("sudo resolvconf -u", check=True)
 
         else:
-            logger.info("Methode: direkte /etc/resolv.conf Modifikation")
+            status("Methode: direkte /etc/resolv.conf Modifikation")
             config_content = f"""# DNS configuration - managed by getScripts.py
 # Date: {datetime.now().strftime('%Y-%m-%d')}
 # To modify: sudo chattr -i /etc/resolv.conf
@@ -4392,7 +4564,7 @@ options timeout:2 attempts:3 rotate
             f.write(f"DNS optimized on {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}\n")
             f.write(f"Servers: {', '.join(dns_servers)}\n")
 
-        logger.info("✅ DNS-Konfiguration erfolgreich angewendet!")
+        status("✅ DNS-Konfiguration erfolgreich angewendet!")
         return True
 
     except Exception as e:
@@ -4448,8 +4620,12 @@ if __name__ == "__main__":
                        help="Clear all cached version information")
     parser.add_argument("--no-cache", action="store_true",
                        help="Disable cache for this run")
+    parser.add_argument("-v", "--verbose", action="store_true",
+                       help="Show every step and all command output on the "
+                            "console (lean by default; the full run is always "
+                            "in ~/getscripts.log)")
     parser.add_argument("--debug", action="store_true",
-                       help="Enable debug logging")
+                       help="Enable debug logging (implies --verbose)")
     parser.add_argument("--dns-check", action="store_true",
                        help="Only check and optimize DNS configuration")
     parser.add_argument("--proxy-check", action="store_true",
@@ -4461,8 +4637,12 @@ if __name__ == "__main__":
 
     args = parser.parse_args()
 
-    if args.debug:
-        logger.setLevel(logging.DEBUG)
+    # Verbosity first: everything below already logs, and the header printed by
+    # setup_environment() reports which mode the run is in.
+    # getEffectiveLevel(), not .level: GETSCRIPTS_DEBUG=1 already switched the
+    # logger to DEBUG at import time and must not be reset here.
+    set_verbosity(verbose=args.verbose,
+                  debug=args.debug or logger.getEffectiveLevel() <= logging.DEBUG)
 
     if args.clear_cache:
         clear_cache()

@@ -1,5 +1,50 @@
 # Release Notes
 
+## `ups` Says Only What Matters (11.08.2026)
+
+*getScripts.py v9.10.0, fish/functions/linux/ups.fish v1.1.0*
+
+### Changed
+- **The console output is now lean, like `update_docker_odoo.py`'s.** An `ups`
+  run touches a dozen tools and every one of them has something to say — apt,
+  git, curl, tar and uv all write straight to the terminal, none of it through
+  the logger — which buried the handful of lines an operator actually needs.
+  Without `-v` the console keeps three things: the status of server
+  optimizations (DNS, proxy, repository, phase markers), warnings, and errors.
+  Everything else moves to `~/getscripts.log`.
+- **Nothing is lost, only moved.** The file handler is untouched and still
+  records the whole run at INFO, including the child output the console no
+  longer shows — that is what makes dropping lines from the screen safe. The
+  header of every run names its mode and the log path, so a pasted excerpt says
+  what was left out.
+- **A failed command puts its output back on screen.** In lean mode a child's
+  output is captured rather than streamed; on a non-zero exit the tail of it
+  (capped at 20 lines, the rest pointed at in the log) is appended to the
+  warning that reports the failure. Silence is for commands that worked.
+- **`ups` forwards its arguments**, so `ups -v` reaches the script instead of
+  being swallowed by the function.
+
+### Added
+- **`-v` / `--verbose`** restores the old behaviour: every INFO line on screen
+  and every child process streaming live. `--debug` implies it, and
+  `GETSCRIPTS_DEBUG=1` still works — the flag handling reads
+  `getEffectiveLevel()` so it cannot reset what the environment variable set.
+- **A `STATUS` log level (25)**, between INFO and WARNING, so a single handler
+  level selects status lines together with warnings and errors — no filter, no
+  second output channel.
+- **`tests/test_getscripts_output.py`** — 15 tests covering the level split,
+  the log file's completeness, the failure excerpt and its cap.
+
+### Notes
+- **Commands that may prompt are never swallowed.** A captured password prompt
+  is an invisible prompt: sudo still reads from the terminal, so the run only
+  appears to hang. `chsh` is marked `interactive=True`, and a `sudo …` command
+  is streamed whenever passwordless sudo is unavailable.
+- The change lives in `getScripts.py` itself. `scripts/lib/` carries a
+  near-identical copy of the logging setup and was left untouched: nothing
+  imports it, so a change applied there would pass every check and reach no
+  server. See the dead-code note under v9.9.0.
+
 ## The Keyring apt Was Not Allowed to Read (10.08.2026)
 
 *getScripts.py v9.9.1*
