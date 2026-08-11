@@ -244,7 +244,7 @@ myodoo-docker/
 
 ### Key Components
 
-#### 1. getScripts.py (v9.10.0)
+#### 1. getScripts.py (v9.11.0)
 - **Purpose**: Main installation and update script
 - **Features**:
   - Lean console output: without `-v` only server-optimization status,
@@ -278,7 +278,31 @@ myodoo-docker/
   - Automated restart management
   - Module updates for Odoo
 
-#### 4. odoo_build_cache.py (v1.5.0)
+#### 4. update_docker_odoo.py (v5.11.0)
+- **Purpose**: Automated Docker container updates for v16+ Odoo instances
+  (image rebuild, container re-creation, module update), driven by
+  `docker2update.yaml`
+- **Features**:
+  - Full run log per container in the build folder, with configurable
+    retention (`log_retention_days`, default 90 days)
+  - Run history in `~/update-history.jsonl` (one line per container run,
+    `defaults.history_retention_days`, 365 default, 0 = forever)
+  - `-s` repeatable/comma-separated and stronger than `active: false`
+  - `--type M|F|N` overrides the YAML mode for one run, `--comment TEXT` is
+    recorded in the history and the run log header
+  - Proxy support (`defaults.proxy`, `pre_build_files`); calls
+    `odoo_build_cache.py sync` before the build
+
+#### 5. ownerp_tui.py (v1.0.0)
+- **Purpose**: curses TUI for picking systems, mode and a run comment
+- **Started with**: `tui`, or `doup` when `~/.ownerp_tui_default` exists
+- **Never writes to the YAML** — `active:`/`type:` are read as the
+  pre-selection, the run is passed as arguments (`-s`, `--type`, `--comment`)
+- **One runner invocation per mode group**, sequential, worst exit code wins
+- **Refuses without a TTY**, on `TERM=dumb`, or below 80×20 — cron always gets
+  the classic runner
+
+#### 6. odoo_build_cache.py (v1.5.0)
 - **Purpose**: Host-side cache of Odoo release archives, shared by every instance
 - **Why**: `build_odoo.py` runs inside the build container and re-downloads all
   several hundred archives on every build; the Docker layer holding them is

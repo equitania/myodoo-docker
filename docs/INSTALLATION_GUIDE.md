@@ -372,6 +372,27 @@ Nützliche Optionen: `doup --validate` (Config prüfen), `-s CONTAINER`
 (einzelner Container), `-v` (verbose). **Proxy-Kunden:** `defaults.proxy` und
 `pre_build_files` in der YAML, Daemon-Proxy via `getScripts.py --proxy-check`.
 
+### TUI-Modus
+
+`tui` startet die Auswahlmaske: alle Systeme aus `docker2update.yaml` mit Modus
+und letztem Lauf. Space wählt aus, `m` schaltet den Modus (M/F/N), `c` hinterlegt
+einen Kommentar, Enter startet. Die YAML wird dabei **nicht** verändert — Haken
+und Modus gelten nur für diesen Lauf.
+
+```bash
+tui                                  # Auswahlmaske
+doup                                 # klassisch, oder TUI wenn als Standard gesetzt
+doup -s live-odoo --type F           # ohne TUI, ein System, Modus einmalig
+doup -s live-odoo --comment "eq_stock nachgezogen"
+```
+
+Mit `d` in der Maske (oder `ownerp_tui.py --make-default`) wird die TUI zum
+Standard für `doup`. Mit Argumenten oder ohne Terminal läuft immer das klassische
+Skript — ein Cronjob kann nie in der Maske hängenbleiben.
+
+Jeder Lauf landet in `~/update-history.jsonl`: wann, welches System, welcher
+Modus, welches Ergebnis, welcher Kommentar.
+
 **Protokoll jedes Laufs.** Unabhängig von `-v` schreibt jeder Lauf eine
 vollständige Logdatei in den Build-Ordner der Instanz:
 `~/docker-builds/<name>/update_JJJJMMTT_HHMMSS.log`. Sie enthält auch die
@@ -526,7 +547,7 @@ Alle Skripte des Repos (`scripts/`, Stand 16.07.2026):
 | `ngx-conf-wizard.sh` (1.1.0) | Interaktiver YAML-Assistent für nginx-set-conf | `./ngx-conf-wizard.sh` |
 | `pg-local-deploy.sh` (1.2.1) | PostgreSQL-Container interaktiv deployen (Profile, optional SSL) | `./pg-local-deploy.sh` |
 | `fr-local-deploy.sh` | FastReport-API-Container deployen (Default `/opt/fast-report`) | `./fr-local-deploy.sh` |
-| `update_docker_odoo.py` (5.10.0) | Odoo-Container-Updates per YAML | `doup` bzw. `python3 update_docker_odoo.py [-s NAME] [--validate]` |
+| `update_docker_odoo.py` (5.11.0) | Odoo-Container-Updates per YAML | `doup` bzw. `python3 update_docker_odoo.py [-s NAME] [--validate]` |
 | `odoo_build_cache.py` (1.5.0) | Release-Archiv-Cache aller Instanzen; pflegt zusätzlich Dockerfile und `odoo.conf` des Build-Ordners | von `doup` aufgerufen; `~/odoo_build_cache.py stats\|gc [--days 30]` |
 | `container2backup.py` (4.7.1) | SQL+Filestore-Backups, Kompression/Verschlüsselung/Streaming | `dobk` bzw. `~/container2backup.py [--sql-only]` |
 | `restore-zip.sh` (2.1.0) | Backup-Restore (DB + Filestore) in Docker | siehe [Kapitel 13](#de-13-restore--notfall) |
@@ -1101,6 +1122,27 @@ Useful options: `doup --validate` (check config), `-s CONTAINER` (single
 container), `-v` (verbose). **Proxy customers:** `defaults.proxy` and
 `pre_build_files` in the YAML, daemon proxy via `getScripts.py --proxy-check`.
 
+### TUI mode
+
+`tui` opens the selection screen: every system from `docker2update.yaml` with its
+mode and its last run. Space selects, `m` cycles the mode (M/F/N), `c` records a
+comment, Enter starts. The YAML is **not** modified — ticks and mode apply to
+this run only.
+
+```bash
+tui                                  # selection screen
+doup                                 # classic, or the TUI when set as default
+doup -s live-odoo --type F           # no TUI, one system, mode just this once
+doup -s live-odoo --comment "pulled in eq_stock"
+```
+
+`d` in the screen (or `ownerp_tui.py --make-default`) makes the TUI the default
+for `doup`. With arguments, or without a terminal, the classic script always runs
+— no cron job can end up waiting in the screen.
+
+Every run is recorded in `~/update-history.jsonl`: when, which system, which
+mode, which result, which comment.
+
 **Every run leaves a log.** Regardless of `-v`, each run writes a full log into
 the instance's build folder: `~/docker-builds/<name>/update_YYYYMMDD_HHMMSS.log`.
 It includes the INFO lines the console withholds without `-v` — which is exactly
@@ -1252,7 +1294,7 @@ All scripts in this repository (`scripts/`, as of 16.07.2026):
 | `ngx-conf-wizard.sh` (1.1.0) | Interactive YAML wizard for nginx-set-conf | `./ngx-conf-wizard.sh` |
 | `pg-local-deploy.sh` (1.2.1) | Deploy a PostgreSQL container interactively (profiles, optional SSL) | `./pg-local-deploy.sh` |
 | `fr-local-deploy.sh` | Deploy the FastReport API container (default `/opt/fast-report`) | `./fr-local-deploy.sh` |
-| `update_docker_odoo.py` (5.10.0) | Odoo container updates via YAML | `doup` or `python3 update_docker_odoo.py [-s NAME] [--validate]` |
+| `update_docker_odoo.py` (5.11.0) | Odoo container updates via YAML | `doup` or `python3 update_docker_odoo.py [-s NAME] [--validate]` |
 | `odoo_build_cache.py` (1.5.0) | Release archive cache shared by all instances; also maintains the build folder's Dockerfile and `odoo.conf` | called by `doup`; `~/odoo_build_cache.py stats\|gc [--days 30]` |
 | `container2backup.py` (4.7.1) | SQL+filestore backups, compression/encryption/streaming | `dobk` or `~/container2backup.py [--sql-only]` |
 | `restore-zip.sh` (2.1.0) | Backup restore (DB + filestore) into Docker | see [chapter 13](#en-13-restore--emergency) |

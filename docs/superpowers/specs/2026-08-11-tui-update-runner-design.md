@@ -1,6 +1,6 @@
 # TUI Update Runner — Design
 
-*11.08.2026 · building block 1 of 3 · status: approved, not yet implemented*
+*11.08.2026 · building block 1 of 3 · status: implemented*
 
 Written in English like the rest of the repository's documentation. The
 conversation that produced it was German; the artefact follows the repo rule.

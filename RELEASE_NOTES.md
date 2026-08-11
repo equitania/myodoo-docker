@@ -1,5 +1,55 @@
 # Release Notes
 
+## Picking Systems Instead of Editing YAML (11.08.2026)
+
+*ownerp_tui.py v1.0.0, update_docker_odoo.py v5.11.0, getScripts.py v9.11.0*
+
+### Added
+- **A TUI for ad-hoc updates**, started with `tui`. It lists every system from
+  `docker2update.yaml` with its mode and its last run, and hands the selection
+  to `update_docker_odoo.py`. Selecting a system for one run used to mean
+  editing `active:` and `type:` with mcedit and editing them back afterwards —
+  with twenty systems that is where mistakes come from, because the file is
+  left in a state nobody intended and the next scheduled run acts on it.
+- **The TUI never writes to the YAML.** Ticks and modes are read from `active:`
+  and `type:` as a starting point; the run itself is passed as arguments. There
+  is nothing to turn back afterwards, and the heavily commented config — which
+  is the documentation for these files — is never at risk.
+- **`~/update-history.jsonl`**: one line per container run — what ran when, in
+  which mode, with which result, duration, log path and comment. Written by the
+  runner, so classic and cron runs are recorded too, which is the whole point of
+  a central file. Retention via `defaults.history_retention_days`, 365 days by
+  default, `0` keeps everything.
+- **`--comment TEXT`** is recorded in the history and in the run log header,
+  where whoever opens that log a month later reads why the run happened.
+- **`--type M|F|N`** overrides the YAML mode for one run without touching it.
+  Since it applies per invocation, a selection with mixed modes becomes one
+  runner call per mode, run in order.
+
+### Changed
+- **`-s` takes several names**, repeated or comma-separated. `-s live-odoo`
+  keeps working exactly as before.
+- **`doup` becomes a function** that starts the TUI only when all three
+  conditions hold: no arguments, an interactive shell, and
+  `~/.ownerp_tui_default` present (toggled with `d` in the TUI, or
+  `ownerp_tui.py --make-default`). Arguments and non-interactive shells always
+  reach the runner directly — no cron job can end up waiting inside a TUI.
+
+### Fixed
+- **`-s` now overrides `active: false`.** The container loop checked `active`
+  before the `-s` match, so an explicitly named but parked container was skipped
+  without a word. Naming a container is a deliberate act. An unknown name is now
+  an error instead of a run that silently updates nothing.
+
+### Notes
+- Stdlib `curses`, no new dependency: the root-run scripts use system Python,
+  PEP 668 makes `pip install` as root fail, and `python3-textual` is not
+  available across all target distributions.
+- Blocks two and three of the design — schema validation and the guided
+  assistants for onboarding and backup configuration — are specified in
+  `docs/superpowers/specs/2026-08-11-tui-update-runner-design.md` and not yet
+  built. `v` in the TUI calls the existing `--validate` until then.
+
 ## `ups` Says Only What Matters (11.08.2026)
 
 *getScripts.py v9.10.0, fish/functions/linux/ups.fish v1.1.0*
