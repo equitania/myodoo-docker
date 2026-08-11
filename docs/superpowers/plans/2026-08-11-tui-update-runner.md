@@ -1811,20 +1811,30 @@ Expected: `FISH OK`
 
 - [ ] **Step 6: Verify the switch picks correctly**
 
-```bash
-fish -c '
-    set -g HOME /tmp/doup-test; mkdir -p $HOME
-    function status; return 1; end          # pretend: not interactive
-    source fish/functions/linux/doup.fish
-    functions doup | grep -c ownerp_tui.py
-'
-```
-Expected: `1` — the function contains the TUI branch. Then verify the marker logic in isolation:
+Stub both targets in a throwaway `$HOME` so the function announces which one it
+picked, then walk the truth table. `fish -i -c` makes `status is-interactive`
+true, which is what separates the operator's shell from cron:
 
 ```bash
-test -f /tmp/doup-test/.ownerp_tui_default; echo "marker present: $status"
+rm -rf /tmp/doup-test && mkdir -p /tmp/doup-test
+printf '#!/bin/sh\necho "REACHED=tui args=$*"\n' > /tmp/doup-test/ownerp_tui.py
+printf '#!/bin/sh\necho "REACHED=runner args=$*"\n' > /tmp/doup-test/update_docker_odoo.py
+chmod +x /tmp/doup-test/*.py
+touch /tmp/doup-test/.ownerp_tui_default
+
+HOME=/tmp/doup-test fish    -c 'source fish/functions/linux/doup.fish; doup'
+HOME=/tmp/doup-test fish    -c 'source fish/functions/linux/doup.fish; doup -s live-odoo'
+HOME=/tmp/doup-test fish -i -c 'source fish/functions/linux/doup.fish; doup'
+HOME=/tmp/doup-test fish -i -c 'source fish/functions/linux/doup.fish; doup -s live-odoo'
+rm -f /tmp/doup-test/.ownerp_tui_default
+HOME=/tmp/doup-test fish -i -c 'source fish/functions/linux/doup.fish; doup'
 ```
-Expected: `marker present: 1` (absent → `doup` would run the classic runner)
+
+Expected, in order: `runner` (cron case — no TTY beats the marker), `runner`
+with the args intact, `tui`, `runner` with the args intact, `runner`.
+
+Do NOT write `function status; return 1; end` to fake the interactive check —
+`status` is a reserved word in Fish 4 and the shell refuses the definition.
 
 - [ ] **Step 7: Run the whole suite**
 
