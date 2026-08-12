@@ -205,7 +205,23 @@ cd $HOME && rm -rf myodoo-docker && rm -rf nginx-conf && \
 
 ### Weiterführende Dokumentation
 
-- **[docs/INSTALLATION_GUIDE.md](docs/INSTALLATION_GUIDE.md) — Installationsleitfaden: frischer Server → Odoo live/test (DE/EN, inkl. Troubleshooting & Erfahrungswerten)**
+- **[docs/INSTALLATION_GUIDE.md](docs/INSTALLATION_GUIDE.md) — der rote Faden: frischer Server → Odoo live/test in zehn Schritten (DE/EN), jeder Schritt mit Link in die zuständige Anleitung**
+
+Die Anleitungen selbst liegen je Aufgabe in [docs/usage/](docs/usage/) — jede
+zweisprachig, jede für sich lesbar:
+
+| Anleitung | Worum es geht |
+|---|---|
+| [01 Provisionierung und Härtung](docs/usage/01-provisioning.md) | Überblick, Voraussetzungen, `bootstrap.sh`, `getScripts.py`, `server_hardening.py` |
+| [02 nginx und Zertifikate](docs/usage/02-nginx-certs.md) | Basisdateien, Vhosts per Wizard, Let's Encrypt, Erreichbarkeit |
+| [03 PostgreSQL und Odoo-Container](docs/usage/03-postgres-odoo.md) | `pg-local-deploy.sh`, Build-Ordner, Erststart von live und test |
+| [04 Updates einrichten und fahren](docs/usage/04-updates.md) | `edup`, `doup`, Auswahlmaske `tui`, Assistent `wiz`, Laufhistorie |
+| [05 Backup und Restore](docs/usage/05-backup-restore.md) | `edbk`, `dobk`, Aufbewahrung, Verschlüsselung, Wiederherstellung, Notfall |
+| [06 Wartung und optionale Komponenten](docs/usage/06-maintenance.md) | Wartungs-Cron, Bereitschaftsprüfung, FastReport, Debian-Major-Upgrade |
+| [07 Betrieb hinter HTTP-Proxy](docs/usage/07-proxy.md) | Server, die nur über einen Firmen-Proxy ins Internet dürfen |
+| [08 Troubleshooting](docs/usage/08-troubleshooting.md) | Symptom → Ursache → Lösung, inklusive der Docker-≥-29-Fallen |
+| [09 Skript- und Shell-Referenz](docs/usage/09-reference.md) | Alle Skripte mit Aufruf, alle fish-Aliase nach Kategorie |
+
 - [scripts/README_BackUp.md](scripts/README_BackUp.md) — Backup-System (Konfiguration, Kompression, Automatisierung)
 - [scripts/README_pg-local-deploy.md](scripts/README_pg-local-deploy.md) — PostgreSQL-Container-Deployment (Profile, Self-Signed-SSL)
 - [scripts/NIGHTLY_CLEANUP.md](scripts/NIGHTLY_CLEANUP.md) — speicherbasierter Container-Neustart
@@ -216,20 +232,20 @@ cd $HOME && rm -rf myodoo-docker && rm -rf nginx-conf && \
 
 | Aufgabe | Befehl / Skript | Details |
 |---|---|---|
-| Server initialisieren | `bootstrap.sh` (One-Liner) | [Guide Kap. 3](docs/INSTALLATION_GUIDE.md#de-3-schritt-1-bootstrap) |
-| Shell & Skripte installieren | `./getScripts.py` | [Guide Kap. 4](docs/INSTALLATION_GUIDE.md#de-4-schritt-2-getscriptspy) |
-| Server härten | `sudo python3 server_hardening.py --apply` | [Guide Kap. 5](docs/INSTALLATION_GUIDE.md#de-5-schritt-3-server-härtung) |
-| nginx-Basis + Vhosts | `deploy-nginx-base.sh`, `ngx-conf-wizard.sh`, `ngxset` | [Guide Kap. 6](docs/INSTALLATION_GUIDE.md#de-6-schritt-4-nginx-basis--vhosts) |
-| PostgreSQL deployen | `pg-local-deploy.sh` | [Guide Kap. 7](docs/INSTALLATION_GUIDE.md#de-7-schritt-5-postgresql-live-dbtest-db) |
-| Odoo-Container starten | `docker run … start` | [Guide Kap. 8](docs/INSTALLATION_GUIDE.md#de-8-schritt-6-odoo-container-erststarten) |
-| Updates | `edup` (Config) / `doup` (Lauf) / `tui` (Auswahlmaske) | [Guide Kap. 10](docs/INSTALLATION_GUIDE.md#de-10-schritt-8-updates-einrichten-edupdoup) |
-| Instanz hinzufügen | `wiz` (geführt, prüft vor dem Schreiben) | [Guide Kap. 10](docs/INSTALLATION_GUIDE.md#de-10-schritt-8-updates-einrichten-edupdoup) |
-| Backups | `edbk` (Config) / `dobk` (Lauf) / `llbk` | [Guide Kap. 11](docs/INSTALLATION_GUIDE.md#de-11-schritt-9-backups-einrichten-edbkdobk) |
-| Konfiguration prüfen | `doval` (beide YAMLs, rein lesend) | [Guide Kap. 11](docs/INSTALLATION_GUIDE.md#de-11-schritt-9-backups-einrichten-edbkdobk) |
-| Wartungs-Cron | `setup-maintenance-cron.sh` | [Guide Kap. 12](docs/INSTALLATION_GUIDE.md#de-12-schritt-10-wartung-automatisieren) |
-| Restore | `restore-zip.sh` | [Guide Kap. 13](docs/INSTALLATION_GUIDE.md#de-13-restore--notfall) |
-| Proxy-Umgebung einrichten | `./getScripts.py --proxy-check` | [Guide Kap. 18](docs/INSTALLATION_GUIDE.md#de-18-betrieb-hinter-http-proxy) |
-| Alle 17 Skripte + Usages | — | [Guide Kap. 14](docs/INSTALLATION_GUIDE.md#de-14-skript-referenz) |
+| Server initialisieren | `bootstrap.sh` (One-Liner) | [Provisionierung](docs/usage/01-provisioning.md#de-3-schritt-1-bootstrap) |
+| Shell & Skripte installieren | `./getScripts.py` | [Provisionierung](docs/usage/01-provisioning.md#de-4-schritt-2-getscriptspy) |
+| Server härten | `sudo python3 server_hardening.py --apply` | [Provisionierung](docs/usage/01-provisioning.md#de-5-schritt-3-server-härtung) |
+| nginx-Basis + Vhosts | `deploy-nginx-base.sh`, `ngx-conf-wizard.sh`, `ngxset` | [nginx & Zertifikate](docs/usage/02-nginx-certs.md#de-6-schritt-4-nginx-basis--vhosts) |
+| PostgreSQL deployen | `pg-local-deploy.sh` | [PostgreSQL & Odoo](docs/usage/03-postgres-odoo.md#de-7-schritt-5-postgresql-live-dbtest-db) |
+| Odoo-Container starten | `docker run … start` | [PostgreSQL & Odoo](docs/usage/03-postgres-odoo.md#de-8-schritt-6-odoo-container-erststarten) |
+| Updates | `edup` (Config) / `doup` (Lauf) / `tui` (Auswahlmaske) | [Updates](docs/usage/04-updates.md#de-10-schritt-8-updates-einrichten-edupdoup) |
+| Instanz hinzufügen | `wiz` (geführt, prüft vor dem Schreiben) | [Updates](docs/usage/04-updates.md#de-10-schritt-8-updates-einrichten-edupdoup) |
+| Backups | `edbk` (Config) / `dobk` (Lauf) / `llbk` | [Backup & Restore](docs/usage/05-backup-restore.md#de-11-schritt-9-backups-einrichten-edbkdobk) |
+| Konfiguration prüfen | `doval` (beide YAMLs, rein lesend) | [Backup & Restore](docs/usage/05-backup-restore.md#de-11-schritt-9-backups-einrichten-edbkdobk) |
+| Wartungs-Cron | `setup-maintenance-cron.sh` | [Wartung](docs/usage/06-maintenance.md#de-12-schritt-10-wartung-automatisieren) |
+| Restore | `restore-zip.sh` | [Backup & Restore](docs/usage/05-backup-restore.md#de-13-restore--notfall) |
+| Proxy-Umgebung einrichten | `./getScripts.py --proxy-check` | [Proxy](docs/usage/07-proxy.md#de-18-betrieb-hinter-http-proxy) |
+| Alle 17 Skripte + Usages | — | [Referenz](docs/usage/09-reference.md#de-14-skript-referenz) |
 
 ---
 
@@ -434,7 +450,23 @@ cd $HOME && rm -rf myodoo-docker && rm -rf nginx-conf && \
 
 ### Further Documentation
 
-- **[docs/INSTALLATION_GUIDE.md](docs/INSTALLATION_GUIDE.md) — installation guide: fresh server → Odoo live/test (DE/EN, incl. troubleshooting & lessons learned)**
+- **[docs/INSTALLATION_GUIDE.md](docs/INSTALLATION_GUIDE.md) — the thread: fresh server → Odoo live/test in ten steps (DE/EN), each step linking into the guide that covers it**
+
+The guides themselves sit one per task in [docs/usage/](docs/usage/) — each
+bilingual, each readable on its own:
+
+| Guide | What it covers |
+|---|---|
+| [01 Provisioning and Hardening](docs/usage/01-provisioning.md) | Overview, prerequisites, `bootstrap.sh`, `getScripts.py`, `server_hardening.py` |
+| [02 nginx and Certificates](docs/usage/02-nginx-certs.md) | Base files, vhosts via the wizard, Let's Encrypt, reachability |
+| [03 PostgreSQL and the Odoo Containers](docs/usage/03-postgres-odoo.md) | `pg-local-deploy.sh`, build folders, first start of live and test |
+| [04 Setting Up and Running Updates](docs/usage/04-updates.md) | `edup`, `doup`, the `tui` selection screen, the `wiz` assistant, run history |
+| [05 Backup and Restore](docs/usage/05-backup-restore.md) | `edbk`, `dobk`, retention, encryption, restoring, emergencies |
+| [06 Maintenance and Optional Components](docs/usage/06-maintenance.md) | Maintenance cron, readiness check, FastReport, Debian major upgrade |
+| [07 Operation Behind an HTTP Proxy](docs/usage/07-proxy.md) | Servers that may only reach the internet through a corporate proxy |
+| [08 Troubleshooting](docs/usage/08-troubleshooting.md) | Symptom → cause → fix, including the Docker ≥ 29 traps |
+| [09 Script and Shell Reference](docs/usage/09-reference.md) | Every script with its invocation, every fish alias by category |
+
 - [scripts/README_BackUp.md](scripts/README_BackUp.md) — backup system (configuration, compression, automation)
 - [scripts/README_pg-local-deploy.md](scripts/README_pg-local-deploy.md) — PostgreSQL container deployment (profiles, self-signed SSL)
 - [scripts/NIGHTLY_CLEANUP.md](scripts/NIGHTLY_CLEANUP.md) — memory-based container restart
@@ -445,20 +477,20 @@ cd $HOME && rm -rf myodoo-docker && rm -rf nginx-conf && \
 
 | Task | Command / script | Details |
 |---|---|---|
-| Initialize a server | `bootstrap.sh` (one-liner) | [Guide ch. 3](docs/INSTALLATION_GUIDE.md#en-3-step-1-bootstrap) |
-| Install shell & scripts | `./getScripts.py` | [Guide ch. 4](docs/INSTALLATION_GUIDE.md#en-4-step-2-getscriptspy) |
-| Harden the server | `sudo python3 server_hardening.py --apply` | [Guide ch. 5](docs/INSTALLATION_GUIDE.md#en-5-step-3-server-hardening) |
-| nginx base + vhosts | `deploy-nginx-base.sh`, `ngx-conf-wizard.sh`, `ngxset` | [Guide ch. 6](docs/INSTALLATION_GUIDE.md#en-6-step-4-nginx-base--vhosts) |
-| Deploy PostgreSQL | `pg-local-deploy.sh` | [Guide ch. 7](docs/INSTALLATION_GUIDE.md#en-7-step-5-postgresql-live-dbtest-db) |
-| Start Odoo containers | `docker run … start` | [Guide ch. 8](docs/INSTALLATION_GUIDE.md#en-8-step-6-first-start-of-the-odoo-containers) |
-| Updates | `edup` (config) / `doup` (run) / `tui` (selection screen) | [Guide ch. 10](docs/INSTALLATION_GUIDE.md#en-10-step-8-set-up-updates-edupdoup) |
-| Add an instance | `wiz` (guided, validates before writing) | [Guide ch. 10](docs/INSTALLATION_GUIDE.md#en-10-step-8-set-up-updates-edupdoup) |
-| Backups | `edbk` (config) / `dobk` (run) / `llbk` | [Guide ch. 11](docs/INSTALLATION_GUIDE.md#en-11-step-9-set-up-backups-edbkdobk) |
-| Validate configuration | `doval` (both YAMLs, read-only) | [Guide ch. 11](docs/INSTALLATION_GUIDE.md#en-11-step-9-set-up-backups-edbkdobk) |
-| Maintenance cron | `setup-maintenance-cron.sh` | [Guide ch. 12](docs/INSTALLATION_GUIDE.md#en-12-step-10-automate-maintenance) |
-| Restore | `restore-zip.sh` | [Guide ch. 13](docs/INSTALLATION_GUIDE.md#en-13-restore--emergency) |
-| Set up a proxy environment | `./getScripts.py --proxy-check` | [Guide ch. 18](docs/INSTALLATION_GUIDE.md#en-18-operation-behind-an-http-proxy) |
-| All 17 scripts + usages | — | [Guide ch. 14](docs/INSTALLATION_GUIDE.md#en-14-script-reference) |
+| Initialize a server | `bootstrap.sh` (one-liner) | [Provisioning](docs/usage/01-provisioning.md#en-3-step-1-bootstrap) |
+| Install shell & scripts | `./getScripts.py` | [Provisioning](docs/usage/01-provisioning.md#en-4-step-2-getscriptspy) |
+| Harden the server | `sudo python3 server_hardening.py --apply` | [Provisioning](docs/usage/01-provisioning.md#en-5-step-3-server-hardening) |
+| nginx base + vhosts | `deploy-nginx-base.sh`, `ngx-conf-wizard.sh`, `ngxset` | [nginx & certificates](docs/usage/02-nginx-certs.md#en-6-step-4-nginx-base--vhosts) |
+| Deploy PostgreSQL | `pg-local-deploy.sh` | [PostgreSQL & Odoo](docs/usage/03-postgres-odoo.md#en-7-step-5-postgresql-live-dbtest-db) |
+| Start Odoo containers | `docker run … start` | [PostgreSQL & Odoo](docs/usage/03-postgres-odoo.md#en-8-step-6-first-start-of-the-odoo-containers) |
+| Updates | `edup` (config) / `doup` (run) / `tui` (selection screen) | [Updates](docs/usage/04-updates.md#en-10-step-8-set-up-updates-edupdoup) |
+| Add an instance | `wiz` (guided, validates before writing) | [Updates](docs/usage/04-updates.md#en-10-step-8-set-up-updates-edupdoup) |
+| Backups | `edbk` (config) / `dobk` (run) / `llbk` | [Backup & restore](docs/usage/05-backup-restore.md#en-11-step-9-set-up-backups-edbkdobk) |
+| Validate configuration | `doval` (both YAMLs, read-only) | [Backup & restore](docs/usage/05-backup-restore.md#en-11-step-9-set-up-backups-edbkdobk) |
+| Maintenance cron | `setup-maintenance-cron.sh` | [Maintenance](docs/usage/06-maintenance.md#en-12-step-10-automate-maintenance) |
+| Restore | `restore-zip.sh` | [Backup & restore](docs/usage/05-backup-restore.md#en-13-restore--emergency) |
+| Set up a proxy environment | `./getScripts.py --proxy-check` | [Proxy](docs/usage/07-proxy.md#en-18-operation-behind-an-http-proxy) |
+| All 17 scripts + usages | — | [Reference](docs/usage/09-reference.md#en-14-script-reference) |
 
 ---
 

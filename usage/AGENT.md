@@ -16,7 +16,7 @@
   operational ones to `/root/` and installs fish aliases (`dobk`, `doup`, `ngxset`, …)
 - **Install:** `curl -fsSL https://raw.githubusercontent.com/equitania/myodoo-docker/2026/scripts/bootstrap.sh -o /opt/myodoo-bootstrap.sh && chmod +x /opt/myodoo-bootstrap.sh && /opt/myodoo-bootstrap.sh`
 - **Version:** branch `2026`; each script carries its own version header
-- **Framework:** Python argparse + bash (no Click) · **Human docs:** `docs/INSTALLATION_GUIDE.md` (DE/EN)
+- **Framework:** Python argparse + bash (no Click) · **Human docs:** `docs/INSTALLATION_GUIDE.md` = the ten-step thread; the instructions themselves are one file per task in `docs/usage/` (DE/EN)
 
 ## Capabilities at a glance
 - Initialize a fresh Debian/Ubuntu server: Docker CE (overlay2 pinned), nginx, certbot, UFW, fail2ban, auto-updates
@@ -73,7 +73,7 @@ mcedit /root/.config/myodoo-docker/.env          # SSH_PORT, ALLOWED_IP_1..n
 sudo python3 /root/server_hardening.py           # audit first — changes nothing
 sudo python3 /root/server_hardening.py --apply   # then apply (ssh module last, keep a 2nd session open)
 ```
-Full step-by-step walkthrough: `docs/INSTALLATION_GUIDE.md`.
+Full step-by-step walkthrough: `docs/usage/01-provisioning.md`.
 
 ### Deploy PostgreSQL + first Odoo container (live)
 ```bash
@@ -161,7 +161,7 @@ python3 ~/getScripts.py --proxy-check   # writes fish conf.d, /etc/environment, 
 systemctl restart docker                # maintenance window — restarts ALL containers
 ```
 Optionally pin the proxy in `docker2update.yaml` (`defaults.proxy`) so cron `doup` runs are
-independent of the shell environment. Full walkthrough: INSTALLATION_GUIDE chapter 18.
+independent of the shell environment. Full walkthrough: `docs/usage/07-proxy.md`.
 
 ## Guardrails & gotchas
 - **Destructive:** `doup` (type `F`) **stops, removes and re-creates** the target container and
@@ -252,7 +252,10 @@ independent of the shell environment. Full walkthrough: INSTALLATION_GUIDE chapt
   `server-readiness.py` deliberately writes no log — it reports to stdout so cron mails it.
 
 ## Deeper docs
-- `docs/INSTALLATION_GUIDE.md` — full fresh-server → Odoo live/test walkthrough (DE/EN, troubleshooting matrix)
+- `docs/INSTALLATION_GUIDE.md` — the ten-step thread from a fresh server to Odoo live/test (DE/EN); each step links into the guide that covers it
+- `docs/usage/` — one guide per task, each bilingual and readable on its own:
+  `01-provisioning.md` · `02-nginx-certs.md` · `03-postgres-odoo.md` · `04-updates.md` (incl. `wiz`) ·
+  `05-backup-restore.md` · `06-maintenance.md` · `07-proxy.md` · `08-troubleshooting.md` · `09-reference.md`
 - `scripts/README_BackUp.md` — backup formats, encryption, per-format restore
 - `scripts/README_pg-local-deploy.md` — PostgreSQL deploy details, conf profiles, SSL
 - `scripts/NIGHTLY_CLEANUP.md` — memory-threshold restart logic

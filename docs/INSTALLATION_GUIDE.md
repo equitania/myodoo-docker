@@ -1,6 +1,6 @@
 # Server Installation Guide — Odoo live/test under Docker
 
-Version 1.2.0 — 02.08.2026
+Version 2.0.0 — 12.08.2026
 
 [🇩🇪 Deutsche Version](#deutsche-version) | [🇬🇧 English Version](#english-version)
 
@@ -9,11 +9,18 @@ Version 1.2.0 — 02.08.2026
 <a id="deutsche-version"></a>
 # Deutsche Version
 
-Schritt-für-Schritt-Leitfaden für Systemadministratoren: von einem frisch
-installierten Debian-/Ubuntu-Server bis zu zwei produktiv laufenden
-Odoo-Systemen (live/test) hinter nginx mit Let's-Encrypt-SSL, automatischen
-Updates (`doup`) und Backups (`dobk`). Alle Beispiele sind neutral gehalten —
-ersetze Domains, IPs und Passwörter durch eure Werte.
+Der rote Faden von einem frisch installierten Debian-/Ubuntu-Server bis zu
+zwei produktiv laufenden Odoo-Systemen (live/test) hinter nginx mit
+Let's-Encrypt-SSL, automatischen Updates (`doup`) und Backups (`dobk`).
+
+**Diese Seite ist die Reihenfolge, nicht das Handbuch.** Jeder Schritt steht
+hier in zwei, drei Sätzen; die vollständige Anleitung mit allen Befehlen,
+Konfigurationsbeispielen und Fallstricken liegt daneben in
+[usage/](usage/) — eine Datei je Aufgabe. Wer nur ein Backup einrichten oder
+eine Instanz nachtragen will, springt direkt dorthin und liest den Rest nicht.
+
+Alle Beispiele sind neutral gehalten — ersetze Domains, IPs und Passwörter
+durch eure Werte.
 
 **Verwendete Platzhalter:**
 
@@ -24,820 +31,159 @@ ersetze Domains, IPs und Passwörter durch eure Werte.
 | `192.168.1.50` | Interne Server-IP (nur bei NAT relevant) |
 | `live-odoo` / `test-odoo`, `live-db` / `test-db` | Container-Namen |
 | `odoo/live`, `odoo/test` | Docker-Image-Namen |
-| `proxy.example.com:8080` | HTTP-Proxy des Kunden (nur [Kapitel 18](#de-18-betrieb-hinter-http-proxy)) |
+| `proxy.example.com:8080` | HTTP-Proxy des Kunden (nur [Betrieb hinter HTTP-Proxy](usage/07-proxy.md)) |
 
-## Inhalt
+## Die Anleitungen
 
-1. [Überblick & Architektur](#de-1-überblick--architektur)
-2. [Voraussetzungen](#de-2-voraussetzungen)
-3. [Schritt 1: Bootstrap](#de-3-schritt-1-bootstrap)
-4. [Schritt 2: getScripts.py](#de-4-schritt-2-getscriptspy)
-5. [Schritt 3: Server-Härtung](#de-5-schritt-3-server-härtung)
-6. [Schritt 4: nginx-Basis + Vhosts](#de-6-schritt-4-nginx-basis--vhosts)
-7. [Schritt 5: PostgreSQL](#de-7-schritt-5-postgresql-live-dbtest-db)
-8. [Schritt 6: Odoo-Container erststarten](#de-8-schritt-6-odoo-container-erststarten)
-9. [Schritt 7: Let's Encrypt & Erreichbarkeit](#de-9-schritt-7-lets-encrypt--erreichbarkeit)
-10. [Schritt 8: Updates einrichten (edup/doup)](#de-10-schritt-8-updates-einrichten-edupdoup)
-11. [Schritt 9: Backups einrichten (edbk/dobk)](#de-11-schritt-9-backups-einrichten-edbkdobk)
-12. [Schritt 10: Wartung automatisieren](#de-12-schritt-10-wartung-automatisieren)
-13. [Restore & Notfall](#de-13-restore--notfall)
-14. [Skript-Referenz](#de-14-skript-referenz)
-15. [Shell-Referenz (fish)](#de-15-shell-referenz-fish)
-16. [Troubleshooting](#de-16-troubleshooting)
-17. [Optionale Komponenten](#de-17-optionale-komponenten)
-18. [Betrieb hinter HTTP-Proxy](#de-18-betrieb-hinter-http-proxy)
+| Datei | Worum es geht |
+|---|---|
+| [01 Provisionierung und Härtung](usage/01-provisioning.md) | Überblick, Voraussetzungen, `bootstrap.sh`, `getScripts.py`, `server_hardening.py` |
+| [02 nginx und Zertifikate](usage/02-nginx-certs.md) | nginx-Basisdateien, Vhosts per Wizard, Let's Encrypt, Erreichbarkeit |
+| [03 PostgreSQL und Odoo-Container](usage/03-postgres-odoo.md) | `pg-local-deploy.sh`, Build-Ordner, Erststart von live und test |
+| [04 Updates einrichten und fahren](usage/04-updates.md) | `edup`, `doup`, die Auswahlmaske `tui`, der Assistent `wiz`, Laufhistorie |
+| [05 Backup und Restore](usage/05-backup-restore.md) | `edbk`, `dobk`, Aufbewahrung, Verschlüsselung, Wiederherstellung, Notfall |
+| [06 Wartung und optionale Komponenten](usage/06-maintenance.md) | Wartungs-Cron, Bereitschaftsprüfung, FastReport, Debian-Major-Upgrade |
+| [07 Betrieb hinter HTTP-Proxy](usage/07-proxy.md) | Server, die nur über einen Firmen-Proxy ins Internet dürfen |
+| [08 Troubleshooting](usage/08-troubleshooting.md) | Symptom → Ursache → Lösung, inklusive der Docker-≥-29-Fallen |
+| [09 Skript- und Shell-Referenz](usage/09-reference.md) | Alle Skripte mit Aufruf, alle fish-Aliase nach Kategorie |
+
+## Der Ablauf
+
+Zehn Schritte, in dieser Reihenfolge. Die Links führen in die jeweilige
+Anleitung, genau an die Stelle des Schrittes.
 
 <a id="de-1-überblick--architektur"></a>
-## 1. Überblick & Architektur
-
-Zielbild nach diesem Leitfaden:
-
-```
-Internet ──443/80──▶ nginx (Host, SSL-Terminierung, Security-Header)
-                       │
-        ┌──────────────┴───────────────┐
-        ▼                              ▼
- erp-live.example.com          erp-test.example.com
- 127.0.0.1:11000/12000         127.0.0.1:13000/14000
-        │                              │
- ┌──────┴──────┐                ┌──────┴──────┐
- │  live-odoo  │                │  test-odoo  │   (Docker, --restart=always)
- │ 8069 / 8072 │                │ 8069 / 8072 │
- └──────┬──────┘                └──────┬──────┘
-        │ live-db-net                  │ test-db-net
- ┌──────┴──────┐                ┌──────┴──────┐
- │   live-db   │                │   test-db   │   (PostgreSQL, Host-Bind-Mount)
- └─────────────┘                └─────────────┘
-```
-
-**Port-Konvention** (aus `docker2update.yaml`):
-
-| System | Web (→ 8069) | Websocket/Longpolling (→ 8072) |
-|---|---|---|
-| live | `127.0.0.1:11000` | `127.0.0.1:12000` |
-| test | `127.0.0.1:13000` | `127.0.0.1:14000` |
-
-Alle Odoo-Ports sind bewusst an `127.0.0.1` gebunden — erreichbar nur über
-nginx. Odoo ≥ 16 nutzt die Route `/websocket` (nicht mehr `/longpolling`);
-die nginx-Templates von `nginx-set-conf` berücksichtigen das automatisch.
-
 <a id="de-2-voraussetzungen"></a>
-## 2. Voraussetzungen
+### Vorher: Überblick und Voraussetzungen
 
-- **OS:** Debian 12/13 oder Ubuntu 20.04–26.04, frisch installiert, Root-Zugang
-- **DNS:** A-Records für `erp-live.example.com` / `erp-test.example.com` auf die öffentliche IP
-- **Bei NAT** (Server steht hinter einer Firewall mit privater IP):
-  - Firewall-Forwarding **TCP 443 und TCP 80** auf die interne Server-IP.
-    Port 80 muss **dauerhaft** offen bleiben (Let's-Encrypt-Renewal!)
-  - Interne Clients: siehe [Troubleshooting → Split-DNS](#de-16-troubleshooting)
-- **Odoo-Image:** eigenes Registry-Image oder Build-Verzeichnis nach
-  `Dockerfiles/v19-odoo/ReadMe.md` (Dockerfile, `build_odoo.py`, `release.file`,
-  `odoo.conf`, `bin/boot`)
-
-> ℹ️ **Die Server-Shell ist fish.** `getScripts.py` installiert fish als
-> Standard-Shell. Für Copy-Paste-Blöcke gilt: `$status` statt `$?`,
-> `set VAR wert` statt `VAR=wert`, keine Heredocs. Bash-Skripte laufen
-> natürlich weiterhin per `./script.sh` oder `bash -c '…'`.
+Was am Ende läuft (zwei Odoo-Container, zwei PostgreSQL-Container, nginx davor)
+und was der Server dafür mitbringen muss — Debian 12/13 oder Ubuntu,
+root-Zugang, DNS-Einträge, offene Ports.
+→ [01 Provisionierung und Härtung](usage/01-provisioning.md#de-1-überblick--architektur)
 
 <a id="de-3-schritt-1-bootstrap"></a>
-## 3. Schritt 1: Bootstrap
+### Schritt 1: Bootstrap
 
-`bootstrap.sh` bringt einen frischen Server in einen definierten Grundzustand —
-idempotent, gefahrlos wiederholbar.
-
-```bash
-# Als root auf dem frischen Server:
-curl -fsSL https://raw.githubusercontent.com/equitania/myodoo-docker/2026/scripts/bootstrap.sh \
-  -o /opt/myodoo-bootstrap.sh && chmod +x /opt/myodoo-bootstrap.sh && /opt/myodoo-bootstrap.sh
-```
-
-Installiert: Docker CE (offizielles Repo), nginx (nginx.org), certbot, UFW
-(installiert, aber **bewusst deaktiviert** — siehe Härtung), fail2ban,
-unattended-upgrades, Python-Abhängigkeiten; klont das Repo und ruft am Ende
-`getScripts.py` auf. Einzelne Schritte lassen sich per ENV abschalten
-(`INSTALL_NGINX=0`, `INSTALL_DOCKER=0`, `RUN_GETSCRIPTS=0`, …).
-
-> ⚠️ **Erfahrungswert (Docker ≥ 29):** Neuinstallationen von Docker ≥ 29
-> aktivieren standardmäßig den containerd Image Store, dessen Image-Export
-> für große Builds kaputt ist ([moby/moby#52431](https://github.com/moby/moby/issues/52431)).
-> `bootstrap.sh` ≥ 1.7.0 pinnt deshalb den klassischen `overlay2`-Treiber in
-> `/etc/docker/daemon.json`. Auf Servern, die **ohne** aktuelles Bootstrap
-> aufgesetzt wurden: Symptome und Heilung siehe [Troubleshooting](#de-16-troubleshooting).
+Ein Aufruf richtet die Grundausstattung ein: Docker CE (mit `overlay2` als
+Storage-Driver), nginx, certbot, UFW, fail2ban und automatische
+Sicherheitsupdates. Idempotent, jede Stufe abschaltbar.
+→ [01 Provisionierung und Härtung](usage/01-provisioning.md#de-3-schritt-1-bootstrap)
 
 <a id="de-4-schritt-2-getscriptspy"></a>
-## 4. Schritt 2: getScripts.py
+### Schritt 2: getScripts.py
 
-Installiert die fish-Shell-Konfiguration, alle Aliase/Funktionen und die
-Verwaltungsskripte (inkl. `container2backup.py`, `update_docker_odoo.py`)
-nach `/root`. Wird vom Bootstrap automatisch ausgeführt; manuell:
-
-```bash
-/root/getScripts.py                 # Installation / Update (schlanke Ausgabe)
-/root/getScripts.py -v              # dasselbe, mit jedem Schritt und jeder Befehlsausgabe
-/root/getScripts.py --dns-check     # DNS-Konfiguration pruefen/optimieren
-/root/getScripts.py --proxy-check   # Docker-Daemon-Proxy einrichten (Proxy-Kunden)
-/root/getScripts.py --reconfigure   # First-Run-Einstellungen erneut abfragen
-```
-
-Danach neue Shell öffnen (oder `source ~/.config/fish/config.fish`) — die
-Aliase aus [Kapitel 15](#de-15-shell-referenz-fish) stehen bereit. Später
-aktualisieren mit `ups`.
-
-> ⚠️ **Erfahrungswert (sudo su):** Wer sich mit einem persönlichen
-> Admin-Account anmeldet und per `sudo su` zu root wird, braucht
-> getScripts.py ≥ 9.7.3 — ältere Versionen installierten in diesem Fall ins
-> falsche Home-Verzeichnis (Aliase fehlten für root).
+Verteilt die Fish-Shell samt Aliasen und alle Verwaltungsskripte nach `/root`.
+Danach existieren `doup`, `dobk`, `doval`, `tui` und `wiz` als Befehle.
+→ [01 Provisionierung und Härtung](usage/01-provisioning.md#de-4-schritt-2-getscriptspy)
 
 <a id="de-5-schritt-3-server-härtung"></a>
-## 5. Schritt 3: Server-Härtung
+### Schritt 3: Server-Härtung
 
-1. Secrets-Datei pflegen (Vorlage: `scripts/.env.example`):
-
-```bash
-mcedit /root/.config/myodoo-docker/.env   # SSH_PORT, ALLOWED_IP_1..n, Alert-Mail
-```
-
-2. Erst **Audit** (ändert nichts), dann anwenden:
-
-```bash
-sudo python3 /root/server_hardening.py            # Audit / Dry-Run
-sudo python3 /root/server_hardening.py --apply    # UFW, fail2ban, SSH, sysctl, auditd, AIDE, ...
-```
-
-UFW wird erst hier aktiviert — nach konfiguriertem SSH-Port und erlaubten
-IPs, damit man sich nicht aussperrt. Einzelne Module gezielt:
-`--apply --module ufw` bzw. `-m fail2ban ssh sysctl`. Konfiguration:
-`scripts/hardening_config.yaml`.
+Erst das Audit ohne `--apply` lesen, dann anwenden: UFW, fail2ban, SSH, sysctl,
+auditd, AIDE. Lockout-sicher — die SSH-Konfiguration wird erst getauscht,
+nachdem `sshd -t` sie akzeptiert hat.
+→ [01 Provisionierung und Härtung](usage/01-provisioning.md#de-5-schritt-3-server-härtung)
 
 <a id="de-6-schritt-4-nginx-basis--vhosts"></a>
-## 6. Schritt 4: nginx-Basis + Vhosts
+### Schritt 4: nginx-Basis und Vhosts
 
-### 6.1 Basis-Dateien ausrollen
-
-Jeder generierte Vhost referenziert gemeinsame Include-Dateien
-(`nginxconfig.io/security.conf`, `general.conf`) und die Wartungsseite.
-Ohne sie schlägt `nginx -t` fehl — deshalb **vor** dem ersten Vhost:
-
-```bash
-~/myodoo-docker/scripts/deploy-nginx-base.sh            # inkl. nginx.conf (Backup + Validierung + Rollback)
-~/myodoo-docker/scripts/deploy-nginx-base.sh --dry-run  # nur anzeigen
-```
-
-> ⚠️ **Erfahrungswert (PID-File-Falle):** `nginx -t` kann `/run/nginx.pid`
-> leer (neu) anlegen. Die Standard-Unit von nginx.org reloaded über
-> `kill -s HUP $(cat /run/nginx.pid)` — mit leerer Datei schlägt der Reload
-> fehl (kill-Usage-Text im Journal) und **die alte Config bleibt still aktiv**.
-> `deploy-nginx-base.sh` ≥ 1.1.0 repariert die PID-Datei automatisch.
-> Dauerhafte Absicherung per systemd-Drop-in:
->
-> ```bash
-> mkdir -p /etc/systemd/system/nginx.service.d
-> printf '[Service]\nExecReload=\nExecReload=/bin/kill -s HUP $MAINPID\n' \
->   > /etc/systemd/system/nginx.service.d/10-reload-mainpid.conf
-> systemctl daemon-reload
-> ```
-
-### 6.2 Vhost-Konfiguration erzeugen
-
-Der interaktive Assistent baut die YAML-Datei für `nginx-set-conf` — Eintrag
-für Eintrag („noch eine Domain?"-Schleife), mit Validierung und optionalem
-Deploy am Ende:
-
-```bash
-~/myodoo-docker/scripts/ngx-conf-wizard.sh
-```
-
-Für die beiden Odoo-Systeme: Template `eq_odoo_ssl`, Domain, Zertifikatsname,
-Port `11000` (live) bzw. `13000` (test), Pollport `12000` bzw. `14000`.
-Die YAML landet in `$HOME/docker-builds/ngx-conf/`; deployen jederzeit mit:
-
-```bash
-ngxset        # = nginx-set-conf --config_path=$HOME/docker-builds/ngx-conf/
-ngx!          # nginx -t
-ngxs          # Status
-```
-
-> ⚠️ **Erfahrungswerte:**
-> - **Die Bind-IP muss LOKAL sein.** Hinter NAT gehört die **interne** IP
->   (`192.168.1.50`) in die Config, nicht die öffentliche DNS-IP — sonst
->   `bind() failed (99: Cannot assign requested address)`. Der Wizard zeigt
->   die lokalen IPs an und warnt bei Fremd-IPs.
-> - `nginx-set-conf` **reloaded** nur — ein gestoppter nginx wird nicht
->   gestartet. Nach dem ersten Deploy prüfen: `ngxs`, ggf. `ngx+`.
+Zuerst die Basisdateien ausrollen, sonst schlägt jedes `include` einer vhost
+fehl. Danach die Vhosts über den Wizard erzeugen und ausliefern.
+→ [02 nginx und Zertifikate](usage/02-nginx-certs.md#de-6-schritt-4-nginx-basis--vhosts)
 
 <a id="de-7-schritt-5-postgresql-live-dbtest-db"></a>
-## 7. Schritt 5: PostgreSQL (live-db/test-db)
+### Schritt 5: PostgreSQL
 
-Pro System ein eigener PostgreSQL-Container — interaktiv per:
-
-```bash
-~/myodoo-docker/scripts/pg-local-deploy.sh   # Lauf 1: live-db
-~/myodoo-docker/scripts/pg-local-deploy.sh   # Lauf 2: test-db
-```
-
-Abgefragt werden u.a. Container-Name (`live-db`), Basis-Verzeichnis,
-DB-User/-Passwort, PostgreSQL-Version (aktuelle Tags:
-<https://hub.docker.com/_/postgres/tags?name=16.>), Performance-Profil
-(2cpu4gb … 8cpu32gb) und optional **Self-Signed-SSL**. Das Skript erzeugt
-Netzwerk (`live-db-net`), Compose-File (`<basis>/live-db-deploy/docker-compose.yml`)
-und startet den Container. Details: [scripts/README_pg-local-deploy.md](../scripts/README_pg-local-deploy.md).
-
-> ⚠️ **Erfahrungswert (db_sslmode):** In der `odoo.conf` des Odoo-Images muss
-> `db_sslmode = prefer` stehen. Mit `require` verweigert Odoo die Verbindung
-> zu einem PostgreSQL ohne SSL („server does not support SSL, but SSL was
-> required"). Vor dem ersten Start prüfen:
->
-> ```fish
-> docker run --rm --entrypoint grep odoo/live db_sslmode /opt/odoo/etc/odoo.conf
-> # Erwartung: db_sslmode = prefer
-> ```
+Je ein Datenbank-Container für live und test, interaktiv deployt, mit
+Ressourcen-Profil und optionalem SSL.
+→ [03 PostgreSQL und Odoo-Container](usage/03-postgres-odoo.md#de-7-schritt-5-postgresql-live-dbtest-db)
 
 <a id="de-8-schritt-6-odoo-container-erststarten"></a>
-## 8. Schritt 6: Odoo-Container erststarten
+### Schritt 6: Odoo-Container erststarten
 
-### 8.1 Image bereitstellen
-
-Entweder aus eurer Registry ziehen oder auf dem Server bauen. Beim Build
-liegt pro System ein Build-Verzeichnis vor (z.B. `$HOME/docker-builds/live-odoo/`
-mit Dockerfile, `build_odoo.py`, `release.file`, `odoo.conf`, `bin/boot` —
-siehe `Dockerfiles/v19-odoo/ReadMe.md`):
-
-```fish
-cd $HOME/docker-builds/live-odoo
-docker build -t odoo/live .
-```
-
-### 8.2 Container starten
-
-```fish
-# LIVE
-docker run -d -p 127.0.0.1:11000:8069 -p 127.0.0.1:12000:8072 \
-  --restart=always --network live-db-net \
-  -v /opt/odoo/live:/opt/odoo/data --name="live-odoo" odoo/live:latest start
-
-# TEST
-docker run -d -p 127.0.0.1:13000:8069 -p 127.0.0.1:14000:8072 \
-  --restart=always --network test-db-net \
-  -v /opt/odoo/test:/opt/odoo/data --name="test-odoo" odoo/test:latest start
-```
-
-Das Boot-Skript im Container akzeptiert genau drei Kommandos:
-`start` (Normalbetrieb), `update` (Modul-Update, genutzt von `doup`),
-`neutralize` (DB neutralisieren, z.B. nach Restore auf test).
-
-> **Nur `start` liest die `odoo.conf`.** `update` und `neutralize` starten
-> `odoo-bin` bewusst ohne `-c`, damit ein Update nicht den `addons_path`, den
-> `db_host` und die Worker-Zahl der Instanz erbt. Eine Änderung an der
-> `odoo.conf` wirkt sich deshalb erst auf den laufenden Container aus, nicht auf
-> die Log-Ausgabe des `update odoo`-Schritts von `doup`.
-
-### 8.3 Verifizieren
-
-```fish
-dps                                                # beide Container "Up"?
-curl -sI http://127.0.0.1:11000/web/health         # HTTP/1.1 200 OK
-docker logs --tail 20 live-odoo                    # Fehler im Log?
-```
-
-Danach im Browser `https://erp-live.example.com` → Datenbank anlegen.
-Die `odoo.conf` je Instanz zeigt per `db_host` auf den DB-Container
-(`live-db` bzw. `test-db`) — die Namensauflösung übernimmt das Docker-Netz.
-
-> ⚠️ **Erfahrungswerte:**
-> - **Immer mit `127.0.0.1:`-Prefix mappen.** Ohne Prefix lauschen 11000/12000
->   auf allen Interfaces — jeder im LAN umgeht dann nginx, SSL und
->   Security-Header.
-> - Schlägt der Start mit `exec /app/bin/boot: no such file or directory`
->   fehl, obwohl das Build-Verzeichnis korrekt ist → fast immer der
->   Docker-29-Store-Bug, siehe [Troubleshooting](#de-16-troubleshooting).
+Build-Ordner anlegen, Image bauen, Container starten — einmal für live, einmal
+für test.
+→ [03 PostgreSQL und Odoo-Container](usage/03-postgres-odoo.md#de-8-schritt-6-odoo-container-erststarten)
 
 <a id="de-9-schritt-7-lets-encrypt--erreichbarkeit"></a>
-## 9. Schritt 7: Let's Encrypt & Erreichbarkeit
+### Schritt 7: Let's Encrypt und Erreichbarkeit
 
-Die Zertifikate erzeugt `nginx-set-conf`/certbot beim Vhost-Deploy
-(HTTP-01 über Port 80). Die automatische Erneuerung übernimmt später der
-Wartungs-Cron ([Kapitel 12](#de-12-schritt-10-wartung-automatisieren)) über
-`ssl-renew.sh` — nginx wird nur angehalten, wenn tatsächlich ein Zertifikat
-fällig ist. Sicherheitsnetz: `nginx-cert-guard.py` quarantänisiert einen
-einzelnen defekten Vhost (Zertifikat/DNS), statt den ganzen Server zu blockieren.
-
-```bash
-showcerts                 # certbot certificates — Laufzeiten pruefen
-/root/ssl-renew.sh        # manueller Renewal-Lauf
-```
-
-> ⚠️ **Erfahrungswerte (NAT):**
-> - Das **Port-80-Forwarding muss dauerhaft** bestehen bleiben — ohne HTTP-01
->   kein Renewal, das Zertifikat läuft nach 90 Tagen ab.
-> - **Interne Clients erreichen die Domain nicht, extern geht alles?**
->   Klassisches Split-DNS-Problem: intern wird die öffentliche IP aufgelöst,
->   das Gateway kann kein Hairpin-NAT. Lösung: auf dem internen DNS-Server
->   eine Pinpoint-Zone `erp-live.example.com` mit A-Record auf die interne
->   Server-IP (`192.168.1.50`) anlegen — **nicht** an der Firewall drehen.
+Zertifikate holen, Erreichbarkeit prüfen, den Renewal-Pfad testen.
+→ [02 nginx und Zertifikate](usage/02-nginx-certs.md#de-9-schritt-7-lets-encrypt--erreichbarkeit)
 
 <a id="de-10-schritt-8-updates-einrichten-edupdoup"></a>
-## 10. Schritt 8: Updates einrichten (edup/doup)
+### Schritt 8: Updates einrichten
 
-`update_docker_odoo.py` aktualisiert die Odoo-Container automatisiert
-(Image-Rebuild, Container-Neuanlage, Modul-Update) — gesteuert über
-`~/docker2update.yaml`:
-
-```bash
-edup    # YAML bearbeiten (mcedit)
-doup    # Update-Lauf starten
-```
-
-Beispiel-Eintrag pro Container (Vorlage: `scripts/docker2update.yaml`):
-
-```yaml
-containers:
-  - active: true
-    type: "F"                        # [M]odules | [F]ull | [N]eutralize
-    delay_time: 10
-    container_name: "live-odoo"
-    database_name: "live_odoo"
-    port: "127.0.0.1:11000"
-    longpolling_port: "127.0.0.1:12000"
-    dockerfile_path: "$HOME/docker-builds/live-odoo/"
-    docker_image_name: "odoo/live"
-    db_user: "ownerp"
-    db_password: "***"
-    db_host: "live-db"
-    volume: "--network live-db-net -v /opt/odoo/live:/opt/odoo/data"
-    odoo_version: "19"
-    translate: "Y"
-```
-
-Nützliche Optionen: `doup --validate` (Config prüfen), `-s CONTAINER`
-(einzelner Container), `-v` (verbose). **Proxy-Kunden:** `defaults.proxy` und
-`pre_build_files` in der YAML, Daemon-Proxy via `getScripts.py --proxy-check`.
-
-### TUI-Modus
-
-`tui` startet die Auswahlmaske: alle Systeme aus `docker2update.yaml` mit Modus
-und letztem Lauf. Space wählt aus, `m` schaltet den Modus (M/F/N), `c` hinterlegt
-einen Kommentar, Enter startet. Die YAML wird dabei **nicht** verändert — Haken
-und Modus gelten nur für diesen Lauf.
-
-```bash
-tui                                  # Auswahlmaske
-doup                                 # klassisch, oder TUI wenn als Standard gesetzt
-doup -s live-odoo --type F           # ohne TUI, ein System, Modus einmalig
-doup -s live-odoo --comment "eq_stock nachgezogen"
-```
-
-Mit `d` in der Maske (oder `ownerp_tui.py --make-default`) wird die TUI zum
-Standard für `doup`. Mit Argumenten oder ohne Terminal läuft immer das klassische
-Skript — ein Cronjob kann nie in der Maske hängenbleiben.
-
-Jeder Lauf landet in `~/update-history.jsonl`: wann, welches System, welcher
-Modus, welches Ergebnis, welcher Kommentar.
-
-**Protokoll jedes Laufs.** Unabhängig von `-v` schreibt jeder Lauf eine
-vollständige Logdatei in den Build-Ordner der Instanz:
-`~/docker-builds/<name>/update_JJJJMMTT_HHMMSS.log`. Sie enthält auch die
-INFO-Zeilen, die die Konsole ohne `-v` verschweigt — für die Frage, was der
-nächtliche Cron-Lauf getan hat, ist genau das der interessante Teil. Die Pfade
-werden am Ende genannt, auch wenn der Lauf abgebrochen ist oder gescheitert.
-Dank `.dockerignore` liegen sie außerhalb des Build-Kontexts und kosten keine
-Build-Zeit.
-
-Aufgeräumt wird beim jeweils nächsten Lauf derselben Instanz: Standard sind
-**90 Tage**, einstellbar über `defaults.log_retention_days` in der YAML oder
-`log_retention_days` am einzelnen Container; `0` behält alles. Gelöscht werden
-ausschließlich Dateien, deren Name exakt dem Muster `update_JJJJMMTT_HHMMSS.log`
-folgt — eine eigene `build.log` im selben Ordner bleibt unangetastet, und
-Unterordner wie `filestore-backup/` werden nicht durchsucht. Das Alter stammt
-aus dem Dateinamen, nicht aus der mtime: der Name sagt, wann der Lauf war, die
-mtime nur, wann die Datei zuletzt angefasst wurde.
-
-**Build-Cache.** Vor jedem Build lädt `odoo_build_cache.py` die Release-Archive
-auf den Host nach `/opt/odoo-build-cache` und verlinkt sie in den Build-Ordner
-— alle Instanzen desselben Release teilen sich denselben Bestand, gebaut wird
-nur noch mit dem, was sich geändert hat. Der Cache blockiert nie einen Build:
-was er nicht liefert, lädt `build_odoo.py` wie zuvor selbst. Aufräumen erledigt
-der Wartungs-Cron (`gc`, 30 Tage), `~/odoo_build_cache.py stats` zeigt die
-Belegung pro Release.
-
-Derselbe Schritt hält die **Dockerfile des Build-Ordners** aktuell. Diese Datei
-gehört dem Kunden — `doup` überschreibt sie nie, weil sie eigene `COPY`- und
-`RUN`-Schritte tragen kann. Deshalb kam etwa der `HEALTHCHECK` vom März 2026 nie
-auf älteren Installationen an. Fehlende Image-Direktiven (`HEALTHCHECK`,
-`VOLUME`, `EXPOSE`) werden jetzt ergänzt, vorher wird eine `.bak_<Zeitstempel>`
-geschrieben. Zusätzlich wird ein `ADD` an das `COPY` der Repository-Vorlage
-angeglichen, sofern beides nachweislich dasselbe tut (einfacher lokaler Pfad —
-niemals bei URL, Archiv oder Platzhalter, weil `ADD` dort lädt bzw. entpackt).
-Alles, was darüber hinaus nur *abweicht*, erscheint als Warnung mit der exakten
-Zeile im Abschlussblock von `doup` und bleibt Handarbeit.
-
-Genauso wird die **`odoo.conf` des Build-Ordners** gepflegt, die aus demselben
-Grund nie verteilt wird: sie enthält `admin_passwd` und `db_password`. Ergänzt
-werden ausschließlich zentral verwaltete Schlüssel und nur dort, wo der Kunde
-keinen eigenen Wert gesetzt hat — ein leerer Wert zählt dabei als nicht gesetzt,
-weil Odoo ihn selbst so behandelt. Erster Schlüssel ist `http_interface`: Odoo 19
-warnt, wenn er fehlt, und **Odoo 20 stellt den Vorgabewert auf `127.0.0.1` um**,
-womit jeder Container über seinen veröffentlichten Port unerreichbar wäre. Auch
-hier wird vorher eine `.bak_<Zeitstempel>` geschrieben, und der Schreibvorgang
-wird verweigert, sobald sich sonst irgendeine Einstellung ändern würde.
+`docker2update.yaml` beschreibt jede Instanz, `doup` fährt die Updates. Eine
+weitere Instanz trägt man am besten mit `wiz` nach — der Assistent prüft, bevor
+er schreibt. `doval` prüft die Konfiguration jederzeit rein lesend.
+→ [04 Updates einrichten und fahren](usage/04-updates.md#de-10-schritt-8-updates-einrichten-edupdoup)
 
 <a id="de-11-schritt-9-backups-einrichten-edbkdobk"></a>
-## 11. Schritt 9: Backups einrichten (edbk/dobk)
+### Schritt 9: Backups einrichten
 
-`container2backup.py` sichert SQL-Dump + Filestore je Datenbank sowie
-Service-Verzeichnisse (nginx, letsencrypt, docker-builds) — gesteuert über
-`~/container2backup.yaml`:
-
-```bash
-edbk    # YAML bearbeiten
-dobk    # Voll-Backup ausfuehren
-dobk --sql-only
-llbk    # Backup-Verzeichnis ansehen (/opt/backups/docker)
-```
-
-Beispiel (Vorlage: `scripts/container2backup.yaml`):
-
-```yaml
-defaults:
-  retention_days: 14
-  db_user: ownerp
-  backup_path: /opt/backups
-  compression: { format: "7z", level: 5 }
-  stream: false          # true = Streaming .tar.zst (grosse Filestores!)
-
-databases:
-  - name: live_odoo
-    sql_container: live-db
-    data_container: live-odoo
-  - name: test_odoo
-    sql_container: test-db
-    data_container: test-odoo
-    only_sql_dump: true
-```
-
-> 💡 **Erfahrungswert:** Bei großen Filestores (≫ 50 GB) `stream: true`
-> setzen — das Backup läuft ohne unkomprimierte Zwischenkopie direkt in ein
-> `.tar.zst`. Kompressionslevel 3 genügt (Filestore-Medien sind bereits
-> komprimiert). Details, Verschlüsselung (AES-256/GPG) und Restore je Format:
-> [scripts/README_BackUp.md](../scripts/README_BackUp.md).
-
-### Konfiguration prüfen (doval)
-
-Nach jeder manuellen Änderung an `docker2update.yaml` oder
-`container2backup.yaml` lohnt sich ein kurzer Check, bevor der nächste `doup`
-oder `dobk` darauf läuft:
-
-```bash
-doval                # beide Konfigurationen an ihren Standardpfaden prüfen
-doval --update       # nur docker2update.yaml
-doval --backup       # nur container2backup.yaml
-```
-
-`ownerp_validate.py` ist **rein lesend** — es schreibt nie in die YAML — und
-prüft Pflichtfelder, Typen, Portform, doppelte Container-/Datenbanknamen und
--Ports (nur unter aktiven Einträgen) sowie unbekannte Schlüssel. Jeder Befund
-nennt Datei und Zeilennummer.
-
-**Die drei Exitcodes:**
-
-| Exitcode | Bedeutung |
-|---|---|
-| `0` | keine Fehler. **Warnungen können trotzdem ausgegeben worden sein** — sie zählen für den Exitcode nicht |
-| `1` | mindestens ein Fehler |
-| `2` | eine Datei fehlt, ist unlesbar, nicht parsebar, oder PyYAML ist nicht installiert |
-
-Ein Cronjob oder Wrapper-Skript, das auf `doval` aufsetzt, muss also den
-Exitcode prüfen (`$status` in fish) — nicht, ob überhaupt etwas ausgegeben
-wurde, denn Warnungen erscheinen auch bei Exitcode `0`.
-
-### Eine Instanz aufnehmen, geführt (wiz)
-
-Eine weitere Odoo-Instanz von Hand in `docker2update.yaml` einzutragen heißt:
-einen bestehenden Block kopieren und zwölf Werte ändern, darunter zwei
-Host-Ports, die mit nichts kollidieren dürfen. `wiz` führt stattdessen durch
-die Felder:
-
-```bash
-wiz                                  # Menü: 1) Instanz aufnehmen  2) Feld ändern
-python3 ~/ownerp_wizard.py --update ~/docker2update.yaml
-```
-
-Der Assistent liest die Konfiguration, **bevor** er etwas fragt, und schlägt
-aus ihr vor — den nächsten freien Host-Port, den Build-Ordner nach dem Muster
-der vorhandenen Einträge, den Image-Namen nach deren Konvention. Der Vorschlag
-steht in eckigen Klammern und wird mit Enter übernommen; wo die Einträge sich
-uneinig sind, schlägt er nichts vor, statt zu raten. Das Passwort wird nicht
-angezeigt und erscheint in der Zusammenfassung als `********`.
-
-**Geschrieben wird erst, wenn das Ergebnis die Prüfung besteht.** Der Ablauf
-ist immer derselbe:
-
-1. Sicherung nach `~/docker2update.yaml.bak-<JJJJMMTT_HHMMSS>`
-2. der neue Text landet in einer temporären Datei **im selben Verzeichnis**
-3. `ownerp_validate.py` prüft genau diese Datei
-4. **Fehler** → temporäre Datei *und* Sicherung werden entfernt, das Original
-   bleibt Byte für Byte unverändert, und der Assistent bietet an, das
-   beanstandete Feld zu korrigieren
-5. **sauber** → die Datei wird atomar ersetzt, die Sicherung bleibt liegen
-
-Eine Sicherung bleibt also nur dann zurück, wenn tatsächlich etwas geändert
-wurde — findet sich nach einem Lauf keine `.bak-*`-Datei, wurde die
-Konfiguration nicht angefasst. Warnungen blockieren nicht: ein noch nicht
-existierender Build-Ordner ist bei einer neuen Instanz der Normalfall, und der
-Assistent bietet an, ihn leer anzulegen (mehr nicht — befüllt wird er beim
-ersten `doup`).
-
-> **Was `wiz` bewusst nicht tut:** Er **entfernt nie einen Eintrag**, und er
-> bearbeitet nur einzelne Werte. Listen und Unterblöcke (`pre_build_files`,
-> `proxy`) zeigt er an, ändert sie aber nicht — dafür bleibt `edup` (mcedit)
-> zuständig. Ohne Terminal verweigert er den Start, ist also für Cronjobs
-> ungeeignet und dort auch nicht nötig.
-
-In der Auswahlmaske `tui` liegt derselbe Assistent auf der Taste `w`; danach
-lädt die Maske die Liste neu, damit die neue Instanz sofort auswählbar ist.
+`container2backup.yaml` beschreibt, was gesichert wird, `dobk` führt es aus.
+Aufbewahrung, Kompression und Verschlüsselung gehören zur Erstkonfiguration.
+→ [05 Backup und Restore](usage/05-backup-restore.md#de-11-schritt-9-backups-einrichten-edbkdobk)
 
 <a id="de-12-schritt-10-wartung-automatisieren"></a>
-## 12. Schritt 10: Wartung automatisieren
+### Schritt 10: Wartung automatisieren
 
-Sobald `container2backup.yaml` steht, verdrahtet ein Aufruf alle
-Wartungsjobs als `/etc/cron.d/myodoo-maintenance` (inkl. logrotate):
+Ein Aufruf verdrahtet Backup, Zertifikatserneuerung, DSGVO-Log-Bereinigung und
+Speicher-Aufräumen in einem Cron-Drop-in. Erst sinnvoll, wenn Schritt 9 steht.
+→ [06 Wartung und optionale Komponenten](usage/06-maintenance.md#de-12-schritt-10-wartung-automatisieren)
 
-```bash
-~/myodoo-docker/scripts/setup-maintenance-cron.sh
-```
-
-| Zeit | Job |
-|---|---|
-| 02:00 / 14:00 | `container2backup.py` — Backups |
-| 23:50 | `nginx-cert-guard.py --check --apply` — DNS-Drift/Zertifikats-Wache |
-| 00:00 | `ssl-renew.sh` — Let's-Encrypt-Renewal |
-| 03:00 | `cleanup-weblogs.py` — DSGVO-Weblog-Rotation (7 Tage) |
-| 04:30 | `nightly-cleanup.sh` — speicherbasierter Container-Neustart |
-| Mo 06:00 | `server-readiness.py --quiet` — Konfigurations-Drift-Report |
-
-Entfernen mit `--remove`. Details zum Nightly-Cleanup:
-[scripts/NIGHTLY_CLEANUP.md](../scripts/NIGHTLY_CLEANUP.md).
-
-Der wöchentliche Readiness-Report schreibt bewusst **kein** Logfile: `--quiet`
-gibt nichts aus, solange alles in Ordnung ist, sodass Cron per `MAILTO=root`
-ausschließlich bei tatsächlicher Abweichung eine Mail schickt. Den vollen
-Bericht jederzeit auf Zuruf: `chk`.
-
-> **Prüfen statt raten:** Nach diesem Schritt beantwortet `chk` die Frage, ob
-> der Server vollständig eingerichtet ist. Genau dafür existiert das Werkzeug —
-> auf Servern, auf denen `setup-maintenance-cron.sh` nie lief, fehlt die
-> logrotate-Konfiguration, und `/var/log/container2backup.log` wächst
-> unbemerkt ins Unendliche.
+## Zum Nachschlagen
 
 <a id="de-13-restore--notfall"></a>
-## 13. Restore & Notfall
+### Restore und Notfall
 
-Backup zurückspielen (Archiv aus `container2backup.py`, erkennt
-`.zip/.7z/.7z.gpg/.tar.gz/.tar.zst` automatisch):
-
-```bash
-env PGPASSWORD='<pg_password>' ~/myodoo-docker/scripts/restore-zip.sh \
-  <backup_kind 1|2> <run_sql> <orig_dbname> <new_dbname> <drop_db Y/n> \
-  <archiv> <odoo_volume> <pg_container>
-```
-
-Das Passwort per `PGPASSWORD`-Umgebungsvariable übergeben — als 9. Argument
-wäre es in `ps aux` und der Shell-History sichtbar (das Skript warnt dann).
-
-Typischer Anwendungsfall: Live-Backup als Test-DB einspielen, danach im
-Container `neutralize` ausführen (Mails/Cron deaktivieren). Für manuelle
-Container-Updates ohne `doup` (Fallback):
-[docs/MANUAL_DOCKER_UPDATE_GUIDE.md](MANUAL_DOCKER_UPDATE_GUIDE.md).
+Wiederherstellung aus einem Backup, inklusive Formaterkennung und der
+Reihenfolge, in der die Container gestoppt werden.
+→ [05 Backup und Restore](usage/05-backup-restore.md#de-13-restore--notfall)
 
 <a id="de-14-skript-referenz"></a>
-## 14. Skript-Referenz
-
-Alle Skripte des Repos (`scripts/`, Stand 16.07.2026):
-
-| Skript | Zweck | Aufruf |
-|---|---|---|
-| `bootstrap.sh` (1.7.0) | Grundausstattung frischer Server (Docker, nginx, certbot, UFW, fail2ban) | `curl … bootstrap.sh -o /opt/… && /opt/myodoo-bootstrap.sh` |
-| `getScripts.py` (9.7.3) | fish-Shell, Aliase, Verwaltungsskripte nach `/root` | `./getScripts.py [--dns-check\|--proxy-check\|--reconfigure]` |
-| `server_hardening.py` (1.8.0) | Audit + Härtung (UFW, fail2ban, SSH, sysctl, auditd, AIDE) | `sudo python3 server_hardening.py [--apply] [-m MODUL …]` |
-| `deploy-nginx-base.sh` (1.3.0) | nginx-Basis: Includes, Wartungsseite, nginx.conf (mit Rollback) | `./deploy-nginx-base.sh [--dry-run] [--no-main-conf]` |
-| `ngx-conf-wizard.sh` (1.1.0) | Interaktiver YAML-Assistent für nginx-set-conf | `./ngx-conf-wizard.sh` |
-| `pg-local-deploy.sh` (1.2.1) | PostgreSQL-Container interaktiv deployen (Profile, optional SSL) | `./pg-local-deploy.sh` |
-| `fr-local-deploy.sh` | FastReport-API-Container deployen (Default `/opt/fast-report`) | `./fr-local-deploy.sh` |
-| `update_docker_odoo.py` (5.12.0) | Odoo-Container-Updates per YAML | `doup` bzw. `python3 update_docker_odoo.py [-s NAME] [--validate]` |
-| `ownerp_tui.py` (1.1.0) | Curses-Auswahlmaske für Odoo-Container-Updates, übergibt an `update_docker_odoo.py` | `tui` bzw. `python3 ownerp_tui.py [-c DATEI]` |
-| `odoo_build_cache.py` (1.5.0) | Release-Archiv-Cache aller Instanzen; pflegt zusätzlich Dockerfile und `odoo.conf` des Build-Ordners | von `doup` aufgerufen; `~/odoo_build_cache.py stats\|gc [--days 30]` |
-| `container2backup.py` (4.8.0) | SQL+Filestore-Backups, Kompression/Verschlüsselung/Streaming | `dobk` bzw. `~/container2backup.py [--sql-only\|--validate]` |
-| `ownerp_validate.py` (1.0.0) | Rein lesende Schema-Prüfung von `docker2update.yaml`/`container2backup.yaml` | `doval` bzw. `~/ownerp_validate.py [--update PATH\|--backup PATH]` |
-| `ownerp_wizard.py` (1.0.0) | Geführtes Aufnehmen einer Instanz bzw. Ändern eines Feldes in `docker2update.yaml`; prüft, bevor er ersetzt, und entfernt nie einen Eintrag | `wiz` bzw. `~/ownerp_wizard.py [--update PATH]` |
-| `restore-zip.sh` (2.1.0) | Backup-Restore (DB + Filestore) in Docker | siehe [Kapitel 13](#de-13-restore--notfall) |
-| `ssl-renew.sh` (1.3.0) | certbot-Renewal, nginx nur bei Bedarf angehalten | `./ssl-renew.sh` (Cron) |
-| `nginx-cert-guard.py` (1.1.0) | Defekte Vhosts quarantänisieren statt nginx zu blockieren | `--reconcile [--start]`, `--check [--apply]`, `--list`, `--restore DOMAIN` |
-| `setup-maintenance-cron.sh` (1.3.0) | Wartungs-Cron + logrotate installieren | `./setup-maintenance-cron.sh [--remove]` |
-| `server-readiness.py` (1.3.0) | Konfigurations-Drift prüfen (rein lesend) | `chk` bzw. `~/server-readiness.py [--brief\|--quiet]` |
-| `nightly-cleanup.sh` (1.1.0) | Container-Neustart bei Speicherdruck | Cron; `MEMORY_THRESHOLD=90 DRY_RUN=1 ./nightly-cleanup.sh` |
-| `cleanup-weblogs.py` (2.0.0) | nginx-Log-Rotation, DSGVO-Löschung nach 7 Tagen | Cron; `python3 cleanup-weblogs.py` |
-| `dist-upgrade-debian.sh` (1.0.0) | Geführtes Debian-Major-Upgrade (z.B. bookworm→trixie) | `./dist-upgrade-debian.sh [CODENAME] [--yes]` |
-| `check_docker_volumes.sh` (1.0.0) | Volumes und referenzierende Container auflisten | `dkvol` |
-
 <a id="de-15-shell-referenz-fish"></a>
-## 15. Shell-Referenz (fish)
+### Skript- und Shell-Referenz
 
-Vollständige Referenz mit Definitionen: [fish/README.md](../fish/README.md).
-Die wichtigsten Aliase/Funktionen nach Kategorie:
-
-**Backup & Update** (`33-aliases-backup.fish`)
-
-| Alias | Befehl / Zweck |
-|---|---|
-| `dobk` | `$HOME/container2backup.py` — Backup ausführen |
-| `edbk` | `mcedit $HOME/container2backup.yaml` — Backup-Config |
-| `llbk` / `cdbk` | Backup-Verzeichnis listen / betreten (`/opt/backups/docker`) |
-| `doup` | `$HOME/update_docker_odoo.py` — Container-Update |
-| `edup` | `mcedit $HOME/docker2update.yaml` — Update-Config |
-
-**nginx** (`34-aliases-nginx.fish`)
-
-| Alias | Befehl / Zweck |
-|---|---|
-| `ngxset` | `nginx-set-conf --config_path=$HOME/docker-builds/ngx-conf/` — Vhosts deployen |
-| `ngx+` / `ngx-` / `ngx#` / `ngxr` | nginx start / stop / restart / reload |
-| `ngx!` / `ngxs` | `nginx -t` / Service-Status |
-| `cdngx` | `cd /etc/nginx/conf.d/` |
-| `showcerts` | `certbot certificates` |
-
-**Docker** (`32-aliases-docker.fish`)
-
-| Alias | Befehl / Zweck |
-|---|---|
-| `dps` / `dpsall` | Container-Übersicht (formatiert, sortiert) |
-| `dpi` | `docker images` |
-| `dkvol` | Volumes + referenzierende Container |
-| `dkstop` | Alle Container stoppen |
-| `exec-live` / `exec-test` | Shell im live-/test-Container |
-| `dco` / `dcup` / `dcdown` / `dclogs` / `dcps` | docker-compose-Kurzformen |
-| `ct` | `ctop` — Container-Monitor |
-| ⚠️ `dkprs` / `dkprv` / `dkprf` / `dkprfa` | `docker system/volume prune`-Varianten — **`dkprfa` löscht auch Volumes!** |
-
-**System** (`30-aliases-system*.fish`)
-
-| Alias | Befehl / Zweck |
-|---|---|
-| `ll` / `hg` / `mce` / `lg` | `ls -alh` / History-Grep / mcedit / lazygit |
-| `rm` / `chmod` / `chown` | Safety-Wrapper (`rm -I`, `-c` verbose) |
-| `cleandlog` | Docker-JSON-Logs leeren |
-| `dusort` | Plattenbelegung sortiert |
-| `f2b` | fail2ban-Status |
-| `prepatch` | Update-Screen-Session öffnen (`screen -S sysupdate`) |
-
-**Funktionen** (`fish/functions/linux/`)
-
-| Funktion | Zweck |
-|---|---|
-| `syspatch` | Komplettes Systemupdate: journalctl-Vacuum → apt dist-upgrade → AIDE-Baseline → `docker image prune -f` |
-| `ups` | ownERP-Skripte aktualisieren (getScripts.py neu ausführen) |
-| `chk` | Readiness-Report: ist der Server auf Stand, was fehlt noch? (rein lesend) |
-| `dkrm` / `dkrmi` / `dkrmv` | Alle Container/Images/Volumes löschen — mit Sicherheitsabfrage, `dkrmv` verlangt wörtlich `DELETE` |
-
-**Odoo** (`35-aliases-odoo.fish`): `odoo-shell`, `odoo-logs`, `odoo-restart`,
-`pg-shell` — Platzhalter-Container-Namen, pro Server anpassen.
+Alle Skripte des Repos mit Zweck und Aufruf, alle fish-Aliase nach Kategorie.
+→ [09 Skript- und Shell-Referenz](usage/09-reference.md#de-14-skript-referenz)
 
 <a id="de-16-troubleshooting"></a>
-## 16. Troubleshooting
+### Troubleshooting
 
-| Symptom | Ursache | Lösung |
-|---|---|---|
-| `docker build` scheitert bei „exporting to image" mit `ref moby/1/… locked … unavailable` | Docker ≥ 29 mit containerd Image Store ([moby#52431](https://github.com/moby/moby/issues/52431)) | `/etc/docker/daemon.json`: `{"storage-driver": "overlay2"}` → `systemctl restart docker` → **Server rebooten** → Images neu ziehen, Container neu erzeugen (Volumes bleiben) |
-| `exec /app/bin/boot: no such file or directory` beim Container-Start, Build lief „durch" | Hohles Image aus vergiftetem BuildKit-Cache (Folge des Store-Bugs). Gegenprobe: fehlt sogar `/bin/sh` im Image? | Nach dem Store-Wechsel: `docker builder prune -af`, dann `docker build --no-cache --pull` |
-| Builds liefern **nichtdeterministisch** hohle Images; Kernel-Log: `overlayfs: lowerdir is in-use as upperdir/workdir of another mount` | Verwaiste Overlay-Mounts des alten Stores nach einem Store-Wechsel ohne Reboot — zwei Overlay-Welten teilen sich Verzeichnisse | **Server rebooten**, danach `docker builder prune -af` + `docker build --no-cache --pull` |
-| `docker build` bricht ab mit `Release server '…' could not be reached` bzw. `Connection refused` beim ZIP-Download | Webdienst auf dem Release-Server ist unten. Downloads werden 5× mit exponentiellem Backoff wiederholt (~45 s, build_odoo ≥ 2.5.0), danach bricht der Build ab | Auf dem Release-Server `systemctl status nginx` prüfen und starten, dann Build erneut anstoßen. Toleranz erhöhen via `BUILD_ODOO_RETRIES` / `BUILD_ODOO_RETRY_BACKOFF` |
-| Build bricht ab mit `N module archive(s) could NOT be installed` samt Liste | Ein oder mehrere Modul-ZIPs fehlen auf dem Release-Server, oder ein Dateiname im `release.file` ist ungültig. Ab build_odoo ≥ 2.6.0 wird daraus ein harter Fehler statt eines stillschweigend unvollständigen Images | Gelistete Archive auf dem Release-Server prüfen bzw. `release.file` korrigieren, dann neu bauen. Drei aufeinanderfolgende Fehlschläge brechen den Lauf vorzeitig ab (`BUILD_ODOO_FAILURE_LIMIT`). Nur wenn ein unvollständiges Image bewusst in Kauf genommen wird: `BUILD_ODOO_ALLOW_PARTIAL=1` |
-| nginx: `bind() to 203.0.113.10:443 failed (99: Cannot assign requested address)` | Öffentliche DNS-IP ist hinter NAT nicht lokal | In der Vhost-Config die **interne** IP verwenden; `ngx-conf-wizard.sh` zeigt die lokalen IPs an |
-| `systemctl reload nginx` schlägt fehl, Journal zeigt kill-Usage-Text; alte Config bleibt aktiv | Leere `/run/nginx.pid` (durch `nginx -t` erzeugt), Standard-Unit vertraut der Datei | `$MAINPID`-Drop-in installieren ([Kapitel 6.1](#de-6-schritt-4-nginx-basis--vhosts)); tritt auch bei nginx-**Paket-Updates** auf (postinst) — danach `systemctl daemon-reload && systemctl restart nginx` |
-| nginx tot (`Connection refused` auf 80 **und** 443), Host per SSH erreichbar; Journal zeigt `Failed to start nginx.service` wenige Sekunden nach einem apt-Upgrade | nginx wurde mitten im Austausch von glibc/openssl neu gestartet (durch `needrestart` oder den certbot-`pre_hook`); der Start scheiterte, und die nginx.org-Unit hat `Restart=no` — ein zweiter Versuch erfolgt nie | Drop-in `/etc/systemd/system/nginx.service.d/10-restart.conf` mit `Restart=on-failure` + `RestartSec=10` (plus `StartLimitBurst=5`/`StartLimitIntervalSec=300`). Zusätzlich `certbot.timer` per Drop-in auf einen festen Slot legen (z.B. `OnCalendar=*-*-* 03:00:00`, mit führender leerer `OnCalendar=`-Zeile), damit seine Zufallsverzögerung nicht ins apt-Fenster 06:00–07:00 fällt. **`bootstrap.sh` ≥ 1.9.0 setzt beide Drop-ins automatisch** — auch beim erneuten Lauf auf einem Bestandsserver |
-| Odoo: „server does not support SSL, but SSL was required" beim DB-Anlegen | `db_sslmode = require` in der odoo.conf, PostgreSQL ohne SSL | `db_sslmode = prefer` setzen (oder PG-SSL aktivieren via `pg-local-deploy.sh`) |
-| Domain extern erreichbar, intern nicht | Split-DNS: interne Clients bekommen die öffentliche IP, Gateway kann kein Hairpin-NAT | Pinpoint-Zone auf dem internen DNS: `erp-live.example.com` → interne Server-IP |
-| Zertifikat läuft ab, Renewal schlägt fehl | Port-80-Forwarding wurde entfernt | TCP 80 → Server dauerhaft forwarden (HTTP-01) |
-| `fish: $? is not the exit status …` | Bash-Syntax in der fish-Shell | `$status` statt `$?`; Bash-Blöcke via `bash -c '…'` |
-| Odoo-Weboberfläche direkt über `IP:11000` aus dem LAN erreichbar | Port-Mapping ohne `127.0.0.1:`-Prefix | Container mit `-p 127.0.0.1:11000:8069 …` neu erzeugen |
+Symptom, Ursache, Lösung — darunter die Docker-≥-29-Fallen, bei denen Builds
+still hohle Images erzeugen.
+→ [08 Troubleshooting](usage/08-troubleshooting.md#de-16-troubleshooting)
 
 <a id="de-17-optionale-komponenten"></a>
-## 17. Optionale Komponenten
+### Optionale Komponenten
 
-**FastReport-API** (PDF-Rendering für Odoo): interaktiv per
-`~/myodoo-docker/scripts/fr-local-deploy.sh` — Standard-Basis
-`/opt/fast-report`, ein Container je System (z.B. `fr-live`, `fr-test`),
-Registry-Zugang erforderlich. Die Backup-Einbindung erfolgt über den
-`fast_report:`-Block in `container2backup.yaml` ([Kapitel 11](#de-11-schritt-9-backups-einrichten-edbkdobk)).
-
-**Debian-Major-Upgrade:** `dist-upgrade-debian.sh` führt geführt durch ein
-In-Place-Upgrade (Quellen umschreiben, phasenweises Upgrade, Reboot-Abfrage).
+FastReport-API für die PDF-Erzeugung, geführtes Debian-Major-Upgrade.
+→ [06 Wartung und optionale Komponenten](usage/06-maintenance.md#de-17-optionale-komponenten)
 
 <a id="de-18-betrieb-hinter-http-proxy"></a>
-## 18. Betrieb hinter HTTP-Proxy
+### Betrieb hinter HTTP-Proxy
 
-Für Server, die nur über einen Firmen-Proxy ins Internet dürfen
-(getScripts.py ≥ 9.8.2, update_docker_odoo.py ≥ 5.3.0). Typisches
-Erkennungsmerkmal: Firewalls solcher Umgebungen **droppen** direkte
-Outbound-Verbindungen oft still — Prozesse ohne Proxy-Konfiguration
-**hängen** dann, statt sofort zu scheitern.
-
-### 18.1 Erstinstallation hinter Proxy
-
-Bootstrap und Repo-Clone brauchen Internet, bevor der Proxy dauerhaft
-konfiguriert ist — daher die Variablen zuerst manuell in der Session setzen
-(frischer Server = noch bash), dann den normalen Bootstrap aus
-[Kapitel 3](#de-3-schritt-1-bootstrap) ausführen:
-
-```bash
-# As root, bash — set proxy for this session first:
-export http_proxy="http://proxy.example.com:8080"
-export https_proxy="http://proxy.example.com:8080"
-export no_proxy="localhost,127.0.0.1,::1,.local"
-```
-
-`apt`, `curl` und `git` übernehmen die Variablen — der Bootstrap läuft damit
-vollständig durch den Proxy. Direkt danach die Konfiguration dauerhaft
-machen (18.2).
-
-### 18.2 Proxy dauerhaft konfigurieren
-
-```fish
-python3 ~/getScripts.py --proxy-check
-```
-
-Fragt Proxy-URL und Ausnahmen interaktiv ab und schreibt vier Stellen:
-
-| Datei | Wirkung | Greift ab |
-|---|---|---|
-| `~/.config/fish/conf.d/99-proxy.fish` | Alle fish-Sessions (interaktiv + Skripte) | Nächste fish-Session (`exec fish`) |
-| `/etc/environment` | Systemweit über PAM: Logins, cron, su | Nächster Login |
-| `~/.getscripts_proxy` | Marker/Fallback für `update_docker_odoo.py` und das fastfetch-Deploy | Sofort |
-| `/etc/systemd/system/docker.service.d/http-proxy.conf` | Docker-Daemon (Image-Pulls) | **Erst nach `systemctl restart docker`** |
-
-> ⚠️ **Wartungsfenster:** `systemctl restart docker` startet **alle
-> Container** neu. Bis zum Restart schlagen `docker pull`s fehl.
-
-Proxy ändern oder entfernen: immer erneut über `--proxy-check` — nie die
-Dateien einzeln editieren.
-
-### 18.3 Container-Updates (doup)
-
-`update_docker_odoo.py` löst den Proxy in dieser Reihenfolge auf:
-`container.proxy` > `defaults.proxy` > Umgebungsvariablen >
-`~/.getscripts_proxy`. Empfehlung: explizit in der `docker2update.yaml`
-eintragen, dann sind auch cron-Läufe unabhängig von der Shell-Umgebung:
-
-```yaml
-defaults:
-  proxy:                                    # wget downloads + docker build
-    http_proxy: "http://proxy.example.com:8080"
-    https_proxy: "http://proxy.example.com:8080"
-    no_proxy: "localhost,127.0.0.1,.local"
-```
-
-Der YAML-Proxy wirkt auf `wget` und `docker build` (Env + `--build-arg`).
-Das **Base-Image-Pull macht der Docker-Daemon** — dafür ist ausschließlich
-das systemd-Drop-in aus 18.2 zuständig. Dateien, die der Build nicht selbst
-laden kann, lassen sich pro Container über `pre_build_files`
-(Liste aus `{source, target}`) vorab in den Build-Ordner kopieren.
-
-### 18.4 Besonderheiten
-
-- **fastfetch:** Das `publicip`-Modul nutzt Raw-Sockets, ignoriert
-  `http_proxy` und würde beim Login endlos hängen. getScripts entfernt es
-  auf Proxy-Hosts automatisch aus der deployten Config. Die verbleibende
-  ~1 s Laufzeit ist normal (NetIO/DiskIO messen über ein 1-s-Fenster).
-- **uv:** Bei per Paketmanager installiertem uv ist `uv self update` nicht
-  möglich — getScripts erkennt das und loggt einen INFO-Skip, kein Fehler.
-- **Interne Dienste:** Sprechen Skripte oder Container interne Hosts per
-  HTTP an (z.B. `*.internal.example.com`), die Ausnahmen bei
-  `--proxy-check` um `.internal.example.com` erweitern — sonst läuft der
-  Traffic durch den Proxy.
-
-### 18.5 Verifikation
-
-```fish
-env | grep -i proxy                                # fish-Umgebung
-grep -i proxy /etc/environment                     # systemweit
-systemctl show docker --property=Environment       # Docker-Daemon
-git -C ~/myodoo-docker fetch --dry-run; echo $status   # Internet via Proxy (0 = ok)
-time fastfetch > /dev/null                         # ~1 s, kein Haenger
-```
-
-| Symptom | Ursache | Fix |
-|---|---|---|
-| Login/fastfetch hängt endlos | Alte fastfetch-Config mit `publicip` | `ups`, danach `--proxy-check` |
-| `docker pull` hängt/scheitert | Drop-in fehlt oder Docker nicht neu gestartet | 18.2 |
-| `git pull` / `curl` hängt | Session ohne Proxy-Umgebung | `exec fish` bzw. neu einloggen |
-| cron-Jobs ohne Internet | `/etc/environment` fehlt/veraltet | `--proxy-check` erneut ausführen |
+Für Server, die nur über einen Firmen-Proxy ins Internet dürfen — inklusive des
+Daemon-Proxys, ohne den jeder Base-Image-Pull scheitert.
+→ [07 Betrieb hinter HTTP-Proxy](usage/07-proxy.md#de-18-betrieb-hinter-http-proxy)
 
 ---
 
 <a id="english-version"></a>
 # English Version
 
-Step-by-step guide for system administrators: from a freshly installed
-Debian/Ubuntu server to two production Odoo systems (live/test) behind nginx
-with Let's Encrypt SSL, automated updates (`doup`) and backups (`dobk`).
+The thread from a freshly installed Debian/Ubuntu server to two production Odoo
+systems (live/test) behind nginx with Let's Encrypt SSL, automated updates
+(`doup`) and backups (`dobk`).
+
+**This page is the order of things, not the manual.** Each step gets two or
+three sentences here; the full instructions — every command, configuration
+example and pitfall — sit beside it in [usage/](usage/), one file per task.
+Anyone who only wants to set up a backup or add an instance jumps straight
+there and reads none of the rest.
+
 All examples are vendor/customer-neutral — replace domains, IPs and passwords
 with your values.
 
@@ -850,805 +196,140 @@ with your values.
 | `192.168.1.50` | Internal server IP (only relevant behind NAT) |
 | `live-odoo` / `test-odoo`, `live-db` / `test-db` | Container names |
 | `odoo/live`, `odoo/test` | Docker image names |
-| `proxy.example.com:8080` | Customer HTTP proxy (only [chapter 18](#en-18-operation-behind-an-http-proxy)) |
+| `proxy.example.com:8080` | Customer HTTP proxy (only [Operation Behind an HTTP Proxy](usage/07-proxy.md)) |
 
-## Contents
+## The guides
 
-1. [Overview & Architecture](#en-1-overview--architecture)
-2. [Prerequisites](#en-2-prerequisites)
-3. [Step 1: Bootstrap](#en-3-step-1-bootstrap)
-4. [Step 2: getScripts.py](#en-4-step-2-getscriptspy)
-5. [Step 3: Server Hardening](#en-5-step-3-server-hardening)
-6. [Step 4: nginx Base + Vhosts](#en-6-step-4-nginx-base--vhosts)
-7. [Step 5: PostgreSQL](#en-7-step-5-postgresql-live-dbtest-db)
-8. [Step 6: First Start of the Odoo Containers](#en-8-step-6-first-start-of-the-odoo-containers)
-9. [Step 7: Let's Encrypt & Reachability](#en-9-step-7-lets-encrypt--reachability)
-10. [Step 8: Set Up Updates (edup/doup)](#en-10-step-8-set-up-updates-edupdoup)
-11. [Step 9: Set Up Backups (edbk/dobk)](#en-11-step-9-set-up-backups-edbkdobk)
-12. [Step 10: Automate Maintenance](#en-12-step-10-automate-maintenance)
-13. [Restore & Emergency](#en-13-restore--emergency)
-14. [Script Reference](#en-14-script-reference)
-15. [Shell Reference (fish)](#en-15-shell-reference-fish)
-16. [Troubleshooting](#en-16-troubleshooting)
-17. [Optional Components](#en-17-optional-components)
-18. [Operation Behind an HTTP Proxy](#en-18-operation-behind-an-http-proxy)
+| File | What it covers |
+|---|---|
+| [01 Provisioning and Hardening](usage/01-provisioning.md) | Overview, prerequisites, `bootstrap.sh`, `getScripts.py`, `server_hardening.py` |
+| [02 nginx and Certificates](usage/02-nginx-certs.md) | nginx base files, vhosts via the wizard, Let's Encrypt, reachability |
+| [03 PostgreSQL and the Odoo Containers](usage/03-postgres-odoo.md) | `pg-local-deploy.sh`, build folders, first start of live and test |
+| [04 Setting Up and Running Updates](usage/04-updates.md) | `edup`, `doup`, the `tui` selection screen, the `wiz` assistant, run history |
+| [05 Backup and Restore](usage/05-backup-restore.md) | `edbk`, `dobk`, retention, encryption, restoring, emergencies |
+| [06 Maintenance and Optional Components](usage/06-maintenance.md) | Maintenance cron, readiness check, FastReport, Debian major upgrade |
+| [07 Operation Behind an HTTP Proxy](usage/07-proxy.md) | Servers that may only reach the internet through a corporate proxy |
+| [08 Troubleshooting](usage/08-troubleshooting.md) | Symptom → cause → fix, including the Docker ≥ 29 traps |
+| [09 Script and Shell Reference](usage/09-reference.md) | Every script with its invocation, every fish alias by category |
+
+## The sequence
+
+Ten steps, in this order. Each link lands on that step inside its guide.
 
 <a id="en-1-overview--architecture"></a>
-## 1. Overview & Architecture
-
-Target picture after completing this guide:
-
-```
-Internet ──443/80──▶ nginx (host, SSL termination, security headers)
-                       │
-        ┌──────────────┴───────────────┐
-        ▼                              ▼
- erp-live.example.com          erp-test.example.com
- 127.0.0.1:11000/12000         127.0.0.1:13000/14000
-        │                              │
- ┌──────┴──────┐                ┌──────┴──────┐
- │  live-odoo  │                │  test-odoo  │   (Docker, --restart=always)
- │ 8069 / 8072 │                │ 8069 / 8072 │
- └──────┬──────┘                └──────┬──────┘
-        │ live-db-net                  │ test-db-net
- ┌──────┴──────┐                ┌──────┴──────┐
- │   live-db   │                │   test-db   │   (PostgreSQL, host bind mount)
- └─────────────┘                └─────────────┘
-```
-
-**Port convention** (from `docker2update.yaml`):
-
-| System | Web (→ 8069) | Websocket/longpolling (→ 8072) |
-|---|---|---|
-| live | `127.0.0.1:11000` | `127.0.0.1:12000` |
-| test | `127.0.0.1:13000` | `127.0.0.1:14000` |
-
-All Odoo ports are deliberately bound to `127.0.0.1` — reachable only through
-nginx. Odoo ≥ 16 uses the `/websocket` route (no longer `/longpolling`); the
-nginx templates generated by `nginx-set-conf` handle this automatically.
-
 <a id="en-2-prerequisites"></a>
-## 2. Prerequisites
+### First: overview and prerequisites
 
-- **OS:** Debian 12/13 or Ubuntu 20.04–26.04, freshly installed, root access
-- **DNS:** A records for `erp-live.example.com` / `erp-test.example.com` pointing to the public IP
-- **Behind NAT** (server has a private IP behind a firewall):
-  - Firewall forwarding of **TCP 443 and TCP 80** to the internal server IP.
-    Port 80 must stay open **permanently** (Let's Encrypt renewal!)
-  - Internal clients: see [Troubleshooting → split DNS](#en-16-troubleshooting)
-- **Odoo image:** your own registry image or a build directory following
-  `Dockerfiles/v19-odoo/ReadMe.md` (Dockerfile, `build_odoo.py`, `release.file`,
-  `odoo.conf`, `bin/boot`)
-
-> ℹ️ **The server shell is fish.** `getScripts.py` installs fish as the
-> default shell. For copy-paste blocks: `$status` instead of `$?`,
-> `set VAR value` instead of `VAR=value`, no heredocs. Bash scripts still run
-> fine via `./script.sh` or `bash -c '…'`.
+What ends up running (two Odoo containers, two PostgreSQL containers, nginx in
+front) and what the server needs for it — Debian 12/13 or Ubuntu, root access,
+DNS records, open ports.
+→ [01 Provisioning and Hardening](usage/01-provisioning.md#en-1-overview--architecture)
 
 <a id="en-3-step-1-bootstrap"></a>
-## 3. Step 1: Bootstrap
+### Step 1: Bootstrap
 
-`bootstrap.sh` brings a fresh server into a defined baseline state —
-idempotent and safe to re-run.
-
-```bash
-# As root on the fresh server:
-curl -fsSL https://raw.githubusercontent.com/equitania/myodoo-docker/2026/scripts/bootstrap.sh \
-  -o /opt/myodoo-bootstrap.sh && chmod +x /opt/myodoo-bootstrap.sh && /opt/myodoo-bootstrap.sh
-```
-
-Installs: Docker CE (official repo), nginx (nginx.org), certbot, UFW
-(installed but **deliberately disabled** — see hardening), fail2ban,
-unattended-upgrades, Python dependencies; clones the repo and finally runs
-`getScripts.py`. Individual steps can be disabled via env vars
-(`INSTALL_NGINX=0`, `INSTALL_DOCKER=0`, `RUN_GETSCRIPTS=0`, …).
-
-> ⚠️ **Lesson learned (Docker ≥ 29):** Fresh installs of Docker ≥ 29 default
-> to the containerd image store, whose image export is broken for large
-> builds ([moby/moby#52431](https://github.com/moby/moby/issues/52431)).
-> `bootstrap.sh` ≥ 1.7.0 therefore pins the classic `overlay2` driver in
-> `/etc/docker/daemon.json`. For servers set up **without** a current
-> bootstrap: symptoms and cure in [Troubleshooting](#en-16-troubleshooting).
+One call installs the baseline: Docker CE (with `overlay2` as the storage
+driver), nginx, certbot, UFW, fail2ban and unattended security updates.
+Idempotent, every stage can be switched off.
+→ [01 Provisioning and Hardening](usage/01-provisioning.md#en-3-step-1-bootstrap)
 
 <a id="en-4-step-2-getscriptspy"></a>
-## 4. Step 2: getScripts.py
+### Step 2: getScripts.py
 
-Installs the fish shell configuration, all aliases/functions and the
-management scripts (including `container2backup.py`, `update_docker_odoo.py`)
-into `/root`. Executed automatically by bootstrap; manually:
-
-```bash
-/root/getScripts.py                 # install / update (lean output)
-/root/getScripts.py -v              # the same, with every step and all command output
-/root/getScripts.py --dns-check     # check/optimize DNS configuration
-/root/getScripts.py --proxy-check   # set up Docker daemon proxy (proxy customers)
-/root/getScripts.py --reconfigure   # re-run first-run configuration
-```
-
-Then open a new shell (or `source ~/.config/fish/config.fish`) — the aliases
-from [chapter 15](#en-15-shell-reference-fish) are available. Update later
-with `ups`.
-
-> ⚠️ **Lesson learned (sudo su):** Operators who log in with a personal admin
-> account and become root via `sudo su` need getScripts.py ≥ 9.7.3 — older
-> versions installed into the wrong home directory in that case (root's
-> shell had no aliases).
+Deploys the fish shell with its aliases and every management script to `/root`.
+Afterwards `doup`, `dobk`, `doval`, `tui` and `wiz` exist as commands.
+→ [01 Provisioning and Hardening](usage/01-provisioning.md#en-4-step-2-getscriptspy)
 
 <a id="en-5-step-3-server-hardening"></a>
-## 5. Step 3: Server Hardening
+### Step 3: Server hardening
 
-1. Maintain the secrets file (template: `scripts/.env.example`):
-
-```bash
-mcedit /root/.config/myodoo-docker/.env   # SSH_PORT, ALLOWED_IP_1..n, alert mail
-```
-
-2. **Audit first** (changes nothing), then apply:
-
-```bash
-sudo python3 /root/server_hardening.py            # audit / dry run
-sudo python3 /root/server_hardening.py --apply    # UFW, fail2ban, SSH, sysctl, auditd, AIDE, ...
-```
-
-UFW is only enabled here — after the SSH port and allowed IPs are configured,
-so you cannot lock yourself out. Target individual modules with
-`--apply --module ufw` or `-m fail2ban ssh sysctl`. Configuration:
-`scripts/hardening_config.yaml`.
+Read the audit without `--apply` first, then apply: UFW, fail2ban, SSH, sysctl,
+auditd, AIDE. Lockout-safe — the SSH configuration is swapped only after
+`sshd -t` accepts it.
+→ [01 Provisioning and Hardening](usage/01-provisioning.md#en-5-step-3-server-hardening)
 
 <a id="en-6-step-4-nginx-base--vhosts"></a>
-## 6. Step 4: nginx Base + Vhosts
+### Step 4: nginx base and vhosts
 
-### 6.1 Deploy the base files
-
-Every generated vhost references shared include files
-(`nginxconfig.io/security.conf`, `general.conf`) and the maintenance page.
-Without them `nginx -t` fails — so run this **before** the first vhost:
-
-```bash
-~/myodoo-docker/scripts/deploy-nginx-base.sh            # incl. nginx.conf (backup + validation + rollback)
-~/myodoo-docker/scripts/deploy-nginx-base.sh --dry-run  # report only
-```
-
-> ⚠️ **Lesson learned (pid file trap):** `nginx -t` can (re)create
-> `/run/nginx.pid` empty. The stock nginx.org unit reloads via
-> `kill -s HUP $(cat /run/nginx.pid)` — with an empty file the reload fails
-> (kill usage text in the journal) and **the old config silently stays
-> live**. `deploy-nginx-base.sh` ≥ 1.1.0 repairs the pid file automatically.
-> Permanent safeguard via systemd drop-in:
->
-> ```bash
-> mkdir -p /etc/systemd/system/nginx.service.d
-> printf '[Service]\nExecReload=\nExecReload=/bin/kill -s HUP $MAINPID\n' \
->   > /etc/systemd/system/nginx.service.d/10-reload-mainpid.conf
-> systemctl daemon-reload
-> ```
-
-### 6.2 Generate the vhost configuration
-
-The interactive wizard builds the YAML file consumed by `nginx-set-conf` —
-entry by entry ("add another domain?" loop), with validation and an optional
-deploy at the end:
-
-```bash
-~/myodoo-docker/scripts/ngx-conf-wizard.sh
-```
-
-For the two Odoo systems: template `eq_odoo_ssl`, domain, certificate name,
-port `11000` (live) / `13000` (test), pollport `12000` / `14000`. The YAML
-lands in `$HOME/docker-builds/ngx-conf/`; deploy any time with:
-
-```bash
-ngxset        # = nginx-set-conf --config_path=$HOME/docker-builds/ngx-conf/
-ngx!          # nginx -t
-ngxs          # status
-```
-
-> ⚠️ **Lessons learned:**
-> - **The bind IP must be LOCAL.** Behind NAT the **internal** IP
->   (`192.168.1.50`) belongs in the config, not the public DNS IP —
->   otherwise `bind() failed (99: Cannot assign requested address)`. The
->   wizard lists local IPs and warns about foreign ones.
-> - `nginx-set-conf` only **reloads** — a stopped nginx is not started.
->   After the first deploy check `ngxs`, then `ngx+` if needed.
+Roll out the base files first, or every `include` in a vhost fails. Then
+generate and deploy the vhosts through the wizard.
+→ [02 nginx and Certificates](usage/02-nginx-certs.md#en-6-step-4-nginx-base--vhosts)
 
 <a id="en-7-step-5-postgresql-live-dbtest-db"></a>
-## 7. Step 5: PostgreSQL (live-db/test-db)
+### Step 5: PostgreSQL
 
-One dedicated PostgreSQL container per system — interactively via:
-
-```bash
-~/myodoo-docker/scripts/pg-local-deploy.sh   # run 1: live-db
-~/myodoo-docker/scripts/pg-local-deploy.sh   # run 2: test-db
-```
-
-Prompts include container name (`live-db`), base directory, DB user/password,
-PostgreSQL version (current tags:
-<https://hub.docker.com/_/postgres/tags?name=16.>), performance profile
-(2cpu4gb … 8cpu32gb) and optional **self-signed SSL**. The script creates the
-network (`live-db-net`), a compose file
-(`<base>/live-db-deploy/docker-compose.yml`) and starts the container.
-Details: [scripts/README_pg-local-deploy.md](../scripts/README_pg-local-deploy.md).
-
-> ⚠️ **Lesson learned (db_sslmode):** The `odoo.conf` inside the Odoo image
-> must contain `db_sslmode = prefer`. With `require`, Odoo refuses to talk to
-> a PostgreSQL without SSL ("server does not support SSL, but SSL was
-> required"). Check before the first start:
->
-> ```fish
-> docker run --rm --entrypoint grep odoo/live db_sslmode /opt/odoo/etc/odoo.conf
-> # expected: db_sslmode = prefer
-> ```
+One database container each for live and test, deployed interactively, with a
+resource profile and optional SSL.
+→ [03 PostgreSQL and the Odoo Containers](usage/03-postgres-odoo.md#en-7-step-5-postgresql-live-dbtest-db)
 
 <a id="en-8-step-6-first-start-of-the-odoo-containers"></a>
-## 8. Step 6: First Start of the Odoo Containers
+### Step 6: First start of the Odoo containers
 
-### 8.1 Provide the image
-
-Either pull from your registry or build on the server. For a build, each
-system has a build directory (e.g. `$HOME/docker-builds/live-odoo/` with
-Dockerfile, `build_odoo.py`, `release.file`, `odoo.conf`, `bin/boot` — see
-`Dockerfiles/v19-odoo/ReadMe.md`):
-
-```fish
-cd $HOME/docker-builds/live-odoo
-docker build -t odoo/live .
-```
-
-### 8.2 Start the containers
-
-```fish
-# LIVE
-docker run -d -p 127.0.0.1:11000:8069 -p 127.0.0.1:12000:8072 \
-  --restart=always --network live-db-net \
-  -v /opt/odoo/live:/opt/odoo/data --name="live-odoo" odoo/live:latest start
-
-# TEST
-docker run -d -p 127.0.0.1:13000:8069 -p 127.0.0.1:14000:8072 \
-  --restart=always --network test-db-net \
-  -v /opt/odoo/test:/opt/odoo/data --name="test-odoo" odoo/test:latest start
-```
-
-The boot script inside the container accepts exactly three commands:
-`start` (normal operation), `update` (module update, used by `doup`),
-`neutralize` (neutralize the DB, e.g. after restoring onto test).
-
-> **Only `start` reads `odoo.conf`.** `update` and `neutralize` launch
-> `odoo-bin` without `-c` on purpose, so an update cannot inherit the instance's
-> `addons_path`, `db_host` and worker count. A change to `odoo.conf` therefore
-> takes effect on the running container only — not on the log output of `doup`'s
-> `update odoo` step.
-
-### 8.3 Verify
-
-```fish
-dps                                                # both containers "Up"?
-curl -sI http://127.0.0.1:11000/web/health         # HTTP/1.1 200 OK
-docker logs --tail 20 live-odoo                    # errors in the log?
-```
-
-Then open `https://erp-live.example.com` in a browser → create the database.
-Each instance's `odoo.conf` points at its DB container via `db_host`
-(`live-db` / `test-db`) — name resolution is handled by the Docker network.
-
-> ⚠️ **Lessons learned:**
-> - **Always map with the `127.0.0.1:` prefix.** Without it, 11000/12000
->   listen on all interfaces — anyone on the LAN bypasses nginx, SSL and the
->   security headers.
-> - If the start fails with `exec /app/bin/boot: no such file or directory`
->   although the build directory is correct → almost always the Docker 29
->   store bug, see [Troubleshooting](#en-16-troubleshooting).
+Create the build folder, build the image, start the container — once for live,
+once for test.
+→ [03 PostgreSQL and the Odoo Containers](usage/03-postgres-odoo.md#en-8-step-6-first-start-of-the-odoo-containers)
 
 <a id="en-9-step-7-lets-encrypt--reachability"></a>
-## 9. Step 7: Let's Encrypt & Reachability
+### Step 7: Let's Encrypt and reachability
 
-Certificates are created by `nginx-set-conf`/certbot during the vhost deploy
-(HTTP-01 via port 80). Automatic renewal is handled later by the maintenance
-cron ([chapter 12](#en-12-step-10-automate-maintenance)) via `ssl-renew.sh` —
-nginx is only stopped when a certificate is actually due. Safety net:
-`nginx-cert-guard.py` quarantines a single broken vhost (certificate/DNS)
-instead of blocking the whole server.
-
-```bash
-showcerts                 # certbot certificates — check validity
-/root/ssl-renew.sh        # manual renewal run
-```
-
-> ⚠️ **Lessons learned (NAT):**
-> - The **port 80 forwarding must stay permanently** — without HTTP-01 no
->   renewal, and the certificate expires after 90 days.
-> - **Internal clients cannot reach the domain, external access works?**
->   Classic split-DNS problem: internally the public IP is resolved and the
->   gateway cannot do hairpin NAT. Solution: create a pinpoint zone
->   `erp-live.example.com` with an A record pointing to the internal server
->   IP (`192.168.1.50`) on the internal DNS server — do **not** touch the
->   firewall for this.
+Obtain the certificates, check reachability, test the renewal path.
+→ [02 nginx and Certificates](usage/02-nginx-certs.md#en-9-step-7-lets-encrypt--reachability)
 
 <a id="en-10-step-8-set-up-updates-edupdoup"></a>
-## 10. Step 8: Set Up Updates (edup/doup)
+### Step 8: Set up updates
 
-`update_docker_odoo.py` updates the Odoo containers automatically (image
-rebuild, container re-creation, module update) — driven by
-`~/docker2update.yaml`:
-
-```bash
-edup    # edit the YAML (mcedit)
-doup    # run the update
-```
-
-Example entry per container (template: `scripts/docker2update.yaml`):
-
-```yaml
-containers:
-  - active: true
-    type: "F"                        # [M]odules | [F]ull | [N]eutralize
-    delay_time: 10
-    container_name: "live-odoo"
-    database_name: "live_odoo"
-    port: "127.0.0.1:11000"
-    longpolling_port: "127.0.0.1:12000"
-    dockerfile_path: "$HOME/docker-builds/live-odoo/"
-    docker_image_name: "odoo/live"
-    db_user: "ownerp"
-    db_password: "***"
-    db_host: "live-db"
-    volume: "--network live-db-net -v /opt/odoo/live:/opt/odoo/data"
-    odoo_version: "19"
-    translate: "Y"
-```
-
-Useful options: `doup --validate` (check config), `-s CONTAINER` (single
-container), `-v` (verbose). **Proxy customers:** `defaults.proxy` and
-`pre_build_files` in the YAML, daemon proxy via `getScripts.py --proxy-check`.
-
-### TUI mode
-
-`tui` opens the selection screen: every system from `docker2update.yaml` with its
-mode and its last run. Space selects, `m` cycles the mode (M/F/N), `c` records a
-comment, Enter starts. The YAML is **not** modified — ticks and mode apply to
-this run only.
-
-```bash
-tui                                  # selection screen
-doup                                 # classic, or the TUI when set as default
-doup -s live-odoo --type F           # no TUI, one system, mode just this once
-doup -s live-odoo --comment "pulled in eq_stock"
-```
-
-`d` in the screen (or `ownerp_tui.py --make-default`) makes the TUI the default
-for `doup`. With arguments, or without a terminal, the classic script always runs
-— no cron job can end up waiting in the screen.
-
-Every run is recorded in `~/update-history.jsonl`: when, which system, which
-mode, which result, which comment.
-
-**Every run leaves a log.** Regardless of `-v`, each run writes a full log into
-the instance's build folder: `~/docker-builds/<name>/update_YYYYMMDD_HHMMSS.log`.
-It includes the INFO lines the console withholds without `-v` — which is exactly
-the interesting part when the question is what last night's cron run did. The
-paths are named at the end, after an abort or a failure too. Thanks to
-`.dockerignore` they sit outside the build context and cost no build time.
-
-Cleanup happens on that instance's next run: **90 days** by default, adjustable
-via `defaults.log_retention_days` in the YAML or `log_retention_days` on the
-individual container; `0` keeps everything. Only files whose name matches
-`update_YYYYMMDD_HHMMSS.log` exactly are ever deleted — a `build.log` of your
-own in the same folder stays untouched, and subfolders such as
-`filestore-backup/` are not searched. The age comes from the file name, not the
-mtime: the name says when the run happened, the mtime only says when the file
-was last touched.
-
-**Build cache.** Before every build, `odoo_build_cache.py` fetches the release
-archives onto the host into `/opt/odoo-build-cache` and links them into the
-build folder — every instance on the same release shares one set, and a build
-downloads only what actually changed. The cache never blocks a build: whatever
-it does not supply, `build_odoo.py` fetches itself as before. The maintenance
-cron handles cleanup (`gc`, 30 days); `~/odoo_build_cache.py stats` shows the
-size per release.
-
-The same step keeps the **build folder's Dockerfile** current. That file belongs
-to the customer — `doup` never overwrites it, because it may carry its own
-`COPY` and `RUN` steps. This is why, for instance, the March 2026 `HEALTHCHECK`
-never reached older installations. Absent image directives (`HEALTHCHECK`,
-`VOLUME`, `EXPOSE`) are now filled in, with a `.bak_<timestamp>` written first.
-An `ADD` is additionally aligned with the reference's `COPY` where the two
-provably do the same thing (a plain local path — never a URL, an archive or a
-wildcard, since `ADD` fetches or unpacks those). Anything that merely *differs*
-beyond that is reported with its exact line in the closing block of `doup` and
-stays manual.
-
-The **build folder's `odoo.conf`** is maintained the same way and for the same
-reason: it is never distributed either, because it holds `admin_passwd` and
-`db_password`. Only centrally managed keys are filled in, and only where the
-customer set no value of their own — an empty value counts as none, because Odoo
-itself treats it that way. The first managed key is `http_interface`: Odoo 19
-warns when it is unset, and **Odoo 20 changes the default to `127.0.0.1`**, which
-would leave every container unreachable through its published port. A
-`.bak_<timestamp>` is written first here too, and the write is refused as soon as
-any other setting would change.
+`docker2update.yaml` describes every instance, `doup` runs the updates. The
+best way to add another instance is `wiz` — the assistant validates before it
+writes. `doval` checks the configuration at any time, read-only.
+→ [04 Setting Up and Running Updates](usage/04-updates.md#en-10-step-8-set-up-updates-edupdoup)
 
 <a id="en-11-step-9-set-up-backups-edbkdobk"></a>
-## 11. Step 9: Set Up Backups (edbk/dobk)
+### Step 9: Set up backups
 
-`container2backup.py` backs up the SQL dump + filestore per database plus
-service directories (nginx, letsencrypt, docker-builds) — driven by
-`~/container2backup.yaml`:
-
-```bash
-edbk    # edit the YAML
-dobk    # run a full backup
-dobk --sql-only
-llbk    # list the backup directory (/opt/backups/docker)
-```
-
-Example (template: `scripts/container2backup.yaml`):
-
-```yaml
-defaults:
-  retention_days: 14
-  db_user: ownerp
-  backup_path: /opt/backups
-  compression: { format: "7z", level: 5 }
-  stream: false          # true = streaming .tar.zst (large filestores!)
-
-databases:
-  - name: live_odoo
-    sql_container: live-db
-    data_container: live-odoo
-  - name: test_odoo
-    sql_container: test-db
-    data_container: test-odoo
-    only_sql_dump: true
-```
-
-> 💡 **Lesson learned:** For large filestores (≫ 50 GB) set `stream: true` —
-> the backup is piped straight into a `.tar.zst` without an uncompressed
-> staging copy. Compression level 3 is enough (filestore media is already
-> compressed). Details, encryption (AES-256/GPG) and per-format restore:
-> [scripts/README_BackUp.md](../scripts/README_BackUp.md).
-
-### Validate the configuration (doval)
-
-After any manual edit to `docker2update.yaml` or `container2backup.yaml`, a
-quick check before the next `doup` or `dobk` run is worth it:
-
-```bash
-doval                # validate both configurations at their default paths
-doval --update       # only docker2update.yaml
-doval --backup       # only container2backup.yaml
-```
-
-`ownerp_validate.py` is **read-only** — it never writes to the YAML — and
-checks required fields, types, port form, duplicate container/database names
-and ports (among active entries only), and unknown keys. Every finding names
-the file and the line number.
-
-**The three exit codes:**
-
-| Exit code | Meaning |
-|---|---|
-| `0` | no errors. **Warnings may still have been printed** — they do not count against the exit code |
-| `1` | at least one error |
-| `2` | a file is missing, unreadable, unparseable, or PyYAML is not installed |
-
-A cron job or wrapper script built on top of `doval` must therefore check the
-exit code (`$status` in fish) — not whether anything was printed at all,
-since warnings appear on exit code `0` too.
-
-### Add an instance, guided (wiz)
-
-Adding another Odoo instance to `docker2update.yaml` by hand means copying an
-existing block and changing twelve values, two of them host ports that must
-not collide with anything already in the file. `wiz` walks the fields instead:
-
-```bash
-wiz                                  # menu: 1) add an instance  2) change a field
-python3 ~/ownerp_wizard.py --update ~/docker2update.yaml
-```
-
-The assistant reads the configuration **before** it asks anything and proposes
-values from it — the next free host port, the build folder following the
-pattern of the existing entries, the image name following their convention. A
-suggestion sits in square brackets and is taken with Enter; where the entries
-disagree, it proposes nothing rather than guessing. The password is not echoed
-and appears in the summary as `********`.
-
-**Nothing is written until the result passes validation.** The sequence is
-always the same:
-
-1. a backup to `~/docker2update.yaml.bak-<YYYYMMDD_HHMMSS>`
-2. the new text goes to a temporary file **in the same directory**
-3. `ownerp_validate.py` runs against exactly that file
-4. **error** → the temporary file *and* the backup are removed, the original
-   is left byte for byte as it was, and the assistant offers to correct the
-   field that was rejected
-5. **clean** → the file is replaced atomically and the backup stays
-
-A backup is therefore left behind only when something actually changed — no
-`.bak-*` file after a run means the configuration was not touched. Warnings do
-not block: a build folder that does not exist yet is the normal state for a new
-instance, and the assistant offers to create it empty (nothing more — it is
-populated by the first `doup`).
-
-> **What `wiz` deliberately does not do:** it **never removes an entry**, and
-> it edits single values only. Lists and sub-blocks (`pre_build_files`,
-> `proxy`) are shown but not changed — those stay with `edup` (mcedit). It
-> refuses to start without a terminal, so it is unsuitable for cron jobs, and
-> unnecessary there.
-
-Inside the `tui` selection screen the same assistant is on the `w` key; the
-screen reloads the list afterwards, so the new instance can be selected right
-away.
+`container2backup.yaml` describes what is backed up, `dobk` carries it out.
+Retention, compression and encryption belong to the initial configuration.
+→ [05 Backup and Restore](usage/05-backup-restore.md#en-11-step-9-set-up-backups-edbkdobk)
 
 <a id="en-12-step-10-automate-maintenance"></a>
-## 12. Step 10: Automate Maintenance
+### Step 10: Automate maintenance
 
-Once `container2backup.yaml` is in place, a single call wires up all
-maintenance jobs as `/etc/cron.d/myodoo-maintenance` (incl. logrotate):
+One call wires backup, certificate renewal, GDPR log purging and memory cleanup
+into a single cron drop-in. Only useful once step 9 is in place.
+→ [06 Maintenance and Optional Components](usage/06-maintenance.md#en-12-step-10-automate-maintenance)
 
-```bash
-~/myodoo-docker/scripts/setup-maintenance-cron.sh
-```
-
-| Time | Job |
-|---|---|
-| 02:00 / 14:00 | `container2backup.py` — backups |
-| 23:50 | `nginx-cert-guard.py --check --apply` — DNS drift/certificate guard |
-| 00:00 | `ssl-renew.sh` — Let's Encrypt renewal |
-| 03:00 | `cleanup-weblogs.py` — GDPR weblog rotation (7 days) |
-| 04:30 | `nightly-cleanup.sh` — memory-based container restart |
-| Mon 06:00 | `server-readiness.py --quiet` — configuration drift report |
-
-Remove with `--remove`. Nightly cleanup details:
-[scripts/NIGHTLY_CLEANUP.md](../scripts/NIGHTLY_CLEANUP.md).
-
-The weekly readiness report deliberately writes **no** logfile: `--quiet` prints
-nothing while everything is fine, so cron mails via `MAILTO=root` only on actual
-drift. For the full report at any time: `chk`.
-
-> **Check instead of guessing:** After this step, `chk` answers whether the
-> server is fully set up. That is exactly what the tool exists for — on servers
-> where `setup-maintenance-cron.sh` never ran, the logrotate config is missing
-> and `/var/log/container2backup.log` grows unbounded unnoticed.
+## For reference
 
 <a id="en-13-restore--emergency"></a>
-## 13. Restore & Emergency
+### Restore and emergency
 
-Restore a backup (archive produced by `container2backup.py`; detects
-`.zip/.7z/.7z.gpg/.tar.gz/.tar.zst` automatically):
-
-```bash
-env PGPASSWORD='<pg_password>' ~/myodoo-docker/scripts/restore-zip.sh \
-  <backup_kind 1|2> <run_sql> <orig_dbname> <new_dbname> <drop_db Y/n> \
-  <archive> <odoo_volume> <pg_container>
-```
-
-Pass the password via the `PGPASSWORD` environment variable — as the 9th
-positional argument it would be visible in `ps aux` and shell history (the
-script warns in that case).
-
-Typical use case: restore the live backup as the test DB, then run
-`neutralize` in the container (disables mails/cron). For manual container
-updates without `doup` (fallback):
-[docs/MANUAL_DOCKER_UPDATE_GUIDE.md](MANUAL_DOCKER_UPDATE_GUIDE.md).
+Restoring from a backup, including format detection and the order in which the
+containers are stopped.
+→ [05 Backup and Restore](usage/05-backup-restore.md#en-13-restore--emergency)
 
 <a id="en-14-script-reference"></a>
-## 14. Script Reference
-
-All scripts in this repository (`scripts/`, as of 16.07.2026):
-
-| Script | Purpose | Invocation |
-|---|---|---|
-| `bootstrap.sh` (1.7.0) | Baseline for fresh servers (Docker, nginx, certbot, UFW, fail2ban) | `curl … bootstrap.sh -o /opt/… && /opt/myodoo-bootstrap.sh` |
-| `getScripts.py` (9.7.3) | fish shell, aliases, management scripts into `/root` | `./getScripts.py [--dns-check\|--proxy-check\|--reconfigure]` |
-| `server_hardening.py` (1.8.0) | Audit + hardening (UFW, fail2ban, SSH, sysctl, auditd, AIDE) | `sudo python3 server_hardening.py [--apply] [-m MODULE …]` |
-| `deploy-nginx-base.sh` (1.3.0) | nginx base: includes, maintenance page, nginx.conf (with rollback) | `./deploy-nginx-base.sh [--dry-run] [--no-main-conf]` |
-| `ngx-conf-wizard.sh` (1.1.0) | Interactive YAML wizard for nginx-set-conf | `./ngx-conf-wizard.sh` |
-| `pg-local-deploy.sh` (1.2.1) | Deploy a PostgreSQL container interactively (profiles, optional SSL) | `./pg-local-deploy.sh` |
-| `fr-local-deploy.sh` | Deploy the FastReport API container (default `/opt/fast-report`) | `./fr-local-deploy.sh` |
-| `update_docker_odoo.py` (5.12.0) | Odoo container updates via YAML | `doup` or `python3 update_docker_odoo.py [-s NAME] [--validate]` |
-| `ownerp_tui.py` (1.1.0) | Curses selection screen for Odoo container updates, hands off to `update_docker_odoo.py` | `tui` or `python3 ownerp_tui.py [-c FILE]` |
-| `odoo_build_cache.py` (1.5.0) | Release archive cache shared by all instances; also maintains the build folder's Dockerfile and `odoo.conf` | called by `doup`; `~/odoo_build_cache.py stats\|gc [--days 30]` |
-| `container2backup.py` (4.8.0) | SQL+filestore backups, compression/encryption/streaming | `dobk` or `~/container2backup.py [--sql-only\|--validate]` |
-| `ownerp_validate.py` (1.0.0) | Read-only schema validation of `docker2update.yaml`/`container2backup.yaml` | `doval` or `~/ownerp_validate.py [--update PATH\|--backup PATH]` |
-| `ownerp_wizard.py` (1.0.0) | Guided adding of an instance / changing a field in `docker2update.yaml`; validates before it replaces, and never removes an entry | `wiz` or `~/ownerp_wizard.py [--update PATH]` |
-| `restore-zip.sh` (2.1.0) | Backup restore (DB + filestore) into Docker | see [chapter 13](#en-13-restore--emergency) |
-| `ssl-renew.sh` (1.3.0) | certbot renewal, nginx stopped only when needed | `./ssl-renew.sh` (cron) |
-| `nginx-cert-guard.py` (1.1.0) | Quarantine broken vhosts instead of blocking nginx | `--reconcile [--start]`, `--check [--apply]`, `--list`, `--restore DOMAIN` |
-| `setup-maintenance-cron.sh` (1.3.0) | Install maintenance cron + logrotate | `./setup-maintenance-cron.sh [--remove]` |
-| `server-readiness.py` (1.3.0) | Check configuration drift (read-only) | `chk` or `~/server-readiness.py [--brief\|--quiet]` |
-| `nightly-cleanup.sh` (1.1.0) | Container restart under memory pressure | cron; `MEMORY_THRESHOLD=90 DRY_RUN=1 ./nightly-cleanup.sh` |
-| `cleanup-weblogs.py` (2.0.0) | nginx log rotation, GDPR purge after 7 days | cron; `python3 cleanup-weblogs.py` |
-| `dist-upgrade-debian.sh` (1.0.0) | Guided Debian major upgrade (e.g. bookworm→trixie) | `./dist-upgrade-debian.sh [CODENAME] [--yes]` |
-| `check_docker_volumes.sh` (1.0.0) | List volumes and referencing containers | `dkvol` |
-
 <a id="en-15-shell-reference-fish"></a>
-## 15. Shell Reference (fish)
+### Script and shell reference
 
-Complete reference with definitions: [fish/README.md](../fish/README.md).
-The most important aliases/functions by category:
-
-**Backup & update** (`33-aliases-backup.fish`)
-
-| Alias | Command / purpose |
-|---|---|
-| `dobk` | `$HOME/container2backup.py` — run a backup |
-| `edbk` | `mcedit $HOME/container2backup.yaml` — backup config |
-| `llbk` / `cdbk` | List / enter the backup directory (`/opt/backups/docker`) |
-| `doup` | `$HOME/update_docker_odoo.py` — container update |
-| `edup` | `mcedit $HOME/docker2update.yaml` — update config |
-
-**nginx** (`34-aliases-nginx.fish`)
-
-| Alias | Command / purpose |
-|---|---|
-| `ngxset` | `nginx-set-conf --config_path=$HOME/docker-builds/ngx-conf/` — deploy vhosts |
-| `ngx+` / `ngx-` / `ngx#` / `ngxr` | nginx start / stop / restart / reload |
-| `ngx!` / `ngxs` | `nginx -t` / service status |
-| `cdngx` | `cd /etc/nginx/conf.d/` |
-| `showcerts` | `certbot certificates` |
-
-**Docker** (`32-aliases-docker.fish`)
-
-| Alias | Command / purpose |
-|---|---|
-| `dps` / `dpsall` | Container overview (formatted, sorted) |
-| `dpi` | `docker images` |
-| `dkvol` | Volumes + referencing containers |
-| `dkstop` | Stop all containers |
-| `exec-live` / `exec-test` | Shell into the live/test container |
-| `dco` / `dcup` / `dcdown` / `dclogs` / `dcps` | docker compose shortcuts |
-| `ct` | `ctop` — container monitor |
-| ⚠️ `dkprs` / `dkprv` / `dkprf` / `dkprfa` | `docker system/volume prune` variants — **`dkprfa` also wipes volumes!** |
-
-**System** (`30-aliases-system*.fish`)
-
-| Alias | Command / purpose |
-|---|---|
-| `ll` / `hg` / `mce` / `lg` | `ls -alh` / history grep / mcedit / lazygit |
-| `rm` / `chmod` / `chown` | Safety wrappers (`rm -I`, `-c` verbose) |
-| `cleandlog` | Truncate Docker JSON logs |
-| `dusort` | Disk usage, sorted |
-| `f2b` | fail2ban status |
-| `prepatch` | Open an update screen session (`screen -S sysupdate`) |
-
-**Functions** (`fish/functions/linux/`)
-
-| Function | Purpose |
-|---|---|
-| `syspatch` | Full system update: journalctl vacuum → apt dist-upgrade → AIDE baseline → `docker image prune -f` |
-| `ups` | Update the ownERP scripts (re-run getScripts.py) |
-| `chk` | Readiness report: is the server up to date, what is missing? (read-only) |
-| `dkrm` / `dkrmi` / `dkrmv` | Delete all containers/images/volumes — confirmation-gated, `dkrmv` requires typing `DELETE` |
-
-**Odoo** (`35-aliases-odoo.fish`): `odoo-shell`, `odoo-logs`, `odoo-restart`,
-`pg-shell` — placeholder container names, adapt per server.
+Every script in the repository with its purpose and invocation, every fish
+alias by category.
+→ [09 Script and Shell Reference](usage/09-reference.md#en-14-script-reference)
 
 <a id="en-16-troubleshooting"></a>
-## 16. Troubleshooting
+### Troubleshooting
 
-| Symptom | Cause | Fix |
-|---|---|---|
-| `docker build` fails at "exporting to image" with `ref moby/1/… locked … unavailable` | Docker ≥ 29 with the containerd image store ([moby#52431](https://github.com/moby/moby/issues/52431)) | `/etc/docker/daemon.json`: `{"storage-driver": "overlay2"}` → `systemctl restart docker` → **reboot the server** → re-pull images, recreate containers (volumes survive) |
-| `exec /app/bin/boot: no such file or directory` on container start although the build "succeeded" | Hollow image from a poisoned BuildKit cache (aftermath of the store bug). Cross-check: is even `/bin/sh` missing in the image? | After switching the store: `docker builder prune -af`, then `docker build --no-cache --pull` |
-| Builds produce **non-deterministically** hollow images; kernel log: `overlayfs: lowerdir is in-use as upperdir/workdir of another mount` | Orphaned overlay mounts of the old store after a store switch without reboot — two overlay worlds share directories | **Reboot the server**, then `docker builder prune -af` + `docker build --no-cache --pull` |
-| `docker build` aborts with `Release server '…' could not be reached` or `Connection refused` while downloading a ZIP | The web service on the release server is down. Downloads are retried 5× with exponential backoff (~45 s, build_odoo ≥ 2.5.0), then the build fails | On the release server check and start `systemctl status nginx`, then rerun the build. Raise the tolerance via `BUILD_ODOO_RETRIES` / `BUILD_ODOO_RETRY_BACKOFF` |
-| Build aborts with `N module archive(s) could NOT be installed` plus a list | One or more module ZIPs are missing on the release server, or a filename in `release.file` is invalid. As of build_odoo ≥ 2.6.0 this is a hard failure instead of a silently incomplete image | Check the listed archives on the release server or fix `release.file`, then rebuild. Three consecutive failures abort the run early (`BUILD_ODOO_FAILURE_LIMIT`). Only if an incomplete image is knowingly acceptable: `BUILD_ODOO_ALLOW_PARTIAL=1` |
-| nginx: `bind() to 203.0.113.10:443 failed (99: Cannot assign requested address)` | Behind NAT the public DNS IP is not local | Use the **internal** IP in the vhost config; `ngx-conf-wizard.sh` lists the local IPs |
-| `systemctl reload nginx` fails, journal shows kill usage text; old config stays live | Empty `/run/nginx.pid` (created by `nginx -t`), stock unit trusts the file | Install the `$MAINPID` drop-in ([chapter 6.1](#en-6-step-4-nginx-base--vhosts)); also happens on nginx **package upgrades** (postinst) — then `systemctl daemon-reload && systemctl restart nginx` |
-| nginx dead (`Connection refused` on 80 **and** 443), host still reachable via SSH; journal shows `Failed to start nginx.service` seconds after an apt upgrade | nginx was restarted mid-swap of glibc/openssl (by `needrestart` or the certbot `pre_hook`); the start failed and the nginx.org unit ships `Restart=no` — no second attempt ever happens | Drop-in `/etc/systemd/system/nginx.service.d/10-restart.conf` with `Restart=on-failure` + `RestartSec=10` (plus `StartLimitBurst=5`/`StartLimitIntervalSec=300`). Also pin `certbot.timer` to a fixed slot via drop-in (e.g. `OnCalendar=*-*-* 03:00:00`, preceded by an empty `OnCalendar=` line) so its randomized delay cannot land in the 06:00–07:00 apt window. **`bootstrap.sh` ≥ 1.9.0 installs both drop-ins automatically** — including on a re-run against an existing server |
-| Odoo: "server does not support SSL, but SSL was required" when creating a DB | `db_sslmode = require` in odoo.conf, PostgreSQL without SSL | Set `db_sslmode = prefer` (or enable PG SSL via `pg-local-deploy.sh`) |
-| Domain reachable externally but not internally | Split DNS: internal clients resolve the public IP, gateway cannot hairpin-NAT | Pinpoint zone on the internal DNS: `erp-live.example.com` → internal server IP |
-| Certificate expires, renewal fails | Port 80 forwarding was removed | Forward TCP 80 → server permanently (HTTP-01) |
-| `fish: $? is not the exit status …` | Bash syntax in the fish shell | `$status` instead of `$?`; bash blocks via `bash -c '…'` |
-| Odoo web UI directly reachable via `IP:11000` from the LAN | Port mapping without the `127.0.0.1:` prefix | Recreate the container with `-p 127.0.0.1:11000:8069 …` |
+Symptom, cause, fix — including the Docker ≥ 29 traps where builds silently
+produce hollow images.
+→ [08 Troubleshooting](usage/08-troubleshooting.md#en-16-troubleshooting)
 
 <a id="en-17-optional-components"></a>
-## 17. Optional Components
+### Optional components
 
-**FastReport API** (PDF rendering for Odoo): interactively via
-`~/myodoo-docker/scripts/fr-local-deploy.sh` — default base
-`/opt/fast-report`, one container per system (e.g. `fr-live`, `fr-test`),
-registry access required. Backup integration via the `fast_report:` block in
-`container2backup.yaml` ([chapter 11](#en-11-step-9-set-up-backups-edbkdobk)).
-
-**Debian major upgrade:** `dist-upgrade-debian.sh` guides through an in-place
-upgrade (rewrite sources, phased upgrade, reboot prompt).
+The FastReport API for PDF rendering, and the guided Debian major upgrade.
+→ [06 Maintenance and Optional Components](usage/06-maintenance.md#en-17-optional-components)
 
 <a id="en-18-operation-behind-an-http-proxy"></a>
-## 18. Operation Behind an HTTP Proxy
+### Operation behind an HTTP proxy
 
-For servers that may only reach the internet through a corporate proxy
-(getScripts.py ≥ 9.8.2, update_docker_odoo.py ≥ 5.3.0). Typical tell:
-firewalls in such environments often **drop** direct outbound connections
-silently — processes without proxy configuration then **hang** instead of
-failing immediately.
-
-### 18.1 Initial Installation Behind a Proxy
-
-Bootstrap and repo clone need internet access before the proxy is
-permanently configured — so set the variables manually in the session first
-(fresh server = still bash), then run the normal bootstrap from
-[chapter 3](#en-3-step-1-bootstrap):
-
-```bash
-# As root, bash — set proxy for this session first:
-export http_proxy="http://proxy.example.com:8080"
-export https_proxy="http://proxy.example.com:8080"
-export no_proxy="localhost,127.0.0.1,::1,.local"
-```
-
-`apt`, `curl` and `git` pick up the variables — the bootstrap then runs
-entirely through the proxy. Immediately afterwards, make the configuration
-permanent (18.2).
-
-### 18.2 Configure the Proxy Permanently
-
-```fish
-python3 ~/getScripts.py --proxy-check
-```
-
-Prompts for proxy URL and exceptions interactively and writes four places:
-
-| File | Effect | Takes effect |
-|---|---|---|
-| `~/.config/fish/conf.d/99-proxy.fish` | All fish sessions (interactive + scripts) | Next fish session (`exec fish`) |
-| `/etc/environment` | System-wide via PAM: logins, cron, su | Next login |
-| `~/.getscripts_proxy` | Marker/fallback for `update_docker_odoo.py` and the fastfetch deploy | Immediately |
-| `/etc/systemd/system/docker.service.d/http-proxy.conf` | Docker daemon (image pulls) | **Only after `systemctl restart docker`** |
-
-> ⚠️ **Maintenance window:** `systemctl restart docker` restarts **all
-> containers**. Until the restart, `docker pull` will fail.
-
-To change or remove the proxy: always rerun `--proxy-check` — never edit
-the files individually.
-
-### 18.3 Container Updates (doup)
-
-`update_docker_odoo.py` resolves the proxy in this order:
-`container.proxy` > `defaults.proxy` > environment variables >
-`~/.getscripts_proxy`. Recommendation: set it explicitly in
-`docker2update.yaml` so cron runs are independent of the shell environment:
-
-```yaml
-defaults:
-  proxy:                                    # wget downloads + docker build
-    http_proxy: "http://proxy.example.com:8080"
-    https_proxy: "http://proxy.example.com:8080"
-    no_proxy: "localhost,127.0.0.1,.local"
-```
-
-The YAML proxy applies to `wget` and `docker build` (env + `--build-arg`).
-The **base image pull is done by the Docker daemon** — only the systemd
-drop-in from 18.2 covers that. Files the build cannot fetch itself can be
-copied into the build folder beforehand via per-container `pre_build_files`
-(list of `{source, target}`).
-
-### 18.4 Peculiarities
-
-- **fastfetch:** The `publicip` module uses raw sockets, ignores
-  `http_proxy` and would hang the login indefinitely. getScripts strips it
-  automatically from the deployed config on proxy hosts. The remaining
-  ~1 s runtime is normal (NetIO/DiskIO sample over a 1 s window).
-- **uv:** With uv installed via a package manager, `uv self update` is not
-  possible — getScripts detects this and logs an INFO skip, not an error.
-- **Internal services:** If scripts or containers talk to internal hosts
-  over HTTP (e.g. `*.internal.example.com`), extend the exceptions in
-  `--proxy-check` with `.internal.example.com` — otherwise that traffic
-  goes through the proxy.
-
-### 18.5 Verification
-
-```fish
-env | grep -i proxy                                # fish environment
-grep -i proxy /etc/environment                     # system-wide
-systemctl show docker --property=Environment       # Docker daemon
-git -C ~/myodoo-docker fetch --dry-run; echo $status   # internet via proxy (0 = ok)
-time fastfetch > /dev/null                         # ~1 s, no hang
-```
-
-| Symptom | Cause | Fix |
-|---|---|---|
-| Login/fastfetch hangs indefinitely | Old fastfetch config with `publicip` | `ups`, then `--proxy-check` |
-| `docker pull` hangs/fails | Drop-in missing or Docker not restarted | 18.2 |
-| `git pull` / `curl` hangs | Session without proxy environment | `exec fish` or re-login |
-| cron jobs without internet | `/etc/environment` missing/outdated | Rerun `--proxy-check` |
+For servers that may only reach the internet through a corporate proxy —
+including the daemon proxy, without which every base image pull fails.
+→ [07 Operation Behind an HTTP Proxy](usage/07-proxy.md#en-18-operation-behind-an-http-proxy)
