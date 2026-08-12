@@ -1,5 +1,41 @@
 # Release Notes
 
+## A PostgreSQL Healthcheck That Stops Writing FATAL Every Ten Seconds (12.08.2026)
+
+*scripts/pg-local-deploy.sh v1.2.2 · semaphore playbooks/odoo/pg/pb_pg_docker_start.yaml*
+
+### Fixed
+- **Every deployed PostgreSQL container logged `FATAL: database "ownerp" does not
+  exist` every ten seconds, forever.** The generated healthcheck ran
+  `pg_isready -U <user>` without `-d`. libpq then falls back to the database named
+  after the connecting user, so a cluster created with `POSTGRES_DB=postgres`
+  rejected every single check — while the check itself kept reporting healthy,
+  because `PQping` counts a FATAL reply as "server is up and accepting
+  connections".
+
+  Nothing was broken, which is exactly the problem: the container was fine, the
+  database was fine, and the log of a production database filled with FATAL lines
+  that bury the errors worth reading. On a customer server the noise arrives
+  wrapped in a `docker logs` excerpt that looks like a database outage.
+
+  Fixed in all four places the call appears: the Compose healthcheck, the
+  `docker run` fallback's `--health-cmd`, and both `pg_isready` wait loops. The
+  same two calls in the Ansible playbook the script mirrors were pulled along —
+  that playbook sets no healthcheck, so its noise was limited to deploy time, but
+  the two deployment paths have to stay comparable line by line.
+
+  The check targets `postgres`, not the configured `$pg_db`: the maintenance
+  database exists after every initdb, whereas `$pg_db` is never created on a
+  re-deploy over existing PGDATA (`POSTGRES_DB` only takes effect during initdb)
+  — which would have reproduced the same failure under a different name.
+
+  **Existing containers keep the old check.** A healthcheck is frozen into the
+  container configuration when it is created, and `docker container update` cannot
+  change it; it knows only resource limits. Correct the `pg_isready` line in
+  `{base}/{name}-deploy/docker-compose.yml` and run `docker compose -f … up -d`,
+  or re-run the script — either way the container is recreated, and PGDATA lives
+  on the host and is untouched.
+
 ## The v19 Container Resolves Visitor Countries Again (12.08.2026)
 
 *v19-odoo/bin/boot v2.5.0*

@@ -194,6 +194,13 @@ independent of the shell environment. Full walkthrough: `docs/usage/07-proxy.md`
   moby/moby#52431). Cure: reboot → `docker builder prune -af` → `docker build --no-cache --pull`.
 - **nginx pid trap:** `nginx -t` can truncate `/run/nginx.pid`; the stock nginx.org unit then fails
   `reload` (kill usage text) while the old config stays live. Use the `$MAINPID` ExecReload drop-in.
+- **`pg_isready` always needs `-d`:** without it libpq falls back to the database named after the
+  connecting user, and every check logs `FATAL: database "<user>" does not exist` while still
+  reporting success (`PQping` counts a FATAL reply as "server accepts connections"). Use
+  `-d postgres` — it exists after every initdb, whereas the configured DB does not on a re-deploy
+  over existing PGDATA. Containers deployed by `pg-local-deploy.sh` < 1.2.2 carry the old check;
+  a healthcheck is frozen in at creation time, so fixing it means **recreating** the container
+  (`docker compose -f <deploy-dir>/docker-compose.yml up -d`) — `docker container update` cannot.
 - **nginx dies during apt upgrades:** the nginx.org unit ships `Restart=no`, so a start that fails
   mid-library-swap (glibc/openssl under `apt-daily-upgrade`) leaves nginx down until a human
   notices — `Connection refused` on 80 *and* 443 while SSH still answers. `bootstrap.sh` ≥ 1.9.0

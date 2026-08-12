@@ -9,7 +9,7 @@
 
 ## Übersicht
 
-`pg-local-deploy.sh` (v1.2.0) ist ein interaktives On-Premise-Deploy-Skript für PostgreSQL-Docker-Container. Es spiegelt das Ansible-Playbook `semaphore/playbooks/odoo/pg/pb_pg_docker_start.yaml` auf der lokalen Maschine, damit PostgreSQL-Instanzen auch ohne Semaphore/Ansible-Setup (z.B. Kunden-On-Premise) ausgerollt werden können.
+`pg-local-deploy.sh` (v1.2.2) ist ein interaktives On-Premise-Deploy-Skript für PostgreSQL-Docker-Container. Es spiegelt das Ansible-Playbook `semaphore/playbooks/odoo/pg/pb_pg_docker_start.yaml` auf der lokalen Maschine, damit PostgreSQL-Instanzen auch ohne Semaphore/Ansible-Setup (z.B. Kunden-On-Premise) ausgerollt werden können.
 
 ### Hauptfunktionen
 
@@ -88,6 +88,7 @@ docker network connect {name}-net <odoo-container>
 - **Container startet nach Conf-Update nicht:** `docker logs <name>` prüfen; Rollback durch Zurückkopieren von `postgresql.conf.bak-<timestamp>` in PGDATA.
 - **`SHOW ssl` liefert nicht `on`:** Logs prüfen — meist fehlen `server.crt`/`server.key` in PGDATA oder die Rechte stimmen nicht (Key muss 0600, Owner 999:999 sein).
 - **Passwort greift nicht:** `POSTGRES_PASSWORD` wirkt nur beim ersten Start (initdb). Bei bestehendem PGDATA das Passwort in der Datenbank ändern.
+- **Log füllt sich alle 10 s mit `FATAL: database "<db-user>" does not exist`, Container ist trotzdem `healthy`:** Healthcheck von Containern, die mit < 1.2.2 deployt wurden. Dort fehlte `-d`, also nahm libpq den Benutzernamen als Datenbanknamen; `PQping` wertet die FATAL-Antwort als „Server nimmt Verbindungen an“, der Check blieb grün. Behebung: im Compose-File `pg_isready -U <user>` → `pg_isready -U <user> -d postgres`, dann `docker compose -f … up -d`. Der Healthcheck ist bei der Container-Erstellung eingefroren und lässt sich nicht per `docker container update` ändern — der Container muss neu erzeugt werden (PGDATA bleibt). Ein erneuter Skript-Lauf schreibt das Compose-File selbst neu.
 
 ---
 
@@ -96,7 +97,7 @@ docker network connect {name}-net <odoo-container>
 
 ## Overview
 
-`pg-local-deploy.sh` (v1.2.0) is an interactive on-premise deploy script for PostgreSQL Docker containers. It mirrors the Ansible playbook `semaphore/playbooks/odoo/pg/pb_pg_docker_start.yaml` on the local machine so PostgreSQL instances can be rolled out without a Semaphore/Ansible setup (e.g. customer on-premise).
+`pg-local-deploy.sh` (v1.2.2) is an interactive on-premise deploy script for PostgreSQL Docker containers. It mirrors the Ansible playbook `semaphore/playbooks/odoo/pg/pb_pg_docker_start.yaml` on the local machine so PostgreSQL instances can be rolled out without a Semaphore/Ansible setup (e.g. customer on-premise).
 
 ### Key Features
 
@@ -175,6 +176,7 @@ docker network connect {name}-net <odoo-container>
 - **Container does not start after conf update:** check `docker logs <name>`; roll back by copying `postgresql.conf.bak-<timestamp>` back into PGDATA.
 - **`SHOW ssl` does not return `on`:** check the logs — usually `server.crt`/`server.key` are missing in PGDATA or permissions are wrong (key must be 0600, owner 999:999).
 - **Password not accepted:** `POSTGRES_PASSWORD` only applies on first start (initdb). With existing PGDATA, change the password inside the database.
+- **Log fills with `FATAL: database "<db-user>" does not exist` every 10 s while the container reports `healthy`:** healthcheck of containers deployed with < 1.2.2. It lacked `-d`, so libpq fell back to the database named after the user; `PQping` treats the FATAL reply as "server accepts connections", so the check stayed green. Fix: in the compose file change `pg_isready -U <user>` → `pg_isready -U <user> -d postgres`, then `docker compose -f … up -d`. The healthcheck is frozen into the container at creation time and cannot be changed via `docker container update` — the container has to be recreated (PGDATA survives). Re-running the script rewrites the compose file by itself.
 
 ---
 

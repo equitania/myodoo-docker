@@ -21,7 +21,7 @@ Alle Skripte des Repos (`scripts/`, Stand 16.07.2026):
 | `server_hardening.py` (1.8.0) | Audit + Härtung (UFW, fail2ban, SSH, sysctl, auditd, AIDE) | `sudo python3 server_hardening.py [--apply] [-m MODUL …]` |
 | `deploy-nginx-base.sh` (1.3.0) | nginx-Basis: Includes, Wartungsseite, nginx.conf (mit Rollback) | `./deploy-nginx-base.sh [--dry-run] [--no-main-conf]` |
 | `ngx-conf-wizard.sh` (1.1.0) | Interaktiver YAML-Assistent für nginx-set-conf | `./ngx-conf-wizard.sh` |
-| `pg-local-deploy.sh` (1.2.1) | PostgreSQL-Container interaktiv deployen (Profile, optional SSL) | `./pg-local-deploy.sh` |
+| `pg-local-deploy.sh` (1.2.2) | PostgreSQL-Container interaktiv deployen (Profile, optional SSL) | `./pg-local-deploy.sh` |
 | `fr-local-deploy.sh` | FastReport-API-Container deployen (Default `/opt/fast-report`) | `./fr-local-deploy.sh` |
 | `update_docker_odoo.py` (5.12.0) | Odoo-Container-Updates per YAML | `doup` bzw. `python3 update_docker_odoo.py [-s NAME] [--validate]` |
 | `ownerp_tui.py` (1.1.0) | Curses-Auswahlmaske für Odoo-Container-Updates, übergibt an `update_docker_odoo.py` | `tui` bzw. `python3 ownerp_tui.py [-c DATEI]` |
@@ -118,7 +118,7 @@ All scripts in this repository (`scripts/`, as of 16.07.2026):
 | `server_hardening.py` (1.8.0) | Audit + hardening (UFW, fail2ban, SSH, sysctl, auditd, AIDE) | `sudo python3 server_hardening.py [--apply] [-m MODULE …]` |
 | `deploy-nginx-base.sh` (1.3.0) | nginx base: includes, maintenance page, nginx.conf (with rollback) | `./deploy-nginx-base.sh [--dry-run] [--no-main-conf]` |
 | `ngx-conf-wizard.sh` (1.1.0) | Interactive YAML wizard for nginx-set-conf | `./ngx-conf-wizard.sh` |
-| `pg-local-deploy.sh` (1.2.1) | Deploy a PostgreSQL container interactively (profiles, optional SSL) | `./pg-local-deploy.sh` |
+| `pg-local-deploy.sh` (1.2.2) | Deploy a PostgreSQL container interactively (profiles, optional SSL) | `./pg-local-deploy.sh` |
 | `fr-local-deploy.sh` | Deploy the FastReport API container (default `/opt/fast-report`) | `./fr-local-deploy.sh` |
 | `update_docker_odoo.py` (5.12.0) | Odoo container updates via YAML | `doup` or `python3 update_docker_odoo.py [-s NAME] [--validate]` |
 | `ownerp_tui.py` (1.1.0) | Curses selection screen for Odoo container updates, hands off to `update_docker_odoo.py` | `tui` or `python3 ownerp_tui.py [-c FILE]` |
