@@ -12,6 +12,8 @@ Run from the repository root:
 
 import os
 import sys
+import shutil
+import tempfile
 import textwrap
 import unittest
 
@@ -131,3 +133,89 @@ class EntryBoundsTest(unittest.TestCase):
         first, last = wiz.entry_bounds(self.LINES, 4, 2)
         self.assertEqual(first, 3)
         self.assertEqual(last, 5)
+
+
+def validator_error():
+    import ownerp_validate
+    return ownerp_validate.ERROR
+
+
+class SafeWriteTest(unittest.TestCase):
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(self.tmp.cleanup)
+        self.path = os.path.join(self.tmp.name, "docker2update.yaml")
+        shutil.copy(TEMPLATE, self.path)
+        with open(self.path, encoding="utf-8") as handle:
+            self.original = handle.read()
+
+    def lines(self):
+        with open(self.path, encoding="utf-8") as handle:
+            return handle.read().split("\n")
+
+    def current(self):
+        with open(self.path, encoding="utf-8") as handle:
+            return handle.read()
+
+    def leftovers(self):
+        return sorted(n for n in os.listdir(self.tmp.name)
+                      if n != "docker2update.yaml")
+
+    def test_a_clean_write_replaces_the_file_and_keeps_the_backup(self):
+        new = self.lines()
+        new.insert(0, "# touched by the test")
+        ok, findings, backup = wiz.safe_write(self.path, new)
+        self.assertTrue(ok, [f.message for f in findings])
+        self.assertTrue(self.current().startswith("# touched by the test"))
+        self.assertTrue(os.path.isfile(backup))
+        with open(backup, encoding="utf-8") as handle:
+            self.assertEqual(handle.read(), self.original)
+
+    def test_a_rejected_write_leaves_the_original_byte_identical(self):
+        new = [line.replace('type: "F"', 'type: "X"') for line in self.lines()]
+        ok, findings, backup = wiz.safe_write(self.path, new)
+        self.assertFalse(ok)
+        self.assertEqual(self.current(), self.original)
+        self.assertIsNone(backup)
+        self.assertTrue(any(f.severity == validator_error() for f in findings))
+
+    def test_a_rejected_write_leaves_no_backup_and_no_temp_file(self):
+        new = [line.replace('type: "F"', 'type: "X"') for line in self.lines()]
+        wiz.safe_write(self.path, new)
+        self.assertEqual(self.leftovers(), [])
+
+    def test_unparseable_output_is_rejected_too(self):
+        new = self.lines() + ["  this: is: not: yaml"]
+        ok, _findings, backup = wiz.safe_write(self.path, new)
+        self.assertFalse(ok)
+        self.assertEqual(self.current(), self.original)
+        self.assertIsNone(backup)
+        self.assertEqual(self.leftovers(), [])
+
+    def test_warnings_alone_do_not_block_the_write(self):
+        # The template's dockerfile_path does not exist here - a warning.
+        new = self.lines()
+        ok, findings, _backup = wiz.safe_write(self.path, new)
+        self.assertTrue(ok)
+        self.assertTrue(findings, "expected the path warnings")
+
+    def test_the_backup_name_carries_a_timestamp(self):
+        import datetime
+        stamp = datetime.datetime(2026, 8, 11, 19, 30, 5)
+        self.assertTrue(
+            wiz.backup_name("/x/c.yaml", stamp).endswith(".bak-20260811_193005"))
+
+    def test_the_temp_file_lives_beside_the_original(self):
+        # os.replace() is only atomic within one filesystem.
+        seen = {}
+        real_replace = os.replace
+
+        def spy(src, dst):
+            seen["src"] = src
+            return real_replace(src, dst)
+
+        from unittest import mock
+        with mock.patch.object(wiz.os, "replace", side_effect=spy):
+            wiz.safe_write(self.path, self.lines())
+        self.assertEqual(os.path.dirname(seen["src"]),
+                         os.path.dirname(self.path))

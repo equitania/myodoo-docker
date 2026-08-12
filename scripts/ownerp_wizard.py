@@ -121,3 +121,48 @@ def entry_bounds(lines, start_line, indent):
     while last > first + 1 and not lines[last - 1].strip():
         last -= 1
     return first, last
+
+
+def backup_name(path, now=None):
+    """Timestamped backup path, in the style of ngx-conf-wizard.sh.
+
+    Never a single '.backup' that the next run overwrites: the run that needs
+    a backup is often the one after the run that made the mistake.
+    """
+    stamp = (now or datetime.datetime.now()).strftime("%Y%m%d_%H%M%S")
+    return f"{path}.bak-{stamp}"
+
+
+def safe_write(path, new_lines, now=None):
+    """Replace `path` with `new_lines`, but only if the result validates.
+
+    Returns (ok, findings, backup). On rejection the original is untouched,
+    the temporary file and the backup are removed, and backup is None - a
+    backup of a file nobody changed is litter, and litter teaches operators to
+    ignore .bak-* files.
+    """
+    backup = backup_name(path, now)
+    shutil.copy2(path, backup)
+
+    tmp = f"{path}.tmp-{os.getpid()}"
+    try:
+        with open(tmp, "w", encoding="utf-8") as handle:
+            handle.write("\n".join(new_lines))
+
+        findings, fatal = validator.validate_update(tmp)
+        errors = [f for f in findings if f.severity == validator.ERROR]
+        if fatal is not None or errors:
+            os.remove(tmp)
+            os.remove(backup)
+            return False, ([fatal] if fatal is not None else findings), None
+
+        os.replace(tmp, path)
+        return True, findings, backup
+    except Exception:
+        # Any unexpected failure leaves the original in place, and leaves
+        # nothing behind that suggests otherwise.
+        if os.path.exists(tmp):
+            os.remove(tmp)
+        if os.path.exists(backup):
+            os.remove(backup)
+        raise
