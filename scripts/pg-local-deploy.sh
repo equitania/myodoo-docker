@@ -2,7 +2,7 @@
 #
 # pg-local-deploy.sh — interaktives On-Premise-Deploy für PostgreSQL-Docker.
 #
-# Version: 1.2.1 — 15.07.2026
+# Version: 1.2.2 — 12.08.2026
 #
 # Spiegelt das Ansible-Playbook
 #   semaphore/playbooks/odoo/pg/pb_pg_docker_start.yaml
@@ -314,6 +314,12 @@ fi
 
 # Compose-File schreiben — kapselt alle Run-Parameter, ermöglicht späteres
 # start/stop/restart ohne dieses Skript. Enthält das DB-Passwort → 0600.
+# Healthcheck immer mit '-d postgres': ohne -d setzt libpq den Datenbanknamen
+# auf den Benutzernamen, und jeder Check schreibt 'FATAL: database "<user>"
+# does not exist' ins Server-Log (der Check gilt trotzdem als healthy, weil
+# PQping eine FATAL-Antwort als "Server nimmt Verbindungen an" wertet). Die
+# Wartungs-DB 'postgres' existiert nach jedem initdb — anders als $pg_db, das
+# bei einem Re-Deploy auf bestehendes PGDATA nie angelegt wurde.
 # umask 077 in Subshell: Datei entsteht direkt mit 0600 (kein TOCTOU-Fenster,
 # in dem das Passwort world-readable wäre, bevor chmod greift).
 ( umask 077; cat > "$compose_file" <<EOF
@@ -337,7 +343,7 @@ services:
     volumes:
       - "$host_pgdata:/var/lib/postgresql/data/"
 ${ports_block}    healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U $pg_user"]
+      test: ["CMD-SHELL", "pg_isready -U $pg_user -d postgres"]
       interval: 10s
       timeout: 5s
       retries: 5
@@ -398,7 +404,7 @@ else
         --env-file "$run_env_file" \
         -v "$host_pgdata:/var/lib/postgresql/data/" \
         "${port_args[@]}" \
-        --health-cmd "pg_isready -U $pg_user" \
+        --health-cmd "pg_isready -U $pg_user -d postgres" \
         --health-interval 10s \
         --health-timeout 5s \
         --health-retries 5 \
@@ -412,11 +418,12 @@ else
     _ok "Container via docker run gestartet"
 fi
 
-# Warten auf pg_isready — wie Playbook (retries: 12, delay: 5)
+# Warten auf pg_isready — wie Playbook (retries: 12, delay: 5).
+# '-d postgres' wie beim Healthcheck: kein FATAL-Rauschen im Server-Log.
 _info "Warte auf PostgreSQL (pg_isready) …"
 pg_ready=0
 for i in $(seq 1 12); do
-    if docker exec "$pg_name" pg_isready -U "$pg_user" >/dev/null 2>&1; then
+    if docker exec "$pg_name" pg_isready -U "$pg_user" -d postgres >/dev/null 2>&1; then
         pg_ready=1
         break
     fi
@@ -485,7 +492,7 @@ _ok "Container wieder gestartet"
 _info "Warte auf PostgreSQL nach Conf-Update …"
 pg_ready=0
 for i in $(seq 1 6); do
-    if docker exec "$pg_name" pg_isready -U "$pg_user" >/dev/null 2>&1; then
+    if docker exec "$pg_name" pg_isready -U "$pg_user" -d postgres >/dev/null 2>&1; then
         pg_ready=1
         break
     fi
