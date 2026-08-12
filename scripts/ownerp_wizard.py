@@ -158,7 +158,11 @@ def safe_write(path, new_lines, now=None):
 
         os.replace(tmp, path)
         return True, findings, backup
-    except Exception:
+    except BaseException:
+        # BaseException, not Exception: a Ctrl-C between the copy and the
+        # replace is an operator abort, and an abort must leave no .bak-* and
+        # no .tmp-* behind. KeyboardInterrupt does not inherit from Exception,
+        # so the narrower clause would walk straight past it.
         # Any unexpected failure leaves the original in place, and leaves
         # nothing behind that suggests otherwise.
         if os.path.exists(tmp):
@@ -380,3 +384,284 @@ def patch_field(lines, data, index, field, value):
     indent = " " * 4
     result.insert(end, f"{indent}{field}: {format_value(value)}")
     return result
+
+
+MASK = "********"
+
+
+def coerce(field_name, text):
+    """Turn prompt text into the type the schema expects for that field.
+
+    A schema entry whose type is a tuple - odoo_version is (str, int) - falls
+    through to text on purpose: every shipped template writes it quoted, and
+    picking one half of the tuple would silently change the file's style.
+    """
+    rule = validator.CONTAINER_FIELDS.get(field_name, {})
+    if rule.get("type") is bool:
+        return text.strip().lower() in ("true", "yes", "y", "1", "ja", "j")
+    if rule.get("type") is int:
+        return int(text.strip())
+    if rule.get("port"):
+        stripped = text.strip()
+        return int(stripped) if stripped.isdigit() else stripped
+    return text.strip()
+
+
+def summary_lines(entry):
+    """The confirmation block. A password is masked, never printed."""
+    lines = []
+    for field in UPDATE_FORM:
+        if field.name not in entry:
+            continue
+        value = MASK if validator.redacted(field.name) else entry[field.name]
+        lines.append(f"  {field.label + ':':<38} {value}")
+    return lines
+
+
+def preflight():
+    """The reason the wizard must not run, or None."""
+    if validator is None:
+        return ("ownerp_validate.py is not installed beside this script. "
+                "The wizard validates before it writes, so it will not run "
+                "without it - install it with 'ups'.")
+    if not sys.stdout.isatty() or not sys.stdin.isatty():
+        return ("This wizard needs a terminal. Edit the configuration with "
+                "'edup' (mcedit) instead, and check it with 'doval'.")
+    return None
+
+
+def ask(field, containers, entry):
+    """One prompt, with its suggestion in brackets. Enter takes the suggestion."""
+    if validator.redacted(field.name):
+        while True:
+            value = getpass.getpass(f"  {field.label}: ")
+            if value:
+                return value
+            print("    A password is required.")
+
+    suggestion = field.suggest(containers, entry) if field.suggest else None
+    hint = f" [{suggestion}]" if suggestion not in (None, "") else ""
+    print(f"    {field.help}")
+    while True:
+        text = input(f"  {field.label}{hint}: ").strip()
+        if not text and suggestion not in (None, ""):
+            return suggestion
+        if not text:
+            print("    This field is required.")
+            continue
+        try:
+            return coerce(field.name, text)
+        except ValueError:
+            print("    Not a number - try again.")
+
+
+def confirm(question, default=False):
+    hint = "Y/n" if default else "y/N"
+    answer = input(f"  {question} ({hint}): ").strip().lower()
+    if not answer:
+        return default
+    return answer in ("y", "yes", "j", "ja")
+
+
+def ask_unique(field, containers, entry, taken):
+    """Ask until the answer is not already used by another entry.
+
+    Caught here rather than at validation: the wizard already holds every
+    existing name, and saying so at the moment it is typed is worth more than
+    a finding five prompts later.
+    """
+    while True:
+        value = ask(field, containers, entry)
+        if value not in taken:
+            return value
+        print(f"    Already used: {', '.join(sorted(str(t) for t in taken))}")
+
+
+def offer_build_folder(path):
+    """The one filesystem write, and only after asking.
+
+    A brand-new instance has no build folder yet, so the validator's warning
+    is the normal state rather than a fault. Creating the empty directory is
+    the step the operator would take next anyway. Nothing is copied into it -
+    populating a build folder belongs to odoo_build_cache.py and
+    sync_build_scripts(), and a second deployment path is the last thing this
+    set of tools needs.
+    """
+    target = validator.expand(path)
+    if os.path.isdir(target):
+        return
+    print(f"\n  The build folder does not exist yet: {target}")
+    if not confirm("Create the empty directory now?", default=True):
+        print("    Left alone. 'doval' will report it until it exists.")
+        return
+    try:
+        os.makedirs(target, exist_ok=True)
+        print(f"    Created: {target}")
+    except OSError as error:
+        print(f"    Could not create it: {error}")
+
+
+def print_findings(findings):
+    """Render findings with their severity in front of the line number.
+
+    The severity is not decoration. A rejected write prints every finding the
+    validator returned, and the path warnings that were there all along would
+    otherwise read as co-defendants of the one error that actually blocked it.
+    """
+    for finding in findings:
+        mark = "error  " if finding.severity == validator.ERROR else "warning"
+        print(f"  {mark} {finding.line or '':>4}  {finding.path}: {finding.message}")
+
+
+def add_container(path, lines, data):
+    """Walk the form, confirm, write. Returns an exit code."""
+    containers = data.get("containers") or []
+    names = {c.get("container_name") for c in containers}
+    databases = {c.get("database_name") for c in containers}
+
+    entry = {}
+    print("\nNew instance - Enter takes the value in brackets.\n")
+    for field in UPDATE_FORM:
+        if field.name == "container_name":
+            entry[field.name] = ask_unique(field, containers, entry, names)
+        elif field.name == "database_name":
+            entry[field.name] = ask_unique(field, containers, entry, databases)
+        else:
+            entry[field.name] = ask(field, containers, entry)
+
+    while True:
+        print("\n" + "\n".join(summary_lines(entry)))
+        if not confirm("\n  Write this entry?", default=True):
+            print("Nothing written.")
+            return 0
+
+        ok, findings, backup = safe_write(path, append_container(lines, data, entry))
+        if ok:
+            print(f"\n  Written to {path}")
+            print(f"  Backup:    {backup}")
+            print_findings(findings)
+            offer_build_folder(entry["dockerfile_path"])
+            return 0
+
+        print("\n  Not written - the result would be invalid:")
+        print_findings(findings)
+        print(f"  {path} is unchanged.")
+        if not confirm("\n  Correct a field and try again?", default=True):
+            return 1
+        entry = correct_one_field(entry, containers)
+
+
+def correct_one_field(entry, containers):
+    """Re-ask one field, keeping everything else the operator typed."""
+    fields = [f for f in UPDATE_FORM if f.name in entry]
+    for number, field in enumerate(fields, 1):
+        value = MASK if validator.redacted(field.name) else entry[field.name]
+        print(f"  {number:>2}) {field.label:<38} {value}")
+    choice = input("  Field number: ").strip()
+    if choice.isdigit() and 1 <= int(choice) <= len(fields):
+        field = fields[int(choice) - 1]
+        entry[field.name] = ask(field, containers, entry)
+    return entry
+
+
+def edit_field(path, lines, data):
+    """Change one scalar field of one existing entry. Returns an exit code."""
+    containers = data.get("containers") or []
+    if not containers:
+        print("No entries to edit.")
+        return 0
+
+    for number, container in enumerate(containers, 1):
+        print(f"  {number:>2}) {container.get('container_name', '?')}")
+    choice = input("  Entry number: ").strip()
+    if not choice.isdigit() or not 1 <= int(choice) <= len(containers):
+        print("Cancelled.")
+        return 0
+    index = int(choice) - 1
+    container = containers[index]
+
+    # Scalars only. A list or a mapping has no single line to replace, and
+    # guessing at one is how a configuration gets quietly corrupted.
+    editable = [f for f in UPDATE_FORM
+                if not isinstance(container.get(f.name), (list, dict))]
+    for number, field in enumerate(editable, 1):
+        value = MASK if validator.redacted(field.name) else container.get(field.name, "-")
+        print(f"  {number:>2}) {field.label:<38} {value}")
+    choice = input("  Field number: ").strip()
+    if not choice.isdigit() or not 1 <= int(choice) <= len(editable):
+        print("Cancelled.")
+        return 0
+    field = editable[int(choice) - 1]
+
+    value = ask(field, containers, dict(container))
+    if not confirm(f"\n  Set {field.label} to "
+                   f"{MASK if validator.redacted(field.name) else value}?",
+                   default=True):
+        print("Nothing written.")
+        return 0
+
+    ok, findings, backup = safe_write(
+        path, patch_field(lines, data, index, field.name, value))
+    if ok:
+        print(f"\n  Written to {path}\n  Backup:    {backup}")
+        return 0
+    print("\n  Not written - the result would be invalid:")
+    print_findings(findings)
+    print(f"  {path} is unchanged.")
+    return 1
+
+
+def parse_arguments(argv):
+    parser = argparse.ArgumentParser(
+        prog="ownerp_wizard.py",
+        description="Guided editing of docker2update.yaml.")
+    parser.add_argument("--update", nargs="?", const=DEFAULT_UPDATE_CONFIG,
+                        metavar="PATH",
+                        help=f"the configuration to edit "
+                             f"(default: {DEFAULT_UPDATE_CONFIG})")
+    # Not argparse's version action: it raises SystemExit and would break
+    # main()'s contract of returning an int, the same rule the validator follows.
+    parser.add_argument("--version", action="store_true",
+                        help="print the version and exit")
+    return parser.parse_args(argv)
+
+
+def main(argv=None):
+    args = parse_arguments(argv)
+    if args.version:
+        print(f"ownerp_wizard.py {SCRIPT_VERSION} ({SCRIPT_DATE})")
+        return 0
+
+    reason = preflight()
+    if reason:
+        print(reason)
+        return 2
+
+    path = args.update or DEFAULT_UPDATE_CONFIG
+    print(f"ownerp_wizard.py {SCRIPT_VERSION} ({SCRIPT_DATE})\n{path}")
+
+    data, fatal = validator.load_positioned(path)
+    if fatal is not None:
+        print(f"\n  {fatal.line or ''}  {fatal.message}")
+        print("  Fix it first - 'doval' shows every finding with its line.")
+        return 2
+    with open(path, encoding="utf-8") as handle:
+        lines = handle.read().split("\n")
+
+    print("\n  1) Add an instance\n  2) Change a field\n  q) Quit")
+    choice = input("\n  Choice [1]: ").strip() or "1"
+    if choice == "1":
+        return add_container(path, lines, data)
+    if choice == "2":
+        return edit_field(path, lines, data)
+    return 0
+
+
+if __name__ == "__main__":
+    try:
+        sys.exit(main())
+    except (KeyboardInterrupt, EOFError):
+        # EOFError as well as Ctrl-C: Ctrl-D at a prompt is an operator
+        # closing the input, not a fault, and it must read like one.
+        print("\nCancelled - nothing written.")
+        sys.exit(130)

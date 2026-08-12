@@ -10,12 +10,15 @@ Run from the repository root:
     python3 -m unittest tests.test_ownerp_wizard -v
 """
 
+import io
 import os
 import sys
 import shutil
+import contextlib
 import tempfile
 import textwrap
 import unittest
+from unittest import mock
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "scripts"))
 
@@ -198,6 +201,16 @@ class SafeWriteTest(unittest.TestCase):
         ok, findings, _backup = wiz.safe_write(self.path, new)
         self.assertTrue(ok)
         self.assertTrue(findings, "expected the path warnings")
+
+    def test_a_ctrl_c_mid_write_leaves_no_backup_and_no_temp_file(self):
+        # KeyboardInterrupt does not inherit from Exception, so a narrower
+        # except clause walks straight past it and leaves the litter behind.
+        with mock.patch.object(wiz.validator, "validate_update",
+                               side_effect=KeyboardInterrupt):
+            with self.assertRaises(KeyboardInterrupt):
+                wiz.safe_write(self.path, self.lines())
+        self.assertEqual(self.leftovers(), [])
+        self.assertEqual(self.current(), self.original)
 
     def test_the_backup_name_carries_a_timestamp(self):
         import datetime
@@ -453,3 +466,192 @@ class PatchTest(unittest.TestCase):
         result = wiz.patch_field(self.lines, self.data, 0, "port", 19000)
         ok, findings, _backup = wiz.safe_write(self.path, result)
         self.assertTrue(ok, [f.message for f in findings])
+
+
+class CoerceTest(unittest.TestCase):
+    def test_a_boolean_field_takes_yes_and_no(self):
+        self.assertIs(wiz.coerce("active", "true"), True)
+        self.assertIs(wiz.coerce("active", "false"), False)
+
+    def test_an_integer_field_becomes_an_int(self):
+        self.assertEqual(wiz.coerce("delay_time", "10"), 10)
+
+    def test_a_port_field_keeps_a_bind_address_as_text(self):
+        self.assertEqual(wiz.coerce("port", "127.0.0.1:11000"),
+                         "127.0.0.1:11000")
+
+    def test_a_bare_port_becomes_an_int(self):
+        self.assertEqual(wiz.coerce("port", "11000"), 11000)
+
+    def test_a_string_field_stays_text(self):
+        self.assertEqual(wiz.coerce("container_name", "demo-odoo"),
+                         "demo-odoo")
+
+    def test_a_field_typed_as_a_tuple_stays_text(self):
+        # odoo_version is (str, int) in the schema. The int branch must not
+        # claim it - "18" is written as a string in every shipped template.
+        self.assertEqual(wiz.coerce("odoo_version", "18"), "18")
+
+
+class SummaryTest(unittest.TestCase):
+    def test_the_password_is_masked(self):
+        lines = wiz.summary_lines(NEW_ENTRY)
+        joined = "\n".join(lines)
+        self.assertNotIn("s3cret", joined)
+        self.assertIn("*", joined)
+
+    def test_every_other_value_is_shown(self):
+        joined = "\n".join(wiz.summary_lines(NEW_ENTRY))
+        self.assertIn("demo-odoo", joined)
+        self.assertIn("15000", joined)
+
+
+class PrintFindingsTest(unittest.TestCase):
+    def test_the_blocking_error_is_told_apart_from_the_warnings(self):
+        import ownerp_validate as ov
+        findings = [
+            ov.Finding(ov.WARNING, "c.yaml", 85, "containers[0].dockerfile_path",
+                       "/x does not exist"),
+            ov.Finding(ov.ERROR, "c.yaml", 119, "containers[2].type",
+                       '"X" is not one of M, F, N'),
+        ]
+        buffer = io.StringIO()
+        with contextlib.redirect_stdout(buffer):
+            wiz.print_findings(findings)
+        warning_line, error_line = buffer.getvalue().rstrip("\n").split("\n")
+        self.assertIn("warning", warning_line)
+        self.assertIn("error", error_line)
+        self.assertNotIn("error", warning_line)
+
+    def test_a_password_value_never_reaches_the_output(self):
+        import ownerp_validate as ov
+        findings = [ov.Finding(ov.ERROR, "c.yaml", 12, "containers[0].db_password",
+                               f"{ov._shown('db_password', 's3cret')} is wrong")]
+        buffer = io.StringIO()
+        with contextlib.redirect_stdout(buffer):
+            wiz.print_findings(findings)
+        self.assertNotIn("s3cret", buffer.getvalue())
+
+
+class PreflightTest(unittest.TestCase):
+    def test_it_refuses_without_a_tty(self):
+        with mock.patch.object(wiz.sys.stdout, "isatty", return_value=False):
+            self.assertIsNotNone(wiz.preflight())
+
+    def test_it_refuses_without_the_validator(self):
+        with mock.patch.object(wiz, "validator", None), \
+             mock.patch.object(wiz.sys.stdout, "isatty", return_value=True), \
+             mock.patch.object(wiz.sys.stdin, "isatty", return_value=True):
+            reason = wiz.preflight()
+        self.assertIsNotNone(reason)
+        self.assertIn("ups", reason)
+
+    def test_it_passes_with_a_tty_and_the_validator(self):
+        with mock.patch.object(wiz.sys.stdout, "isatty", return_value=True), \
+             mock.patch.object(wiz.sys.stdin, "isatty", return_value=True):
+            self.assertIsNone(wiz.preflight())
+
+
+class BuildFolderTest(unittest.TestCase):
+    """The wizard's one write outside the YAML, and only after asking."""
+
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(self.tmp.cleanup)
+        self.target = os.path.join(self.tmp.name, "docker-builds", "demo-odoo")
+
+    def test_it_creates_the_directory_on_yes(self):
+        with mock.patch.object(wiz, "confirm", return_value=True), \
+             contextlib.redirect_stdout(io.StringIO()):
+            wiz.offer_build_folder(self.target)
+        self.assertTrue(os.path.isdir(self.target))
+
+    def test_it_creates_nothing_on_no(self):
+        with mock.patch.object(wiz, "confirm", return_value=False), \
+             contextlib.redirect_stdout(io.StringIO()):
+            wiz.offer_build_folder(self.target)
+        self.assertFalse(os.path.exists(self.target))
+
+    def test_it_does_not_ask_when_the_directory_exists(self):
+        os.makedirs(self.target)
+        with mock.patch.object(wiz, "confirm") as asked, \
+             contextlib.redirect_stdout(io.StringIO()):
+            wiz.offer_build_folder(self.target)
+        asked.assert_not_called()
+
+    def test_it_puts_nothing_inside_the_new_directory(self):
+        # Populating a build folder belongs to odoo_build_cache.py.
+        with mock.patch.object(wiz, "confirm", return_value=True), \
+             contextlib.redirect_stdout(io.StringIO()):
+            wiz.offer_build_folder(self.target)
+        self.assertEqual(os.listdir(self.target), [])
+
+
+class _TTYBuffer(io.StringIO):
+    """A capture buffer that still looks like a terminal.
+
+    redirect_stdout replaces sys.stdout *after* any patch of the old object,
+    so patching the real stdout's isatty does nothing once the redirect is in
+    place - preflight() then refuses and main() returns 2 before reaching a
+    single prompt. That failure mode passed one of these tests for the wrong
+    reason, because the refusal message also names 'doval'.
+    """
+
+    def isatty(self):
+        return True
+
+
+class MainTest(unittest.TestCase):
+    def test_version_prints_and_exits_zero(self):
+        buffer = io.StringIO()
+        with contextlib.redirect_stdout(buffer):
+            code = wiz.main(["--version"])
+        self.assertEqual(code, 0)
+        self.assertIn(wiz.SCRIPT_VERSION, buffer.getvalue())
+
+    def test_it_exits_two_without_a_tty_on_stdout(self):
+        buffer = io.StringIO()  # a plain buffer is not a terminal
+        with contextlib.redirect_stdout(buffer):
+            self.assertEqual(wiz.main([]), 2)
+        self.assertIn("edup", buffer.getvalue())
+
+    def test_it_exits_two_without_a_tty_on_stdin(self):
+        buffer = _TTYBuffer()
+        with mock.patch.object(wiz.sys.stdin, "isatty", return_value=False), \
+             contextlib.redirect_stdout(buffer):
+            self.assertEqual(wiz.main([]), 2)
+        self.assertIn("edup", buffer.getvalue())
+
+    def test_ctrl_d_at_a_prompt_is_an_abort_not_a_traceback(self):
+        # A closed stdin reaches the prompt as EOFError. The __main__ guard
+        # turns it into a sentence, not a stack trace - and nothing is written
+        # either way.
+        tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(tmp.cleanup)
+        path = os.path.join(tmp.name, "c.yaml")
+        shutil.copy(TEMPLATE, path)
+        with open(path, encoding="utf-8") as handle:
+            before = handle.read()
+        with mock.patch.object(wiz.sys.stdin, "isatty", return_value=True), \
+             mock.patch("builtins.input", side_effect=EOFError), \
+             contextlib.redirect_stdout(_TTYBuffer()):
+            with self.assertRaises(EOFError):
+                wiz.main(["--update", path])
+        with open(path, encoding="utf-8") as handle:
+            self.assertEqual(handle.read(), before)
+        self.assertEqual(sorted(os.listdir(tmp.name)), ["c.yaml"])
+
+    def test_it_exits_two_when_the_configuration_does_not_parse(self):
+        tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(tmp.cleanup)
+        broken = os.path.join(tmp.name, "broken.yaml")
+        with open(broken, "w", encoding="utf-8") as handle:
+            handle.write("containers:\n  - this: is: not: yaml\n")
+        buffer = _TTYBuffer()
+        with mock.patch.object(wiz.sys.stdin, "isatty", return_value=True), \
+             contextlib.redirect_stdout(buffer):
+            code = wiz.main(["--update", broken])
+        self.assertEqual(code, 2)
+        # "Fix it first" comes only from the parse branch; "doval" alone would
+        # also match the no-TTY refusal.
+        self.assertIn("Fix it first", buffer.getvalue())
