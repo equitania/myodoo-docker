@@ -80,7 +80,7 @@ Der Pfad wird aus Host und Pfad der Basis-URL abgeleitet. Damit gilt:
 - Der Cache liegt nicht unter `$HOME/docker-builds` und wandert damit nicht in das
   Backup (`container2backup.yaml` sichert `$HOME/docker-builds`).
 
-**Kein Index, kein Zustandsfile.** „Zuletzt benutzt" ist die `mtime` der Datei: bei jedem
+**Kein Index, kein Zustandsfile.** „Zuletzt benutzt“ ist die `mtime` der Datei: bei jedem
 Treffer wird sie via `os.utime()` auf jetzt gesetzt. Das macht die Bereinigung zu einem
 `find -mtime +30` und vermeidet Sperr- und Konsistenzfragen bei parallelen Läufen.
 
@@ -181,7 +181,7 @@ den Container ersetzt.
 ### 5. Bereinigung
 
 - `odoo_build_cache.py gc --days 30`: Archive ohne Nutzung seit 30 Tagen. Bewusst nicht
-  „steht nicht in der aktuellen `release.file`" — eine andere Instanz kann auf einem
+  „steht nicht in der aktuellen `release.file`“ — eine andere Instanz kann auf einem
   älteren Release stehen und dieselbe Datei noch brauchen.
 - Alte `release.file-<timestamp>` in jedem Build-Ordner: die letzten fünf behalten.
 - Aufruf wöchentlich über `myodoo-maintenance.cron`, analog zu den bestehenden Einträgen.

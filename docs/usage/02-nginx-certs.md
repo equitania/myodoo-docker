@@ -40,7 +40,7 @@ Ohne sie schlägt `nginx -t` fehl — deshalb **vor** dem ersten Vhost:
 ### 6.2 Vhost-Konfiguration erzeugen
 
 Der interaktive Assistent baut die YAML-Datei für `nginx-set-conf` — Eintrag
-für Eintrag („noch eine Domain?"-Schleife), mit Validierung und optionalem
+für Eintrag („noch eine Domain?“-Schleife), mit Validierung und optionalem
 Deploy am Ende:
 
 ```bash
