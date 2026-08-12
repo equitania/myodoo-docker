@@ -54,7 +54,7 @@ docker rmi myodoo:16 myodoo:18
 
 **UTF-8 ENCODING REQUIREMENT**:
 1. **Always use UTF-8 encoding** for all strings, file operations, and text processing
-2. **International character support**: Handle German umlauts (ä, ö, ü), special quotes („", ‚'), and other Unicode characters correctly
+2. **International character support**: Handle German umlauts (ä, ö, ü), special quotes („“, ‚‘), and other Unicode characters correctly
 3. **File I/O**: Ensure all file operations use UTF-8 encoding by default
 4. **String parsing**: Use Unicode-aware string functions for international text processing
 
