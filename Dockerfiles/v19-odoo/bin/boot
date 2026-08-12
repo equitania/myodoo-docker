@@ -1,8 +1,8 @@
 #!/bin/bash
 ##############################################################################
 # This script is designed to be run inside the container
-# Version 2.4.0
-# Date 06.08.2026
+# Version 2.5.0
+# Date 12.08.2026
 ##############################################################################
 #
 #    Shell Script for Odoo Docker Container
@@ -41,10 +41,30 @@ interface_argument="--http-interface=0.0.0.0"
 # Fail hard and fast even on pipelines
 set -eo pipefail
 
+# Function: refresh_geoip
+# Description: Brings the GeoIP database up to date before Odoo starts.
+# Parameters: none
+# Note: Odoo opens the database once during start-up and caches the reader, so
+#   a refresh only takes effect if it happens before odoo-bin runs. We are still
+#   root here, which the write to /usr/share/GeoIP needs.
+#   The helper comes from the base image and defaults to DB-IP, which needs no
+#   account; MaxMind is used instead as soon as GEOIPUPDATE_ACCOUNT_ID and
+#   GEOIPUPDATE_LICENSE_KEY are in the environment. Older base images do not
+#   carry the helper, hence the guard.
+#   Never fatal: without a database Odoo simply leaves the visitor country
+#   empty, which must not keep the server from starting.
+function refresh_geoip {
+    if command -v geoip-refresh > /dev/null 2>&1; then
+        geoip-refresh || true
+    fi
+}
+
 # Function: start
 # Description: Starts the Odoo server with the specified configuration
 # Parameters: Additional command line arguments for Odoo
 function start {
+    refresh_geoip
+
     echo "Running odoo..."
     set +e
     if [ ! -e $1 ]; then

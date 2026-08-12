@@ -1,5 +1,42 @@
 # Release Notes
 
+## The v19 Container Resolves Visitor Countries Again (12.08.2026)
+
+*v19-odoo/bin/boot v2.5.0*
+
+### Fixed
+- **The visitor country stayed "Unknown" in every Odoo 19 website statistic.**
+  Odoo reads geolocation data through `geoip2`, which understands the MaxMind DB
+  format (`.mmdb`) and nothing else. The base image installed the Debian package
+  `geoip-database`, which ships the discontinued legacy format — in Trixie exactly
+  `GeoIP.dat` and `GeoIPv6.dat`. GeoIP therefore looked installed in every
+  container while Odoo found nothing at the path configured in `odoo.conf`, with
+  no message above debug level to show for it.
+
+  The base image `prepare-19` now carries `geoip-refresh` instead, and `boot`
+  calls it in `start` before handing over to `odoo-bin`. The order matters: Odoo
+  opens the database once during start-up and caches the reader, so a later
+  refresh would not take effect until the next restart. It runs while we are
+  still root, which the write to `/usr/share/GeoIP` needs.
+
+  Databases come from DB-IP by default, which needs no account. Setting
+  `GEOIPUPDATE_ACCOUNT_ID` and `GEOIPUPDATE_LICENSE_KEY` in the container
+  environment switches to MaxMind GeoLite2 and its weekly instead of monthly
+  refresh; there is no separate switch to remember. `odoo.conf` stays unchanged
+  either way.
+
+  Two prerequisites remain on the operator: `/usr/share/GeoIP` should be a
+  persistent volume, or the database is downloaded again on every start, and
+  `proxy_mode = True` has to be set, or Odoo only sees the reverse proxy's own
+  address and finds no country regardless of the database.
+
+  The call is guarded, so a container still built on an older base image starts
+  exactly as before, and a failing refresh never keeps the server down — without
+  a database Odoo simply leaves the country empty.
+
+  Requires a base image built after this change; bump the `FROM` tag in
+  `Dockerfiles/v19-odoo/Dockerfile` once the `prepare-19` pipeline has published it.
+
 ## A Guided Assistant for docker2update.yaml (12.08.2026)
 
 *ownerp_wizard.py v1.0.0, ownerp_tui.py v1.1.0, getScripts.py v9.13.0*
