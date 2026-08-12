@@ -327,3 +327,129 @@ class SuggestionTest(unittest.TestCase):
     def test_no_suggestion_is_offered_for_a_password(self):
         password = [f for f in wiz.UPDATE_FORM if f.name == "db_password"][0]
         self.assertIsNone(password.suggest)
+
+
+NEW_ENTRY = {
+    "active": True, "type": "F", "delay_time": 10,
+    "container_name": "demo-odoo", "database_name": "demo_db",
+    "port": 15000, "longpolling_port": 16000,
+    "dockerfile_path": "$HOME/docker-builds/demo-odoo/",
+    "docker_image_name": "odoo/demo", "db_user": "ownerp",
+    "db_password": "s3cret", "db_host": "demo-db",
+    "volume": "--network demo-db-net -v /opt/odoo/demo:/opt/odoo/data",
+    "odoo_version": "18", "translate": "Y", "db_password_via_env": True,
+}
+
+
+class AppendTest(unittest.TestCase):
+    def setUp(self):
+        with open(TEMPLATE, encoding="utf-8") as handle:
+            self.lines = handle.read().split("\n")
+        self.data, fatal = wiz.validator.load_positioned(TEMPLATE)
+        self.assertIsNone(fatal)
+
+    def test_the_result_parses_and_holds_the_new_entry(self):
+        result = wiz.append_container(self.lines, self.data, NEW_ENTRY)
+        parsed = yaml.safe_load("\n".join(result))
+        names = [c["container_name"] for c in parsed["containers"]]
+        self.assertEqual(names[-1], "demo-odoo")
+
+    def test_every_entered_value_survives_the_round_trip(self):
+        result = wiz.append_container(self.lines, self.data, NEW_ENTRY)
+        parsed = yaml.safe_load("\n".join(result))["containers"][-1]
+        for key, value in NEW_ENTRY.items():
+            if key in ("port", "longpolling_port"):
+                self.assertEqual(wiz.validator.parse_port(parsed[key]), value)
+            else:
+                self.assertEqual(parsed[key], value, key)
+
+    def test_every_pre_existing_line_is_untouched(self):
+        # Split at the real insertion point rather than assuming the template
+        # ends with exactly one blank line - the property under test is
+        # "nothing else moved", not "the file has a particular tail".
+        at = wiz.containers_end(self.lines, self.data)
+        block = wiz.render_container(NEW_ENTRY)
+        result = wiz.append_container(self.lines, self.data, NEW_ENTRY)
+        self.assertEqual(result[:at], self.lines[:at])
+        self.assertEqual(result[at + len(block):], self.lines[at:])
+
+    def test_the_block_matches_the_shipped_indentation(self):
+        block = wiz.render_container(NEW_ENTRY)
+        self.assertTrue(block[0].startswith("  - "), block[0])
+        self.assertTrue(all(l.startswith("    ") for l in block[1:]), block)
+
+    def test_the_appended_block_carries_the_pgpassword_note(self):
+        # An operator reading the file afterwards should not be able to tell a
+        # generated block from a typed one - and the note is what stops
+        # somebody turning the flag off without reading why it is on.
+        block = wiz.render_container(NEW_ENTRY)
+        line = [l for l in block if "db_password_via_env" in l][0]
+        self.assertIn("PGPASSWORD", line)
+
+
+class PatchTest(unittest.TestCase):
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(self.tmp.cleanup)
+        self.path = os.path.join(self.tmp.name, "c.yaml")
+        shutil.copy(TEMPLATE, self.path)
+        with open(self.path, encoding="utf-8") as handle:
+            self.lines = handle.read().split("\n")
+        self.data, _ = wiz.validator.load_positioned(self.path)
+
+    def test_only_the_target_line_changes(self):
+        result = wiz.patch_field(self.lines, self.data, 0, "port", 19000)
+        self.assertEqual(len(result), len(self.lines))
+        differing = [i for i, (a, b) in enumerate(zip(self.lines, result))
+                     if a != b]
+        self.assertEqual(len(differing), 1, differing)
+
+    def test_the_new_value_is_readable_again(self):
+        result = wiz.patch_field(self.lines, self.data, 0, "port", 19000)
+        parsed = yaml.safe_load("\n".join(result))["containers"][0]
+        self.assertEqual(wiz.validator.parse_port(parsed["port"]), 19000)
+
+    def test_the_second_container_is_reachable_and_the_first_untouched(self):
+        # This is what save_updated_config() gets wrong: it scans forward for
+        # the next matching key and can land in the following entry.
+        result = wiz.patch_field(self.lines, self.data, 1, "port", 19000)
+        parsed = yaml.safe_load("\n".join(result))["containers"]
+        self.assertEqual(wiz.validator.parse_port(parsed[1]["port"]), 19000)
+        self.assertEqual(wiz.validator.parse_port(parsed[0]["port"]), 11000)
+
+    def test_a_trailing_comment_on_the_target_line_survives(self):
+        result = wiz.patch_field(self.lines, self.data, 0,
+                                 "db_password_via_env", False)
+        # Match the data line, not the key's own mention in the template's
+        # header comment - "in l" would find that one first.
+        line = [l for l in result
+                if l.strip().startswith("db_password_via_env")][0]
+        self.assertIn("#", line)
+        self.assertIn("false", line)
+
+    def test_an_absent_field_is_inserted_at_the_entrys_indentation(self):
+        result = wiz.patch_field(self.lines, self.data, 0,
+                                 "log_retention_days", 30)
+        parsed = yaml.safe_load("\n".join(result))["containers"][0]
+        self.assertEqual(parsed["log_retention_days"], 30)
+        line = [l for l in result
+                if l.strip().startswith("log_retention_days")][0]
+        self.assertTrue(line.startswith("    "), repr(line))
+
+    def test_an_inserted_field_lands_in_its_own_entry(self):
+        result = wiz.patch_field(self.lines, self.data, 0,
+                                 "log_retention_days", 30)
+        parsed = yaml.safe_load("\n".join(result))["containers"]
+        self.assertNotIn("log_retention_days", parsed[1])
+
+    def test_patching_never_touches_another_entrys_line(self):
+        result = wiz.patch_field(self.lines, self.data, 0, "port", 19000)
+        parsed = yaml.safe_load("\n".join(result))["containers"][1]
+        self.assertEqual(wiz.validator.parse_port(parsed["port"]), 13000)
+        self.assertEqual(wiz.validator.parse_port(parsed["longpolling_port"]),
+                         14000)
+
+    def test_a_patched_file_still_validates(self):
+        result = wiz.patch_field(self.lines, self.data, 0, "port", 19000)
+        ok, findings, _backup = wiz.safe_write(self.path, result)
+        self.assertTrue(ok, [f.message for f in findings])

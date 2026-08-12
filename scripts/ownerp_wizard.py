@@ -320,3 +320,63 @@ UPDATE_FORM = [
           "with ps aux - set false only for legacy images",
           lambda c, e: TEMPLATE_DEFAULTS["db_password_via_env"]),
 ]
+
+# Comments the shipped template carries on specific keys. An operator opening
+# the file afterwards should not be able to tell a generated block from a
+# typed one - and the PGPASSWORD note is the kind of thing that stops someone
+# turning the flag off without reading why it is on.
+BLOCK_COMMENTS = {
+    "db_password_via_env":
+        "  # secure default: password via -e PGPASSWORD, not argv",
+}
+
+
+def render_container(entry):
+    """The new entry as a list of lines, in the shipped shape."""
+    lines = []
+    for field in UPDATE_FORM:
+        if field.name not in entry:
+            continue
+        lead = "  - " if not lines else "    "
+        comment = BLOCK_COMMENTS.get(field.name, "")
+        lines.append(f"{lead}{field.name}: {format_value(entry[field.name])}{comment}")
+    return lines
+
+
+def containers_end(lines, data):
+    """0-based index just past the last container entry.
+
+    Found through the positioned loader rather than by pattern: the last
+    entry's own first-key line is known, and entry_bounds walks to the first
+    following line at the list's indentation or less.
+    """
+    containers = data.get("containers") or []
+    if not containers:
+        # An empty list: insert right after the 'containers:' key itself.
+        return validator.line_of(data, "containers")
+    last = containers[-1]
+    indent = 2  # the '- ' of a list entry under a top-level key
+    _first, end = entry_bounds(lines, last.line, indent)
+    return end
+
+
+def append_container(lines, data, entry):
+    """Insert a rendered entry at the end of the containers list."""
+    at = containers_end(lines, data)
+    return lines[:at] + render_container(entry) + lines[at:]
+
+
+def patch_field(lines, data, index, field, value):
+    """Rewrite one field of containers[index], or insert it when absent."""
+    container = (data.get("containers") or [])[index]
+    line_number = validator.line_of(container, field)
+    result = list(lines)
+    if line_number:
+        result[line_number - 1] = patch_line(result[line_number - 1], value)
+        return result
+
+    # Absent: insert at the end of this entry's block, at its indentation.
+    _first, end = entry_bounds(lines, container.line, 2)
+    indent = " " * 4
+    result.insert(end, f"{indent}{field}: {format_value(value)}")
+    return result
