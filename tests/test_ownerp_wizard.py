@@ -219,3 +219,111 @@ class SafeWriteTest(unittest.TestCase):
             wiz.safe_write(self.path, self.lines())
         self.assertEqual(os.path.dirname(seen["src"]),
                          os.path.dirname(self.path))
+
+
+CONTAINERS = [
+    {"container_name": "live-odoo", "database_name": "live_odoo",
+     "port": "127.0.0.1:11000", "longpolling_port": "127.0.0.1:12000",
+     "dockerfile_path": "$HOME/docker-builds/live-odoo/",
+     "docker_image_name": "odoo/live", "db_user": "ownerp",
+     "db_host": "live-db", "odoo_version": "18", "active": True},
+    {"container_name": "test-odoo", "database_name": "test_db",
+     "port": "127.0.0.1:13000", "longpolling_port": "127.0.0.1:14000",
+     "dockerfile_path": "$HOME/docker-builds/test-odoo/",
+     "docker_image_name": "odoo/test", "db_user": "ownerp",
+     "db_host": "test-db", "odoo_version": "18", "active": False},
+]
+
+
+class FormMatchesSchemaTest(unittest.TestCase):
+    """The one test that keeps the form and the schema from drifting apart."""
+
+    def test_every_required_schema_field_is_asked_for(self):
+        import ownerp_validate as ov
+        required = {name for name, rule in ov.CONTAINER_FIELDS.items()
+                    if rule.get("required")}
+        asked = {field.name for field in wiz.UPDATE_FORM}
+        self.assertEqual(required - asked, set(),
+                         "required schema fields missing from the form")
+
+    def test_every_form_field_exists_in_the_schema(self):
+        import ownerp_validate as ov
+        asked = {field.name for field in wiz.UPDATE_FORM}
+        self.assertEqual(asked - set(ov.CONTAINER_FIELDS), set(),
+                         "form asks for fields the schema does not know")
+
+    def test_the_form_asks_in_the_shipped_order(self):
+        self.assertEqual([f.name for f in wiz.UPDATE_FORM][:5],
+                         ["active", "type", "delay_time",
+                          "container_name", "database_name"])
+
+    def test_every_field_has_a_label_and_help(self):
+        for field in wiz.UPDATE_FORM:
+            self.assertTrue(field.label, field.name)
+            self.assertTrue(field.help, field.name)
+
+    def test_the_form_asks_for_no_list_or_mapping_field(self):
+        # Scalars only: pre_build_files and proxy have no single line to
+        # replace, so the wizard shows them and never edits them.
+        import ownerp_validate as ov
+        for field in wiz.UPDATE_FORM:
+            expected = ov.CONTAINER_FIELDS[field.name].get("type")
+            self.assertNotIn(expected, (list, dict), field.name)
+
+
+class SuggestionTest(unittest.TestCase):
+    def test_used_ports_covers_both_port_fields_and_inactive_entries(self):
+        self.assertEqual(wiz.used_ports(CONTAINERS),
+                         {11000, 12000, 13000, 14000})
+
+    def test_the_next_free_port_clears_every_used_one(self):
+        port = wiz.suggest_free_port(CONTAINERS)
+        self.assertNotIn(port, wiz.used_ports(CONTAINERS))
+        self.assertGreater(port, 14000)
+
+    def test_the_longpolling_port_does_not_collide_with_the_http_port(self):
+        http = wiz.suggest_free_port(CONTAINERS)
+        poll = wiz.suggest_longpolling(CONTAINERS, http)
+        self.assertNotEqual(poll, http)
+        self.assertNotIn(poll, wiz.used_ports(CONTAINERS))
+
+    def test_an_empty_configuration_falls_back_to_the_template_port(self):
+        self.assertEqual(wiz.suggest_free_port([]), 11000)
+
+    def test_a_unanimous_value_is_suggested(self):
+        self.assertEqual(wiz.suggest_unanimous(CONTAINERS, "db_user"), "ownerp")
+
+    def test_a_split_value_is_not_suggested(self):
+        self.assertIsNone(wiz.suggest_unanimous(CONTAINERS, "db_host"))
+
+    def test_an_empty_configuration_suggests_nothing_unanimous(self):
+        self.assertIsNone(wiz.suggest_unanimous([], "db_user"))
+
+    def test_the_path_pattern_substitutes_the_new_name(self):
+        self.assertEqual(
+            wiz.suggest_path_pattern(CONTAINERS, "dockerfile_path", "demo-odoo"),
+            "$HOME/docker-builds/demo-odoo/")
+
+    def test_the_path_pattern_gives_up_when_the_paths_disagree(self):
+        containers = [dict(CONTAINERS[0]),
+                      dict(CONTAINERS[1], dockerfile_path="/srv/other/")]
+        self.assertIsNone(
+            wiz.suggest_path_pattern(containers, "dockerfile_path", "demo-odoo"))
+
+    def test_the_image_name_follows_the_shipped_convention(self):
+        # live-odoo -> odoo/live, so demo-odoo -> odoo/demo. Name substitution
+        # cannot do this: "live-odoo" does not occur in "odoo/live".
+        self.assertEqual(wiz.suggest_image_name(CONTAINERS, "demo-odoo"),
+                         "odoo/demo")
+
+    def test_the_image_name_gives_up_when_the_prefixes_disagree(self):
+        containers = [dict(CONTAINERS[0]),
+                      dict(CONTAINERS[1], docker_image_name="other/test")]
+        self.assertIsNone(wiz.suggest_image_name(containers, "demo-odoo"))
+
+    def test_an_empty_configuration_suggests_the_template_image_prefix(self):
+        self.assertEqual(wiz.suggest_image_name([], "demo-odoo"), "odoo/demo")
+
+    def test_no_suggestion_is_offered_for_a_password(self):
+        password = [f for f in wiz.UPDATE_FORM if f.name == "db_password"][0]
+        self.assertIsNone(password.suggest)

@@ -166,3 +166,157 @@ def safe_write(path, new_lines, now=None):
         if os.path.exists(backup):
             os.remove(backup)
         raise
+
+
+Field = collections.namedtuple("Field", "name label help suggest")
+
+# The values the shipped template carries, used when the configuration holds
+# no entry to learn from - the first container on a fresh server should still
+# be a guided walk, not a blank form.
+TEMPLATE_DEFAULTS = {
+    "active": True, "type": "F", "delay_time": 10,
+    "port": 11000, "longpolling_port": 12000,
+    "dockerfile_path": "$HOME/docker-builds/{name}/",
+    "docker_image_name": "odoo/{name}", "db_user": "ownerp",
+    "odoo_version": "18", "translate": "Y", "db_password_via_env": True,
+}
+
+
+def used_ports(containers):
+    """Every host port already taken, from both port fields of every entry.
+
+    Inactive entries count: their ports are still written down, and an
+    operator who reactivates one must not find it clashing with something the
+    wizard handed out in the meantime.
+    """
+    taken = set()
+    for container in containers:
+        for field in ("port", "longpolling_port"):
+            number = validator.parse_port(container.get(field))
+            if number is not None:
+                taken.add(number)
+    return taken
+
+
+def suggest_free_port(containers, step=1000):
+    taken = used_ports(containers)
+    if not taken:
+        return TEMPLATE_DEFAULTS["port"]
+    candidate = max(taken) + step
+    while candidate in taken:
+        candidate += step
+    return candidate
+
+
+def suggest_longpolling(containers, http_port, step=1000):
+    taken = used_ports(containers) | {http_port}
+    candidate = http_port + step
+    while candidate in taken:
+        candidate += step
+    return candidate
+
+
+def suggest_unanimous(containers, field):
+    """The value when every entry agrees on it, otherwise None."""
+    values = {container.get(field) for container in containers
+              if not validator.is_empty(container.get(field))}
+    return values.pop() if len(values) == 1 else None
+
+
+def suggest_path_pattern(containers, field, new_name):
+    """The shared pattern of an existing field, with the new name substituted.
+
+    Each entry's value is turned into a pattern by replacing its own container
+    name with a placeholder. All entries must agree on the pattern; a
+    disagreement means there is no convention to follow, and inventing one
+    would be a guess dressed up as help.
+    """
+    patterns = set()
+    for container in containers:
+        value = container.get(field)
+        name = container.get("container_name")
+        if validator.is_empty(value) or validator.is_empty(name):
+            continue
+        if name not in str(value):
+            return None
+        patterns.add(str(value).replace(name, "{name}"))
+    if len(patterns) != 1:
+        return None
+    return patterns.pop().format(name=new_name)
+
+
+def suggest_image_name(containers, new_name):
+    """Follow the shipped convention: live-odoo -> odoo/live.
+
+    Name substitution cannot do this one - "live-odoo" does not occur in
+    "odoo/live". What is shared is the prefix up to and including the last
+    slash; the tail is the container name's first '-' separated token.
+    """
+    if not new_name:
+        return None
+    prefixes = {str(c["docker_image_name"]).rsplit("/", 1)[0] + "/"
+                for c in containers
+                if not validator.is_empty(c.get("docker_image_name"))
+                and "/" in str(c.get("docker_image_name", ""))}
+    if len(prefixes) > 1:
+        return None
+    prefix = prefixes.pop() if prefixes else "odoo/"
+    return prefix + new_name.split("-")[0]
+
+
+UPDATE_FORM = [
+    Field("active", "Take part in updates",
+          "false parks the entry - doup skips it until you select it by name",
+          lambda c, e: TEMPLATE_DEFAULTS["active"]),
+    Field("type", "Update mode",
+          "M = modules only (2-3 min), F = full (10-20 min), "
+          "N = neutralize the database first, then a full update",
+          lambda c, e: TEMPLATE_DEFAULTS["type"]),
+    Field("delay_time", "Delay before restart (seconds)",
+          "how long to wait for the container to stop before starting it again",
+          lambda c, e: suggest_unanimous(c, "delay_time")
+          or TEMPLATE_DEFAULTS["delay_time"]),
+    Field("container_name", "Container name",
+          "the Docker container name, e.g. live-odoo", None),
+    Field("database_name", "Database name",
+          "the Odoo database this container serves", None),
+    Field("port", "HTTP port",
+          "host port, mapped to 8069 inside the container; "
+          'accepts 11000 or "127.0.0.1:11000"',
+          lambda c, e: suggest_free_port(c)),
+    Field("longpolling_port", "Longpolling port",
+          "host port, mapped to 8072 inside the container",
+          lambda c, e: suggest_longpolling(c, validator.parse_port(e.get("port")) or 0)),
+    Field("dockerfile_path", "Build folder",
+          "the folder holding the Dockerfile for this instance",
+          lambda c, e: suggest_path_pattern(c, "dockerfile_path",
+                                            e.get("container_name", ""))
+          or TEMPLATE_DEFAULTS["dockerfile_path"].format(
+              name=e.get("container_name", ""))),
+    Field("docker_image_name", "Image name",
+          "the tag docker build writes, e.g. odoo/live",
+          lambda c, e: suggest_image_name(c, e.get("container_name", ""))),
+    Field("db_user", "Database user",
+          "the PostgreSQL role Odoo connects as",
+          lambda c, e: suggest_unanimous(c, "db_user")
+          or TEMPLATE_DEFAULTS["db_user"]),
+    Field("db_password", "Database password",
+          "not echoed, and never shown again in this session", None),
+    Field("db_host", "Database host",
+          "hostname or IP of the PostgreSQL container",
+          lambda c, e: suggest_unanimous(c, "db_host")),
+    Field("volume", "Docker volume and network arguments",
+          "passed to docker run verbatim, e.g. "
+          "--network live-db-net -v /opt/odoo/live:/opt/odoo/data", None),
+    Field("odoo_version", "Odoo version",
+          "major version as a string, e.g. 18",
+          lambda c, e: suggest_unanimous(c, "odoo_version")
+          or TEMPLATE_DEFAULTS["odoo_version"]),
+    Field("translate", "Load translations",
+          "Y or N",
+          lambda c, e: TEMPLATE_DEFAULTS["translate"]),
+    Field("db_password_via_env", "Pass the password via environment",
+          "true keeps it out of argv, where every local user can read it "
+          "with ps aux - set false only for legacy images",
+          lambda c, e: TEMPLATE_DEFAULTS["db_password_via_env"]),
+]
