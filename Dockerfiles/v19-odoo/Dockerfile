@@ -1,8 +1,9 @@
-FROM myodoo/prepare-v19:26.05.19-3.13.13
+FROM myodoo/prepare-v19:26.08.12-3.13.15
 LABEL maintainer=info@ownerp.com
 # Mit diesem Skript überprüft das passende Dockerimage gemäß des Releasefiles
 # Date 17.03.2026 - Added HEALTHCHECK directive
 # Date 14.07.2026 - Replaced ADD with COPY for bin/ (security hardening, avoid unintended tar auto-extraction)
+# Date 12.08.2026 - Base image carries geoip-refresh, which bin/boot calls; Python 3.13.15
 
 # create the odoo user
 RUN adduser --home=/opt/odoo --disabled-password --gecos "" --shell=/bin/bash odoo
