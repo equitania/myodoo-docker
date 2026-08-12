@@ -220,6 +220,55 @@ def suggest_longpolling(containers, http_port, step=1000):
     return candidate
 
 
+def bind_prefix(value):
+    """The bind address a port value carries, including the colon, or "".
+
+    "127.0.0.1:11000" -> "127.0.0.1:",  "[::1]:11000" -> "[::1]:",  11000 -> ""
+    """
+    text = str(value).strip()
+    if validator.parse_port(text) is None:
+        return ""
+    head, sep, _tail = text.rpartition(":")
+    return head + sep if sep else ""
+
+
+def suggest_bind(containers):
+    """The bind address every existing port agrees on, or "".
+
+    The shipped layout binds to 127.0.0.1 and puts nginx in front. A wizard
+    that hands out a bare port number on such a host would publish the next
+    instance on every interface - a change nobody asked for and nobody sees.
+    """
+    prefixes = set()
+    for container in containers:
+        for field in ("port", "longpolling_port"):
+            value = container.get(field)
+            if not validator.is_empty(value) and validator.parse_port(value):
+                prefixes.add(bind_prefix(value))
+    return prefixes.pop() if len(prefixes) == 1 else ""
+
+
+def with_bind(containers, port):
+    """A port suggestion in the form the existing entries use."""
+    prefix = suggest_bind(containers)
+    return f"{prefix}{port}" if prefix else port
+
+
+def keep_bind_address(old_value, new_value):
+    """Carry a bind address over to a value the operator typed bare.
+
+    Typing "19000" to change a port is not a request to unbind it from
+    localhost, but that is what replacing "127.0.0.1:13000" with 19000 does.
+    An explicit address in the new value always wins.
+    """
+    if validator.parse_port(new_value) is None:
+        return new_value
+    if bind_prefix(new_value):
+        return new_value
+    prefix = bind_prefix(old_value)
+    return f"{prefix}{new_value}" if prefix else new_value
+
+
 def suggest_unanimous(containers, field):
     """The value when every entry agrees on it, otherwise None."""
     values = {container.get(field) for container in containers
@@ -287,10 +336,11 @@ UPDATE_FORM = [
     Field("port", "HTTP port",
           "host port, mapped to 8069 inside the container; "
           'accepts 11000 or "127.0.0.1:11000"',
-          lambda c, e: suggest_free_port(c)),
+          lambda c, e: with_bind(c, suggest_free_port(c))),
     Field("longpolling_port", "Longpolling port",
           "host port, mapped to 8072 inside the container",
-          lambda c, e: suggest_longpolling(c, validator.parse_port(e.get("port")) or 0)),
+          lambda c, e: with_bind(c, suggest_longpolling(
+              c, validator.parse_port(e.get("port")) or 0))),
     Field("dockerfile_path", "Build folder",
           "the folder holding the Dockerfile for this instance",
           lambda c, e: suggest_path_pattern(c, "dockerfile_path",
@@ -594,6 +644,8 @@ def edit_field(path, lines, data):
     field = editable[int(choice) - 1]
 
     value = ask(field, containers, dict(container))
+    # Changing a port must not silently unbind it from localhost.
+    value = keep_bind_address(container.get(field.name), value)
     if not confirm(f"\n  Set {field.label} to "
                    f"{MASK if validator.redacted(field.name) else value}?",
                    default=True):

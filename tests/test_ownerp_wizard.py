@@ -337,6 +337,48 @@ class SuggestionTest(unittest.TestCase):
     def test_an_empty_configuration_suggests_the_template_image_prefix(self):
         self.assertEqual(wiz.suggest_image_name([], "demo-odoo"), "odoo/demo")
 
+    def test_the_bind_address_is_read_off_a_port_value(self):
+        self.assertEqual(wiz.bind_prefix("127.0.0.1:11000"), "127.0.0.1:")
+        self.assertEqual(wiz.bind_prefix("[::1]:11000"), "[::1]:")
+        self.assertEqual(wiz.bind_prefix(11000), "")
+        self.assertEqual(wiz.bind_prefix("not a port"), "")
+
+    def test_a_unanimous_bind_address_is_suggested(self):
+        self.assertEqual(wiz.suggest_bind(CONTAINERS), "127.0.0.1:")
+
+    def test_a_split_bind_address_suggests_none(self):
+        containers = [dict(CONTAINERS[0]), dict(CONTAINERS[1], port=13000)]
+        self.assertEqual(wiz.suggest_bind(containers), "")
+
+    def test_a_port_suggestion_keeps_the_shipped_bind_address(self):
+        # A bare number on a 127.0.0.1 host would publish the new instance on
+        # every interface - a change nobody asked for and nobody sees.
+        port = [f for f in wiz.UPDATE_FORM if f.name == "port"][0]
+        self.assertEqual(port.suggest(CONTAINERS, {}), "127.0.0.1:15000")
+
+    def test_a_longpolling_suggestion_keeps_it_too(self):
+        poll = [f for f in wiz.UPDATE_FORM if f.name == "longpolling_port"][0]
+        suggestion = poll.suggest(CONTAINERS, {"port": "127.0.0.1:15000"})
+        self.assertTrue(str(suggestion).startswith("127.0.0.1:"), suggestion)
+
+    def test_an_empty_configuration_suggests_a_bare_port(self):
+        port = [f for f in wiz.UPDATE_FORM if f.name == "port"][0]
+        self.assertEqual(port.suggest([], {}), 11000)
+
+    def test_a_bare_replacement_keeps_the_old_bind_address(self):
+        self.assertEqual(wiz.keep_bind_address("127.0.0.1:13000", 19000),
+                         "127.0.0.1:19000")
+
+    def test_an_explicit_replacement_wins(self):
+        self.assertEqual(wiz.keep_bind_address("127.0.0.1:13000", "0.0.0.0:19000"),
+                         "0.0.0.0:19000")
+
+    def test_an_unbound_old_value_stays_unbound(self):
+        self.assertEqual(wiz.keep_bind_address(13000, 19000), 19000)
+
+    def test_a_non_port_field_is_left_alone(self):
+        self.assertEqual(wiz.keep_bind_address("live-db", "demo-db"), "demo-db")
+
     def test_no_suggestion_is_offered_for_a_password(self):
         password = [f for f in wiz.UPDATE_FORM if f.name == "db_password"][0]
         self.assertIsNone(password.suggest)
