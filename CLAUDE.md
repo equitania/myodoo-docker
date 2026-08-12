@@ -162,6 +162,10 @@ python3 ~/update_docker_myodoo.py
 # Validate both YAML configurations (read-only, never writes)
 doval  # ~/ownerp_validate.py — exit 0 = no errors, 1 = at least one error,
        # 2 = file missing/unreadable/unparseable or PyYAML absent
+
+# Add an instance or change a field, guided (the only writing tool here)
+wiz    # ~/ownerp_wizard.py — validates before it replaces anything; refuses
+       # without a terminal; never removes an entry
 ```
 
 ### Docker Management Aliases
@@ -371,6 +375,36 @@ myodoo-docker/
   `password`
 - **`update_docker_odoo.py --validate` and `container2backup.py --validate`**
   both delegate to it
+
+#### 8. ownerp_wizard.py (v1.0.0)
+- **Purpose**: Guided editing of `docker2update.yaml` — add an Odoo instance,
+  or change one field of an existing entry, started with `wiz`
+- **The only tool in this set that writes to a customer's configuration**, so
+  the write path is the substance: timestamped backup → build in memory →
+  temporary file **in the same directory** → `ownerp_validate.py` runs against
+  that file → **error: temp file and backup removed, original byte-identical**
+  → **clean: `os.replace()`**, backup kept. Warnings never block (a build
+  folder that does not exist yet is the normal state for a new instance)
+- **Suggests from the file itself**: the next free host port across both port
+  fields of every entry (active or not), a unanimous `db_user`/`db_host`, the
+  shared build-folder pattern with the new name substituted, the shared image
+  prefix. Enter takes the value in brackets; a disagreement suggests nothing
+  rather than guessing
+- **Field edits address the line the positioned loader recorded** — not a
+  forward text search like `save_updated_config()`, which can land in the
+  following entry. Indentation and any trailing comment on that line survive
+- **Refuses** instead of guessing: no TTY (naming `edup`), no
+  `ownerp_validate.py` beside it (naming `ups`), an unparseable configuration
+  (pointing at `doval`). A duplicate container/database name is rejected at the
+  prompt, not at validation
+- **Scalars only** (`pre_build_files` and `proxy` are shown, never edited),
+  **never removes an entry**, and `db_password` is never suggested, never
+  echoed, and masked in every summary
+- **Its one write outside the YAML** is the empty build folder it offers to
+  create — nothing is copied into it; populating a build folder belongs to
+  `odoo_build_cache.py`
+- **`ownerp_tui.py` v1.1.0** reaches it with the `w` key and reloads the
+  container list afterwards
 
 ### Development Patterns
 

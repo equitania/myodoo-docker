@@ -509,6 +509,52 @@ Ein Cronjob oder Wrapper-Skript, das auf `doval` aufsetzt, muss also den
 Exitcode prüfen (`$status` in fish) — nicht, ob überhaupt etwas ausgegeben
 wurde, denn Warnungen erscheinen auch bei Exitcode `0`.
 
+### Eine Instanz aufnehmen, geführt (wiz)
+
+Eine weitere Odoo-Instanz von Hand in `docker2update.yaml` einzutragen heißt:
+einen bestehenden Block kopieren und zwölf Werte ändern, darunter zwei
+Host-Ports, die mit nichts kollidieren dürfen. `wiz` führt stattdessen durch
+die Felder:
+
+```bash
+wiz                                  # Menü: 1) Instanz aufnehmen  2) Feld ändern
+python3 ~/ownerp_wizard.py --update ~/docker2update.yaml
+```
+
+Der Assistent liest die Konfiguration, **bevor** er etwas fragt, und schlägt
+aus ihr vor — den nächsten freien Host-Port, den Build-Ordner nach dem Muster
+der vorhandenen Einträge, den Image-Namen nach deren Konvention. Der Vorschlag
+steht in eckigen Klammern und wird mit Enter übernommen; wo die Einträge sich
+uneinig sind, schlägt er nichts vor, statt zu raten. Das Passwort wird nicht
+angezeigt und erscheint in der Zusammenfassung als `********`.
+
+**Geschrieben wird erst, wenn das Ergebnis die Prüfung besteht.** Der Ablauf
+ist immer derselbe:
+
+1. Sicherung nach `~/docker2update.yaml.bak-<JJJJMMTT_HHMMSS>`
+2. der neue Text landet in einer temporären Datei **im selben Verzeichnis**
+3. `ownerp_validate.py` prüft genau diese Datei
+4. **Fehler** → temporäre Datei *und* Sicherung werden entfernt, das Original
+   bleibt Byte für Byte unverändert, und der Assistent bietet an, das
+   beanstandete Feld zu korrigieren
+5. **sauber** → die Datei wird atomar ersetzt, die Sicherung bleibt liegen
+
+Eine Sicherung bleibt also nur dann zurück, wenn tatsächlich etwas geändert
+wurde — findet sich nach einem Lauf keine `.bak-*`-Datei, wurde die
+Konfiguration nicht angefasst. Warnungen blockieren nicht: ein noch nicht
+existierender Build-Ordner ist bei einer neuen Instanz der Normalfall, und der
+Assistent bietet an, ihn leer anzulegen (mehr nicht — befüllt wird er beim
+ersten `doup`).
+
+> **Was `wiz` bewusst nicht tut:** Er **entfernt nie einen Eintrag**, und er
+> bearbeitet nur einzelne Werte. Listen und Unterblöcke (`pre_build_files`,
+> `proxy`) zeigt er an, ändert sie aber nicht — dafür bleibt `edup` (mcedit)
+> zuständig. Ohne Terminal verweigert er den Start, ist also für Cronjobs
+> ungeeignet und dort auch nicht nötig.
+
+In der Auswahlmaske `tui` liegt derselbe Assistent auf der Taste `w`; danach
+lädt die Maske die Liste neu, damit die neue Instanz sofort auswählbar ist.
+
 <a id="de-12-schritt-10-wartung-automatisieren"></a>
 ## 12. Schritt 10: Wartung automatisieren
 
@@ -577,10 +623,11 @@ Alle Skripte des Repos (`scripts/`, Stand 16.07.2026):
 | `pg-local-deploy.sh` (1.2.1) | PostgreSQL-Container interaktiv deployen (Profile, optional SSL) | `./pg-local-deploy.sh` |
 | `fr-local-deploy.sh` | FastReport-API-Container deployen (Default `/opt/fast-report`) | `./fr-local-deploy.sh` |
 | `update_docker_odoo.py` (5.12.0) | Odoo-Container-Updates per YAML | `doup` bzw. `python3 update_docker_odoo.py [-s NAME] [--validate]` |
-| `ownerp_tui.py` (1.0.0) | Curses-Auswahlmaske für Odoo-Container-Updates, übergibt an `update_docker_odoo.py` | `tui` bzw. `python3 ownerp_tui.py [-c DATEI]` |
+| `ownerp_tui.py` (1.1.0) | Curses-Auswahlmaske für Odoo-Container-Updates, übergibt an `update_docker_odoo.py` | `tui` bzw. `python3 ownerp_tui.py [-c DATEI]` |
 | `odoo_build_cache.py` (1.5.0) | Release-Archiv-Cache aller Instanzen; pflegt zusätzlich Dockerfile und `odoo.conf` des Build-Ordners | von `doup` aufgerufen; `~/odoo_build_cache.py stats\|gc [--days 30]` |
 | `container2backup.py` (4.8.0) | SQL+Filestore-Backups, Kompression/Verschlüsselung/Streaming | `dobk` bzw. `~/container2backup.py [--sql-only\|--validate]` |
 | `ownerp_validate.py` (1.0.0) | Rein lesende Schema-Prüfung von `docker2update.yaml`/`container2backup.yaml` | `doval` bzw. `~/ownerp_validate.py [--update PATH\|--backup PATH]` |
+| `ownerp_wizard.py` (1.0.0) | Geführtes Aufnehmen einer Instanz bzw. Ändern eines Feldes in `docker2update.yaml`; prüft, bevor er ersetzt, und entfernt nie einen Eintrag | `wiz` bzw. `~/ownerp_wizard.py [--update PATH]` |
 | `restore-zip.sh` (2.1.0) | Backup-Restore (DB + Filestore) in Docker | siehe [Kapitel 13](#de-13-restore--notfall) |
 | `ssl-renew.sh` (1.3.0) | certbot-Renewal, nginx nur bei Bedarf angehalten | `./ssl-renew.sh` (Cron) |
 | `nginx-cert-guard.py` (1.1.0) | Defekte Vhosts quarantänisieren statt nginx zu blockieren | `--reconcile [--start]`, `--check [--apply]`, `--list`, `--restore DOMAIN` |
@@ -1287,6 +1334,51 @@ A cron job or wrapper script built on top of `doval` must therefore check the
 exit code (`$status` in fish) — not whether anything was printed at all,
 since warnings appear on exit code `0` too.
 
+### Add an instance, guided (wiz)
+
+Adding another Odoo instance to `docker2update.yaml` by hand means copying an
+existing block and changing twelve values, two of them host ports that must
+not collide with anything already in the file. `wiz` walks the fields instead:
+
+```bash
+wiz                                  # menu: 1) add an instance  2) change a field
+python3 ~/ownerp_wizard.py --update ~/docker2update.yaml
+```
+
+The assistant reads the configuration **before** it asks anything and proposes
+values from it — the next free host port, the build folder following the
+pattern of the existing entries, the image name following their convention. A
+suggestion sits in square brackets and is taken with Enter; where the entries
+disagree, it proposes nothing rather than guessing. The password is not echoed
+and appears in the summary as `********`.
+
+**Nothing is written until the result passes validation.** The sequence is
+always the same:
+
+1. a backup to `~/docker2update.yaml.bak-<YYYYMMDD_HHMMSS>`
+2. the new text goes to a temporary file **in the same directory**
+3. `ownerp_validate.py` runs against exactly that file
+4. **error** → the temporary file *and* the backup are removed, the original
+   is left byte for byte as it was, and the assistant offers to correct the
+   field that was rejected
+5. **clean** → the file is replaced atomically and the backup stays
+
+A backup is therefore left behind only when something actually changed — no
+`.bak-*` file after a run means the configuration was not touched. Warnings do
+not block: a build folder that does not exist yet is the normal state for a new
+instance, and the assistant offers to create it empty (nothing more — it is
+populated by the first `doup`).
+
+> **What `wiz` deliberately does not do:** it **never removes an entry**, and
+> it edits single values only. Lists and sub-blocks (`pre_build_files`,
+> `proxy`) are shown but not changed — those stay with `edup` (mcedit). It
+> refuses to start without a terminal, so it is unsuitable for cron jobs, and
+> unnecessary there.
+
+Inside the `tui` selection screen the same assistant is on the `w` key; the
+screen reloads the list afterwards, so the new instance can be selected right
+away.
+
 <a id="en-12-step-10-automate-maintenance"></a>
 ## 12. Step 10: Automate Maintenance
 
@@ -1354,10 +1446,11 @@ All scripts in this repository (`scripts/`, as of 16.07.2026):
 | `pg-local-deploy.sh` (1.2.1) | Deploy a PostgreSQL container interactively (profiles, optional SSL) | `./pg-local-deploy.sh` |
 | `fr-local-deploy.sh` | Deploy the FastReport API container (default `/opt/fast-report`) | `./fr-local-deploy.sh` |
 | `update_docker_odoo.py` (5.12.0) | Odoo container updates via YAML | `doup` or `python3 update_docker_odoo.py [-s NAME] [--validate]` |
-| `ownerp_tui.py` (1.0.0) | Curses selection screen for Odoo container updates, hands off to `update_docker_odoo.py` | `tui` or `python3 ownerp_tui.py [-c FILE]` |
+| `ownerp_tui.py` (1.1.0) | Curses selection screen for Odoo container updates, hands off to `update_docker_odoo.py` | `tui` or `python3 ownerp_tui.py [-c FILE]` |
 | `odoo_build_cache.py` (1.5.0) | Release archive cache shared by all instances; also maintains the build folder's Dockerfile and `odoo.conf` | called by `doup`; `~/odoo_build_cache.py stats\|gc [--days 30]` |
 | `container2backup.py` (4.8.0) | SQL+filestore backups, compression/encryption/streaming | `dobk` or `~/container2backup.py [--sql-only\|--validate]` |
 | `ownerp_validate.py` (1.0.0) | Read-only schema validation of `docker2update.yaml`/`container2backup.yaml` | `doval` or `~/ownerp_validate.py [--update PATH\|--backup PATH]` |
+| `ownerp_wizard.py` (1.0.0) | Guided adding of an instance / changing a field in `docker2update.yaml`; validates before it replaces, and never removes an entry | `wiz` or `~/ownerp_wizard.py [--update PATH]` |
 | `restore-zip.sh` (2.1.0) | Backup restore (DB + filestore) into Docker | see [chapter 13](#en-13-restore--emergency) |
 | `ssl-renew.sh` (1.3.0) | certbot renewal, nginx stopped only when needed | `./ssl-renew.sh` (cron) |
 | `nginx-cert-guard.py` (1.1.0) | Quarantine broken vhosts instead of blocking nginx | `--reconcile [--start]`, `--check [--apply]`, `--list`, `--restore DOMAIN` |

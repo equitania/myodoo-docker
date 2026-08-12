@@ -1,5 +1,69 @@
 # Release Notes
 
+## A Guided Assistant for docker2update.yaml (12.08.2026)
+
+*ownerp_wizard.py v1.0.0, ownerp_tui.py v1.1.0, getScripts.py v9.13.0*
+
+### Added
+- **`ownerp_wizard.py`**, started with `wiz`. Walks an operator through adding
+  an Odoo instance to `docker2update.yaml`, and through changing a single
+  field of an existing entry. It reads the configuration before it asks
+  anything and proposes values from it — the next free host port (across
+  **both** port fields of **every** entry, active or not), a `db_user` the
+  existing entries agree on, the shared build-folder pattern with the new
+  container name substituted, the shared image-name prefix. A suggestion sits
+  in brackets and is taken with Enter.
+  ```
+  ownerp_wizard.py                    # menu: add an instance / change a field
+  ownerp_wizard.py --update [PATH]    # default ~/docker2update.yaml
+  ownerp_wizard.py --version
+  ```
+  This is the **only tool in the ownERP set that writes to a customer's
+  configuration**, so the write path is the substance:
+
+  1. the file is copied to `<path>.bak-<YYYYmmdd_HHMMSS>`,
+  2. the new text is built in memory and written to `<path>.tmp-<pid>` **in the
+     same directory**, so the later replacement is atomic,
+  3. `ownerp_validate.py` runs against that temporary file,
+  4. **any error → the temporary file and the backup are both removed and the
+     original is left byte-identical**,
+  5. **clean → `os.replace()`**, and the backup stays.
+
+  Warnings do not block a write: a build folder that does not exist yet is the
+  normal state for an instance being created. A backup is therefore kept only
+  when the original was actually replaced — a backup of a file nobody changed
+  is litter, and litter teaches operators to ignore `.bak-*` files.
+
+  It **refuses** rather than guesses: without a terminal (naming `edup`),
+  without `ownerp_validate.py` beside it (naming `ups`), and on a configuration
+  that does not parse (pointing at `doval` for the line). A duplicate container
+  or database name is rejected at the prompt, where the operator is still
+  typing, rather than five prompts later at validation.
+
+  It edits **scalars only** — `pre_build_files` and `proxy` are a list and a
+  mapping, and a value spanning several lines has no single line to replace.
+  It **never removes an entry**. `db_password` is never suggested, never
+  echoed (`getpass`), and appears as `********` in every summary. Its one write
+  outside the YAML is the empty build folder it offers to create; nothing is
+  copied into it, because populating a build folder belongs to
+  `odoo_build_cache.py`.
+- **`ownerp_tui.py` v1.1.0**: the new key **`w`** leaves curses, runs the
+  wizard, and **reloads the container list on return** — unlike `v`
+  (validate), which only reads, the wizard may have added an entry, and a
+  stale list would send the next Enter against a system that no longer looks
+  that way. The wizard's exit code is deliberately not folded into the run's:
+  a cancelled wizard is not a failed update.
+- **`wiz` alias** and distribution via `getScripts.py` v9.13.0.
+
+### Fixed
+- **`ownerp_wizard.py`**: a `Ctrl-C` between the backup and the replacement
+  left the `.bak-*` and `.tmp-*` behind. `KeyboardInterrupt` does not inherit
+  from `Exception`, so the cleanup clause walked straight past it — an operator
+  abort must leave no trace, and now does not.
+- **`ownerp_wizard.py`**: `Ctrl-D` at a prompt ended in an `EOFError`
+  traceback. Closing the input is an operator's decision, not a fault, and it
+  now reads like one.
+
 ## One Validator for Both Configurations (11.08.2026)
 
 *ownerp_validate.py v1.0.0, update_docker_odoo.py v5.12.0,

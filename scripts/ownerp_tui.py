@@ -1,8 +1,8 @@
 #!/usr/bin/python3
 # -*- coding: utf-8 -*-
 # Terminal UI for selecting Odoo container updates
-# Version 1.0.0
-# Date 11.08.2026
+# Version 1.1.0
+# Date 12.08.2026
 ##############################################################################
 #
 #    Shell Script for Odoo, Open Source Management Solution
@@ -53,6 +53,10 @@ except ImportError:          # pragma: no cover - a server always has it
     runner = None
 
 RUNNER_SCRIPT = join(expanduser("~"), "update_docker_odoo.py")
+# A full path like the runner above: run_outside_curses() prefixes only
+# sys.executable, so a bare name would be resolved against the working
+# directory rather than against the installation.
+WIZARD_SCRIPT = join(expanduser("~"), "ownerp_wizard.py")
 CONFIG_FILE = join(expanduser("~"), "docker2update.yaml")
 
 # Below this the list has no room to be a list.
@@ -60,8 +64,8 @@ MIN_SIZE = (80, 20)
 
 TUI_DEFAULT_MARKER = join(expanduser("~"), ".ownerp_tui_default")
 
-SCRIPT_VERSION = "1.0.0"
-SCRIPT_DATE = "11.08.2026"
+SCRIPT_VERSION = "1.1.0"
+SCRIPT_DATE = "12.08.2026"
 
 # The update modes, in the order the 'm' key rotates them.
 MODES = ("M", "F", "N")
@@ -281,6 +285,7 @@ HELP_LINES = [
     "  a           all / none      m       mode  M → F → N",
     "  c           run comment     Enter   start the selected systems",
     "  v           validate the configuration",
+    "  w           add an instance or change a field (ownerp_wizard.py)",
     "  d           use the TUI as the default for `doup` on this server",
     "  q / Esc     quit",
     "",
@@ -323,7 +328,7 @@ def draw(stdscr, selection, latest, message=""):
         stdscr.addnstr(height - 2, 0, f" {message}"[:width - 1], width - 1,
                        curses.A_BOLD)
     footer = (" Space select   m mode   c comment   Enter start   "
-              "v validate   ? help   q quit")
+              "v validate   w edit   ? help   q quit")
     stdscr.addnstr(height - 1, 0, footer.ljust(width - 1), width - 1,
                    curses.A_REVERSE)
     stdscr.refresh()
@@ -452,6 +457,27 @@ def loop(stdscr, selection, latest, config=None):
                 argv += ["-c", config]
             argv += ["--validate"]
             worst = max(worst, run_outside_curses(stdscr, [argv]))
+        elif key == ord("w"):
+            argv = [WIZARD_SCRIPT, "--update"]
+            if config:
+                argv.append(config)
+            # The wizard's own exit code stays out of `worst`: a cancelled
+            # wizard is not a failed update run.
+            run_outside_curses(stdscr, [argv])
+            # The wizard may have added an entry. Without this reload the list
+            # on screen is a snapshot of a file that no longer looks that way,
+            # and the next Enter would run against a stale selection. This is
+            # the difference from the 'v' key, which only reads.
+            containers, error = (load_containers(config) if config
+                                 else load_containers())
+            if error:
+                # The wizard writes only what validates, so reaching this means
+                # the file changed some other way. Keep the list that is on
+                # screen rather than replacing it with nothing.
+                message = error
+            else:
+                selection = UpdateSelection(containers)
+                message = "Configuration reloaded."
         elif key in (curses.KEY_ENTER, 10, 13):
             if not selection.can_start():
                 message = "Nothing selected - Space ticks a system."

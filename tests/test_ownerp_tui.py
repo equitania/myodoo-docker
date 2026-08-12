@@ -22,8 +22,10 @@ import unittest
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "scripts"))
 try:
     import yaml  # noqa: F401
+    HAVE_YAML = True
 except ImportError:
     sys.modules["yaml"] = types.ModuleType("yaml")
+    HAVE_YAML = False
 import ownerp_tui as tui  # noqa: E402
 
 CONTAINERS = [
@@ -300,6 +302,49 @@ class DefaultMarkerTest(unittest.TestCase):
     def test_clearing_an_absent_marker_is_not_an_error(self):
         tui.set_tui_default(False, self.marker)       # must not raise
         self.assertFalse(tui.tui_is_default(self.marker))
+
+
+class ReloadAfterWizardTest(unittest.TestCase):
+    """What the TUI's 'w' key relies on after the wizard has written."""
+
+    ADDED = {"container_name": "demo-odoo", "database_name": "demo_db",
+             "odoo_version": "18", "type": "F", "active": True}
+
+    def test_a_rebuilt_selection_shows_an_added_container(self):
+        before = tui.UpdateSelection(CONTAINERS)
+        after = tui.UpdateSelection(CONTAINERS + [self.ADDED])
+        self.assertEqual(len(after.rows), len(before.rows) + 1)
+        self.assertEqual(after.rows[-1]["name"], "demo-odoo")
+
+    def test_the_added_container_is_preselected_from_its_active_flag(self):
+        selection = tui.UpdateSelection(CONTAINERS + [self.ADDED])
+        self.assertTrue(selection.rows[-1]["selected"])
+
+    def test_a_rebuilt_selection_carries_no_state_from_the_old_one(self):
+        # The reload replaces the object; a comment typed before the wizard
+        # ran must not silently survive into the new selection.
+        before = tui.UpdateSelection(CONTAINERS)
+        before.comment = "typed earlier"
+        after = tui.UpdateSelection(CONTAINERS)
+        self.assertNotEqual(after.comment, "typed earlier")
+
+    def test_the_wizard_is_addressed_by_a_full_path(self):
+        # run_outside_curses() prefixes only sys.executable, so a bare name
+        # would be resolved against the working directory.
+        self.assertTrue(os.path.isabs(tui.WIZARD_SCRIPT), tui.WIZARD_SCRIPT)
+        self.assertTrue(tui.WIZARD_SCRIPT.endswith("ownerp_wizard.py"))
+
+    @unittest.skipUnless(HAVE_YAML, "load_containers needs a real parser")
+    def test_load_containers_returns_a_pair_the_reload_must_unpack(self):
+        # The 'w' branch unpacks (containers, error). A single-value read
+        # would put a tuple into UpdateSelection and fail only on screen.
+        result = tui.load_containers(os.path.join(
+            os.path.dirname(os.path.abspath(__file__)), "..", "scripts",
+            "docker2update.yaml"))
+        self.assertEqual(len(result), 2)
+        containers, error = result
+        self.assertIsNone(error)
+        self.assertTrue(containers)
 
 
 if __name__ == "__main__":

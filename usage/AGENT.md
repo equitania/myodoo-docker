@@ -25,6 +25,7 @@
 - Deploy nginx base files + generate reverse-proxy vhosts for Odoo/other services via wizard + `nginx-set-conf`
 - Deploy PostgreSQL and FastReport containers interactively (profiles, optional self-signed SSL)
 - Update Odoo containers unattended from YAML (image rebuild, module update, restart)
+- Add an Odoo instance to the update configuration through a guided assistant that validates before it writes
 - Back up Odoo databases (SQL + filestore) with compression/encryption/streaming, and restore them
 - Renew Let's Encrypt certificates without needless nginx downtime; quarantine broken vhosts
 - Wire all maintenance jobs (backup, renewal, log GDPR purge, memory cleanup) into one cron drop-in
@@ -46,7 +47,8 @@ All commands run as **root** on the target server. The interactive login shell i
 | `pg-local-deploy.sh` | — | Deploy a PostgreSQL container (compose file, network, profile, optional SSL) | interactive only (container name, base dir, db user/name, password, PG version, profile `2cpu4gb|2cpu8gb|4cpu16gb|8cpu32gb`, optional host port, optional self-signed SSL) |
 | `fr-local-deploy.sh` | — | Deploy the FastReport API container (`/opt/fast-report/<name>/…`) | interactive only (container name, port, image tag, registry token, optional secrets) |
 | `update_docker_odoo.py` | `doup` (config: `edup`) | Update Odoo containers from `~/docker2update.yaml` (rebuild image, update DB, restart). Writes a full run log per container to `<build folder>/update_<YYYYMMDD>_<HHMMSS>.log` regardless of `-v`; the paths are listed at exit. Logs older than `log_retention_days` (YAML `defaults` or per container, 90 days default, `0` = keep forever) are removed on that instance's next run. Each container run also appends one line to `~/update-history.jsonl` (`defaults.history_retention_days`, 365 default, `0` = forever) | `-c/--config CONFIG` · `-v/--verbose` · `-s/--specific-container NAME` (repeatable, also comma-separated; **overrides `active: false`**) · `--type {M,F,N}` (runtime mode override, never written to the YAML) · `--comment TEXT` (into the run log header and the history) · `--validate` · `--dns-optimize` |
-| `ownerp_tui.py` | `tui` | curses selection screen for ad-hoc updates: lists every system from `docker2update.yaml` with its mode and its last run, then hands the selection to `update_docker_odoo.py` — one invocation per mode group, sequential, worst exit code wins. **Never writes to the YAML.** Keys: Space select · `a` all/none · `m` mode M→F→N · `c` comment · `Enter` start · `v` validate · `d` make it `doup`'s default · `?` help · `q`/`Esc` quit | `-c/--config CONFIG` · `--make-default` · `--no-default` |
+| `ownerp_tui.py` | `tui` | curses selection screen for ad-hoc updates: lists every system from `docker2update.yaml` with its mode and its last run, then hands the selection to `update_docker_odoo.py` — one invocation per mode group, sequential, worst exit code wins. **Never writes to the YAML.** Keys: Space select · `a` all/none · `m` mode M→F→N · `c` comment · `Enter` start · `v` validate · `w` add an instance / change a field (runs `ownerp_wizard.py`, then reloads the list) · `d` make it `doup`'s default · `?` help · `q`/`Esc` quit | `-c/--config CONFIG` · `--make-default` · `--no-default` |
+| `ownerp_wizard.py` | `wiz` | Guided editing of `docker2update.yaml`: add an instance, or change one scalar field of an existing entry. Suggests from the file itself — next free host port across both port fields of every entry, unanimous `db_user`/`db_host`, shared build-folder pattern and image prefix; Enter takes the value in brackets. **The only tool here that writes to a customer configuration**: backup → temp file in the same directory → `ownerp_validate.py` against it → error means temp file *and* backup removed and the original left byte-identical; clean means `os.replace()`. Warnings never block. **Refuses without a TTY**, without `ownerp_validate.py`, or on an unparseable config. Scalars only; **never removes an entry**; `db_password` never echoed or shown | `--update [PATH]` (default `~/docker2update.yaml`) · `--version` (no flag = menu) |
 | `container2backup.py` | `dobk` (config: `edbk`) | Back up Odoo DBs (SQL + filestore) + service dirs per `~/container2backup.yaml` | `--sql-only` · `--validate` |
 | `ownerp_validate.py` | `doval` | Read-only schema validation of `docker2update.yaml` and/or `container2backup.yaml` — structure, required fields, types, enums, port form, duplicate container/database names and host ports (active entries only), path existence (warning), unknown keys with a suggestion (warning). Findings name the file and line number; never prints a `*password` value; never writes | `--update [PATH]` (default `~/docker2update.yaml`) · `--backup [PATH]` (default `~/container2backup.yaml`) · `--version` (no flag = both, at default paths) |
 | `restore-zip.sh` | — | Restore a backup archive (auto-detects `.zip/.7z/.7z.gpg/.tar.gz/.tar.zst`) | positional: `backup_kind(1\|2)` `runsql(v10…v16)` `orig_dbname` `new_dbname` `drop_db(Y/n)` `zip_file` `odoo_volume` `pg_container` `pg_password` |
@@ -121,6 +123,17 @@ echo $status                                     # fish; 0 = no errors, 1 = erro
 Read-only, never writes. Check the exit code, not the presence of output — warnings print on a
 clean (`0`) exit too.
 
+### Add an Odoo instance to the update configuration
+```bash
+wiz                                              # menu: 1) add an instance  2) change a field
+python3 ~/ownerp_wizard.py --update ~/docker2update.yaml
+```
+Interactive only — it refuses without a terminal. Enter takes the suggestion in brackets; the
+build folder, ports and image name are proposed from the entries already in the file. Nothing is
+written until the summary is confirmed *and* the result validates; a rejection leaves the file
+byte-identical and names the field to correct. Inside the TUI the same wizard is the `w` key,
+after which the list reloads.
+
 ### Run / restrict a backup
 ```bash
 python3 ~/container2backup.py                    # or: dobk — full SQL+filestore per YAML
@@ -160,6 +173,12 @@ independent of the shell environment. Full walkthrough: INSTALLATION_GUIDE chapt
   that sends. The second confirmation exists only inside the TUI, which names the affected
   databases before it starts. `update_docker_odoo.py -s live-odoo --type N` runs immediately.
   Never pass `--type N` against a production database without the operator saying so in that turn.
+- **`ownerp_wizard.py` (`wiz`) is the only tool in this set that writes to a customer
+  configuration.** It refuses without a TTY, so it cannot be driven from a cron job or a
+  non-interactive session — for unattended edits use `mcedit`/an editor plus `doval`, not the
+  wizard. It never removes an entry, and it edits scalars only: `pre_build_files` and `proxy`
+  stay manual. A rejected write leaves the file byte-identical and removes its own backup, so
+  the absence of a `.bak-*` after a wizard run means nothing was changed.
 - **`-s` overrides `active: false`.** A container parked in the YAML runs when it is named — that
   is deliberate, and it means `-s` is not a filter over the active set but a selection in its own
   right. Check the name against `docker2update.yaml` before running, not against what is running.
