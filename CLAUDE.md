@@ -457,6 +457,24 @@ myodoo-docker/
 - **A commented-out CSV row stays switched off**: `active: false` in
   `docker2update.yaml`; `container2backup.yaml` has no such key, so those rows
   become a commented-out block rather than vanishing or silently activating
+- **`--from-docker` (v1.1.0)**: rebuilds both configs from the running
+  containers, for servers whose CSVs were already deleted. `docker inspect`
+  yields 12 of the 14 update columns exactly; the database name comes from
+  `psql -l` in the paired Postgres container. What is unrecoverable (`type`,
+  `delay_time`, `translate`, `retention_days`) gets a documented default **and**
+  an entry in the `REVIEW BEFORE USE` block at the top of the file — a guess
+  that looks like a fact would update the wrong database. **Opt-in only**;
+  never runs from `ups`
+
+#### 11. Login command overview (fish)
+- **`fish/functions/linux/ownerp-help.fish`** prints the dozen commands an
+  operator actually needs; `help` is aliased to it
+- **Once per LOGIN shell**, not per interactive shell — `fastfetch` is four
+  lines and can run every time, this panel is fifteen and a tmux session with
+  six panes would print it six times. `status is-login` is that boundary
+- **Curated, not generated** — but `tests/test_fish_help.py` asserts every
+  advertised command still resolves to an alias or function, so a rename fails
+  the suite instead of sending an operator to type something that is gone
 
 ### Development Patterns
 

@@ -4,8 +4,8 @@
 # Title:            server-readiness.py
 # Description:      Report whether this server matches the state myodoo-docker
 #                   expects, and name the exact command that closes each gap.
-# Version:          1.3.0
-# Date:             04.08.2026
+# Version:          1.4.1
+# Date:             13.08.2026
 # Author:           Equitania Software GmbH
 # ==============================================================================
 # Why this exists:
@@ -63,7 +63,7 @@ from dataclasses import dataclass
 from enum import Enum
 from typing import Callable, List, Optional, Tuple
 
-SCRIPT_VERSION = "1.4.0"
+SCRIPT_VERSION = "1.4.1"
 SCRIPT_DATE = "13.08.2026"
 
 # Where nginx keeps its customer vhosts (mirrors nginx-cert-guard.py).
@@ -513,9 +513,17 @@ def check_backup_config(ctx: HealthContext) -> Finding:
     if error == "PyYAML not installed":
         return _skip("backup_config", "Backup config", error)
     if error:
+        # On a machine that runs Docker, a missing backup config usually means
+        # the legacy cleanup took the CSV rather than that nobody ever wrote
+        # one. Sending the operator to an empty editor makes them retype what
+        # `docker inspect` can still read; send them to the reconstruction.
+        if shutil.which("docker"):
+            fix = (f"{ctx.home}/ownerp_migrate.py --from-docker   "
+                   f"# rebuild from the running containers, then: edbk")
+        else:
+            fix = "edbk   # create or repair the backup configuration"
         return Finding(
-            "backup_config", Severity.FAIL, "Backup config", error,
-            "edbk   # create or repair the backup configuration",
+            "backup_config", Severity.FAIL, "Backup config", error, fix,
         )
 
     # The key is `databases` — that is what container2backup.py iterates over.

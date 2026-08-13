@@ -241,6 +241,129 @@ class SafetyTest(MigrateFixture):
         self.assertEqual(self.read(om.BACKUP_YAML), before)
 
 
+def _stack():
+    """A minimal but realistic one-instance Odoo stack as `docker inspect` reports it."""
+    return [
+        {"Name": "/live-odoo",
+         "Config": {"Image": "odoo/live:16",
+                    "ExposedPorts": {"8069/tcp": {}, "8072/tcp": {}},
+                    "Env": ["HOST=live-db", "USER=ownerp", "PASSWORD=secret123"]},
+         "NetworkSettings": {
+             "Ports": {"8069/tcp": [{"HostIp": "127.0.0.1", "HostPort": "11000"}],
+                       "8072/tcp": [{"HostIp": "127.0.0.1", "HostPort": "12000"}]},
+             "Networks": {"live-db-net": {}}},
+         "HostConfig": {"Binds": ["/opt/odoo/live:/opt/odoo/data"],
+                        "NetworkMode": "live-db-net"}},
+        {"Name": "/live-db",
+         "Config": {"Image": "postgres:16", "ExposedPorts": {"5432/tcp": {}},
+                    "Env": ["POSTGRES_USER=ownerp", "POSTGRES_PASSWORD=secret123"]},
+         "NetworkSettings": {"Ports": {}, "Networks": {"live-db-net": {}}},
+         "HostConfig": {"Binds": ["/opt/pg/live:/var/lib/postgresql/data"]}},
+    ]
+
+
+class ReconstructFixture(MigrateFixture):
+    """Reconstruction from the running Docker state, with docker stubbed out."""
+
+    def setUp(self):
+        super().setUp()
+        self.stub(_stack(), {"live-db": ["live_db"]})
+
+    def stub(self, containers, databases):
+        original_inspect = om.inspect_containers
+        original_databases = om.databases_in
+        om.inspect_containers = lambda: containers
+        om.databases_in = lambda name, user: databases.get(name, [])
+        self.addCleanup(lambda: (setattr(om, "inspect_containers", original_inspect),
+                                 setattr(om, "databases_in", original_databases)))
+
+
+@unittest.skipUnless(HAVE_YAML, "the reconstruction is only meaningful if it parses")
+class ReconstructTest(ReconstructFixture):
+    def test_the_recoverable_fields_match_the_original_csv_row(self):
+        """12 of the 14 CSV columns are still readable from the live container."""
+        om.reconstruct_from_docker(self.home)
+        live = yaml.safe_load(self.read(om.UPDATE_YAML))["containers"][0]
+        self.assertEqual(live["container_name"], "live-odoo")
+        self.assertEqual(live["database_name"], "live_db")
+        self.assertEqual(live["port"], "127.0.0.1:11000")
+        self.assertEqual(live["longpolling_port"], "127.0.0.1:12000")
+        self.assertEqual(live["docker_image_name"], "odoo/live")
+        self.assertEqual(live["db_user"], "ownerp")
+        self.assertEqual(live["db_password"], "secret123")
+        self.assertEqual(live["db_host"], "live-db")
+        self.assertEqual(live["odoo_version"], "16")
+        self.assertEqual(live["volume"],
+                         "--network live-db-net -v /opt/odoo/live:/opt/odoo/data")
+
+    def test_the_backup_config_pairs_database_and_containers(self):
+        om.reconstruct_from_docker(self.home)
+        entry = yaml.safe_load(self.read(om.BACKUP_YAML))["databases"][0]
+        self.assertEqual(entry["name"], "live_db")
+        self.assertEqual(entry["sql_container"], "live-db")
+        self.assertEqual(entry["data_container"], "live-odoo")
+
+    def test_the_unrecoverable_choices_are_named_not_hidden(self):
+        om.reconstruct_from_docker(self.home)
+        header = self.read(om.UPDATE_YAML)
+        self.assertIn("REVIEW BEFORE USE", header)
+        self.assertIn("type (M/F/N), delay_time and translate", header)
+
+    def test_a_missing_password_becomes_a_visible_placeholder(self):
+        stack = _stack()
+        stack[0]["Config"]["Env"] = ["HOST=live-db", "USER=ownerp"]
+        stack[1]["Config"]["Env"] = []
+        self.stub(stack, {"live-db": ["live_db"]})
+        om.reconstruct_from_docker(self.home)
+        text = self.read(om.UPDATE_YAML)
+        self.assertIn(om.PLACEHOLDER, text)
+        self.assertIn("db_password is not in the container", text)
+
+    def test_several_databases_refuse_to_guess(self):
+        self.stub(_stack(), {"live-db": ["alpha", "beta", "gamma"]})
+        om.reconstruct_from_docker(self.home)
+        live = yaml.safe_load(self.read(om.UPDATE_YAML))["containers"][0]
+        self.assertEqual(live["database_name"], om.PLACEHOLDER)
+        self.assertIn("3 databases behind live-db", self.read(om.UPDATE_YAML))
+
+    def test_a_database_that_cannot_be_named_is_left_out_of_the_backup(self):
+        """A backup entry pointing at the wrong database is worse than none."""
+        self.stub(_stack(), {"live-db": []})
+        om.reconstruct_from_docker(self.home)
+        self.assertFalse(os.path.exists(os.path.join(self.home, om.BACKUP_YAML)))
+
+    def test_it_still_refuses_to_overwrite(self):
+        self.write(om.UPDATE_YAML, "containers: []\n")
+        results = om.reconstruct_from_docker(self.home)
+        self.assertEqual(self.result(results, "update").status, "exists")
+        self.assertEqual(self.read(om.UPDATE_YAML), "containers: []\n")
+
+    def test_no_odoo_container_reconstructs_nothing(self):
+        self.stub([_stack()[1]], {})
+        results = om.reconstruct_from_docker(self.home)
+        self.assertTrue(all(r.status == "none" for r in results))
+
+
+class DockerParsingTest(unittest.TestCase):
+    def test_a_registry_port_is_not_mistaken_for_an_image_tag(self):
+        container = {"Config": {"Image": "registry.example.com:5000/odoo/live"}}
+        self.assertEqual(om._image_of(container),
+                         "registry.example.com:5000/odoo/live")
+
+    def test_a_tag_is_stripped_from_the_image_name(self):
+        self.assertEqual(om._image_of({"Config": {"Image": "odoo/live:16"}}),
+                         "odoo/live")
+
+    def test_a_wildcard_binding_yields_a_bare_port(self):
+        container = {"NetworkSettings": {"Ports": {
+            "8069/tcp": [{"HostIp": "0.0.0.0", "HostPort": "11000"}]}}}
+        self.assertEqual(om._published(container, "8069"), "11000")
+
+    def test_an_unpublished_port_is_none_rather_than_invented(self):
+        container = {"NetworkSettings": {"Ports": {"8069/tcp": None}}}
+        self.assertIsNone(om._published(container, "8069"))
+
+
 class CleanupListTest(unittest.TestCase):
     def test_the_csvs_are_no_longer_marked_for_deletion(self):
         """cleanup_legacy_files() deletes what this list names, uncommented."""

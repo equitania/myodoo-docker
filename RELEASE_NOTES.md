@@ -1,5 +1,48 @@
 # Release Notes
 
+## Getting the Deleted Configuration Back, and a Login That Says What to Type (13.08.2026)
+
+*scripts/ownerp_migrate.py v1.1.0 · scripts/server-readiness.py v1.4.1 ·
+fish/functions/linux/ownerp-help.fish v1.0.1 (new) · fish/conf.d/50-prompt.fish v1.1.0 ·
+fish/conf.d/30-aliases-system.fish v1.1.0*
+
+### Added
+
+- **`ownerp_migrate.py --from-docker` reconstructs both configs from the running containers.**
+  For the servers whose CSVs were deleted before the previous release existed. The configuration
+  is off the disk but not off the machine: `docker inspect` still knows the ports, the image, the
+  network, the volumes and — because the Odoo images take them that way — the database
+  credentials.
+
+  Twelve of the fourteen `docker2update.csv` columns come back exactly: `container_name`,
+  `database_name` (via `psql -l` in the paired Postgres container), `port`, `longpolling_port`,
+  `docker_image_name`, `db_user`, `db_password`, `db_host`, `volume` (network + binds),
+  `odoo_version`, `dockerfile_path`. The backup config gets the database, its SQL container and
+  its data container from the same pairing.
+
+  What cannot come back is **named rather than guessed**. `type` (M/F/N), `delay_time`,
+  `translate` and `retention_days` were operator choices stored nowhere on the machine;
+  documented defaults are used and a `REVIEW BEFORE USE` block at the top of each generated file
+  lists every one of them, plus anything that had to be left as `REVIEW_ME` — an unpublished
+  port, an unreadable password, several databases behind one container. A guess that looks like
+  a fact would quietly update the wrong database.
+
+  Same install path as the CSV conversion, so the same refusals: never overwrites an existing
+  YAML, never installs what does not validate, mode `0600`. **Opt-in only — it never runs from
+  `ups`.** `server-readiness.py` now points at it when the backup config is missing and Docker is
+  present, because on such a machine that is far more likely to be the deleted CSV than a server
+  nobody ever configured.
+
+- **A command overview at login.** `fastfetch` keeps running on every interactive shell; the new
+  panel prints once per *login* shell — an ssh session gets it, a new tmux window does not — and
+  `help` shows it again on demand. It names the dozen commands that matter: `doup`, `tui`, `wiz`,
+  `dobk`, `edbk`, `doval`, `docron`, `ups`, `ngxset`, `dps` and friends.
+
+  Curated by hand rather than generated: a listing of all ninety aliases is forty lines nobody
+  reads. Curation rots, so `tests/test_fish_help.py` checks that every command the panel
+  advertises still exists as an alias or function — a renamed alias fails the suite instead of
+  sending an operator to type something that is gone.
+
 ## The Upgrade Deleted the Configuration It Was Supposed to Convert (13.08.2026)
 
 *scripts/ownerp_migrate.py v1.0.0 (new) · cleanup_legacy.txt · getScripts.py v9.15.0 ·

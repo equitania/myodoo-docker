@@ -3,7 +3,7 @@
 # ==============================================================================
 # Title:            ownerp_migrate.py
 # Description:      Convert the legacy CSV configurations to YAML, once, safely.
-# Version:          1.0.0
+# Version:          1.1.0
 # Date:             13.08.2026
 # Author:           Equitania Software GmbH
 # ==============================================================================
@@ -39,6 +39,16 @@
 #     $HOME/legacy-csv/<timestamp>/, which is created 0700 because
 #     docker2update.csv contains database passwords in clear text.
 #
+# For servers whose CSVs are already gone (--from-docker):
+#   The configuration is off the disk but not off the machine. `docker inspect`
+#   still knows the ports, the image, the network, the volumes and — because the
+#   Odoo images take them that way — the database credentials. Twelve of the
+#   fourteen CSV columns come back exactly. `type` (M/F/N), `delay_time` and
+#   `translate` were operator choices stored nowhere on the machine, and
+#   retention_days likewise; those are written as documented defaults and listed
+#   in a REVIEW block at the top of the generated file. Opt-in only — this never
+#   runs from `ups`.
+#
 # A note on commented-out rows:
 #   In both CSV formats a leading '#' marked a row as switched off. That maps
 #   to `active: false` in docker2update.yaml. container2backup.yaml has no such
@@ -73,7 +83,7 @@ import time
 from dataclasses import dataclass, field
 from typing import List, Optional, Tuple
 
-SCRIPT_VERSION = "1.0.0"
+SCRIPT_VERSION = "1.1.0"
 SCRIPT_DATE = "13.08.2026"
 
 BACKUP_CSV = "container2backup.csv"
@@ -208,22 +218,47 @@ def _int_or_none(value) -> Optional[int]:
         return None
 
 
-def _provenance(source_files: List[str]) -> List[str]:
-    return [
-        "# Converted from the legacy CSV configuration by ownerp_migrate.py "
+def _provenance(source_files: List[str], review: Optional[List[str]] = None) -> List[str]:
+    """Header saying where this file came from, and what still needs a human.
+
+    The REVIEW block is not decoration. A reconstruction from the running
+    Docker state recovers most fields exactly and cannot recover a few at all;
+    writing a plausible default without saying so would produce a file that
+    looks authoritative and quietly updates the wrong database.
+    """
+    if review is None:
+        lines = [
+            "# Converted from the legacy CSV configuration by ownerp_migrate.py "
+            f"{SCRIPT_VERSION}",
+            f"# on {time.strftime('%d.%m.%Y %H:%M')}. Sources: "
+            + ", ".join(sorted(source_files)),
+            "# The originals were moved to $HOME/legacy-csv/ — nothing was deleted.",
+            "#",
+        ]
+        return lines
+
+    lines = [
+        f"# Reconstructed from the running Docker state by ownerp_migrate.py "
         f"{SCRIPT_VERSION}",
-        f"# on {time.strftime('%d.%m.%Y %H:%M')}. Sources: "
-        + ", ".join(sorted(source_files)),
-        "# The originals were moved to $HOME/legacy-csv/ — nothing was deleted.",
+        f"# on {time.strftime('%d.%m.%Y %H:%M')} — the CSV configuration was "
+        f"already gone.",
         "#",
+        f"# REVIEW BEFORE USE. Every value below was read from `docker inspect`",
+        f"# except the {len(review)} point(s) listed here:",
     ]
+    for note in review:
+        lines.append(f"#   * {note}")
+    lines.append(f"# Anything still reading {PLACEHOLDER} must be filled in by hand.")
+    lines.append("#")
+    return lines
 
 
 def render_backup_yaml(rows: List[Row], backup_path: Optional[str],
                        rsync: List[Tuple[str, bool]],
-                       sources: List[str]) -> str:
+                       sources: List[str],
+                       review: Optional[List[str]] = None) -> str:
     """Build container2backup.yaml from the converted rows."""
-    out = _provenance(sources)
+    out = _provenance(sources, review)
     out.append("")
 
     # A db_user shared by every row belongs in defaults; a disagreement is
@@ -246,11 +281,12 @@ def render_backup_yaml(rows: List[Row], backup_path: Optional[str],
     out.append("    level: 5")
     out.append("")
 
-    # The CSV format had no services section. These three are what every ownERP
-    # server backs up, taken from the current template — flagged as such so the
-    # next reader does not mistake them for something the CSV said.
-    out.append("# Not from the CSV — the standard service backups of the current")
-    out.append("# template. Review the paths, then remove what this server does not have.")
+    # Neither source carries a services section: the CSV format had none, and
+    # Docker cannot be asked what an operator wanted backed up. These three are
+    # what every ownERP server backs up, taken from the current template —
+    # flagged as such so the next reader does not mistake them for recovered fact.
+    out.append("# NOT recovered from the source — the standard service backups of the")
+    out.append("# current template. Review the paths, then remove what this server lacks.")
     out.append("services:")
     for name, source, retention in (("nginx", "/etc/nginx", 14),
                                     ("letsencrypt", "/etc/letsencrypt", 14),
@@ -314,11 +350,12 @@ def _backup_entry(row: Row, shared_user: Optional[str], prefix: str) -> List[str
     return lines
 
 
-def render_update_yaml(rows: List[Row], sources: List[str]) -> str:
+def render_update_yaml(rows: List[Row], sources: List[str],
+                       review: Optional[List[str]] = None) -> str:
     """Build docker2update.yaml from the converted rows."""
-    out = _provenance(sources)
-    out.append("# SECURITY: db_password is stored in clear text here, exactly as it was")
-    out.append("# in the CSV. This file is created mode 0600.")
+    out = _provenance(sources, review)
+    out.append("# SECURITY: db_password is stored in clear text here, as the source")
+    out.append("# held it. This file is created mode 0600.")
     out.append("")
     out.append("containers:")
     if not rows:
@@ -348,6 +385,312 @@ def _update_entry(row: Row) -> List[str]:
     # the password through argv would expose it to every local user via `ps`.
     lines.append("    db_password_via_env: true")
     return lines
+
+
+# ==============================================================================
+# Reconstruction from the running Docker state (--from-docker)
+# ==============================================================================
+#
+# For servers whose CSVs were already deleted before this script existed. The
+# configuration is gone from disk but not from the machine: `docker inspect`
+# still knows the ports, the image, the network, the volumes and — because the
+# Odoo images take them that way — the database credentials.
+#
+# What can be READ is reconstructed. What cannot is written as a placeholder and
+# listed in a REVIEW block at the top of the generated file, because a guess
+# that looks like a fact is worse than an obvious gap: `type` (M/F/N),
+# `delay_time` and `translate` were operator choices that were never stored
+# anywhere on the machine, and no amount of inspection will bring them back.
+#
+# Opt-in only. This never runs from `ups`.
+
+# Odoo speaks these to its database; the images accept several spellings.
+DB_HOST_ENV = ("HOST", "DB_HOST", "PGHOST")
+DB_USER_ENV = ("USER", "DB_USER", "PGUSER", "POSTGRES_USER")
+DB_PASSWORD_ENV = ("PASSWORD", "DB_PASSWORD", "PGPASSWORD", "POSTGRES_PASSWORD")
+
+PLACEHOLDER = "REVIEW_ME"
+SYSTEM_DATABASES = {"postgres", "template0", "template1"}
+
+
+def _docker(args: List[str], timeout: int = 30) -> Tuple[int, str]:
+    try:
+        proc = subprocess.run(["docker"] + args, capture_output=True,
+                              text=True, timeout=timeout)
+        return proc.returncode, (proc.stdout or "") + (proc.stderr or "")
+    except FileNotFoundError:
+        return 127, "docker not found"
+    except (OSError, subprocess.SubprocessError) as exc:
+        return 1, str(exc)
+
+
+def inspect_containers() -> List[dict]:
+    """Full `docker inspect` of every container, running or stopped.
+
+    Stopped ones count: a test instance that happens to be down is still part
+    of the configuration that was lost.
+    """
+    import json as _json
+
+    code, output = _docker(["ps", "-aq"])
+    if code != 0 or not output.strip():
+        return []
+    ids = output.split()
+    code, output = _docker(["inspect"] + ids, timeout=60)
+    if code != 0:
+        return []
+    try:
+        return _json.loads(output)
+    except ValueError:
+        return []
+
+
+def _env_of(container: dict) -> dict:
+    env = {}
+    for item in (container.get("Config") or {}).get("Env") or []:
+        key, _, value = item.partition("=")
+        env[key] = value
+    return env
+
+
+def _name_of(container: dict) -> str:
+    return (container.get("Name") or "").lstrip("/")
+
+
+def _image_of(container: dict) -> str:
+    """Repository without the tag, as docker2update.yaml stores it."""
+    image = (container.get("Config") or {}).get("Image") or ""
+    head, sep, tail = image.rpartition(":")
+    # "host:5000/img" has a colon that is not a tag separator.
+    if sep and "/" not in tail:
+        return head
+    return image
+
+
+def _tag_of(container: dict) -> str:
+    image = (container.get("Config") or {}).get("Image") or ""
+    _, sep, tail = image.rpartition(":")
+    return tail if sep and "/" not in tail else ""
+
+
+def _published(container: dict, port: str) -> Optional[str]:
+    """Host binding of a container port as 'ip:port', or None if unpublished."""
+    bindings = ((container.get("NetworkSettings") or {}).get("Ports")
+                or {}).get(f"{port}/tcp")
+    if not bindings:
+        return None
+    first = bindings[0]
+    host_ip = first.get("HostIp") or ""
+    host_port = first.get("HostPort") or ""
+    if not host_port:
+        return None
+    if host_ip in ("", "0.0.0.0"):
+        return host_port
+    return f"{host_ip}:{host_port}"
+
+
+def _networks(container: dict) -> List[str]:
+    return sorted(((container.get("NetworkSettings") or {}).get("Networks")
+                   or {}).keys())
+
+
+def _volume_argument(container: dict) -> str:
+    """Rebuild the `volume` string the runner passes to `docker run`."""
+    parts = []
+    networks = [n for n in _networks(container) if n not in ("bridge", "host", "none")]
+    if networks:
+        parts.append(f"--network {networks[0]}")
+    for bind in (container.get("HostConfig") or {}).get("Binds") or []:
+        parts.append(f"-v {bind}")
+    return " ".join(parts)
+
+
+def is_odoo(container: dict) -> bool:
+    """An Odoo container publishes or exposes 8069, or says so in its image."""
+    exposed = (container.get("Config") or {}).get("ExposedPorts") or {}
+    if "8069/tcp" in exposed:
+        return True
+    return "odoo" in _image_of(container).lower()
+
+
+def is_postgres(container: dict) -> bool:
+    exposed = (container.get("Config") or {}).get("ExposedPorts") or {}
+    if "5432/tcp" in exposed:
+        return True
+    return "postgres" in _image_of(container).lower()
+
+
+def databases_in(container_name: str, user: str) -> List[str]:
+    """List the non-system databases of a Postgres container.
+
+    Read-only (`psql -l`). A container that is not running, or a wrong user,
+    yields nothing — the caller then falls back to a placeholder rather than
+    inventing a database name.
+    """
+    code, output = _docker([
+        "exec", container_name, "psql", "-U", user, "-Atqc",
+        "SELECT datname FROM pg_database WHERE datistemplate = false",
+    ])
+    if code != 0:
+        return []
+    return [line.strip() for line in output.splitlines()
+            if line.strip() and line.strip() not in SYSTEM_DATABASES]
+
+
+def _pair_database_container(odoo: dict, postgres: List[dict]) -> Optional[dict]:
+    """Which Postgres container this Odoo instance talks to.
+
+    The env var wins when it names something we can see; otherwise a shared
+    user-defined network is the next best evidence, and it is usually decisive
+    because these stacks get one network per instance.
+    """
+    env = _env_of(odoo)
+    named = next((env[key] for key in DB_HOST_ENV if env.get(key)), None)
+    if named:
+        for candidate in postgres:
+            if _name_of(candidate) == named:
+                return candidate
+    odoo_networks = {n for n in _networks(odoo)
+                     if n not in ("bridge", "host", "none")}
+    for candidate in postgres:
+        if odoo_networks & set(_networks(candidate)):
+            return candidate
+    return postgres[0] if len(postgres) == 1 else None
+
+
+def _odoo_version(container: dict, home: str) -> str:
+    """Best available reading of the Odoo major version."""
+    tag = _tag_of(container)
+    if tag and tag[0].isdigit():
+        return tag.split(".")[0]
+    dockerfile = os.path.join(home, "docker-builds", _name_of(container),
+                              "Dockerfile")
+    try:
+        with open(dockerfile, "r", encoding="utf-8", errors="replace") as handle:
+            for line in handle:
+                if line.upper().startswith("FROM "):
+                    _, _, reference = line.strip().partition(":")
+                    if reference and reference[0].isdigit():
+                        return reference.split(".")[0]
+    except OSError:
+        pass
+    return PLACEHOLDER
+
+
+def reconstruct(home: str) -> Tuple[List[Row], List[Row], List[str]]:
+    """Build update and backup rows from the running Docker state.
+
+    Returns (update_rows, backup_rows, review) where review lists every field
+    that had to be guessed or left blank.
+    """
+    review: List[str] = []
+    containers = inspect_containers()
+    if not containers:
+        return [], [], ["docker returned nothing — is the daemon running?"]
+
+    odoo_containers = [c for c in containers if is_odoo(c)]
+    pg_containers = [c for c in containers if is_postgres(c) and not is_odoo(c)]
+
+    update_rows: List[Row] = []
+    backup_rows: List[Row] = []
+
+    for odoo in sorted(odoo_containers, key=_name_of):
+        name = _name_of(odoo)
+        env = _env_of(odoo)
+        database_container = _pair_database_container(odoo, pg_containers)
+        db_name_of_container = _name_of(database_container) if database_container else ""
+
+        user = next((env[k] for k in DB_USER_ENV if env.get(k)), "")
+        if not user and database_container:
+            user = next((v for k, v in _env_of(database_container).items()
+                         if k in DB_USER_ENV and v), "")
+        if not user:
+            user = PLACEHOLDER
+            review.append(f"{name}: db_user could not be read from the container")
+
+        password = next((env[k] for k in DB_PASSWORD_ENV if env.get(k)), "")
+        if not password and database_container:
+            password = next((v for k, v in _env_of(database_container).items()
+                             if k in DB_PASSWORD_ENV and v), "")
+        if not password:
+            password = PLACEHOLDER
+            review.append(f"{name}: db_password is not in the container "
+                          f"environment — set it before the next update run")
+
+        host_port = _published(odoo, "8069")
+        if not host_port:
+            host_port = PLACEHOLDER
+            review.append(f"{name}: port 8069 is not published — no host port to read")
+        poll_port = _published(odoo, "8072")
+        if not poll_port:
+            poll_port = PLACEHOLDER
+            review.append(f"{name}: port 8072 is not published — no host port to read")
+
+        databases = (databases_in(db_name_of_container, user)
+                     if database_container and user != PLACEHOLDER else [])
+        if len(databases) == 1:
+            database = databases[0]
+        elif databases:
+            # Several databases behind one container: prefer one whose name
+            # echoes the instance, else say so rather than pick blindly.
+            stem = name.replace("-odoo", "").replace("-", "_")
+            matches = [d for d in databases if stem and stem in d]
+            database = matches[0] if len(matches) == 1 else PLACEHOLDER
+            if database == PLACEHOLDER:
+                review.append(f"{name}: {len(databases)} databases behind "
+                              f"{db_name_of_container} ({', '.join(databases)}) "
+                              f"— pick the right one")
+        else:
+            database = PLACEHOLDER
+            review.append(f"{name}: could not list databases in "
+                          f"{db_name_of_container or 'its database container'}")
+
+        version = _odoo_version(odoo, home)
+        if version == PLACEHOLDER:
+            review.append(f"{name}: odoo_version could not be determined")
+
+        build_folder = os.path.join(home, "docker-builds", name) + "/"
+        if not os.path.isdir(build_folder):
+            review.append(f"{name}: {build_folder} does not exist — "
+                          f"check dockerfile_path")
+
+        update_rows.append(Row(values={
+            "type": "F",
+            "delay_time": "10",
+            "container_name": name,
+            "database_name": database,
+            "port": host_port,
+            "longpolling_port": poll_port,
+            "dockerfile_path": build_folder,
+            "docker_image_name": _image_of(odoo),
+            "db_user": user,
+            "db_password": password,
+            "db_host": db_name_of_container or PLACEHOLDER,
+            "volume": _volume_argument(odoo),
+            "odoo_version": version,
+            "translate": "Y",
+        }, active=True))
+
+        if database != PLACEHOLDER and db_name_of_container:
+            backup_rows.append(Row(values={
+                "name": database,
+                "db_user": user if user != PLACEHOLDER else "",
+                "sql_container": db_name_of_container,
+                "data_container": name,
+                "retention_days": "14",
+            }, active=True))
+
+    if update_rows:
+        review.append("type (M/F/N), delay_time and translate were operator "
+                      "choices that are stored nowhere on the machine — "
+                      "defaults F / 10 / Y were used")
+    if backup_rows:
+        review.append("retention_days is not recoverable either — 14 was used "
+                      "for every database")
+    if not odoo_containers:
+        review.append("no Odoo container found — nothing to reconstruct")
+
+    return update_rows, backup_rows, review
 
 
 # ==============================================================================
@@ -417,9 +760,10 @@ def _install(text: str, target: str, home: str, sources: List[str],
                       written=pending)
 
     if dry_run:
+        origin = (", ".join(os.path.basename(s) for s in sources)
+                  if sources else "the running Docker state")
         return Result(label, "migrated",
-                      f"would write {os.path.basename(target)} "
-                      f"from {', '.join(os.path.basename(s) for s in sources)}",
+                      f"would write {os.path.basename(target)} from {origin}",
                       written=target)
 
     _write(pending, text)
@@ -432,9 +776,10 @@ def _install(text: str, target: str, home: str, sources: List[str],
 
     os.replace(pending, target)
     archived = _archive(home, sources, stamp, dry_run=False)
+    origin = (", ".join(os.path.basename(s) for s in sources)
+              if sources else "the running Docker state")
     return Result(label, "migrated",
-                  f"{os.path.basename(target)} written from "
-                  f"{', '.join(os.path.basename(s) for s in sources)}",
+                  f"{os.path.basename(target)} written from {origin}",
                   written=target, archived=archived)
 
 
@@ -486,6 +831,36 @@ def migrate(home: str, dry_run: bool = False) -> List[Result]:
     return results
 
 
+def reconstruct_from_docker(home: str, dry_run: bool = False) -> List[Result]:
+    """Rebuild both configs from the running containers. Opt-in only.
+
+    Uses the same install path as the CSV conversion, which means the same
+    refusals: an existing YAML is never overwritten, and nothing that fails
+    validation is installed. There are no sources to archive here — the source
+    is the machine itself.
+    """
+    update_rows, backup_rows, review = reconstruct(home)
+    if not update_rows and not backup_rows:
+        return [Result("reconstruct", "none",
+                       "; ".join(review) or "nothing found to reconstruct")]
+
+    results = []
+    if update_rows:
+        text = render_update_yaml(update_rows, [], review=review)
+        results.append(_install(text, os.path.join(home, UPDATE_YAML), home,
+                                [], time.strftime("%Y%m%d_%H%M%S"), "update",
+                                dry_run))
+    if backup_rows:
+        text = render_backup_yaml(backup_rows, "/opt/backups", [], [],
+                                  review=review)
+        results.append(_install(text, os.path.join(home, BACKUP_YAML), home,
+                                [], time.strftime("%Y%m%d_%H%M%S"), "backup",
+                                dry_run))
+    for result in results:
+        result.detail += f" · {len(review)} point(s) need review — see the file header"
+    return results
+
+
 def print_results(results: List[Result], stream=None) -> None:
     """Print a summary — but stay silent when there was nothing to do.
 
@@ -529,6 +904,10 @@ def build_parser() -> argparse.ArgumentParser:
                         help="directory holding the configs (default: %(default)s)")
     parser.add_argument("--dry-run", action="store_true",
                         help="report what would happen; write nothing")
+    parser.add_argument("--from-docker", action="store_true",
+                        help="rebuild both configs from the running containers, "
+                             "for servers whose CSVs are already gone. Opt-in; "
+                             "never runs from ups.")
     parser.add_argument("--version", action="version",
                         version=f"ownerp_migrate.py {SCRIPT_VERSION} ({SCRIPT_DATE})")
     return parser
@@ -536,10 +915,24 @@ def build_parser() -> argparse.ArgumentParser:
 
 def main(argv=None) -> int:
     args = build_parser().parse_args(argv)
+
+    if args.from_docker:
+        results = reconstruct_from_docker(args.home, dry_run=args.dry_run)
+        print_results(results)
+        if all(r.status == "none" for r in results):
+            for result in results:
+                print(f"Nothing reconstructed: {result.detail}")
+            return 1
+        print("Review the REVIEW block at the top of each file before the next "
+              "update or backup run, then check with: doval")
+        return 1 if any(r.status == "invalid" for r in results) else 0
+
     results = migrate(args.home, dry_run=args.dry_run)
     print_results(results)
     if all(r.status == "none" for r in results):
         print("Nothing to migrate — no legacy CSV configuration found.")
+        print("If the CSVs are already gone, rebuild from the running "
+              "containers with: ownerp_migrate.py --from-docker")
         return 0
     return 1 if any(r.status == "invalid" for r in results) else 0
 
