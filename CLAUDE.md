@@ -477,7 +477,32 @@ myodoo-docker/
   production database is not backed up, which surfaces only when a restore is
   needed
 
-#### 11. Login command overview (fish)
+#### 11. ownerp_state.py (v1.0.0)
+- **Purpose**: The whole server on one page — instances, backup ages,
+  maintenance jobs, readiness checks. Started with `dostat`; stage 1 of the
+  console design in `docs/superpowers/specs/2026-08-13-ownerp-console-design.md`
+- **Two consumers, one collector**: `dostat` is this file's own `main()`, and
+  the Textual console of stage 3 will be the second. It therefore carries **no
+  interface import** — a data layer that knew about its UI could not be tested
+  without it, and `dostat` could not exist
+- **Every source is optional**, because a status tool is read on a broken
+  server. Docker down, PyYAML absent, a YAML that does not parse, `/etc`
+  unreadable — each costs exactly one section, states its reason, and leaves
+  the rest of the page standing
+- **"Not asked" is not "down"**: skipping the Docker query used to leave an
+  empty status string that rendered as a stopped container. Container state is
+  three-valued (`True`/`False`/`None`) and `worst()` never counts an unknown as
+  a fault
+- **Never writes** — no `os.replace`, no `chmod`, no `remove`. Configuration
+  changes stay with `ownerp_wizard.py`, cron changes with `ownerp_cron.py`; the
+  test suite fails if a write call or a UI import appears here
+- **Does not reimplement the readiness checks**: `collect_health()` runs
+  `server-readiness.py`'s own `run_checks()`. A second opinion that drifted
+  from the first would be worse than none
+- **Exit code** `0` clean / `1` needs attention / `2` broken, plus `--json`, so
+  cron and monitoring never parse the text
+
+#### 12. Login command overview (fish)
 - **`fish/functions/linux/ownerp-help.fish`** prints the dozen commands an
   operator actually needs; `help` is aliased to it
 - **Once per LOGIN shell**, not per interactive shell — `fastfetch` is four

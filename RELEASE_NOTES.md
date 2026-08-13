@@ -1,5 +1,54 @@
 # Release Notes
 
+## The Whole Server on One Page (13.08.2026)
+
+*scripts/ownerp_state.py v1.0.0 (new) · getScripts.py v9.16.0 ·
+fish/conf.d/33-aliases-backup.fish v1.5.0 ·
+fish/functions/linux/ownerp-help.fish v1.1.0*
+
+Stage 1 of the ownERP console design.
+
+### Added
+
+- **`dostat`** — instances, backup ages, maintenance jobs and the readiness checks in one
+  page of text. Every fact was already on the machine, spread across five tools with five
+  output formats; nothing put it together. Exit code `0` clean / `1` needs attention /
+  `2` broken, so a cron job can act on it without parsing anything, and `--json` for
+  anything that would otherwise parse the text.
+
+  The module carries no interface import at all. Stage 3 puts a Textual console on top of
+  the same collectors — a data layer that knew about its interface could neither be tested
+  without it nor produce `dostat`.
+
+- **A status tool has to work on a broken server**, because that is where it is read. Every
+  source is optional: Docker down, PyYAML absent, a YAML that does not parse, `/etc`
+  unreadable — each costs exactly one section, states its reason in a sentence, and leaves
+  the other three standing.
+
+  One distinction is load-bearing and cost a test to get right: **"not asked" is not
+  "down"**. Skipping the Docker query left an empty status string, which read as a stopped
+  container — the report would have announced every instance as down on a machine where
+  nobody had looked. Container state is now genuinely three-valued.
+
+- **`ownerp_state.py` never writes.** It opens files for reading, runs `docker ps`, and
+  calls the read-only entry points of its siblings. Configuration changes stay with
+  `ownerp_wizard.py`, cron changes with `ownerp_cron.py` — one write path per file, and
+  this is not one. `tests/test_ownerp_state.py` fails the suite if a write call or a UI
+  import ever appears in it.
+
+- **The readiness checks are not reimplemented.** `collect_health()` calls
+  `server-readiness.py` through its own `run_checks()`; a second opinion that drifted from
+  the first would be worse than none.
+
+### Changed
+
+- The design places the collector in `lib/`, which turned out to be wrong: `copy_scripts()`
+  delivers flat files to `$HOME` and has never delivered `scripts/lib/`, so a collector
+  there would not exist on any server. It ships as `ownerp_state.py` beside its siblings
+  instead — the pattern `ownerp_cron.py` and `ownerp_validate.py` already prove out.
+
+- `dostat` heads the login panel. It is what an operator wants first after logging in.
+
 ## A Backup Header That Talks About Backups (13.08.2026)
 
 *scripts/ownerp_migrate.py v1.3.0 ·

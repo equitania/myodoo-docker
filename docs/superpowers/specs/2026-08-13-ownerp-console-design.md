@@ -56,6 +56,15 @@ makes it safe to depend on a library for it.
 
 Two layers, and the lower one does not know Textual exists.
 
+> **Correction from stage 1 (13.08.2026).** `lib/` is wrong: `copy_scripts()`
+> delivers flat files to `$HOME` and has never delivered `scripts/lib/`, which
+> exists for getScripts.py's own use inside the cloned repository. A collector
+> there would not exist on any server. It ships as `scripts/ownerp_state.py`
+> beside its siblings, following the pattern `ownerp_cron.py` and
+> `ownerp_validate.py` already prove out. `config_writer` in stage 2 becomes
+> part of `ownerp_wizard.py`'s importable surface for the same reason. The
+> layering below is unchanged; only the file names are.
+
 ```
 lib/server_state.py      pure Python, no Textual import, fully unit-testable
    ├─ instances()        docker2update.yaml + docker ps + run history

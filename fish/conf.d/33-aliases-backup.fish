@@ -1,5 +1,5 @@
 # Backup and Update Aliases
-# Version 1.4.0 | 13.08.2026
+# Version 1.5.0 | 13.08.2026
 
 # Backup operations
 alias dobk='$HOME/container2backup.py'
@@ -21,3 +21,8 @@ alias wiz='$HOME/ownerp_wizard.py'
 # Maintenance cron: what runs when, and when it last ran. Bare `docron` only
 # reports; editing goes through the TUI (key c) or --set/--enable/--disable.
 alias docron='$HOME/ownerp_cron.py'
+
+# The whole server on one page: instances, backup ages, maintenance jobs and
+# the readiness checks. Reads only. Exit code 0 clean / 1 attention / 2 broken,
+# so it is usable from cron without parsing the text.
+alias dostat='$HOME/ownerp_state.py'
