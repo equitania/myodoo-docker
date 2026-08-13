@@ -136,7 +136,7 @@ if os.environ.get('GETSCRIPTS_DEBUG', '').lower() in ('1', 'true', 'yes'):
     logger.debug("Debug logging enabled")
 
 # Script version and date
-SCRIPT_VERSION = "9.15.1"
+SCRIPT_VERSION = "9.15.2"
 SCRIPT_DATE = "13.08.2026"
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -3910,10 +3910,15 @@ def copy_scripts(_myhome: str, myodoo_docker: str) -> None:
 def _ensure_executable(path: str) -> None:
     """Give a delivered file the execute bit when it declares an interpreter.
 
-    `cp` carries the source mode over, so a script committed without +x arrives
-    without +x, and the alias that calls it dies with "exists but is not an
-    executable file" — on the customer's terminal, at the moment they needed it.
-    That happened to ownerp_cron.py and ownerp_migrate.py.
+    This is the fix, not a safety net around one. `cp` only takes the source's
+    mode when it CREATES the target; onto a file that already exists it
+    truncates and writes, leaving the old mode untouched. So a script that once
+    landed as 0644 stays 0644 on that server forever, no matter what the
+    repository says — correcting the committed mode alone would have fixed
+    fresh installs and silently done nothing everywhere it mattered. That is
+    what happened to ownerp_cron.py and ownerp_migrate.py: the alias died with
+    "exists but is not an executable file", on the customer's terminal, at the
+    moment they needed it.
 
     A shebang is the file saying it is meant to be run, and it is a property of
     the content rather than of whoever last touched the permissions. Data files

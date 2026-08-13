@@ -3,7 +3,7 @@
 # ==============================================================================
 # Title:            ownerp_migrate.py
 # Description:      Convert the legacy CSV configurations to YAML, once, safely.
-# Version:          1.1.0
+# Version:          1.1.1
 # Date:             13.08.2026
 # Author:           Equitania Software GmbH
 # ==============================================================================
@@ -83,7 +83,7 @@ import time
 from dataclasses import dataclass, field
 from typing import List, Optional, Tuple
 
-SCRIPT_VERSION = "1.1.0"
+SCRIPT_VERSION = "1.1.1"
 SCRIPT_DATE = "13.08.2026"
 
 BACKUP_CSV = "container2backup.csv"
@@ -130,6 +130,11 @@ class Result:
     detail: str = ""
     written: Optional[str] = None
     archived: List[str] = field(default_factory=list)
+    # Points needing a human. Carried on the Result rather than only written
+    # into the file header, because --dry-run writes no file — reporting "15
+    # point(s) need review" while withholding the fifteen points is useless
+    # exactly when the operator is deciding whether to run it for real.
+    review: List[str] = field(default_factory=list)
 
 
 # ==============================================================================
@@ -842,7 +847,7 @@ def reconstruct_from_docker(home: str, dry_run: bool = False) -> List[Result]:
     update_rows, backup_rows, review = reconstruct(home)
     if not update_rows and not backup_rows:
         return [Result("reconstruct", "none",
-                       "; ".join(review) or "nothing found to reconstruct")]
+                       "nothing found to reconstruct", review=review)]
 
     results = []
     if update_rows:
@@ -857,7 +862,9 @@ def reconstruct_from_docker(home: str, dry_run: bool = False) -> List[Result]:
                                 [], time.strftime("%Y%m%d_%H%M%S"), "backup",
                                 dry_run))
     for result in results:
-        result.detail += f" · {len(review)} point(s) need review — see the file header"
+        result.detail += f" · {len(review)} point(s) need review"
+    if results:
+        results[0].review = review
     return results
 
 
@@ -892,6 +899,8 @@ def print_results(results: List[Result], stream=None) -> None:
         if result.archived:
             print(f"      originals moved to "
                   f"{os.path.dirname(result.archived[0])}", file=stream)
+        for note in result.review:
+            print(f"      {yellow}·{reset} {note}", file=stream)
     print("=" * 60, file=stream)
     print("", file=stream)
 
@@ -922,6 +931,8 @@ def main(argv=None) -> int:
         if all(r.status == "none" for r in results):
             for result in results:
                 print(f"Nothing reconstructed: {result.detail}")
+                for note in result.review:
+                    print(f"  · {note}")
             return 1
         print("Review the REVIEW block at the top of each file before the next "
               "update or backup run, then check with: doval")

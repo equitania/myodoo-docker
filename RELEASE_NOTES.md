@@ -9,20 +9,30 @@ fish/conf.d/30-aliases-system.fish v1.1.0*
 ### Fixed
 
 - **`docron` and `ownerp_migrate.py` arrived on the server unexecutable.** Both were committed
-  `100644`. `copy_scripts()` delivers with `cp`, which carries the source mode over, so the alias
-  died with `exists but is not an executable file` — on the customer's terminal, at the moment the
-  reconstruction was needed. `odoo_build_cache.py` had the same mode and only worked because cron
-  calls it through `/usr/bin/python3`.
+  `100644`, so the alias died with `exists but is not an executable file` — on the customer's
+  terminal, at the moment the reconstruction was needed. `odoo_build_cache.py` had the same mode
+  and only got away with it because cron invokes it through `/usr/bin/python3`.
 
-  All three are `100755` now, and `copy_scripts()` sets the execute bit on any delivered file that
-  starts with `#!` — a shebang is the file saying it is meant to be run, and it is a property of
-  the content rather than of whoever last touched the permissions. Data files delivered by the
-  same loop (`myodoo-maintenance.cron`, `.logrotate`) have none and keep their mode.
+  Correcting the committed mode is **not** sufficient, and assuming it was cost a round trip:
+  `cp` takes the source's mode only when it *creates* the target. Onto a file that already exists
+  it truncates and writes, leaving the old mode untouched — so a script that once landed as `0644`
+  would have stayed `0644` on that server forever. The fix is in `copy_scripts()`, which now sets
+  the execute bit on any delivered file starting with `#!`: a shebang is the file declaring it is
+  meant to be run, a property of the content rather than of whoever last touched the permissions.
+  Data files delivered by the same loop (`myodoo-maintenance.cron`, `.logrotate`) have none and
+  keep their mode. The three committed modes are corrected as well, for fresh installs, and
   `tests/test_delivered_scripts.py` fails the suite if a shebang script is ever committed without
-  the bit again, so the delivery-time repair stays a safety net rather than the fix.
+  the bit again.
 
-  **On an already-updated server:** `chmod +x /root/ownerp_cron.py /root/ownerp_migrate.py`, or
-  simply run `ups` again.
+  **On a server already updated past this point:** the repair ships *inside* getScripts.py, and
+  `ups` runs the copy in `$HOME` that was loaded before the pull — so it lands one run late. Either
+  run `ups` a second time, or:
+  `chmod +x /root/ownerp_cron.py /root/ownerp_migrate.py /root/odoo_build_cache.py`
+
+- **`--from-docker --dry-run` reported the number of review points while withholding the points.**
+  The REVIEW block lives in the generated file's header, and a dry run writes no file — so the one
+  moment an operator is deciding whether to run it for real was the one moment the reasons were
+  invisible. The review list is printed to the console now, in both modes.
 
 ### Added
 
