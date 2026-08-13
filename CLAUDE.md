@@ -380,9 +380,10 @@ myodoo-docker/
 - **`update_docker_odoo.py --validate` and `container2backup.py --validate`**
   both delegate to it
 
-#### 8. ownerp_wizard.py (v1.0.0)
-- **Purpose**: Guided editing of `docker2update.yaml` — add an Odoo instance,
-  or change one field of an existing entry, started with `wiz`
+#### 8. ownerp_wizard.py (v1.1.0)
+- **Purpose**: Guided editing of `docker2update.yaml` **and**
+  `container2backup.yaml` — add an entry, or change one field of an existing
+  one. `wiz` asks which file, `wizup`/`wizbk` go straight there
 - **The only tool in this set that writes to a customer's configuration**, so
   the write path is the substance: timestamped backup → build in memory →
   temporary file **in the same directory** → `ownerp_validate.py` runs against
@@ -409,6 +410,22 @@ myodoo-docker/
   `odoo_build_cache.py`
 - **`ownerp_tui.py` v1.1.0** reaches it with the `w` key and reloads the
   container list afterwards
+- **The backup side (v1.1.0)**: `container2backup.yaml` had no editor at all
+  before this. `safe_write()` picks the schema from the kind — validating a
+  backup config against the update schema would reject every field it has and
+  accept none it lacks, so the wrong one there is a tool that can never write
+  that file
+- **The backup form suggests from `docker2update.yaml`**: which Postgres
+  container holds a database and which Odoo container holds its filestore are
+  already recorded as `db_host` and `container_name`. Naming the database fills
+  in the rest. Two update entries on one database suggest nothing — that is an
+  error the validator reports, and a guess in front of someone fixing it is
+  worse than a blank field
+- **A write API with no terminal in it** (v1.1.0): `load_config()`,
+  `add_entry()`, `set_field()`, each returning a `WriteResult`. The console of
+  stage 3 consumes it and the interactive wizard runs on it, so the path used
+  less often cannot rot unnoticed. Duplicate names and a port's localhost bind
+  address are handled there rather than in the prompts
 
 #### 9. ownerp_cron.py (v1.0.0)
 - **Purpose**: Overview and guided editing of `/etc/cron.d/myodoo-maintenance` —

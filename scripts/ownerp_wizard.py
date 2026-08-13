@@ -2,10 +2,11 @@
 # -*- coding: utf-8 -*-
 # ==============================================================================
 # Title:            ownerp_wizard.py
-# Description:      Guided editing of docker2update.yaml - add an instance,
-#                   change a field. Validates before it replaces anything.
-# Version:          1.0.0
-# Date:             12.08.2026
+# Description:      Guided editing of docker2update.yaml and
+#                   container2backup.yaml - add an entry, change a field.
+#                   Validates before it replaces anything.
+# Version:          1.1.0
+# Date:             13.08.2026
 # Author:           Equitania Software GmbH
 # ==============================================================================
 #
@@ -39,10 +40,20 @@ try:
 except ImportError:  # pragma: no cover - depends on the installation
     validator = None
 
-SCRIPT_VERSION = "1.0.0"
-SCRIPT_DATE = "12.08.2026"
+SCRIPT_VERSION = "1.1.0"
+SCRIPT_DATE = "13.08.2026"
 
 DEFAULT_UPDATE_CONFIG = os.path.join(os.path.expanduser("~"), "docker2update.yaml")
+DEFAULT_BACKUP_CONFIG = os.path.join(os.path.expanduser("~"),
+                                     "container2backup.yaml")
+
+# The two configurations this tool may write to. Held as data rather than as
+# two parallel code paths, because the mechanics are identical - a list of
+# mappings under one top-level key - and only the names differ. A second write
+# implementation is a second place for the backup/validate/replace sequence to
+# drift out of step.
+UPDATE = "update"
+BACKUP = "backup"
 
 
 def split_comment(text):
@@ -133,14 +144,21 @@ def backup_name(path, now=None):
     return f"{path}.bak-{stamp}"
 
 
-def safe_write(path, new_lines, now=None):
+def safe_write(path, new_lines, now=None, kind=UPDATE):
     """Replace `path` with `new_lines`, but only if the result validates.
 
     Returns (ok, findings, backup). On rejection the original is untouched,
     the temporary file and the backup are removed, and backup is None - a
     backup of a file nobody changed is litter, and litter teaches operators to
     ignore .bak-* files.
+
+    `kind` picks the schema. Validating a backup configuration against the
+    update schema would reject every field it has and accept none it lacks,
+    so the wrong one here is not a near miss - it is a tool that can never
+    write that file.
     """
+    validate = (validator.validate_backup if kind == BACKUP
+                else validator.validate_update)
     backup = backup_name(path, now)
     shutil.copy2(path, backup)
 
@@ -149,7 +167,7 @@ def safe_write(path, new_lines, now=None):
         with open(tmp, "w", encoding="utf-8") as handle:
             handle.write("\n".join(new_lines))
 
-        findings, fatal = validator.validate_update(tmp)
+        findings, fatal = validate(tmp)
         errors = [f for f in findings if f.severity == validator.ERROR]
         if fatal is not None or errors:
             os.remove(tmp)
@@ -385,10 +403,118 @@ BLOCK_COMMENTS = {
 }
 
 
-def render_container(entry):
-    """The new entry as a list of lines, in the shipped shape."""
+# ==============================================================================
+# The backup configuration
+# ==============================================================================
+
+def update_instances(path=None):
+    """The containers of docker2update.yaml, or [] when it cannot be read.
+
+    Read-only and best-effort: the backup form uses it to suggest, and a
+    missing or broken update configuration must cost a suggestion, never the
+    ability to edit the backup file.
+    """
+    if validator is None:
+        return []
+    try:
+        data, fatal = validator.load_positioned(path or DEFAULT_UPDATE_CONFIG)
+    except OSError:
+        return []
+    if fatal is not None or not isinstance(data, dict):
+        return []
+    containers = data.get("containers") or []
+    return [c for c in containers if isinstance(c, dict)]
+
+
+def instance_for_database(database, instances=None):
+    """The update entry serving `database`, when exactly one does.
+
+    Two entries naming the same database is a configuration error the
+    validator already reports; suggesting from either of them here would put a
+    guess in front of an operator who is mid-way through fixing it.
+    """
+    if not database:
+        return None
+    matches = [c for c in (instances if instances is not None
+                           else update_instances())
+               if c.get("database_name") == database]
+    return matches[0] if len(matches) == 1 else None
+
+
+def suggest_from_instance(field, entry, instances=None):
+    """Fill a backup field from the update entry that serves this database.
+
+    This is the point of editing the two files with one tool. The pairing a
+    backup entry needs - which Postgres container holds the database, which
+    Odoo container holds the filestore - is already written down in
+    docker2update.yaml as db_host and container_name. Asking the operator to
+    retype it is asking them to introduce a typo into a backup.
+    """
+    instance = instance_for_database(entry.get("name", ""), instances)
+    if instance is None:
+        return None
+    return {"sql_container": instance.get("db_host"),
+            "data_container": instance.get("container_name"),
+            "db_user": instance.get("db_user")}.get(field)
+
+
+def suggest_backup_unanimous(databases, field, fallback=None):
+    """A value every configured database agrees on, else `fallback`."""
+    values = {d.get(field) for d in databases if d.get(field) is not None}
+    return values.pop() if len(values) == 1 else fallback
+
+
+BACKUP_FORM = [
+    Field("name", "Database name",
+          "the PostgreSQL database to back up", None),
+    Field("sql_container", "Database container",
+          "the Postgres container holding it - pg_dump runs in here",
+          lambda d, e: suggest_from_instance("sql_container", e)),
+    Field("data_container", "Odoo container",
+          "the Odoo container holding the filestore",
+          lambda d, e: suggest_from_instance("data_container", e)),
+    Field("db_user", "Database user",
+          "the PostgreSQL role pg_dump connects as",
+          lambda d, e: suggest_from_instance("db_user", e)
+          or suggest_backup_unanimous(d, "db_user")),
+    Field("retention_days", "Keep archives for (days)",
+          "older archives of this database are removed after a successful run",
+          lambda d, e: suggest_backup_unanimous(d, "retention_days", 14)),
+    Field("only_sql_dump", "Database only, no filestore",
+          "true skips the filestore - much faster, and not a full backup",
+          lambda d, e: False),
+    Field("stream", "Stream into one .tar.zst",
+          "true for large filestores: no uncompressed staging copy is made",
+          lambda d, e: suggest_backup_unanimous(d, "stream", False)),
+]
+
+# Which top-level list each configuration keeps its entries in, what makes an
+# entry unique, and which form describes it. Everything below reads this
+# instead of naming "containers" or "databases" directly.
+KINDS = {
+    UPDATE: {
+        "path": DEFAULT_UPDATE_CONFIG,
+        "collection": "containers",
+        "form": UPDATE_FORM,
+        "label": "instance",
+        "unique": ("container_name", "database_name"),
+        "fields": lambda: validator.CONTAINER_FIELDS,
+    },
+    BACKUP: {
+        "path": DEFAULT_BACKUP_CONFIG,
+        "collection": "databases",
+        "form": BACKUP_FORM,
+        "label": "database",
+        "unique": ("name",),
+        "fields": lambda: validator.DATABASE_FIELDS,
+    },
+}
+
+
+def render_entry(entry, form):
+    """A new entry as a list of lines, in the shipped shape."""
     lines = []
-    for field in UPDATE_FORM:
+    for field in form:
         if field.name not in entry:
             continue
         lead = "  - " if not lines else "    "
@@ -397,56 +523,193 @@ def render_container(entry):
     return lines
 
 
-def containers_end(lines, data):
-    """0-based index just past the last container entry.
+def collection_end(lines, data, key):
+    """0-based index just past the last entry of the list under `key`.
 
     Found through the positioned loader rather than by pattern: the last
     entry's own first-key line is known, and entry_bounds walks to the first
     following line at the list's indentation or less.
     """
-    containers = data.get("containers") or []
-    if not containers:
-        # An empty list: insert right after the 'containers:' key itself.
-        return validator.line_of(data, "containers")
-    last = containers[-1]
+    entries = data.get(key) or []
+    if not entries:
+        # An empty list: insert right after the key itself. A key that is not
+        # in the file at all has no insertion point, and saying so beats
+        # writing the entry into whatever happens to be at line 0.
+        line = validator.line_of(data, key)
+        if not line:
+            raise KeyError(f"`{key}:` is not in this file")
+        return line
     indent = 2  # the '- ' of a list entry under a top-level key
-    _first, end = entry_bounds(lines, last.line, indent)
+    _first, end = entry_bounds(lines, entries[-1].line, indent)
     return end
 
 
-def append_container(lines, data, entry):
-    """Insert a rendered entry at the end of the containers list."""
-    at = containers_end(lines, data)
-    return lines[:at] + render_container(entry) + lines[at:]
+def append_entry(lines, data, entry, kind=UPDATE):
+    """Insert a rendered entry at the end of that kind's collection."""
+    spec = KINDS[kind]
+    at = collection_end(lines, data, spec["collection"])
+    return lines[:at] + render_entry(entry, spec["form"]) + lines[at:]
 
 
-def patch_field(lines, data, index, field, value):
-    """Rewrite one field of containers[index], or insert it when absent."""
-    container = (data.get("containers") or [])[index]
-    line_number = validator.line_of(container, field)
+def patch_entry_field(lines, data, index, field, value, kind=UPDATE):
+    """Rewrite one field of one entry, or insert it when absent."""
+    entry = (data.get(KINDS[kind]["collection"]) or [])[index]
+    line_number = validator.line_of(entry, field)
     result = list(lines)
     if line_number:
         result[line_number - 1] = patch_line(result[line_number - 1], value)
         return result
 
     # Absent: insert at the end of this entry's block, at its indentation.
-    _first, end = entry_bounds(lines, container.line, 2)
+    _first, end = entry_bounds(lines, entry.line, 2)
     indent = " " * 4
     result.insert(end, f"{indent}{field}: {format_value(value)}")
     return result
 
 
+# ==============================================================================
+# The write API
+# ==============================================================================
+#
+# Everything above is a pure function over lines. These three are the whole
+# cycle - read, change, validate, replace - in one call, and they need no
+# terminal. That is what the console of stage 3 consumes, and what the
+# interactive path below now runs on: one write path per file, exercised by
+# both callers, so the one that is used less often cannot rot unnoticed.
+
+WriteResult = collections.namedtuple("WriteResult",
+                                     "ok findings backup error")
+WriteResult.__new__.__defaults__ = (False, (), None, None)
+
+
+def load_config(path):
+    """(lines, data, error). Every failure is a sentence, never an exception."""
+    if validator is None:
+        return None, None, ("ownerp_validate.py is not installed beside this "
+                            "script - run ups")
+    try:
+        data, fatal = validator.load_positioned(path)
+    except OSError as exc:
+        return None, None, f"{path} cannot be read: {exc}"
+    if fatal is not None:
+        where = f"line {fatal.line}: " if fatal.line else ""
+        return None, None, f"{where}{fatal.message}"
+    try:
+        with open(path, encoding="utf-8") as handle:
+            lines = handle.read().split("\n")
+    except OSError as exc:
+        return None, None, f"{path} cannot be read: {exc}"
+    return lines, data, None
+
+
+def entries_of(data, kind=UPDATE):
+    """The list this kind edits, mappings only."""
+    entries = data.get(KINDS[kind]["collection"]) or []
+    return [e for e in entries if isinstance(e, dict)]
+
+
+def duplicate_of(data, entry, kind=UPDATE, skip=None):
+    """The field of `entry` that collides with an existing one, or None.
+
+    Checked before the write rather than left to the validator, because the
+    validator's rejection arrives after the entry was built and reads like a
+    fault in the tool. `skip` is the index being edited, which must not count
+    as a duplicate of itself.
+    """
+    for field in KINDS[kind]["unique"]:
+        value = entry.get(field)
+        if value in (None, ""):
+            continue
+        for index, existing in enumerate(entries_of(data, kind)):
+            if index != skip and existing.get(field) == value:
+                return field
+    return None
+
+
+def set_field(path, index, field, value, kind=UPDATE, now=None):
+    """Change one scalar field of one entry. No terminal involved."""
+    lines, data, error = load_config(path)
+    if error:
+        return WriteResult(error=error)
+
+    entries = entries_of(data, kind)
+    if not 0 <= index < len(entries):
+        return WriteResult(error=f"there is no entry {index} in {path}")
+
+    current = entries[index].get(field)
+    if isinstance(current, (list, dict)):
+        # A value spanning several lines has no single line to replace, and
+        # guessing at one is how a configuration gets quietly corrupted.
+        return WriteResult(error=f"{field} is not a scalar - edit it with mcedit")
+
+    if field in KINDS[kind]["unique"]:
+        clash = duplicate_of(data, {field: value}, kind, skip=index)
+        if clash:
+            return WriteResult(error=f"{field} {value!r} is already in use")
+
+    if validator.parse_port(current) is not None:
+        # Changing a port must not silently unbind it from localhost.
+        value = keep_bind_address(current, value)
+
+    ok, findings, backup = safe_write(
+        path, patch_entry_field(lines, data, index, field, value, kind),
+        now=now, kind=kind)
+    return WriteResult(ok=ok, findings=tuple(findings), backup=backup)
+
+
+def add_entry(path, entry, kind=UPDATE, now=None):
+    """Append one entry. No terminal involved."""
+    lines, data, error = load_config(path)
+    if error:
+        return WriteResult(error=error)
+
+    clash = duplicate_of(data, entry, kind)
+    if clash:
+        return WriteResult(error=f"{clash} {entry.get(clash)!r} is already in use")
+
+    try:
+        new_lines = append_entry(lines, data, entry, kind)
+    except KeyError as exc:
+        return WriteResult(error=str(exc).strip("'"))
+
+    ok, findings, backup = safe_write(path, new_lines, now=now, kind=kind)
+    return WriteResult(ok=ok, findings=tuple(findings), backup=backup)
+
+
+# The update-shaped names kept as they were. Ninety tests and the whole
+# interactive path call these; they are the update kind of the generic four
+# above and nothing more.
+def render_container(entry):
+    """The new instance as a list of lines, in the shipped shape."""
+    return render_entry(entry, UPDATE_FORM)
+
+
+def containers_end(lines, data):
+    """0-based index just past the last container entry."""
+    return collection_end(lines, data, "containers")
+
+
+def append_container(lines, data, entry):
+    """Insert a rendered entry at the end of the containers list."""
+    return append_entry(lines, data, entry, UPDATE)
+
+
+def patch_field(lines, data, index, field, value):
+    """Rewrite one field of containers[index], or insert it when absent."""
+    return patch_entry_field(lines, data, index, field, value, UPDATE)
+
+
 MASK = "********"
 
 
-def coerce(field_name, text):
+def coerce(field_name, text, kind=UPDATE):
     """Turn prompt text into the type the schema expects for that field.
 
     A schema entry whose type is a tuple - odoo_version is (str, int) - falls
     through to text on purpose: every shipped template writes it quoted, and
     picking one half of the tuple would silently change the file's style.
     """
-    rule = validator.CONTAINER_FIELDS.get(field_name, {})
+    rule = KINDS[kind]["fields"]().get(field_name, {})
     if rule.get("type") is bool:
         return text.strip().lower() in ("true", "yes", "y", "1", "ja", "j")
     if rule.get("type") is int:
@@ -457,10 +720,10 @@ def coerce(field_name, text):
     return text.strip()
 
 
-def summary_lines(entry):
+def summary_lines(entry, form=None):
     """The confirmation block. A password is masked, never printed."""
     lines = []
-    for field in UPDATE_FORM:
+    for field in (form or UPDATE_FORM):
         if field.name not in entry:
             continue
         value = MASK if validator.redacted(field.name) else entry[field.name]
@@ -480,7 +743,7 @@ def preflight():
     return None
 
 
-def ask(field, containers, entry):
+def ask(field, containers, entry, kind=UPDATE):
     """One prompt, with its suggestion in brackets. Enter takes the suggestion."""
     if validator.redacted(field.name):
         while True:
@@ -500,7 +763,7 @@ def ask(field, containers, entry):
             print("    This field is required.")
             continue
         try:
-            return coerce(field.name, text)
+            return coerce(field.name, text, kind)
         except ValueError:
             print("    Not a number - try again.")
 
@@ -513,7 +776,7 @@ def confirm(question, default=False):
     return answer in ("y", "yes", "j", "ja")
 
 
-def ask_unique(field, containers, entry, taken):
+def ask_unique(field, containers, entry, taken, kind=UPDATE):
     """Ask until the answer is not already used by another entry.
 
     Caught here rather than at validation: the wizard already holds every
@@ -521,7 +784,7 @@ def ask_unique(field, containers, entry, taken):
     a finding five prompts later.
     """
     while True:
-        value = ask(field, containers, entry)
+        value = ask(field, containers, entry, kind)
         if value not in taken:
             return value
         print(f"    Already used: {', '.join(sorted(str(t) for t in taken))}")
@@ -563,79 +826,91 @@ def print_findings(findings):
         print(f"  {mark} {finding.line or '':>4}  {finding.path}: {finding.message}")
 
 
-def add_container(path, lines, data):
-    """Walk the form, confirm, write. Returns an exit code."""
-    containers = data.get("containers") or []
-    names = {c.get("container_name") for c in containers}
-    databases = {c.get("database_name") for c in containers}
+def add_container(path, lines, data, kind=UPDATE):
+    """Walk the form, confirm, write. Returns an exit code.
+
+    The write itself goes through add_entry(), the same call the console makes.
+    It re-reads the file each attempt, which is what makes the retry loop
+    correct: after a rejection the operator may well have been fixing the file
+    in another window.
+    """
+    spec = KINDS[kind]
+    entries = entries_of(data, kind)
+    taken = {field: {e.get(field) for e in entries}
+             for field in spec["unique"]}
 
     entry = {}
-    print("\nNew instance - Enter takes the value in brackets.\n")
-    for field in UPDATE_FORM:
-        if field.name == "container_name":
-            entry[field.name] = ask_unique(field, containers, entry, names)
-        elif field.name == "database_name":
-            entry[field.name] = ask_unique(field, containers, entry, databases)
+    print(f"\nNew {spec['label']} - Enter takes the value in brackets.\n")
+    for field in spec["form"]:
+        if field.name in taken:
+            entry[field.name] = ask_unique(field, entries, entry,
+                                           taken[field.name], kind)
         else:
-            entry[field.name] = ask(field, containers, entry)
+            entry[field.name] = ask(field, entries, entry, kind)
 
     while True:
-        print("\n" + "\n".join(summary_lines(entry)))
+        print("\n" + "\n".join(summary_lines(entry, spec["form"])))
         if not confirm("\n  Write this entry?", default=True):
             print("Nothing written.")
             return 0
 
-        ok, findings, backup = safe_write(path, append_container(lines, data, entry))
-        if ok:
+        result = add_entry(path, entry, kind)
+        if result.error:
+            print(f"\n  Not written: {result.error}")
+            return 1
+        if result.ok:
             print(f"\n  Written to {path}")
-            print(f"  Backup:    {backup}")
-            print_findings(findings)
-            offer_build_folder(entry["dockerfile_path"])
+            print(f"  Backup:    {result.backup}")
+            print_findings(result.findings)
+            if kind == UPDATE:
+                offer_build_folder(entry["dockerfile_path"])
             return 0
 
         print("\n  Not written - the result would be invalid:")
-        print_findings(findings)
+        print_findings(result.findings)
         print(f"  {path} is unchanged.")
         if not confirm("\n  Correct a field and try again?", default=True):
             return 1
-        entry = correct_one_field(entry, containers)
+        entry = correct_one_field(entry, entries, kind)
 
 
-def correct_one_field(entry, containers):
+def correct_one_field(entry, containers, kind=UPDATE):
     """Re-ask one field, keeping everything else the operator typed."""
-    fields = [f for f in UPDATE_FORM if f.name in entry]
+    fields = [f for f in KINDS[kind]["form"] if f.name in entry]
     for number, field in enumerate(fields, 1):
         value = MASK if validator.redacted(field.name) else entry[field.name]
         print(f"  {number:>2}) {field.label:<38} {value}")
     choice = input("  Field number: ").strip()
     if choice.isdigit() and 1 <= int(choice) <= len(fields):
         field = fields[int(choice) - 1]
-        entry[field.name] = ask(field, containers, entry)
+        entry[field.name] = ask(field, containers, entry, kind)
     return entry
 
 
-def edit_field(path, lines, data):
+def edit_field(path, lines, data, kind=UPDATE):
     """Change one scalar field of one existing entry. Returns an exit code."""
-    containers = data.get("containers") or []
-    if not containers:
+    spec = KINDS[kind]
+    entries = entries_of(data, kind)
+    if not entries:
         print("No entries to edit.")
         return 0
 
-    for number, container in enumerate(containers, 1):
-        print(f"  {number:>2}) {container.get('container_name', '?')}")
+    identity = spec["unique"][0]
+    for number, existing in enumerate(entries, 1):
+        print(f"  {number:>2}) {existing.get(identity, '?')}")
     choice = input("  Entry number: ").strip()
-    if not choice.isdigit() or not 1 <= int(choice) <= len(containers):
+    if not choice.isdigit() or not 1 <= int(choice) <= len(entries):
         print("Cancelled.")
         return 0
     index = int(choice) - 1
-    container = containers[index]
+    current = entries[index]
 
     # Scalars only. A list or a mapping has no single line to replace, and
     # guessing at one is how a configuration gets quietly corrupted.
-    editable = [f for f in UPDATE_FORM
-                if not isinstance(container.get(f.name), (list, dict))]
+    editable = [f for f in spec["form"]
+                if not isinstance(current.get(f.name), (list, dict))]
     for number, field in enumerate(editable, 1):
-        value = MASK if validator.redacted(field.name) else container.get(field.name, "-")
+        value = MASK if validator.redacted(field.name) else current.get(field.name, "-")
         print(f"  {number:>2}) {field.label:<38} {value}")
     choice = input("  Field number: ").strip()
     if not choice.isdigit() or not 1 <= int(choice) <= len(editable):
@@ -643,22 +918,24 @@ def edit_field(path, lines, data):
         return 0
     field = editable[int(choice) - 1]
 
-    value = ask(field, containers, dict(container))
-    # Changing a port must not silently unbind it from localhost.
-    value = keep_bind_address(container.get(field.name), value)
+    value = ask(field, entries, dict(current), kind)
     if not confirm(f"\n  Set {field.label} to "
                    f"{MASK if validator.redacted(field.name) else value}?",
                    default=True):
         print("Nothing written.")
         return 0
 
-    ok, findings, backup = safe_write(
-        path, patch_field(lines, data, index, field.name, value))
-    if ok:
-        print(f"\n  Written to {path}\n  Backup:    {backup}")
+    # set_field keeps the bind address and rejects a duplicate identity; both
+    # used to live here, and the console would have had to repeat them.
+    result = set_field(path, index, field.name, value, kind)
+    if result.error:
+        print(f"\n  Not written: {result.error}")
+        return 1
+    if result.ok:
+        print(f"\n  Written to {path}\n  Backup:    {result.backup}")
         return 0
     print("\n  Not written - the result would be invalid:")
-    print_findings(findings)
+    print_findings(result.findings)
     print(f"  {path} is unchanged.")
     return 1
 
@@ -669,8 +946,12 @@ def parse_arguments(argv):
         description="Guided editing of docker2update.yaml.")
     parser.add_argument("--update", nargs="?", const=DEFAULT_UPDATE_CONFIG,
                         metavar="PATH",
-                        help=f"the configuration to edit "
+                        help=f"edit the update configuration "
                              f"(default: {DEFAULT_UPDATE_CONFIG})")
+    parser.add_argument("--backup", nargs="?", const=DEFAULT_BACKUP_CONFIG,
+                        metavar="PATH",
+                        help=f"edit the backup configuration "
+                             f"(default: {DEFAULT_BACKUP_CONFIG})")
     # Not argparse's version action: it raises SystemExit and would break
     # main()'s contract of returning an int, the same rule the validator follows.
     parser.add_argument("--version", action="store_true",
@@ -689,24 +970,50 @@ def main(argv=None):
         print(reason)
         return 2
 
-    path = args.update or DEFAULT_UPDATE_CONFIG
-    print(f"ownerp_wizard.py {SCRIPT_VERSION} ({SCRIPT_DATE})\n{path}")
+    print(f"ownerp_wizard.py {SCRIPT_VERSION} ({SCRIPT_DATE})")
 
-    data, fatal = validator.load_positioned(path)
-    if fatal is not None:
-        print(f"\n  {fatal.line or ''}  {fatal.message}")
+    # An explicit flag picks the file; without one, ask. Defaulting silently
+    # to the update configuration would make the backup side invisible to
+    # anyone who does not read --help, and it is the side that had no editor
+    # at all until now.
+    if args.backup:
+        kind, path = BACKUP, args.backup
+    elif args.update:
+        kind, path = UPDATE, args.update
+    else:
+        kind, path = choose_config()
+        if kind is None:
+            return 0
+
+    print(path)
+    lines, data, error = load_config(path)
+    if error:
+        print(f"\n  {error}")
         print("  Fix it first - 'doval' shows every finding with its line.")
         return 2
-    with open(path, encoding="utf-8") as handle:
-        lines = handle.read().split("\n")
 
-    print("\n  1) Add an instance\n  2) Change a field\n  q) Quit")
+    label = KINDS[kind]["label"]
+    print(f"\n  1) Add a{'n' if label[0] in 'aeiou' else ''} {label}"
+          f"\n  2) Change a field\n  q) Quit")
     choice = input("\n  Choice [1]: ").strip() or "1"
     if choice == "1":
-        return add_container(path, lines, data)
+        return add_container(path, lines, data, kind)
     if choice == "2":
-        return edit_field(path, lines, data)
+        return edit_field(path, lines, data, kind)
     return 0
+
+
+def choose_config():
+    """(kind, path), or (None, None) when the operator quits."""
+    print("\n  1) Odoo instances    (docker2update.yaml)"
+          "\n  2) Database backups  (container2backup.yaml)"
+          "\n  q) Quit")
+    choice = input("\n  Choice [1]: ").strip() or "1"
+    if choice == "2":
+        return BACKUP, DEFAULT_BACKUP_CONFIG
+    if choice == "1":
+        return UPDATE, DEFAULT_UPDATE_CONFIG
+    return None, None
 
 
 if __name__ == "__main__":

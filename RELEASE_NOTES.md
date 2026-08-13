@@ -1,5 +1,51 @@
 # Release Notes
 
+## The Backup Configuration Gets an Editor (13.08.2026)
+
+*scripts/ownerp_wizard.py v1.1.0 · fish/conf.d/33-aliases-backup.fish v1.6.0 ·
+fish/functions/linux/ownerp-help.fish v1.2.0*
+
+Stage 2 of the ownERP console design.
+
+### Added
+
+- **`container2backup.yaml` can be edited.** It had no editor at all — not in the wizard,
+  not in the TUI, only `edbk` and mcedit. `wizbk` now adds a database or changes a field
+  through the same validated write path the update configuration has always used:
+  timestamped backup, temp file in the same directory, validation of that file,
+  `os.replace()`. A rejected result leaves the original byte for byte.
+
+  `safe_write()` picks the schema from the kind. Validating a backup configuration against
+  the update schema would reject every field it has and accept none it lacks — the wrong
+  one there is not a near miss but a tool that can never write that file.
+
+- **The backup form suggests from `docker2update.yaml`.** A backup entry needs to know
+  which Postgres container holds the database and which Odoo container holds the
+  filestore — and both are already written down as `db_host` and `container_name`. Type
+  `test_db` and the remaining three fields arrive filled in. Asking an operator to retype
+  a pairing they have already recorded is asking them to introduce a typo into a backup.
+
+  Two update entries naming one database suggests nothing rather than picking one: that is
+  a configuration error the validator reports, and a guess in front of someone mid-way
+  through fixing it is worse than a blank field.
+
+- **A write API with no terminal in it** — `load_config()`, `add_entry()`, `set_field()`,
+  each returning a `WriteResult`. This is what stage 3's console consumes, and the
+  interactive wizard now runs on it too. One write path per file, exercised by both
+  callers, so the one used less often cannot rot unnoticed. Duplicate names and the
+  localhost bind address of a port are handled there rather than in the prompts, where the
+  console would have had to repeat them.
+
+### Changed
+
+- The wizard asks which configuration to edit when started without a flag. Defaulting
+  silently to the update file would keep the backup side invisible to anyone who does not
+  read `--help` — and that is the side that had no editor until now.
+
+- `render_container`, `containers_end`, `append_container` and `patch_field` are now thin
+  update-shaped wrappers over generic equivalents. Same signatures, same behaviour, and the
+  91 existing tests pass unchanged.
+
 ## The Whole Server on One Page (13.08.2026)
 
 *scripts/ownerp_state.py v1.0.0 (new) · getScripts.py v9.16.0 ·

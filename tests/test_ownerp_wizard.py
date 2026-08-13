@@ -697,3 +697,305 @@ class MainTest(unittest.TestCase):
         # "Fix it first" comes only from the parse branch; "doval" alone would
         # also match the no-TTY refusal.
         self.assertIn("Fix it first", buffer.getvalue())
+
+
+# ==============================================================================
+# Stage 2: the backup configuration, and the write API both callers share
+# ==============================================================================
+
+BACKUP_TEMPLATE = os.path.join(REPO_ROOT, "scripts", "container2backup.yaml")
+
+BACKUP_CONFIG = textwrap.dedent("""\
+    defaults:
+      retention_days: 14
+      db_user: ownerp
+      backup_path: /opt/backups
+      temp_path: /tmp/odoo_backup
+      stream: false
+      compression:
+        format: "7z"
+        level: 5
+
+    databases:
+      - name: live_db
+        db_user: ownerp
+        sql_container: live-db
+        data_container: live-odoo
+        retention_days: 5
+""")
+
+UPDATE_CONFIG = textwrap.dedent("""\
+    defaults:
+      log_retention_days: 90
+
+    containers:
+      - active: true
+        type: F
+        delay_time: 10
+        container_name: live-odoo
+        database_name: live_db
+        port: "127.0.0.1:11000"
+        longpolling_port: "127.0.0.1:12000"
+        dockerfile_path: /root/docker-builds/live-odoo/
+        docker_image_name: odoo/live
+        db_user: ownerp
+        db_password: secret
+        db_host: live-db
+        volume: "-v /opt/odoo/live:/opt/odoo/data"
+        odoo_version: "18"
+        translate: Y
+""")
+
+
+# Appended to UPDATE_CONFIG when a second entry is needed. Written out rather
+# than dedented inline: the list indentation is two spaces and getting it wrong
+# produces a YAML error that reads like a bug in the code under test.
+SECOND_CONTAINER = (
+    "  - active: true\n"
+    "    type: F\n"
+    "    container_name: test-odoo\n"
+    "    database_name: test_db\n"
+    '    port: "127.0.0.1:13000"\n'
+    '    longpolling_port: "127.0.0.1:14000"\n'
+    "    dockerfile_path: /root/docker-builds/test-odoo/\n"
+    "    docker_image_name: odoo/test\n"
+    "    db_user: ownerp\n"
+    "    db_password: secret\n"
+    "    db_host: test-db\n"
+    '    volume: "-v /opt/odoo/test:/opt/odoo/data"\n'
+    '    odoo_version: "18"\n'
+    "    translate: Y\n"
+)
+
+
+class ConfigFixture(unittest.TestCase):
+    """A throwaway directory holding both configurations."""
+
+    def setUp(self):
+        self.dir = tempfile.mkdtemp(prefix="wizard-stage2-")
+        self.addCleanup(shutil.rmtree, self.dir, ignore_errors=True)
+        self.backup = self.write("container2backup.yaml", BACKUP_CONFIG)
+        self.update = self.write("docker2update.yaml", UPDATE_CONFIG)
+
+    def write(self, name, text):
+        path = os.path.join(self.dir, name)
+        with open(path, "w", encoding="utf-8") as handle:
+            handle.write(text)
+        return path
+
+    def read(self, path):
+        with open(path, encoding="utf-8") as handle:
+            return handle.read()
+
+    def parsed(self, path):
+        return yaml.safe_load(self.read(path))
+
+
+class BackupWriteTest(ConfigFixture):
+    """container2backup.yaml had no editor at all before this."""
+
+    def test_a_database_is_appended_and_the_file_still_parses(self):
+        result = wiz.add_entry(self.backup, {
+            "name": "test_db", "sql_container": "test-db",
+            "data_container": "test-odoo", "db_user": "ownerp",
+            "retention_days": 7,
+        }, kind=wiz.BACKUP)
+        self.assertTrue(result.ok, result.error or result.findings)
+        names = [d["name"] for d in self.parsed(self.backup)["databases"]]
+        self.assertEqual(names, ["live_db", "test_db"])
+
+    def test_the_existing_entry_is_untouched_by_an_append(self):
+        before = self.read(self.backup).splitlines()
+        wiz.add_entry(self.backup, {
+            "name": "test_db", "sql_container": "test-db",
+            "data_container": "test-odoo",
+        }, kind=wiz.BACKUP)
+        after = self.read(self.backup).splitlines()
+        self.assertEqual(before, after[:len(before)])
+
+    def test_a_field_of_an_existing_database_is_changed_in_place(self):
+        result = wiz.set_field(self.backup, 0, "retention_days", 30,
+                               kind=wiz.BACKUP)
+        self.assertTrue(result.ok, result.error)
+        self.assertEqual(self.parsed(self.backup)["databases"][0]["retention_days"],
+                         30)
+
+    def test_a_duplicate_database_name_is_refused_before_the_write(self):
+        result = wiz.add_entry(self.backup, {
+            "name": "live_db", "sql_container": "other-db",
+            "data_container": "other-odoo",
+        }, kind=wiz.BACKUP)
+        self.assertFalse(result.ok)
+        self.assertIn("already in use", result.error)
+        self.assertEqual(self.read(self.backup), BACKUP_CONFIG)
+
+    def test_an_entry_missing_a_required_field_is_rejected_and_nothing_changes(self):
+        """sql_container is required; the validator must catch it, not the disk."""
+        result = wiz.add_entry(self.backup, {"name": "test_db"},
+                               kind=wiz.BACKUP)
+        self.assertFalse(result.ok)
+        self.assertIsNone(result.backup)
+        self.assertEqual(self.read(self.backup), BACKUP_CONFIG)
+
+    def test_the_backup_schema_is_used_not_the_update_one(self):
+        """Validating this file as an update config would reject every field."""
+        result = wiz.set_field(self.backup, 0, "only_sql_dump", True,
+                               kind=wiz.BACKUP)
+        self.assertTrue(result.ok, result.error)
+        self.assertIs(self.parsed(self.backup)["databases"][0]["only_sql_dump"],
+                      True)
+
+    def test_the_shipped_template_can_be_appended_to(self):
+        """The real template, whose last entry ends in a nested fast_report
+        block. entry_bounds has to walk past that mapping to find the end of
+        the list, and landing inside it would produce unparseable YAML."""
+        path = self.write("from-template.yaml", self.read(BACKUP_TEMPLATE))
+        before = [d["name"] for d in self.parsed(path)["databases"]]
+        result = wiz.add_entry(path, {
+            "name": "third_db", "sql_container": "third-db",
+            "data_container": "third-odoo",
+        }, kind=wiz.BACKUP)
+        self.assertTrue(result.ok, result.error or result.findings)
+        self.assertEqual([d["name"] for d in self.parsed(path)["databases"]],
+                         before + ["third_db"])
+
+    def test_the_nested_block_of_the_previous_entry_survives(self):
+        path = self.write("from-template.yaml", self.read(BACKUP_TEMPLATE))
+        wiz.add_entry(path, {"name": "third_db", "sql_container": "third-db",
+                             "data_container": "third-odoo"}, kind=wiz.BACKUP)
+        by_name = {d["name"]: d for d in self.parsed(path)["databases"]}
+        self.assertEqual(by_name["live_db"]["fast_report"]["path"],
+                         "/opt/fast-report/fr-live")
+
+
+class SuggestionFromUpdateConfigTest(ConfigFixture):
+    """The pairing is already written down once; retyping it invites a typo."""
+
+    def test_the_containers_come_from_the_matching_update_entry(self):
+        instances = wiz.update_instances(self.update)
+        entry = {"name": "live_db"}
+        self.assertEqual(
+            wiz.suggest_from_instance("sql_container", entry, instances),
+            "live-db")
+        self.assertEqual(
+            wiz.suggest_from_instance("data_container", entry, instances),
+            "live-odoo")
+
+    def test_an_unknown_database_suggests_nothing(self):
+        instances = wiz.update_instances(self.update)
+        self.assertIsNone(wiz.suggest_from_instance(
+            "sql_container", {"name": "nope_db"}, instances))
+
+    def test_two_instances_on_one_database_suggest_nothing(self):
+        """That is a config error the validator reports; a guess would obscure it."""
+        doubled = UPDATE_CONFIG + SECOND_CONTAINER.replace("test_db", "live_db")
+        path = self.write("doubled.yaml", doubled)
+        instances = wiz.update_instances(path)
+        self.assertIsNone(wiz.suggest_from_instance(
+            "sql_container", {"name": "live_db"}, instances))
+
+    def test_a_missing_update_config_costs_a_suggestion_not_the_editor(self):
+        self.assertEqual(wiz.update_instances(os.path.join(self.dir, "gone.yaml")),
+                         [])
+
+    def test_a_broken_update_config_costs_a_suggestion_not_the_editor(self):
+        path = self.write("broken.yaml", "containers: [unclosed\n")
+        self.assertEqual(wiz.update_instances(path), [])
+
+    def test_retention_falls_back_to_what_the_others_agree_on(self):
+        databases = [{"retention_days": 5}, {"retention_days": 5}]
+        self.assertEqual(wiz.suggest_backup_unanimous(databases,
+                                                      "retention_days"), 5)
+
+    def test_a_disagreement_suggests_the_fallback_rather_than_a_guess(self):
+        databases = [{"retention_days": 5}, {"retention_days": 30}]
+        self.assertEqual(
+            wiz.suggest_backup_unanimous(databases, "retention_days", 14), 14)
+
+
+class WriteApiTest(ConfigFixture):
+    """The API the console consumes. No terminal is involved anywhere here."""
+
+    def test_a_missing_file_is_an_error_not_an_exception(self):
+        result = wiz.set_field(os.path.join(self.dir, "gone.yaml"), 0, "x", 1)
+        self.assertFalse(result.ok)
+        self.assertIn("not found", result.error)
+
+    def test_an_unparseable_file_is_an_error_not_an_exception(self):
+        path = self.write("broken.yaml", "containers: [unclosed\n")
+        result = wiz.set_field(path, 0, "port", 11000)
+        self.assertFalse(result.ok)
+        self.assertIsNotNone(result.error)
+
+    def test_an_index_out_of_range_says_so(self):
+        result = wiz.set_field(self.update, 99, "port", 11000)
+        self.assertIn("no entry 99", result.error)
+
+    def test_a_list_valued_field_is_refused_rather_than_guessed_at(self):
+        path = self.write("withlist.yaml", UPDATE_CONFIG
+                          + "    pre_build_files:\n"
+                            "      - /root/certs/ca.crt\n")
+        result = wiz.set_field(path, 0, "pre_build_files", "x")
+        self.assertFalse(result.ok)
+        self.assertIn("not a scalar", result.error)
+
+    def test_changing_a_port_keeps_its_bind_address(self):
+        """127.0.0.1:11000 -> 19000 must not become a public bind."""
+        result = wiz.set_field(self.update, 0, "port", 19000)
+        self.assertTrue(result.ok, result.error)
+        self.assertEqual(self.parsed(self.update)["containers"][0]["port"],
+                         "127.0.0.1:19000")
+
+    def test_renaming_a_container_to_an_existing_name_is_refused(self):
+        path = self.write("two.yaml", UPDATE_CONFIG + SECOND_CONTAINER)
+        result = wiz.set_field(path, 1, "container_name", "live-odoo")
+        self.assertFalse(result.ok)
+        self.assertIn("already in use", result.error)
+
+    def test_setting_a_field_to_its_own_value_is_not_a_duplicate(self):
+        result = wiz.set_field(self.update, 0, "container_name", "live-odoo")
+        self.assertTrue(result.ok, result.error)
+
+    def test_a_rejected_write_leaves_no_backup_behind(self):
+        """A .bak-* of a file nobody changed teaches operators to ignore them."""
+        wiz.add_entry(self.backup, {"name": "broken_db"}, kind=wiz.BACKUP)
+        leftovers = [f for f in os.listdir(self.dir) if ".bak-" in f]
+        self.assertEqual(leftovers, [])
+
+    def test_a_successful_write_keeps_its_backup(self):
+        result = wiz.set_field(self.backup, 0, "retention_days", 21,
+                               kind=wiz.BACKUP)
+        self.assertTrue(os.path.isfile(result.backup))
+        self.assertEqual(self.read(result.backup), BACKUP_CONFIG)
+
+    def test_the_backup_holds_the_previous_content_exactly(self):
+        wiz.set_field(self.update, 0, "delay_time", 45)
+        backups = [f for f in os.listdir(self.dir) if ".bak-" in f]
+        self.assertEqual(len(backups), 1)
+        self.assertEqual(self.read(os.path.join(self.dir, backups[0])),
+                         UPDATE_CONFIG)
+
+
+class GenericCollectionTest(ConfigFixture):
+    """The update-shaped names must stay exactly what they were."""
+
+    def test_the_legacy_names_still_target_containers(self):
+        lines, data, error = wiz.load_config(self.update)
+        self.assertIsNone(error)
+        self.assertEqual(wiz.containers_end(lines, data),
+                         wiz.collection_end(lines, data, "containers"))
+
+    def test_appending_without_a_kind_still_means_update(self):
+        lines, data, _ = wiz.load_config(self.update)
+        entry = {"container_name": "x-odoo", "database_name": "x_db"}
+        self.assertEqual(wiz.append_container(lines, data, entry),
+                         wiz.append_entry(lines, data, entry, wiz.UPDATE))
+
+    def test_a_file_without_the_collection_key_says_so(self):
+        path = self.write("nokey.yaml", "defaults:\n  retention_days: 14\n")
+        result = wiz.add_entry(path, {"name": "x_db",
+                                      "sql_container": "a",
+                                      "data_container": "b"},
+                               kind=wiz.BACKUP)
+        self.assertFalse(result.ok)
+        self.assertIn("databases", result.error)
