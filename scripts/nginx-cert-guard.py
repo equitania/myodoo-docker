@@ -4,8 +4,8 @@
 # Title:            nginx-cert-guard.py
 # Description:      Keep nginx up when a single customer vhost breaks, and warn
 #                   early when a (sub)domain stops pointing at this server.
-# Version:          1.1.0
-# Date:             11.06.2026
+# Version:          1.2.0
+# Date:             13.08.2026
 # Author:           Equitania Software GmbH
 # ==============================================================================
 # Why this exists:
@@ -13,6 +13,13 @@
 #   file, or an old `listen <domain>:443` whose hostname no longer resolves) makes
 #   `nginx -t` fail and blocks the WHOLE server from starting. A customer changing
 #   their DNS away from us could therefore take every site on the host offline.
+#
+#   v1.2.0 exists because that happened for real (13.08.2026): a customer moved
+#   one A record to another provider, and all ten vhosts on the host went down
+#   with it. The listen hostname still resolved perfectly — just to somebody
+#   else's IP — so the "does it resolve" test saw nothing, and nginx died with
+#   `bind() to <foreign-ip>:443 failed (99: Cannot assign requested address)`.
+#   Resolvability was never the property that mattered; bindability is.
 #
 # What it does:
 #   --reconcile [--start]  Reactive safety net (the must-have): if `nginx -t` fails,
@@ -25,6 +32,12 @@
 #                          GUARD_FAIL_THRESHOLD consecutive runs, quarantine it
 #                          (only with --apply) and alert. Confirmation counter guards
 #                          against DNS glitches / Cloudflare-fronted domains.
+#                          EXCEPTION (v1.2.0): a domain that also appears in a
+#                          `listen` directive is acted on at the FIRST failing run.
+#                          Confirm-and-wait is right for a customer drifting away —
+#                          it is wrong when the same DNS record decides whether
+#                          nginx can bind at all, because then every day of waiting
+#                          is a day the whole host is one reload from going dark.
 #   --list                 Show active and quarantined vhosts.
 #   --restore <domain>     Re-enable a quarantined vhost after the cause is fixed.
 #   --dry-run              Report only; make no changes (reconcile + check).
@@ -214,54 +227,126 @@ def missing_cert_files(conf_path):
     return missing
 
 
-def unresolvable_listen_host(conf_path):
-    """Pattern-A guard: `listen <hostname>:port` whose hostname no longer resolves.
+def listen_hosts(conf_path):
+    """Host part of every `listen` directive in a vhost, wildcards excluded.
 
-    A hostname in a listen directive must resolve at nginx start or the socket
-    bind fails and takes down the whole server. IP-bound listens are fine.
+    `listen 443 ssl;`, `listen 0.0.0.0:443;` and `listen [::]:443;` bind every
+    interface and carry no host that could point at the wrong machine, so they
+    are not returned. Order is preserved and duplicates are dropped.
     """
     try:
         text = conf_path.read_text(encoding="utf-8", errors="replace")
     except OSError:
-        return None
+        return []
+    hosts = []
     for raw in _LISTEN_RE.findall(text):
-        token = raw.strip().split()[0]  # e.g. "1.2.3.4:443" / "example.de:443" / "443"
-        host = token.rsplit(":", 1)[0] if ":" in token else ""
-        if not host or host in ("[::]", "*"):
+        token = raw.strip().split()[0]  # "1.2.3.4:443" / "example.de:443" / "443"
+        if ":" not in token:
+            continue  # bare port -> wildcard bind
+        # IPv6 literals are bracketed ([::1]:443) — strip for parsing, else a
+        # healthy local IPv6 listener would look like a hostname.
+        host = token.rsplit(":", 1)[0].strip("[]")
+        if not host or host in ("*", "0.0.0.0", "::"):
             continue
-        # IPv6 literals are bracketed ([::1]:443) - strip for parsing, else
-        # a healthy local IPv6 listener would be flagged as unresolvable
-        host = host.strip("[]")
-        if not host:
-            continue
-        # Skip plain IP literals (those always "resolve").
+        if host not in hosts:
+            hosts.append(host)
+    return hosts
+
+
+def unbindable_listen_target(conf_path, local_ips):
+    """Pattern-A guard: a `listen` target this host cannot bind().
+
+    nginx resolves a hostname in `listen` at config-parse time and then binds
+    the resulting address, so BOTH of these kill the whole server rather than
+    just this vhost:
+
+      * the hostname no longer resolves at all
+            nginx: [emerg] host not found in "..." of the "listen" directive
+      * the hostname — or a hardcoded IP — points at an address that is not
+        assigned to this machine
+            nginx: [emerg] bind() to <ip>:443 failed
+                   (99: Cannot assign requested address)
+
+    Until v1.2.0 only the first case was checked, and IP literals were skipped
+    outright on the reasoning that "those always resolve". They do; resolving
+    was simply never the property that mattered. The second case is what took a
+    ten-vhost host offline on 13.08.2026 — the name resolved fine, just not to
+    us — and it is invisible to a resolvability test by construction.
+
+    Args:
+        conf_path: The vhost file to inspect.
+        local_ips: Addresses currently assigned to this host, from
+            local_bound_ips(). An EMPTY set means "could not determine", and
+            the bindability half is then skipped entirely — an unreadable
+            `ip addr` must never make every vhost on the box look broken.
+
+    Returns:
+        (host, reason) for the first offending target, or None.
+    """
+    for host in listen_hosts(conf_path):
         try:
             ipaddress.ip_address(host)
-            continue
         except ValueError:
             pass
+        else:
+            # IP literal: nothing to resolve, it is bindable or it is not.
+            if local_ips and host not in local_ips:
+                return host, (
+                    f"listen IP {host} is not assigned to this host — nginx "
+                    f"would fail with 'Cannot assign requested address'"
+                )
+            continue
+
         try:
-            socket.getaddrinfo(host, None)
+            infos = socket.getaddrinfo(host, None)
         except socket.gaierror:
-            return host  # hostname no longer resolves
+            return host, f"listen hostname does not resolve: {host}"
+
+        if not local_ips:
+            continue
+        resolved = {info[4][0] for info in infos}
+        if not resolved & local_ips:
+            return host, (
+                f"listen hostname {host} resolves to "
+                f"{', '.join(sorted(resolved))} — not an address of this host"
+            )
     return None
 
 
-def detect_broken(conf_dir):
+def detect_broken(conf_dir, local_ips=None):
     """Deterministic, file-based detection of vhosts that will break nginx start.
+
+    Args:
+        conf_dir: Directory holding the vhost files.
+        local_ips: Pre-computed result of local_bound_ips(). Passed in by
+            callers that check several vhosts so `ip addr` runs once; computed
+            here when omitted.
 
     Returns list of (path, reason). Pure (no nginx needed) — used by --dry-run too.
     """
+    if local_ips is None:
+        local_ips = local_bound_ips()
     broken = []
     for vh in active_vhosts(conf_dir):
         missing = missing_cert_files(vh)
         if missing:
             broken.append((vh, f"missing cert file(s): {', '.join(missing)}"))
             continue
-        bad_host = unresolvable_listen_host(vh)
-        if bad_host:
-            broken.append((vh, f"listen hostname does not resolve: {bad_host}"))
+        bad = unbindable_listen_target(vh, local_ips)
+        if bad:
+            broken.append((vh, bad[1]))
     return broken
+
+
+def shared_cause(candidates):
+    """The single reason behind every candidate, or None if they differ.
+
+    Ten vhosts failing for ten different reasons is ten problems; ten failing
+    for one reason is one problem wearing ten hats, and the alert should say
+    which it is.
+    """
+    reasons = {reason for _, reason in candidates}
+    return reasons.pop() if len(reasons) == 1 else None
 
 
 # ─── quarantine / restore ────────────────────────────────────
@@ -289,6 +374,36 @@ def restore_vhost(disabled_path, dry_run=False):
 
 
 # ─── server IPs & DNS ────────────────────────────────────────
+def local_bound_ips():
+    """Addresses actually assigned to this host — the set nginx can bind() to.
+
+    Deliberately NOT server_ips(). That one answers "is this domain still
+    ours?" and therefore folds in the public address seen from the outside,
+    which behind NAT is precisely the address that cannot be bound locally.
+    Bindability is a purely local question, so only addresses present on an
+    interface count here — including loopback and the docker bridges, which
+    nginx may legitimately bind.
+
+    GUARD_SERVER_IPS is intentionally ignored: it exists so an operator can
+    declare which public IPs are "ours", not to override what the kernel
+    reports about its own interfaces.
+
+    Returns:
+        Set of address strings; EMPTY when it could not be determined. Callers
+        must treat empty as "unknown" and skip the check — never as "nothing
+        is bindable", which would condemn every vhost on the host.
+    """
+    ips = set()
+    rc, out = run(["ip", "-o", "addr", "show"])
+    if rc == 0:
+        for tok in re.findall(r"inet6?\s+([0-9a-fA-F:.]+)/\d+", out):
+            ips.add(tok)
+    if not ips:
+        logger.warning("Could not determine this host's local addresses — "
+                       "listen-bindability checks are skipped this run.")
+    return ips
+
+
 def server_ips():
     """This host's public IPs: explicit GUARD_SERVER_IPS, else autodetect."""
     explicit = cfg_list("GUARD_SERVER_IPS")
@@ -440,14 +555,28 @@ def mode_reconcile(args):
 
     # Mass-failure guard up front: too many candidates means a global fault
     # (letsencrypt gone, nginx.conf error) — do NOT shut down half the host.
-    if len(candidates) > max_disable:
-        body = (f"nginx -t failed and {len(candidates)} vhosts look broken "
+    #
+    # "Every active vhost is a candidate" is treated the same way even when the
+    # host has fewer vhosts than GUARD_MAX_DISABLE. A three-vhost server whose
+    # own IP changed would otherwise slip under the numeric limit and get
+    # emptied out one file at a time — the count was never the signal, the
+    # scope is: a fault under ALL of them is one fault, not many customers.
+    global_fault = bool(candidates) and len(candidates) == total_active
+    if len(candidates) > max_disable or global_fault:
+        cause = shared_cause(candidates)
+        scope = ("EVERY active vhost" if global_fault
+                 else f"{len(candidates)} of {total_active} vhosts")
+        body = (f"nginx -t failed and {scope} looks broken "
                 f"(limit GUARD_MAX_DISABLE={max_disable}). This points at a global "
                 f"fault, not individual customers. NOTHING was disabled.\n\n"
-                f"nginx -t output:\n{out}\n\nCandidates:\n"
+                + (f"All candidates share one cause:\n  {cause}\n\n" if cause else "")
+                + f"nginx -t output:\n{out}\n\nCandidates:\n"
                 + "\n".join(f"  {p.name}: {r}" for p, r in candidates))
-        logger.error("Mass failure (%d candidates > limit %d) — escalating, no changes.",
-                     len(candidates), max_disable)
+        logger.error("Mass failure (%d candidate(s), %d active, limit %d) — "
+                     "escalating, no changes.",
+                     len(candidates), total_active, max_disable)
+        if cause:
+            logger.error("Shared cause across all candidates: %s", cause)
         send_alert("MASS FAILURE — manual intervention required", body)
         return 2
 
@@ -536,12 +665,26 @@ def mode_check(args):
         # Not pointing here (NXDOMAIN or foreign IP).
         detail = ("does not resolve" if not resolved
                   else f"resolves to {', '.join(sorted(ips))} (not us)")
+
+        # A domain that also appears in a `listen` directive is not a soft
+        # drift. nginx resolves listen targets at config-parse time, so from
+        # the moment that record points elsewhere the host is one reload away
+        # from total darkness — every other customer on the box included.
+        # Confirm-and-wait is the right instinct for "is this customer leaving
+        # us?", and the wrong one for "can nginx still start?": each extra day
+        # of confirmation buys certainty about a departure while risking the
+        # whole server. So listen-bound domains act on the first failing run.
+        listen_bound = domain in listen_hosts(vh)
+        effective_threshold = 1 if listen_bound else threshold
+        if listen_bound:
+            detail += " [listen-bound: whole-host outage risk]"
+
         fails = entry.get("consecutive_failures", 0) + 1
         state[domain] = {"consecutive_failures": fails, "last_fail": _now(),
                          "last_detail": detail}
-        report_lines.append(f"  {domain}: {detail} [{fails}/{threshold}]")
-        logger.warning("%s %s [%d/%d]", domain, detail, fails, threshold)
-        if fails >= threshold:
+        report_lines.append(f"  {domain}: {detail} [{fails}/{effective_threshold}]")
+        logger.warning("%s %s [%d/%d]", domain, detail, fails, effective_threshold)
+        if fails >= effective_threshold:
             to_disable.append((vh, domain, detail))
 
     save_state(args.state_file, state, dry_run=dry)
@@ -551,12 +694,20 @@ def mode_check(args):
         return 0
 
     # Mass-failure guard (e.g. our own DNS/uplink hiccup affecting everything).
-    if len(to_disable) > max_disable:
-        body = (f"{len(to_disable)} domains crossed the failure threshold at once "
+    # As in mode_reconcile, "all of them" counts as a mass failure even on a
+    # host with fewer vhosts than the numeric limit: emptying a server
+    # completely is never the proportionate response to a DNS reading.
+    total_active = len(active_vhosts(conf_dir))
+    would_empty_host = bool(to_disable) and len(to_disable) == total_active
+    if len(to_disable) > max_disable or would_empty_host:
+        scope = ("EVERY active domain" if would_empty_host
+                 else f"{len(to_disable)} domains")
+        body = (f"{scope} crossed the failure threshold at once "
                 f"(limit {max_disable}) — likely a local DNS/network issue, not many "
                 f"customers leaving. NOTHING disabled.\n\n" + "\n".join(report_lines))
-        logger.error("Mass DNS failure (%d > limit %d) — escalating, no changes.",
-                     len(to_disable), max_disable)
+        logger.error("Mass DNS failure (%d of %d active, limit %d) — "
+                     "escalating, no changes.",
+                     len(to_disable), total_active, max_disable)
         send_alert("MASS DNS FAILURE — manual check required", body)
         return 2
 
