@@ -519,7 +519,28 @@ myodoo-docker/
 - **Exit code** `0` clean / `1` needs attention / `2` broken, plus `--json`, so
   cron and monitoring never parse the text
 
-#### 12. Login command overview (fish)
+#### 12. ownerp_console.py (v1.0.0)
+- **Purpose**: The ownERP console — server state and configuration editing in
+  a full-screen interface. Started with `konsole`; stage 3 (last) of
+  `docs/superpowers/specs/2026-08-13-ownerp-console-design.md`
+- **Owns no data and no write path**: facts from `ownerp_state.py`,
+  configuration changes through `ownerp_wizard.py`, cron changes through
+  `ownerp_cron.py`. The suite fails if a write call appears here — a second
+  implementation of backup/validate/replace is a second place for it to drift
+- **Starts nothing**: no updates, no backups, no container operations. That is
+  what lets it skip process supervision, a cancel path and a log pane
+  entirely; every action finishes in under a second or fails with a message
+- **Never the only route**: `dostat`, `wiz`, `docron`, `doval` cover the same
+  ground without Textual. Missing library → one re-exec through
+  `uv run --with`, then a message naming those four
+- **`uv run --with` is an ISOLATED environment** — the system site-packages
+  are not on its path. PyYAML is therefore declared next to Textual; without
+  it every section reported "unknown", which looks exactly like a broken
+  server. `getScripts.py` warms that cache at install time and parses the
+  specs out of this file rather than duplicating them
+- **Textual pinned `>=8,<9`**: a widget API is not stable across majors
+
+#### 13. Login command overview (fish)
 - **`fish/functions/linux/ownerp-help.fish`** prints the dozen commands an
   operator actually needs; `help` is aliased to it
 - **Once per LOGIN shell**, not per interactive shell — `fastfetch` is four

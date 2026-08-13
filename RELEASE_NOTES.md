@@ -1,5 +1,65 @@
 # Release Notes
 
+## The ownERP Console (13.08.2026)
+
+*scripts/ownerp_console.py v1.0.0 (new) · getScripts.py v9.17.0 ·
+fish/conf.d/33-aliases-backup.fish v1.7.0 ·
+fish/functions/linux/ownerp-help.fish v1.3.0*
+
+Stage 3, the last one. `konsole` starts it.
+
+### Added
+
+- **A full-screen console** with five tabs — overview tiles, instances, backup, maintenance,
+  system — mouse support, sortable tables and real input fields. Selecting a row opens the
+  entry's fields; selecting a field edits it. Cron jobs can be switched off and rescheduled.
+
+- **It owns no data and no write path.** Every fact comes from `ownerp_state.py`, every
+  configuration change from `ownerp_wizard.py`, every cron change from `ownerp_cron.py` —
+  which already back up, validate and refuse on regression. The test suite fails if a
+  write call appears in the console itself.
+
+- **It starts nothing.** No updates, no backups, no container operations. That boundary is
+  the design: a tool that starts nothing long-running needs no process supervision, no
+  cancel path, no log pane and no partial-failure recovery. Every action finishes in well
+  under a second or fails with a message. `doup` and `dobk` stay what they are.
+
+- **Never the only route to anything.** `dostat`, `wiz`, `docron` and `doval` do everything
+  the console does, without Textual — which is what makes it safe to depend on a library
+  for the comfortable version. If Textual is missing, the console re-executes itself
+  through `uv run --with` once; if that fails too, it names those four commands and stops.
+
+- **`getScripts.py` warms the console's uv cache** at install time, so the first start does
+  not wait on the network at the moment somebody wants to look at a misbehaving server.
+  Never fatal — a machine with no network keeps working, and the console says so itself.
+  The specs are parsed out of `ownerp_console.py` rather than duplicated: a warm-up for the
+  wrong version looks exactly like a successful one.
+
+### Fixed before it shipped
+
+- **`uv run --with` builds an isolated environment.** The re-executed console found no
+  PyYAML and reported *every* section as unknown — which looks precisely like a broken
+  server, the worst way for a status tool to be wrong. PyYAML is now declared alongside
+  Textual, and a test reads the source to keep both in the list and both passed to uv.
+  This only surfaced in a live run; no unit test would have caught it.
+
+### Not done, deliberately
+
+- **`ownerp_tui.py` still ships.** The design has it removed, and that is right — but only
+  after the console has run on a real server. Until then the TUI is the fallback for a
+  problem this machine could not show. `tui` is unchanged.
+
+### A note on running the tests
+
+The console's 17 interface tests need Textual and skip without it. The full suite:
+
+```bash
+uv run --with 'textual>=8,<9' --with pyyaml python3 -m unittest $(ls tests/test_*.py | sed 's|/|.|; s|\.py$||')
+```
+
+The eight that always run are the ones that catch what reaches a customer: the dependency
+list, the write-path ownership, and the wording of the refusals.
+
 ## The Backup Configuration Gets an Editor (13.08.2026)
 
 *scripts/ownerp_wizard.py v1.1.0 · fish/conf.d/33-aliases-backup.fish v1.6.0 ·

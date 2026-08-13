@@ -1,6 +1,19 @@
 # ownERP Console — Design
 
-*13.08.2026 · supersedes building block 1 of 3 · status: specified*
+*13.08.2026 · supersedes building block 1 of 3 · status: implemented,
+stages 0–3*
+
+> **Two corrections the implementation forced.** The collector could not live
+> in `lib/` (see the note under Architecture). And the Textual pin `>=1.0,<2`
+> was already three majors stale — the current release is 8.2.x, so the ship
+> pin is `>=8,<9`. Both are recorded where they belong rather than quietly
+> fixed, because a spec that disagrees with the code teaches people to stop
+> reading it.
+>
+> One item is **deliberately not done**: `ownerp_tui.py` still ships. Removing
+> it is correct only once the console has been used on a real server, and
+> until then the TUI is the fallback if the console turns out to have a
+> problem this machine could not show.
 
 Written in English like the rest of the repository's documentation. The
 conversation that produced it was German; the artefact follows the repo rule.

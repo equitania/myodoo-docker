@@ -136,7 +136,7 @@ if os.environ.get('GETSCRIPTS_DEBUG', '').lower() in ('1', 'true', 'yes'):
     logger.debug("Debug logging enabled")
 
 # Script version and date
-SCRIPT_VERSION = "9.16.0"
+SCRIPT_VERSION = "9.17.0"
 SCRIPT_DATE = "13.08.2026"
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -3883,6 +3883,7 @@ def copy_scripts(_myhome: str, myodoo_docker: str) -> None:
         "ownerp_cron.py",
         "ownerp_migrate.py",
         "ownerp_state.py",
+        "ownerp_console.py",
         "cleanup-weblogs.py",
         "container2backup.py",
         "restore-zip.sh",
@@ -3906,6 +3907,64 @@ def copy_scripts(_myhome: str, myodoo_docker: str) -> None:
         if os.path.exists(source):
             run_command(f"cp {source} {target}")
             _ensure_executable(target)
+
+
+def warm_console_cache() -> None:
+    """Resolve the console's dependencies once, at install time.
+
+    ownerp_console.py re-executes itself through `uv run --with` when Textual
+    is not installed system-wide. uv caches the resolved environment, so only
+    the first start touches the network - and that first start should happen
+    here, during an `ups` the operator is already waiting through, rather than
+    when they open the console to look at a server that is misbehaving.
+
+    Never fatal: a machine without network, or behind a proxy that blocks
+    PyPI, keeps working. dostat, wiz, docron and doval need none of this, and
+    the console says so itself when it cannot start.
+    """
+    if not is_uv_installed():
+        logger.info("Skipping console cache warm-up: uv is not available")
+        return
+    specs = _console_dependencies()
+    if not specs:
+        return
+    command = "uv run --quiet --no-project"
+    for spec in specs:
+        command += f" --with '{spec}'"
+    command += " python3 -c pass"
+    try:
+        result = run_command(command, capture_output=True, check=False)
+        if result is not None and getattr(result, "returncode", 1) != 0:
+            logger.warning("Console dependencies could not be pre-fetched; "
+                           "the console will fetch them on first start")
+        else:
+            logger.info("Console dependencies cached")
+    except Exception as exc:
+        logger.warning(f"Console cache warm-up skipped: {exc}")
+
+
+def _console_dependencies() -> list:
+    """The specs ownerp_console.py declares, read from the script itself.
+
+    Parsed rather than duplicated: two copies of a version pin drift, and the
+    one here would drift silently - a warm-up for the wrong version looks
+    exactly like a successful warm-up.
+    """
+    source_path = os.path.join(os.path.dirname(os.path.abspath(__file__)),
+                               "scripts", "ownerp_console.py")
+    if not os.path.isfile(source_path):
+        source_path = os.path.join(os.path.expanduser("~"), "ownerp_console.py")
+    try:
+        with open(source_path, "r", encoding="utf-8") as handle:
+            text = handle.read()
+    except OSError:
+        return []
+    specs = []
+    for name in ("TEXTUAL_SPEC", "YAML_SPEC"):
+        match = re.search(rf'^{name} = "([^"]+)"', text, re.MULTILINE)
+        if match:
+            specs.append(match.group(1))
+    return specs
 
 
 def _ensure_executable(path: str) -> None:
@@ -4084,6 +4143,10 @@ def install_packages(package_info: Dict[str, Any]) -> None:
 
     # 5. Migrate from pipx if still present (AFTER uv tools are installed)
     migrate_from_pipx()
+
+    # 6. Warm the console's uv cache, so its first start does not wait on the
+    # network at the moment an operator wants to look at something.
+    warm_console_cache()
     
     # Collect all packages for parallel version checking
     all_packages = []

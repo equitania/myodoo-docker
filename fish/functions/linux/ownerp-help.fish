@@ -1,5 +1,5 @@
 # ownERP command overview
-# Version 1.2.0 | 13.08.2026
+# Version 1.3.0 | 13.08.2026
 #
 # Printed once per LOGIN (see conf.d/50-prompt.fish); `help` shows it again.
 #
@@ -27,7 +27,8 @@ function ownerp-help --description "Show the ownERP command overview"
     printf " %sownERP · command overview%s%s%44s%s\n" \
         (set_color --bold) $n $d "help" $n
     echo "$d$rule$n"
-    __ownerp_help_row "Overview"    dostat "state of this server" doval    "check configs"
+    __ownerp_help_row "Overview"    konsole "server console"     dostat    "same, as text"
+    __ownerp_help_row ""            doval  "check configs"       ""        ""
     __ownerp_help_row "Odoo update" doup   "update containers"  tui       "pick systems"
     __ownerp_help_row ""            wiz    "add an instance"    edup      "edit config"
     __ownerp_help_row "Backup"      dobk   "back up now"        wizbk     "add a database"

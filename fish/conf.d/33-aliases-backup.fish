@@ -1,5 +1,5 @@
 # Backup and Update Aliases
-# Version 1.6.0 | 13.08.2026
+# Version 1.7.0 | 13.08.2026
 
 # Backup operations
 alias dobk='$HOME/container2backup.py'
@@ -29,3 +29,9 @@ alias docron='$HOME/ownerp_cron.py'
 # the readiness checks. Reads only. Exit code 0 clean / 1 attention / 2 broken,
 # so it is usable from cron without parsing the text.
 alias dostat='$HOME/ownerp_state.py'
+
+# The same facts, plus editing, in a full-screen interface. Starts nothing:
+# no updates, no backups, no container operations - `doup` and `dobk` stay
+# what they are. Needs Textual; without it, it names dostat/wiz/docron/doval
+# and stops, so nothing here is ever the only route to anything.
+alias konsole='$HOME/ownerp_console.py'
