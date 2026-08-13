@@ -129,3 +129,60 @@ class DeliveryHardeningTest(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class RetiredScriptsTest(unittest.TestCase):
+    """Withdrawing a script has to reach servers that already exist.
+
+    Taking a name off the copy_scripts() list stops it being delivered; it
+    does not remove the copy already sitting in $HOME. cleanup_legacy.txt does
+    not close that gap either — it only runs on a fresh Fish installation, so
+    on every server that already had Fish the retired script would outlive its
+    replacement, with an alias possibly still pointing at it.
+    """
+
+    def test_retired_scripts_are_no_longer_delivered(self):
+        delivered = delivered_names()
+        for name in gs.RETIRED_SCRIPTS:
+            self.assertNotIn(name, delivered,
+                             f"{name} is both retired and delivered")
+
+    def test_the_tui_is_retired_and_gone_from_the_repository(self):
+        self.assertIn("ownerp_tui.py", gs.RETIRED_SCRIPTS)
+        self.assertFalse(os.path.exists(os.path.join(SCRIPTS, "ownerp_tui.py")))
+
+    def test_every_retired_entry_carries_a_reason(self):
+        """The log line an operator sees has to say what replaced it."""
+        for name, reason in gs.RETIRED_SCRIPTS.items():
+            self.assertTrue(reason.strip(), f"{name} has no reason")
+
+    def test_removal_is_not_gated_on_a_fresh_install(self):
+        with open(GETSCRIPTS, "r", encoding="utf-8") as handle:
+            text = handle.read()
+        call = text.index("remove_retired_scripts(_myhome)",
+                          text.index("copy_scripts(_myhome"))
+        gate = text.index("if fish_is_fresh_install:")
+        self.assertLess(call, gate,
+                        "retired scripts must be removed on every run")
+
+    def test_a_delivered_script_is_never_on_the_legacy_cleanup_list(self):
+        """restore-zip.sh was on both: delivered, then deleted by the same run."""
+        with open(os.path.join(REPO, "cleanup_legacy.txt"),
+                  encoding="utf-8") as handle:
+            listed = {line.strip() for line in handle
+                      if line.strip() and not line.startswith("#")}
+        clash = sorted(set(delivered_names()) & listed)
+        self.assertEqual(clash, [],
+                         f"delivered and then deleted on a fresh install: {clash}")
+
+    def test_removing_a_retired_script_is_not_fatal_when_it_is_absent(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            gs.remove_retired_scripts(tmp)
+
+    def test_a_present_retired_script_is_removed(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            victim = os.path.join(tmp, "ownerp_tui.py")
+            with open(victim, "w", encoding="utf-8") as handle:
+                handle.write("#!/usr/bin/python3\n")
+            gs.remove_retired_scripts(tmp)
+            self.assertFalse(os.path.exists(victim))

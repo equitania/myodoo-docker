@@ -136,7 +136,7 @@ if os.environ.get('GETSCRIPTS_DEBUG', '').lower() in ('1', 'true', 'yes'):
     logger.debug("Debug logging enabled")
 
 # Script version and date
-SCRIPT_VERSION = "9.17.0"
+SCRIPT_VERSION = "9.18.0"
 SCRIPT_DATE = "13.08.2026"
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -3877,13 +3877,13 @@ def copy_scripts(_myhome: str, myodoo_docker: str) -> None:
     """Copy utility scripts to home directory."""
     scripts = [
         "update_docker_odoo.py",
-        "ownerp_tui.py",
         "ownerp_validate.py",
         "ownerp_wizard.py",
         "ownerp_cron.py",
         "ownerp_migrate.py",
         "ownerp_state.py",
         "ownerp_console.py",
+        # ownerp_tui.py was here until 13.08.2026; see RETIRED_SCRIPTS below.
         "cleanup-weblogs.py",
         "container2backup.py",
         "restore-zip.sh",
@@ -3907,6 +3907,37 @@ def copy_scripts(_myhome: str, myodoo_docker: str) -> None:
         if os.path.exists(source):
             run_command(f"cp {source} {target}")
             _ensure_executable(target)
+
+
+# Scripts this project used to deliver and no longer does. Removed on EVERY
+# run, not through cleanup_legacy.txt — that list only runs on a fresh Fish
+# installation, so on a server that already has Fish a withdrawn script would
+# sit in $HOME forever, with an alias that may still point at it.
+#
+# Only ever files THIS project delivered. A customer's own file must never
+# appear here: cleanup_legacy.txt once listed the four CSV configurations and
+# destroyed them on the very upgrade meant to convert them. The rule that
+# keeps the two apart is simple — if copy_scripts() put it there, this may
+# take it away again; if the customer wrote it, it is not ours to remove.
+RETIRED_SCRIPTS = {
+    # 13.08.2026: replaced by ownerp_console.py (`konsole`). The marker made
+    # `doup` start the TUI; the alias and that branch are gone with it.
+    "ownerp_tui.py": "replaced by ownerp_console.py — start it with `konsole`",
+    ".ownerp_tui_default": "the TUI it switched on no longer exists",
+}
+
+
+def remove_retired_scripts(_myhome: str) -> None:
+    """Delete the scripts this project has withdrawn. Never fatal."""
+    for name, reason in RETIRED_SCRIPTS.items():
+        target = os.path.join(_myhome, name)
+        if not os.path.exists(target):
+            continue
+        try:
+            os.remove(target)
+            logger.info(f"Removed {name}: {reason}")
+        except OSError as exc:
+            logger.warning(f"Could not remove {name}: {exc}")
 
 
 def warm_console_cache() -> None:
@@ -4061,7 +4092,7 @@ def print_cron_overview(_myhome: str) -> None:
 
     Read-only and non-interactive by design: `ups` also runs unattended, from
     scripts and from cron, where there is nothing to prompt on. Editing lives in
-    the TUI (`tui`, key c) and in `ownerp_cron.py` itself.
+    the console (`konsole`) and in `ownerp_cron.py` itself.
     """
     script = os.path.join(_myhome, "ownerp_cron.py")
     if not os.path.exists(script):
@@ -4249,6 +4280,12 @@ def main() -> None:
 
         # Copy scripts (without update_docker_myodoo.py - deprecated)
         copy_scripts(_myhome, myodoo_docker)
+
+        # Withdraw what this project no longer delivers. Runs on every pass,
+        # unlike cleanup_legacy_files() below, which only fires on a fresh
+        # Fish installation - a retired script would otherwise outlive its
+        # replacement on every server that already had Fish.
+        remove_retired_scripts(_myhome)
 
         # Convert leftover CSV configurations to YAML. Must run AFTER
         # copy_scripts (which delivers ownerp_migrate.py) and BEFORE the legacy

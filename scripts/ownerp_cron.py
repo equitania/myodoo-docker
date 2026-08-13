@@ -19,8 +19,8 @@
 #     * getScripts.py (`ups`) prints --brief after the install summary. Purely
 #       informational and non-interactive, because ups also runs from scripts
 #       and from cron itself, where there is no terminal to prompt on.
-#     * ownerp_tui.py edits through this module's API, so the write path exists
-#       exactly once.
+#     * ownerp_console.py edits through this module's API, so the write
+#       path exists exactly once.
 #
 # Write safety (mirrors ownerp_wizard.py, deliberately):
 #   timestamped backup -> build in memory -> temp file in the SAME directory ->
@@ -65,7 +65,7 @@ import time
 from dataclasses import dataclass, field
 from typing import List, Optional, Tuple
 
-SCRIPT_VERSION = "1.0.1"
+SCRIPT_VERSION = "1.0.2"
 SCRIPT_DATE = "13.08.2026"
 
 CRON_PATH = "/etc/cron.d/myodoo-maintenance"
@@ -145,7 +145,7 @@ class CronJob:
 
     @property
     def job_id(self) -> str:
-        """Stable handle used on the command line and in the TUI.
+        """Stable handle used on the command line and in the console.
 
         The backup runs twice a day from two lines, so the script name alone is
         ambiguous; the duplicates get :1, :2 in file order.
@@ -563,9 +563,9 @@ def print_report(cron: CronFile, brief: bool = False, stream=None) -> None:
     # cannot act on is a schedule they will change by hand in an editor, which
     # is the unvalidated write this tool exists to replace.
     if brief:
-        print("  Edit: tui (key t)  ·  docron --help", file=stream)
+        print("  Edit: konsole  ·  docron --help", file=stream)
     else:
-        print("  Edit with 'tui' (key t), or:", file=stream)
+        print("  Edit with 'konsole', or:", file=stream)
         print("    docron --set <job> --schedule '0 2 * * *'", file=stream)
         print("    docron --disable <job>   ·   docron --enable <job>", file=stream)
     print("=" * width, file=stream)

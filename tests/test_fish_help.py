@@ -86,8 +86,16 @@ class AdvertisedCommandsTest(unittest.TestCase):
 
     def test_the_commands_this_release_added_are_on_it(self):
         advertised = advertised_commands()
-        for command in ("docron", "tui", "wiz", "doval"):
+        # `tui` was here until 13.08.2026, when ownerp_tui.py was withdrawn.
+        # Its replacements are `konsole` (full screen) and `dostat` (text).
+        for command in ("docron", "doval", "konsole", "dostat",
+                        "wizup", "wizbk"):
             self.assertIn(command, advertised)
+
+    def test_the_withdrawn_tui_is_no_longer_advertised(self):
+        """A panel that names a command an operator cannot run is worse than
+        one that omits it: they type it at 3am and get 'command not found'."""
+        self.assertNotIn("tui", advertised_commands())
 
 
 class LoginBehaviourTest(unittest.TestCase):

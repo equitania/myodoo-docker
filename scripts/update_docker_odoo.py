@@ -832,8 +832,8 @@ def container_matches_selection(container, selected):
 
     An explicit selection wins over 'active'. Naming a container is a deliberate
     act; skipping it because the YAML has it parked is the opposite of what was
-    asked - and from the TUI, where the operator just ticked it, it would look
-    like the tool ignored the click.
+    asked - `doup -s live-odoo` on a parked entry is somebody who knows it is
+    parked and wants it updated anyway.
     """
     if selected:
         return container.get('container_name') in selected

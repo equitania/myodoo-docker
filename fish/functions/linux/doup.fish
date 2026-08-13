@@ -1,15 +1,14 @@
 # Update Odoo containers
-# Version 1.0.0 | 11.08.2026
+# Version 2.0.0 | 13.08.2026
 
-function doup --description "Update Odoo containers (TUI when enabled)"
-    # Three conditions, all of them required, because each one protects a
-    # different caller:
-    #   no arguments    - `doup -s live-odoo` must reach the runner untouched
-    #   interactive     - a cron job must never end up waiting inside a TUI
-    #   marker present  - the TUI is opt-in per server until it has proven itself
-    if test (count $argv) -eq 0; and status is-interactive; and test -f $HOME/.ownerp_tui_default
-        $HOME/ownerp_tui.py
-    else
-        $HOME/update_docker_odoo.py $argv
-    end
+# A function rather than an alias for one reason only: it used to choose
+# between the TUI and the runner. That choice is gone — ownerp_tui.py was
+# withdrawn on 13.08.2026 and the console that replaced it starts nothing, so
+# `doup` goes straight to the runner again.
+#
+# Kept as a function anyway, because an alias here would be shadowed by the
+# function fish has already autoloaded on any server that has not re-sourced
+# its configuration yet. One less thing to go wrong during an upgrade.
+function doup --description "Update Odoo containers"
+    $HOME/update_docker_odoo.py $argv
 end

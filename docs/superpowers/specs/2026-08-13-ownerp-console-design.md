@@ -10,10 +10,13 @@ stages 0–3*
 > fixed, because a spec that disagrees with the code teaches people to stop
 > reading it.
 >
-> One item is **deliberately not done**: `ownerp_tui.py` still ships. Removing
-> it is correct only once the console has been used on a real server, and
-> until then the TUI is the fallback if the console turns out to have a
-> problem this machine could not show.
+> `ownerp_tui.py` was withdrawn on 13.08.2026, one commit after the console
+> shipped. Taking a name off `copy_scripts()` does not remove the copy already
+> in `$HOME`, and `cleanup_legacy.txt` only runs on a fresh Fish installation —
+> so a `RETIRED_SCRIPTS` list in getScripts.py removes it on every pass. That
+> gap turned up a second one: `restore-zip.sh` was on the cleanup list *and*
+> the delivery list, so a fresh installation delivered it and deleted it again
+> in the same run.
 
 Written in English like the rest of the repository's documentation. The
 conversation that produced it was German; the artefact follows the repo rule.

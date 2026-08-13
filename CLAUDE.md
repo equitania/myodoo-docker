@@ -163,13 +163,20 @@ python3 ~/update_docker_myodoo.py
 doval  # ~/ownerp_validate.py — exit 0 = no errors, 1 = at least one error,
        # 2 = file missing/unreadable/unparseable or PyYAML absent
 
-# Add an instance or change a field, guided (the only writing tool here)
-wiz    # ~/ownerp_wizard.py — validates before it replaces anything; refuses
-       # without a terminal; never removes an entry
+# Add an entry or change a field, guided (the only writing tool here)
+wiz    # ~/ownerp_wizard.py — asks which configuration; wizup/wizbk go straight
+       # there. Validates before it replaces anything; refuses without a
+       # terminal; never removes an entry
 
 # Maintenance cron: what runs when, and when it last ran
-docron # ~/ownerp_cron.py — bare call only reports; editing via `tui` key t or
+docron # ~/ownerp_cron.py — bare call only reports; editing via `konsole` or
        # --set/--schedule, --enable, --disable
+
+# The whole server on one page
+dostat  # ~/ownerp_state.py — instances, backup ages, cron, readiness checks.
+        # Exit 0 clean / 1 attention / 2 broken; --json for monitoring
+konsole # ~/ownerp_console.py — the same, full screen, and editable. Starts
+        # nothing: no updates, no backups, no container operations
 ```
 
 ### Docker Management Aliases
@@ -307,16 +314,7 @@ myodoo-docker/
   - Proxy support (`defaults.proxy`, `pre_build_files`); calls
     `odoo_build_cache.py sync` before the build
 
-#### 5. ownerp_tui.py (v1.0.0)
-- **Purpose**: curses TUI for picking systems, mode and a run comment
-- **Started with**: `tui`, or `doup` when `~/.ownerp_tui_default` exists
-- **Never writes to the YAML** — `active:`/`type:` are read as the
-  pre-selection, the run is passed as arguments (`-s`, `--type`, `--comment`)
-- **One runner invocation per mode group**, sequential, worst exit code wins
-- **Refuses without a TTY**, on `TERM=dumb`, or below 80×20 — cron always gets
-  the classic runner
-
-#### 6. odoo_build_cache.py (v1.5.0)
+#### 5. odoo_build_cache.py (v1.5.0)
 - **Purpose**: Host-side cache of Odoo release archives, shared by every instance
 - **Why**: `build_odoo.py` runs inside the build container and re-downloads all
   several hundred archives on every build; the Docker layer holding them is
@@ -359,7 +357,7 @@ myodoo-docker/
   **Odoo 20 defaults it to `127.0.0.1`**, which would leave every container
   unreachable through its published port
 
-#### 7. ownerp_validate.py (v1.0.0)
+#### 6. ownerp_validate.py (v1.0.0)
 - **Purpose**: Read-only validation of `docker2update.yaml` and
   `container2backup.yaml` against their declared schemas — no other script
   writes as much unattended config as these two, so a typo surfaces at `doval`
@@ -380,7 +378,7 @@ myodoo-docker/
 - **`update_docker_odoo.py --validate` and `container2backup.py --validate`**
   both delegate to it
 
-#### 8. ownerp_wizard.py (v1.1.0)
+#### 7. ownerp_wizard.py (v1.1.0)
 - **Purpose**: Guided editing of `docker2update.yaml` **and**
   `container2backup.yaml` — add an entry, or change one field of an existing
   one. `wiz` asks which file, `wizup`/`wizbk` go straight there
@@ -408,8 +406,6 @@ myodoo-docker/
 - **Its one write outside the YAML** is the empty build folder it offers to
   create — nothing is copied into it; populating a build folder belongs to
   `odoo_build_cache.py`
-- **`ownerp_tui.py` v1.1.0** reaches it with the `w` key and reloads the
-  container list afterwards
 - **The backup side (v1.1.0)**: `container2backup.yaml` had no editor at all
   before this. `safe_write()` picks the schema from the kind — validating a
   backup config against the update schema would reject every field it has and
@@ -427,12 +423,12 @@ myodoo-docker/
   less often cannot rot unnoticed. Duplicate names and a port's localhost bind
   address are handled there rather than in the prompts
 
-#### 9. ownerp_cron.py (v1.0.0)
+#### 8. ownerp_cron.py (v1.0.0)
 - **Purpose**: Overview and guided editing of `/etc/cron.d/myodoo-maintenance` —
   the backup, cert-renewal, DNS-guard and cleanup jobs an ownERP server runs
 - **Two consumers, one implementation**: `getScripts.py` prints `--brief` after
   the install summary (read-only and non-interactive, because `ups` also runs
-  unattended), `ownerp_tui.py` edits through this module's API (key `t`), so the
+  unattended), `ownerp_console.py` edits through this module's API, so the
   write path exists exactly once
 - **Write path mirrors `ownerp_wizard.py`**: timestamped backup → build in
   memory → temp file **in the same directory** → re-parse and validate that
@@ -452,7 +448,7 @@ myodoo-docker/
   `setup-maintenance-cron.sh` restores the repository schedule and discards the
   customisation — that is its job, and the tool says so before it writes
 
-#### 10. ownerp_migrate.py (v1.3.0)
+#### 9. ownerp_migrate.py (v1.3.0)
 - **Purpose**: One-way conversion of the legacy CSV configurations to YAML —
   `container2backup.csv` + `container2backup_path.csv` + `rsync_targets.csv` →
   `container2backup.yaml`, `docker2update.csv` → `docker2update.yaml`
@@ -494,12 +490,12 @@ myodoo-docker/
   production database is not backed up, which surfaces only when a restore is
   needed
 
-#### 11. ownerp_state.py (v1.0.0)
+#### 10. ownerp_state.py (v1.0.0)
 - **Purpose**: The whole server on one page — instances, backup ages,
   maintenance jobs, readiness checks. Started with `dostat`; stage 1 of the
   console design in `docs/superpowers/specs/2026-08-13-ownerp-console-design.md`
 - **Two consumers, one collector**: `dostat` is this file's own `main()`, and
-  the Textual console of stage 3 will be the second. It therefore carries **no
+  `ownerp_console.py` is the second. It therefore carries **no
   interface import** — a data layer that knew about its UI could not be tested
   without it, and `dostat` could not exist
 - **Every source is optional**, because a status tool is read on a broken
@@ -519,7 +515,7 @@ myodoo-docker/
 - **Exit code** `0` clean / `1` needs attention / `2` broken, plus `--json`, so
   cron and monitoring never parse the text
 
-#### 12. ownerp_console.py (v1.0.0)
+#### 11. ownerp_console.py (v1.0.0)
 - **Purpose**: The ownERP console — server state and configuration editing in
   a full-screen interface. Started with `konsole`; stage 3 (last) of
   `docs/superpowers/specs/2026-08-13-ownerp-console-design.md`
@@ -540,7 +536,7 @@ myodoo-docker/
   specs out of this file rather than duplicating them
 - **Textual pinned `>=8,<9`**: a widget API is not stable across majors
 
-#### 13. Login command overview (fish)
+#### 12. Login command overview (fish)
 - **`fish/functions/linux/ownerp-help.fish`** prints the dozen commands an
   operator actually needs; `help` is aliased to it
 - **Once per LOGIN shell**, not per interactive shell — `fastfetch` is four

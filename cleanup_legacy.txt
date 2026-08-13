@@ -1,5 +1,5 @@
 # Legacy Cleanup List for ownERP Server Environment
-# Version 1.0.0 | 28.01.2026
+# Version 1.1.0 | 13.08.2026
 #
 # This file contains paths relative to $HOME that should be removed
 # during getScripts.py execution. Lines starting with # are comments.
@@ -55,7 +55,15 @@ update_docker_myodoo.py
 # =============================================================================
 .selected_editor
 .wget-hsts
-restore-zip.sh
+
+# restore-zip.sh was listed here and must not be: copy_scripts() DELIVERS it,
+# and this cleanup runs afterwards on a fresh Fish installation — so the very
+# run that set up the server deleted its restore tool again. Same shape as the
+# CSV loss above: a list that deletes what the same run just produced.
+#
+# A script this project delivers and then withdraws belongs in
+# RETIRED_SCRIPTS in getScripts.py, which runs on every pass rather than only
+# on a fresh install.
 
 # =============================================================================
 # OLD LOG FILES (optional - uncomment if desired)

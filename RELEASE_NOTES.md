@@ -1,5 +1,40 @@
 # Release Notes
 
+## The TUI Is Withdrawn (13.08.2026)
+
+*scripts/ownerp_tui.py removed · getScripts.py v9.18.0 ·
+scripts/ownerp_cron.py v1.0.2 · fish/functions/linux/doup.fish v2.0.0 ·
+fish/conf.d/33-aliases-backup.fish v2.0.0 ·
+fish/functions/linux/ownerp-help.fish v1.4.0 · cleanup_legacy.txt v1.1.0*
+
+### Removed
+
+- **`ownerp_tui.py` and its `tui` alias.** `konsole` replaces it for the full-screen
+  version and `dostat` for the text one. The `.ownerp_tui_default` marker and the branch
+  in `doup` go with it — `doup` is a plain call to the runner again.
+
+### Fixed
+
+- **Withdrawing a delivered script did not reach existing servers.** Taking a name off
+  `copy_scripts()` stops it being delivered; it does not remove the copy already sitting in
+  `$HOME`. `cleanup_legacy.txt` does not close that gap either — it runs **only on a fresh
+  Fish installation**, so on every server that already had Fish, `ownerp_tui.py` would have
+  outlived its replacement indefinitely, with an alias that may still point at it.
+
+  `RETIRED_SCRIPTS` in getScripts.py removes withdrawn scripts on **every** pass, and logs
+  what replaced each one. Strictly limited to files this project delivered: a customer's own
+  file must never appear there. That distinction is the whole lesson of the CSV loss — a
+  deletion list that named the customer's configuration destroyed it during the upgrade
+  meant to convert it.
+
+- **`restore-zip.sh` was delivered and then deleted by the same run.** It appeared on the
+  `copy_scripts()` list *and* in `cleanup_legacy.txt`, and the cleanup runs afterwards — so
+  every fresh Fish installation set the server up and removed its restore tool again. Found
+  while adding the entry above, and it is the same shape as the CSV loss: a list that
+  deletes what the same run just produced. It is off the cleanup list, and
+  `tests/test_delivered_scripts.py` now fails if any delivered script is ever listed there
+  again.
+
 ## The ownERP Console (13.08.2026)
 
 *scripts/ownerp_console.py v1.0.0 (new) · getScripts.py v9.17.0 ·
