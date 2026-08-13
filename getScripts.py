@@ -136,8 +136,8 @@ if os.environ.get('GETSCRIPTS_DEBUG', '').lower() in ('1', 'true', 'yes'):
     logger.debug("Debug logging enabled")
 
 # Script version and date
-SCRIPT_VERSION = "9.13.0"
-SCRIPT_DATE = "12.08.2026"
+SCRIPT_VERSION = "9.14.0"
+SCRIPT_DATE = "13.08.2026"
 
 # ─────────────────────────────────────────────────────────────────────────────
 # Install report
@@ -3880,6 +3880,7 @@ def copy_scripts(_myhome: str, myodoo_docker: str) -> None:
         "ownerp_tui.py",
         "ownerp_validate.py",
         "ownerp_wizard.py",
+        "ownerp_cron.py",
         "cleanup-weblogs.py",
         "container2backup.py",
         "restore-zip.sh",
@@ -3928,6 +3929,31 @@ def print_readiness_report(_myhome: str) -> None:
         subprocess.run([sys.executable, script, "--brief"], timeout=120)
     except Exception as e:
         logger.warning(f"Readiness report could not be generated: {e}")
+
+
+def print_cron_overview(_myhome: str) -> None:
+    """Show the maintenance cron schedule and when each job last ran.
+
+    The jobs an ownERP server depends on — backup, cert renewal, DNS guard —
+    were invisible unless somebody opened /etc/cron.d/myodoo-maintenance. A job
+    that was never installed, or switched off months ago, looked exactly like a
+    job running nightly, so `ups` now says which it is.
+
+    Read-only and non-interactive by design: `ups` also runs unattended, from
+    scripts and from cron, where there is nothing to prompt on. Editing lives in
+    the TUI (`tui`, key c) and in `ownerp_cron.py` itself.
+    """
+    script = os.path.join(_myhome, "ownerp_cron.py")
+    if not os.path.exists(script):
+        logger.debug("ownerp_cron.py not present - skipping cron overview")
+        return
+
+    try:
+        # Streamed, not captured: the colour handling belongs to ownerp_cron.py,
+        # and a missing cron file is its message to deliver, not ours.
+        subprocess.run([sys.executable, script, "--brief"], timeout=60)
+    except Exception as e:
+        logger.warning(f"Cron overview could not be generated: {e}")
 
 # uv builds that cannot self-update (pip wheel, brew, apt, ...) refuse with
 # exit code 2 but the message text differs per build - match all known ones.
@@ -4174,6 +4200,9 @@ def main() -> None:
 
         # Visible install summary (surfaces failures that only hit the logger).
         print_install_report()
+
+        # Maintenance schedule: what runs when, and when it last ran.
+        print_cron_overview(_myhome)
 
         # Server readiness: what is installed vs. what this server still needs.
         print_readiness_report(_myhome)

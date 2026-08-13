@@ -1,5 +1,74 @@
 # Release Notes
 
+## One Customer's DNS Edit Took Ten Sites Down, and Nothing Saw It Coming (13.08.2026)
+
+*scripts/nginx-cert-guard.py v1.2.0 · scripts/server-readiness.py v1.4.0 ·
+scripts/ownerp_cron.py v1.0.0 (new) · scripts/ownerp_tui.py v1.2.0 ·
+getScripts.py v9.14.0 · fish/conf.d/33-aliases-backup.fish v1.4.0*
+
+### Fixed
+
+- **A guard built for exactly this scenario watched it happen and said nothing.**
+  A customer moved the A record of `assistedhome.de` to another provider. Ten vhosts
+  on the host still carried the pre-1.11.0 form `listen <hostname>:443`; nginx resolves
+  a listen hostname at config-parse time, got the new owner's IP, and refused to start
+  with `bind() to 94.130.186.22:443 failed (99: Cannot assign requested address)`. Every
+  site on the machine went down over one DNS edit somebody else made.
+
+  `nginx-cert-guard.py` was supposed to catch this. It checked whether a listen hostname
+  **resolved** — and this one resolved perfectly, just not to us. IP literals were skipped
+  outright, on the reasoning that "those always resolve"; they do, and it was never the
+  property that mattered. `unbindable_listen_target()` replaces the resolvability test with
+  a bindability test: every listen target, hostname or literal, must be an address this
+  machine actually holds. When `ip addr` cannot be read the check is skipped rather than
+  failed, because "unknown" must never be rendered as "nothing is bindable".
+
+- **The proactive check treated a total outage as a customer slowly drifting away.**
+  `--check` confirmed a departed domain over `GUARD_FAIL_THRESHOLD` (3) runs before acting
+  — right for a domain that merely appears in `server_name`, wrong for one in a `listen`
+  directive, where every day of confirmation is a day the whole host is one reload from
+  darkness. Listen-bound domains now act on the first failing run; everything else keeps
+  the confirmation counter.
+
+- **The mass-failure guard counted instead of measuring scope.** Both `--reconcile` and
+  `--check` escalated only above `GUARD_MAX_DISABLE` (5), so a three-vhost server whose own
+  IP had changed would slip under the limit and be emptied one file at a time. "All of them"
+  is now a mass failure regardless of the count, and when every candidate shares one cause
+  the alert names that cause instead of listing the same sentence ten times.
+
+### Added
+
+- **`server-readiness.py` checks that every `listen` target is bindable** (`nginx listen
+  targets`). This is the check that would have reported the outage days before the deploy
+  hit it. It imports the guard rather than re-implementing the rule — two copies of
+  "what can nginx bind" would disagree exactly when it counts — and reports SKIP with a
+  pointer to `ups` when the guard is absent or predates v1.2.0.
+
+- **`ownerp_cron.py` (new): the maintenance cron is visible and editable.** The jobs an
+  ownERP server depends on — backup, cert renewal, DNS guard, log cleanup — were invisible
+  unless somebody opened `/etc/cron.d/myodoo-maintenance`, and a job never installed looked
+  exactly like a job running nightly.
+  - `ups` now prints the schedule after the install summary: job, when it runs, when it
+    last ran. Read-only and non-interactive, because `ups` also runs unattended.
+  - `tui` key `t` reschedules jobs and switches them on and off. Same write discipline as
+    `ownerp_wizard.py`: timestamped backup → temp file in the same directory → re-parse and
+    validate → `os.replace()`, with mode 0644 set before the rename (cron silently ignores
+    a group-writable `cron.d` file). Only the named job's line is rewritten; a regression
+    check refuses the write if anything else moved, and the template's column alignment on
+    untouched lines survives.
+  - Range validation is strict on purpose: cron accepts `0 25 * * *` at write time and then
+    simply never fires it.
+  - A job switched off keeps its line behind `#OWNERP-DISABLED#` rather than being deleted,
+    so the schedule is there for whoever switches it back on.
+  - An edit stamps the file, and `server-readiness.py` reads that stamp — a deliberate
+    schedule change reports as "customised locally" instead of nagging as drift forever.
+    Re-running `setup-maintenance-cron.sh` still restores the repository schedule.
+  - New alias `docron` for the report on its own.
+
+**Companion release:** `nginx-set-conf` v1.18.0 stops blaming the base configs for
+environmental faults. Its pre-flight had been aborting the very redeploy that rewrites
+hostname-bound listens into IP-bound ones — the repair for this outage.
+
 ## A PostgreSQL Healthcheck That Stops Writing FATAL Every Ten Seconds (12.08.2026)
 
 *scripts/pg-local-deploy.sh v1.2.2 · semaphore playbooks/odoo/pg/pb_pg_docker_start.yaml*

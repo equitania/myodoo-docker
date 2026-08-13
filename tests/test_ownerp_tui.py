@@ -347,5 +347,23 @@ class ReloadAfterWizardTest(unittest.TestCase):
         self.assertTrue(containers)
 
 
+class CronScreenTest(unittest.TestCase):
+    """The 't' screen is the one place this TUI writes outside its own run."""
+
+    def test_a_missing_ownerp_cron_reports_instead_of_crashing(self):
+        # Returns before touching stdscr, so None is a safe stand-in: an
+        # operator on a server that has not been updated yet must get a
+        # sentence, not a traceback over their container list.
+        original = tui.ownerp_cron
+        tui.ownerp_cron = None
+        self.addCleanup(lambda: setattr(tui, "ownerp_cron", original))
+        self.assertIn("ups", tui.cron_screen(None))
+
+    def test_the_cron_key_is_advertised_in_the_help(self):
+        joined = " ".join(tui.HELP_LINES)
+        self.assertIn("maintenance cron", joined)
+        self.assertIn("/etc/cron.d/myodoo-maintenance", joined)
+
+
 if __name__ == "__main__":
     unittest.main()

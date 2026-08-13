@@ -166,6 +166,10 @@ doval  # ~/ownerp_validate.py — exit 0 = no errors, 1 = at least one error,
 # Add an instance or change a field, guided (the only writing tool here)
 wiz    # ~/ownerp_wizard.py — validates before it replaces anything; refuses
        # without a terminal; never removes an entry
+
+# Maintenance cron: what runs when, and when it last ran
+docron # ~/ownerp_cron.py — bare call only reports; editing via `tui` key t or
+       # --set/--schedule, --enable, --disable
 ```
 
 ### Docker Management Aliases
@@ -405,6 +409,31 @@ myodoo-docker/
   `odoo_build_cache.py`
 - **`ownerp_tui.py` v1.1.0** reaches it with the `w` key and reloads the
   container list afterwards
+
+#### 9. ownerp_cron.py (v1.0.0)
+- **Purpose**: Overview and guided editing of `/etc/cron.d/myodoo-maintenance` —
+  the backup, cert-renewal, DNS-guard and cleanup jobs an ownERP server runs
+- **Two consumers, one implementation**: `getScripts.py` prints `--brief` after
+  the install summary (read-only and non-interactive, because `ups` also runs
+  unattended), `ownerp_tui.py` edits through this module's API (key `t`), so the
+  write path exists exactly once
+- **Write path mirrors `ownerp_wizard.py`**: timestamped backup → build in
+  memory → temp file **in the same directory** → re-parse and validate that
+  file → `os.replace()`. Mode 0644 is set **before** the rename: cron silently
+  ignores a group- or world-writable `cron.d` file
+- **Only the named job's line is rewritten** — `_regression()` refuses the write
+  if any other job would move, and untouched lines keep the template's column
+  alignment byte for byte
+- **Range validation is strict**: cron accepts `0 25 * * *` and then never fires
+  it, so a field-count check alone would pass exactly the mistake this tool exists
+  to prevent
+- **A job switched off keeps its line** behind `#OWNERP-DISABLED#` rather than
+  being deleted — the schedule survives for whoever switches it back on
+- **Local edits are marked, not hidden**: an edit stamps `# ownerp-cron-edit:`
+  into the header and `server-readiness.py` reads it, so a deliberate schedule
+  change reports as "customised locally" instead of as drift. Re-running
+  `setup-maintenance-cron.sh` restores the repository schedule and discards the
+  customisation — that is its job, and the tool says so before it writes
 
 ### Development Patterns
 

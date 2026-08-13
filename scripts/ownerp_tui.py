@@ -52,6 +52,15 @@ try:
 except ImportError:          # pragma: no cover - a server always has it
     runner = None
 
+# The maintenance-cron model and its write path. Editing goes through this
+# module rather than through a second implementation here: there is exactly one
+# way this TUI is allowed to touch /etc/cron.d/myodoo-maintenance, and it is
+# the one that backs up, validates and refuses on regression.
+try:
+    import ownerp_cron
+except ImportError:          # pragma: no cover - delivered alongside this file
+    ownerp_cron = None
+
 RUNNER_SCRIPT = join(expanduser("~"), "update_docker_odoo.py")
 # A full path like the runner above: run_outside_curses() prefixes only
 # sys.executable, so a bare name would be resolved against the working
@@ -64,8 +73,8 @@ MIN_SIZE = (80, 20)
 
 TUI_DEFAULT_MARKER = join(expanduser("~"), ".ownerp_tui_default")
 
-SCRIPT_VERSION = "1.1.0"
-SCRIPT_DATE = "12.08.2026"
+SCRIPT_VERSION = "1.2.0"
+SCRIPT_DATE = "13.08.2026"
 
 # The update modes, in the order the 'm' key rotates them.
 MODES = ("M", "F", "N")
@@ -286,6 +295,7 @@ HELP_LINES = [
     "  c           run comment     Enter   start the selected systems",
     "  v           validate the configuration",
     "  w           add an instance or change a field (ownerp_wizard.py)",
+    "  t           maintenance cron: reschedule, switch jobs on and off",
     "  d           use the TUI as the default for `doup` on this server",
     "  q / Esc     quit",
     "",
@@ -295,6 +305,10 @@ HELP_LINES = [
     "  Nothing here is ever written to docker2update.yaml. The ticks and modes",
     "  are read from `active:` and `type:` as a starting point, and changing",
     "  them applies to this run only.",
+    "",
+    "  The 't' screen is the exception: it DOES write, to",
+    "  /etc/cron.d/myodoo-maintenance, with a backup before every change.",
+    "  Re-running setup-maintenance-cron.sh restores the repository schedule.",
 ]
 
 
@@ -328,7 +342,7 @@ def draw(stdscr, selection, latest, message=""):
         stdscr.addnstr(height - 2, 0, f" {message}"[:width - 1], width - 1,
                        curses.A_BOLD)
     footer = (" Space select   m mode   c comment   Enter start   "
-              "v validate   w edit   ? help   q quit")
+              "v validate   w edit   t cron   ? help   q quit")
     stdscr.addnstr(height - 1, 0, footer.ljust(width - 1), width - 1,
                    curses.A_REVERSE)
     stdscr.refresh()
@@ -373,6 +387,108 @@ def show_block(stdscr, lines):
     stdscr.addnstr(height - 2, 2, "Press any key.", width - 3, curses.A_BOLD)
     stdscr.refresh()
     stdscr.getch()
+
+
+def cron_screen(stdscr):
+    """Sub-screen for /etc/cron.d/myodoo-maintenance: reschedule and switch off.
+
+    Its own loop rather than more keys on the main screen: the main list is
+    about Odoo containers, and mixing a second object's keys into it is how a
+    key like 'space' comes to mean two things. Returns a status line for the
+    caller to display.
+
+    Every write goes through ownerp_cron, which backs up, validates and refuses
+    to touch a job the operator did not name. This screen therefore has no
+    error handling of its own beyond showing what came back — a rejected write
+    already left the file untouched by the time the message arrives.
+    """
+    if ownerp_cron is None:
+        return "ownerp_cron.py not installed - run ups."
+    try:
+        cron = ownerp_cron.load()
+    except ownerp_cron.CronError as exc:
+        return str(exc)
+    if not cron.jobs:
+        return "No cron jobs configured - run setup-maintenance-cron.sh."
+
+    cursor = 0
+    message = ""
+    while True:
+        stdscr.erase()
+        height, width = stdscr.getmaxyx()
+        stdscr.addnstr(0, 0, " Maintenance cron".ljust(width - 1), width - 1,
+                       curses.A_REVERSE)
+        header_right = f"{cron.path} "
+        if len(header_right) < width - 20:
+            stdscr.addnstr(0, width - 1 - len(header_right), header_right,
+                           len(header_right), curses.A_REVERSE)
+
+        name_width = max(len(job.job_id) for job in cron.jobs)
+        for offset, job in enumerate(cron.jobs[:max(1, height - 4)]):
+            mark = "x" if job.active else " "
+            line = (f" [{mark}] {job.job_id:<{name_width}}  "
+                    f"{ownerp_cron.humanise(job.schedule):<16.16} "
+                    f"{job.schedule:<12.12} {ownerp_cron.describe(job)}")
+            attr = curses.A_BOLD if offset == cursor else curses.A_NORMAL
+            stdscr.addnstr(2 + offset, 0, line.ljust(width - 1), width - 1, attr)
+
+        if message:
+            stdscr.addnstr(height - 2, 0, f" {message}"[:width - 1], width - 1,
+                           curses.A_BOLD)
+        footer = (" Space on/off   Enter reschedule   "
+                  "r raw schedule   q back")
+        stdscr.addnstr(height - 1, 0, footer.ljust(width - 1), width - 1,
+                       curses.A_REVERSE)
+        stdscr.refresh()
+
+        message = ""
+        key = stdscr.getch()
+        if key in (ord("q"), 27):
+            return ""
+        if key == curses.KEY_RESIZE:
+            continue
+        if key in (curses.KEY_UP, ord("k")):
+            cursor = max(0, cursor - 1)
+            continue
+        if key in (curses.KEY_DOWN, ord("j")):
+            cursor = min(len(cron.jobs) - 1, cursor + 1)
+            continue
+
+        job = cron.jobs[cursor]
+        try:
+            if key == ord(" "):
+                changed, backup = ownerp_cron.set_active(
+                    cron, job.job_id, not job.active)
+                message = (f"{changed.job_id} "
+                           f"{'enabled' if changed.active else 'switched off'} "
+                           f"- backup {os.path.basename(backup)}")
+            elif key in (curses.KEY_ENTER, 10, 13, ord("r")):
+                answer = prompt(stdscr,
+                                f"New schedule for {job.job_id} "
+                                f"(min hour dom mon dow):", job.schedule)
+                if answer is None or answer == job.schedule:
+                    message = "Unchanged."
+                else:
+                    changed, backup = ownerp_cron.set_schedule(
+                        cron, job.job_id, answer)
+                    message = (f"{changed.job_id} now runs "
+                               f"{ownerp_cron.humanise(changed.schedule)} "
+                               f"- backup {os.path.basename(backup)}")
+            else:
+                continue
+        except ownerp_cron.CronError as exc:
+            message = str(exc)
+        except OSError as exc:
+            message = f"cannot write {cron.path}: {exc}"
+
+        # Re-read after every attempt, successful or not. The in-memory model
+        # was mutated before the write was validated, so keeping it would show
+        # a schedule the file does not have.
+        try:
+            cron = ownerp_cron.load()
+        except ownerp_cron.CronError as exc:
+            return str(exc)
+        cursor = min(cursor, len(cron.jobs) - 1)
 
 
 def run_outside_curses(stdscr, invocations):
@@ -449,6 +565,8 @@ def loop(stdscr, selection, latest, config=None):
             set_tui_default(not tui_is_default())
             message = ("`doup` now starts the TUI." if tui_is_default()
                        else "`doup` now starts the runner directly.")
+        elif key == ord("t"):
+            message = cron_screen(stdscr)
         elif key in (ord("?"), ord("h")):
             show_block(stdscr, HELP_LINES)
         elif key == ord("v"):

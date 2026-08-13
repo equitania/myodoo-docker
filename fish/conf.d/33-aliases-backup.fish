@@ -1,5 +1,5 @@
 # Backup and Update Aliases
-# Version 1.3.0 | 12.08.2026
+# Version 1.4.0 | 13.08.2026
 
 # Backup operations
 alias dobk='$HOME/container2backup.py'
@@ -17,3 +17,7 @@ alias doval='$HOME/ownerp_validate.py'
 # The only tool here that writes to the configuration - it validates first,
 # refuses without a terminal, and never removes an entry.
 alias wiz='$HOME/ownerp_wizard.py'
+
+# Maintenance cron: what runs when, and when it last ran. Bare `docron` only
+# reports; editing goes through the TUI (key c) or --set/--enable/--disable.
+alias docron='$HOME/ownerp_cron.py'

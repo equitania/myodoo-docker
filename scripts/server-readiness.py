@@ -52,6 +52,7 @@
 ###############################################################################
 
 import argparse
+import importlib.util
 import os
 import re
 import shutil
@@ -62,12 +63,19 @@ from dataclasses import dataclass
 from enum import Enum
 from typing import Callable, List, Optional, Tuple
 
-SCRIPT_VERSION = "1.3.0"
-SCRIPT_DATE = "04.08.2026"
+SCRIPT_VERSION = "1.4.0"
+SCRIPT_DATE = "13.08.2026"
+
+# Where nginx keeps its customer vhosts (mirrors nginx-cert-guard.py).
+NGINX_CONF_D = "etc/nginx/conf.d"
 
 # Installed locations managed by setup-maintenance-cron.sh.
 CRON_DEST = "etc/cron.d/myodoo-maintenance"
 LOGROTATE_DEST = "etc/logrotate.d/myodoo-maintenance"
+
+# Written into the cron file by ownerp_cron.py when an operator edits it. Must
+# mirror ownerp_cron.EDIT_MARKER.
+CRON_EDIT_MARKER = "# ownerp-cron-edit:"
 
 # Templates delivered to $HOME by getScripts.py; they are the reference state.
 CRON_TEMPLATE = "myodoo-maintenance.cron"
@@ -87,6 +95,7 @@ DELIVERED_SCRIPTS = (
     "setup-maintenance-cron.sh",
     "server-readiness.py",
     "odoo_build_cache.py",
+    "ownerp_cron.py",
 )
 
 # Job names that must run from /etc/cron.d/myodoo-maintenance and nowhere else.
@@ -221,6 +230,16 @@ def _cron_command_lines(text: str) -> List[str]:
     return lines
 
 
+def _disabled_cron_lines(text: str) -> List[str]:
+    """Jobs switched off through ownerp_cron.py.
+
+    They keep their line behind an explicit marker rather than being deleted,
+    so the schedule survives for whoever switches them back on.
+    """
+    prefix = "#OWNERP-DISABLED#"
+    return [l.strip() for l in text.splitlines() if l.strip().startswith(prefix)]
+
+
 def _normalise_cron_line(line: str) -> str:
     """Collapse whitespace and reduce script paths to their basename.
 
@@ -271,9 +290,12 @@ def check_maintenance_cron_present(ctx: HealthContext) -> Finding:
     shown = "/" + CRON_DEST
     path = ctx.p(CRON_DEST)
     if os.path.isfile(path):
-        jobs = len(_cron_command_lines(_read(path) or ""))
+        text = _read(path) or ""
+        jobs = len(_cron_command_lines(text))
+        off = len(_disabled_cron_lines(text))
+        suffix = f", {off} switched off" if off else ""
         return _ok("maintenance_cron_present", "Maintenance cron",
-                   f"{shown} active ({jobs} jobs)")
+                   f"{shown} active ({jobs} jobs{suffix})")
     return Finding(
         "maintenance_cron_present", Severity.FAIL, "Maintenance cron",
         f"{shown} missing — backup, cert renewal and log cleanup are not scheduled",
@@ -304,6 +326,17 @@ def check_maintenance_cron_current(ctx: HealthContext) -> Finding:
 
     missing = len(template_jobs - installed_jobs)
     extra = len(installed_jobs - template_jobs)
+
+    # A difference the operator made on purpose is not drift. ownerp_cron.py
+    # stamps the file when it edits it, which is the whole reason that marker
+    # exists — without it, every deliberate schedule change would nag forever
+    # and the report would train people to ignore it.
+    if CRON_EDIT_MARKER in installed:
+        off = len(_disabled_cron_lines(installed))
+        detail = f"customised locally ({missing} rescheduled or switched off"
+        detail += f", {off} off)" if off else ")"
+        return _ok("maintenance_cron_current", "Cron up to date", detail)
+
     return Finding(
         "maintenance_cron_current", Severity.WARN, "Cron up to date",
         f"schedule differs from the template ({missing} missing, {extra} extra)",
@@ -587,6 +620,88 @@ def check_nginx_unit_dropin(ctx: HealthContext) -> Finding:
     )
 
 
+def _load_cert_guard(ctx: HealthContext):
+    """Import nginx-cert-guard.py by path (its filename carries hyphens).
+
+    The readiness report deliberately does not re-implement the bindability
+    rule. The guard is the authority on what nginx can bind, and a second copy
+    of that rule here would drift from it exactly when it matters — the whole
+    point of this check is to agree with the tool that acts on the answer.
+
+    Returns the module, or None when it is absent or unimportable.
+    """
+    path = os.path.join(ctx.home, "nginx-cert-guard.py")
+    if not os.path.isfile(path):
+        return None
+    try:
+        spec = importlib.util.spec_from_file_location("nginx_cert_guard", path)
+        module = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(module)
+        return module
+    except Exception:  # a broken guard is reported by check_script_versions
+        return None
+
+
+def check_nginx_listen_targets(ctx: HealthContext) -> Finding:
+    """Every `listen` target must be an address this host can actually bind().
+
+    This is the check that was missing on 13.08.2026. A customer repointed one
+    A record; the hostname in that vhost's `listen` directives began resolving
+    to somebody else's server; nginx refused to start at all, because bind()
+    cannot claim an address the machine does not own. Ten sites went dark over
+    one DNS edit, and nothing said a word until the next deploy failed.
+
+    Reported as FAIL rather than WARN even while nginx is still serving: the
+    running process holds sockets it could no longer acquire, so the outage is
+    already decided and merely deferred to the next reload.
+    """
+    conf_dir = ctx.p(NGINX_CONF_D)
+    if not shutil.which("nginx") or not os.path.isdir(conf_dir):
+        return _skip("nginx_listen_targets", "nginx listen targets",
+                     "nginx not installed")
+
+    guard = _load_cert_guard(ctx)
+    if guard is None:
+        return _skip("nginx_listen_targets", "nginx listen targets",
+                     f"{ctx.home}/nginx-cert-guard.py not installed — run ups")
+    if not hasattr(guard, "unbindable_listen_target"):
+        return Finding(
+            "nginx_listen_targets", Severity.WARN, "nginx listen targets",
+            "installed nginx-cert-guard.py predates v1.2.0 and cannot check "
+            "bindability — a customer DNS change can still take the host down",
+            "ups   # update the ownERP scripts",
+        )
+
+    vhosts = guard.active_vhosts(conf_dir)
+    if not vhosts:
+        return _skip("nginx_listen_targets", "nginx listen targets",
+                     "no vhosts configured")
+
+    local_ips = guard.local_bound_ips()
+    if not local_ips:
+        return _skip("nginx_listen_targets", "nginx listen targets",
+                     "could not determine this host's addresses")
+
+    broken = []
+    for vhost in vhosts:
+        found = guard.unbindable_listen_target(vhost, local_ips)
+        if found:
+            broken.append(f"{vhost.name}: {found[1]}")
+
+    if not broken:
+        return _ok("nginx_listen_targets", "nginx listen targets",
+                   f"all {len(vhosts)} vhosts bind an address of this host")
+
+    shown = "; ".join(broken[:3])
+    if len(broken) > 3:
+        shown += f" (+{len(broken) - 3} more)"
+    return Finding(
+        "nginx_listen_targets", Severity.FAIL, "nginx listen targets",
+        f"{len(broken)} of {len(vhosts)} vhosts cannot bind — {shown}",
+        f"{ctx.home}/nginx-cert-guard.py --check --apply",
+    )
+
+
 def check_certbot_timer_window(ctx: HealthContext) -> Finding:
     """The distro certbot.timer fires inside the 06:00-07:00 apt window, where a
     renewal can collide with a package upgrade. bootstrap.sh pins it to 03:00."""
@@ -688,6 +803,7 @@ CHECKS: Tuple[Callable[[HealthContext], Finding], ...] = (
     check_backup_config,
     check_docker_storage_driver,
     check_nginx_unit_dropin,
+    check_nginx_listen_targets,
     check_certbot_timer_window,
     check_script_versions,
     check_backup_disk_space,
