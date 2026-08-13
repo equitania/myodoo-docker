@@ -1,5 +1,43 @@
 # Release Notes
 
+## A Backup Header That Talks About Backups (13.08.2026)
+
+*scripts/ownerp_migrate.py v1.3.0 ·
+docs/superpowers/specs/2026-08-13-ownerp-console-design.md (new)*
+
+### Fixed
+
+- **The reconstructed `container2backup.yaml` opened with the update program's questions.**
+  `reconstruct_from_docker()` collected one flat list of review points and handed the same list
+  to both renderers, so a backup configuration was topped with notes about `type`, `delay_time`,
+  `translate`, `odoo_version`, port 8072 and the build folder — six things a backup configuration
+  does not have. The update file meanwhile carried `retention_days`, which only the backup one
+  has. On the ucore stack both files listed the same seven points; they now list three and two,
+  with no overlap.
+
+  Each point now declares which file it concerns at the moment it is raised (`update`, `backup`
+  or `both`) and `_provenance()` filters on it. Collection is unchanged — only delivery. The
+  per-file count changed with it: a header stating seven points while listing three sends the
+  reader hunting for four that were never printed.
+
+- **An instance whose database could not be identified was left out of the backup configuration
+  silently.** A backup entry needs a database name, and without one no row was written — but
+  nothing said so. The generated file looked complete while one production database was not
+  backed up at all. That is worse than any header defect: a missing update entry means nobody
+  updates the instance, a missing backup entry means nobody notices until a restore is needed.
+  Every instance that does not make it into the file is now named in the backup header and in
+  the `--dry-run` output, in those words.
+
+### Added
+
+- **`docs/superpowers/specs/2026-08-13-ownerp-console-design.md`** — the design for the ownERP
+  console that replaces `ownerp_tui.py`. The TUI was built as a front end for `doup` and answers
+  a question operators do not ask; what they need is server state and a way to change
+  configuration without hand-editing YAML. The console shows state and edits configuration, and
+  deliberately starts nothing: no updates, no backups, no container operations. Four stages, each
+  leaving something usable behind — this release is stage 0. The superseded design is marked as
+  such rather than deleted.
+
 ## Getting the Deleted Configuration Back, and a Login That Says What to Type (13.08.2026)
 
 *scripts/ownerp_migrate.py v1.1.0 · scripts/server-readiness.py v1.4.1 ·

@@ -269,6 +269,19 @@ class ReconstructFixture(MigrateFixture):
         super().setUp()
         self.stub(_stack(), {"live-db": ["live_db"]})
 
+    def header(self, name):
+        """The comment block a generated file opens with.
+
+        _provenance() emits comment lines and then a blank one, so the first
+        non-comment line ends the header.
+        """
+        lines = []
+        for line in self.read(name).splitlines():
+            if not line.startswith("#"):
+                break
+            lines.append(line)
+        return "\n".join(lines)
+
     def stub(self, containers, databases, version=None):
         original_inspect = om.inspect_containers
         original_databases = om.databases_in
@@ -486,9 +499,105 @@ class UcoreReconstructionTest(ReconstructFixture):
 
     def test_fastreport_containers_are_mentioned_not_guessed(self):
         results = om.reconstruct_from_docker(self.home)
-        review = " ".join(results[0].review)
-        self.assertIn("fr-live", review)
-        self.assertIn("fast_report", review)
+        notes = [n for n in results[0].review if "fr-live" in n.text]
+        self.assertEqual(len(notes), 1)
+        self.assertIn("fast_report", notes[0].text)
+        # It is a per-database block — the update file has no such key.
+        self.assertEqual(notes[0].target, om.BACKUP_ONLY)
+
+
+@unittest.skipUnless(HAVE_YAML, "the routing is only observable once it parses")
+class ReviewRoutingTest(ReconstructFixture):
+    """Which review note reaches which file.
+
+    The defect: reconstruct_from_docker() handed one flat list to both
+    renderers, so a reconstructed container2backup.yaml opened with notes about
+    `type`, `delay_time`, `translate`, `odoo_version`, port 8072 and the build
+    folder — six things a backup configuration does not have. Meanwhile the
+    update file carried `retention_days`, which only the backup one has.
+
+    live resolves and test does not: that asymmetry exercises the routing and
+    the missing-entry note below in the same fixture.
+    """
+
+    def setUp(self):
+        MigrateFixture.setUp(self)
+        self.stub(_ucore_stack(), {"live-db": ["live_db"]}, version="16")
+
+    def test_update_only_fields_stay_out_of_the_backup_header(self):
+        om.reconstruct_from_docker(self.home)
+        head = self.header(om.BACKUP_YAML)
+        for term in ("delay_time", "translate", "odoo_version",
+                     "8072", "dockerfile_path"):
+            self.assertNotIn(term, head,
+                             f"{term} has no meaning in a backup configuration")
+
+    def test_the_operator_choices_are_named_in_the_update_header(self):
+        om.reconstruct_from_docker(self.home)
+        self.assertIn("delay_time", self.header(om.UPDATE_YAML))
+
+    def test_retention_days_stays_out_of_the_update_header(self):
+        om.reconstruct_from_docker(self.home)
+        self.assertNotIn("retention_days", self.header(om.UPDATE_YAML))
+
+    def test_retention_days_is_named_in_the_backup_header(self):
+        om.reconstruct_from_docker(self.home)
+        self.assertIn("retention_days", self.header(om.BACKUP_YAML))
+
+    def test_fastreport_belongs_to_the_backup_file_only(self):
+        """fast_report is a per-database block; the update file has no such key."""
+        om.reconstruct_from_docker(self.home)
+        self.assertIn("fr-live", self.header(om.BACKUP_YAML))
+        self.assertNotIn("fr-live", self.header(om.UPDATE_YAML))
+
+    def test_a_shared_point_reaches_both_headers(self):
+        """test-odoo's database could not be listed — that concerns both files."""
+        om.reconstruct_from_docker(self.home)
+        self.assertIn("could not list databases",
+                      self.header(om.UPDATE_YAML))
+        self.assertIn("could not list databases",
+                      self.header(om.BACKUP_YAML))
+
+    def test_each_file_counts_only_the_points_that_concern_it(self):
+        """A count that includes another file's points sends the reader hunting."""
+        results = {r.name: r for r in om.reconstruct_from_docker(self.home)}
+        for kind, name in (("update", om.UPDATE_YAML), ("backup", om.BACKUP_YAML)):
+            stated = int(results[kind].detail.split(" point(s)")[0].split("· ")[-1])
+            self.assertEqual(stated, self.header(name).count("\n#   * "),
+                             f"the {kind} file states a count it does not list")
+
+
+@unittest.skipUnless(HAVE_YAML, "the omission is only visible in the parsed file")
+class SilentlyMissingBackupTest(ReconstructFixture):
+    """An instance whose database did not resolve gets no backup entry at all.
+
+    reconstruct() appends a backup row only when the database name resolved.
+    When it did not, that instance was absent from container2backup.yaml and
+    nothing said so — the file looked complete while one production database
+    was not backed up. A misplaced header line is cosmetic; this loses data.
+    """
+
+    def setUp(self):
+        MigrateFixture.setUp(self)
+        self.stub(_ucore_stack(), {"live-db": ["live_db"]}, version="16")
+
+    def test_only_the_resolved_database_is_in_the_file(self):
+        om.reconstruct_from_docker(self.home)
+        data = yaml.safe_load(self.read(om.BACKUP_YAML))
+        self.assertEqual([d["name"] for d in data["databases"]], ["live_db"])
+
+    def test_the_absent_instance_is_named_in_the_backup_header(self):
+        om.reconstruct_from_docker(self.home)
+        head = self.header(om.BACKUP_YAML)
+        self.assertIn("test-odoo", head)
+        self.assertIn("not backed up", head.lower())
+
+    def test_the_omission_is_reported_to_a_dry_run_too(self):
+        """--dry-run writes no file, so the Result must carry the warning."""
+        results = om.reconstruct_from_docker(self.home, dry_run=True)
+        notes = " ".join(n.text for n in results[0].review)
+        self.assertIn("test-odoo", notes)
+        self.assertIn("not backed up", notes.lower())
 
 
 class DockerParsingTest(unittest.TestCase):

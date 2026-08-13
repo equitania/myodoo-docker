@@ -435,7 +435,7 @@ myodoo-docker/
   `setup-maintenance-cron.sh` restores the repository schedule and discards the
   customisation — that is its job, and the tool says so before it writes
 
-#### 10. ownerp_migrate.py (v1.0.0)
+#### 10. ownerp_migrate.py (v1.3.0)
 - **Purpose**: One-way conversion of the legacy CSV configurations to YAML —
   `container2backup.csv` + `container2backup_path.csv` + `rsync_targets.csv` →
   `container2backup.yaml`, `docker2update.csv` → `docker2update.yaml`
@@ -465,6 +465,17 @@ myodoo-docker/
   an entry in the `REVIEW BEFORE USE` block at the top of the file — a guess
   that looks like a fact would update the wrong database. **Opt-in only**;
   never runs from `ups`
+- **Each review point knows which file it concerns** (v1.3.0). `type`,
+  `delay_time`, `odoo_version` and the build folder do not exist in a backup
+  configuration; `retention_days` does not exist in an update one. A `ReviewNote`
+  carries `update`, `backup` or `both`, `_provenance()` filters on it, and the
+  per-file count follows — a header stating seven points while listing three
+  sends the reader hunting for four that were never printed
+- **An instance missing from the backup file is named, not omitted quietly**
+  (v1.3.0). A backup entry needs a database name; without one no row is written.
+  Saying so is the point — the file otherwise looks complete while one
+  production database is not backed up, which surfaces only when a restore is
+  needed
 
 #### 11. Login command overview (fish)
 - **`fish/functions/linux/ownerp-help.fish`** prints the dozen commands an

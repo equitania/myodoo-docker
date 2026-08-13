@@ -1,6 +1,15 @@
 # TUI Update Runner — Design
 
-*11.08.2026 · building block 1 of 3 · status: implemented*
+*11.08.2026 · building block 1 of 3 · status: superseded by
+`2026-08-13-ownerp-console-design.md`*
+
+> **Superseded 13.08.2026.** What was built here works, and it answers a
+> question operators do not ask: which containers to update. `doup -s live` had
+> always done that. What they need is server state and a way to change
+> configuration without editing YAML by hand — a different tool, not a better
+> version of this one. The successor keeps this design's one genuinely load-
+> bearing decision: the UI writes nothing itself and delegates every change to a
+> validated write path.
 
 Written in English like the rest of the repository's documentation. The
 conversation that produced it was German; the artefact follows the repo rule.

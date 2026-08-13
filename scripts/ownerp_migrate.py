@@ -3,7 +3,7 @@
 # ==============================================================================
 # Title:            ownerp_migrate.py
 # Description:      Convert the legacy CSV configurations to YAML, once, safely.
-# Version:          1.2.0
+# Version:          1.3.0
 # Date:             13.08.2026
 # Author:           Equitania Software GmbH
 # ==============================================================================
@@ -81,9 +81,9 @@ import subprocess
 import sys
 import time
 from dataclasses import dataclass, field
-from typing import List, Optional, Tuple
+from typing import List, NamedTuple, Optional, Tuple
 
-SCRIPT_VERSION = "1.2.0"
+SCRIPT_VERSION = "1.3.0"
 SCRIPT_DATE = "13.08.2026"
 
 BACKUP_CSV = "container2backup.csv"
@@ -121,6 +121,28 @@ class Row:
     active: bool = True
 
 
+# Which generated file a review point actually concerns. A reconstruction
+# raises points about both files at once, and they are not interchangeable:
+# `delay_time` and `odoo_version` do not exist in a backup configuration, and
+# `retention_days` does not exist in an update one. A header listing the other
+# file's open questions sends the reader looking for keys that are not there,
+# and trains them to skip the block that matters.
+UPDATE_ONLY = "update"
+BACKUP_ONLY = "backup"
+BOTH = "both"
+
+
+class ReviewNote(NamedTuple):
+    """A point needing a human, and the file it belongs in front of."""
+
+    target: str
+    text: str
+
+    def concerns(self, kind: Optional[str]) -> bool:
+        """True when this note belongs in `kind`'s header (None = every note)."""
+        return kind is None or self.target in (kind, BOTH)
+
+
 @dataclass
 class Result:
     """What happened to one config, for the summary and the exit code."""
@@ -134,7 +156,7 @@ class Result:
     # into the file header, because --dry-run writes no file — reporting "15
     # point(s) need review" while withholding the fifteen points is useless
     # exactly when the operator is deciding whether to run it for real.
-    review: List[str] = field(default_factory=list)
+    review: List["ReviewNote"] = field(default_factory=list)
 
 
 # ==============================================================================
@@ -223,14 +245,22 @@ def _int_or_none(value) -> Optional[int]:
         return None
 
 
-def _provenance(source_files: List[str], review: Optional[List[str]] = None) -> List[str]:
+def _provenance(source_files: List[str],
+                review: Optional[List[ReviewNote]] = None,
+                kind: Optional[str] = None) -> List[str]:
     """Header saying where this file came from, and what still needs a human.
 
     The REVIEW block is not decoration. A reconstruction from the running
     Docker state recovers most fields exactly and cannot recover a few at all;
     writing a plausible default without saying so would produce a file that
     looks authoritative and quietly updates the wrong database.
+
+    `kind` selects which points belong here — see ReviewNote. Passing None
+    keeps every point, which is what the on-screen summary wants.
     """
+    if review is not None:
+        review = [note for note in review if note.concerns(kind)]
+
     if review is None:
         lines = [
             "# Converted from the legacy CSV configuration by ownerp_migrate.py "
@@ -248,14 +278,22 @@ def _provenance(source_files: List[str], review: Optional[List[str]] = None) -> 
         f"# on {time.strftime('%d.%m.%Y %H:%M')} — the CSV configuration was "
         f"already gone.",
         "#",
-        f"# REVIEW BEFORE USE. Every value below was read from `docker inspect`",
-        f"# except the {len(review)} point(s) listed here:",
     ]
+    if not review:
+        # Filtering can empty the block for one file while the other still has
+        # points. Announcing "0 point(s)" over an empty list reads like a bug.
+        lines.append("# Every value below was read from `docker inspect`.")
+        lines.append("#")
+        return lines
+
+    lines.append("# REVIEW BEFORE USE. Every value below was read from "
+                 "`docker inspect`")
+    lines.append(f"# except the {len(review)} point(s) listed here:")
     for note in review:
-        lines.append(f"#   * {note}")
+        lines.append(f"#   * {note.text}")
     # Only when there is actually one to find. A standing warning about
     # placeholders on a file that has none trains the reader to skip the block.
-    if any(PLACEHOLDER in note for note in review):
+    if any(PLACEHOLDER in note.text for note in review):
         lines.append(f"# Anything still reading {PLACEHOLDER} must be filled in "
                      f"by hand before this file is used.")
     lines.append("#")
@@ -265,9 +303,9 @@ def _provenance(source_files: List[str], review: Optional[List[str]] = None) -> 
 def render_backup_yaml(rows: List[Row], backup_path: Optional[str],
                        rsync: List[Tuple[str, bool]],
                        sources: List[str],
-                       review: Optional[List[str]] = None) -> str:
+                       review: Optional[List[ReviewNote]] = None) -> str:
     """Build container2backup.yaml from the converted rows."""
-    out = _provenance(sources, review)
+    out = _provenance(sources, review, BACKUP_ONLY)
     out.append("")
 
     # A db_user shared by every row belongs in defaults; a disagreement is
@@ -360,9 +398,9 @@ def _backup_entry(row: Row, shared_user: Optional[str], prefix: str) -> List[str
 
 
 def render_update_yaml(rows: List[Row], sources: List[str],
-                       review: Optional[List[str]] = None) -> str:
+                       review: Optional[List[ReviewNote]] = None) -> str:
     """Build docker2update.yaml from the converted rows."""
-    out = _provenance(sources, review)
+    out = _provenance(sources, review, UPDATE_ONLY)
     out.append("# SECURITY: db_password is stored in clear text here, as the source")
     out.append("# held it. This file is created mode 0600.")
     out.append("")
@@ -638,16 +676,18 @@ def _odoo_version(container: dict, home: str,
     return PLACEHOLDER
 
 
-def reconstruct(home: str) -> Tuple[List[Row], List[Row], List[str]]:
+def reconstruct(home: str) -> Tuple[List[Row], List[Row], List[ReviewNote]]:
     """Build update and backup rows from the running Docker state.
 
     Returns (update_rows, backup_rows, review) where review lists every field
-    that had to be guessed or left blank.
+    that had to be guessed or left blank, each tagged with the file it
+    concerns — see ReviewNote.
     """
-    review: List[str] = []
+    review: List[ReviewNote] = []
     containers = inspect_containers()
     if not containers:
-        return [], [], ["docker returned nothing — is the daemon running?"]
+        return [], [], [ReviewNote(BOTH, "docker returned nothing — is the "
+                                         "daemon running?")]
 
     odoo_containers = [c for c in containers if is_odoo(c)]
     pg_containers = [c for c in containers if is_postgres(c) and not is_odoo(c)]
@@ -667,7 +707,9 @@ def reconstruct(home: str) -> Tuple[List[Row], List[Row], List[str]]:
                          if k in DB_USER_ENV and v), "")
         if not user:
             user = PLACEHOLDER
-            review.append(f"{name}: db_user could not be read from the container")
+            # Both files carry db_user.
+            review.append(ReviewNote(
+                BOTH, f"{name}: db_user could not be read from the container"))
 
         password = next((env[k] for k in DB_PASSWORD_ENV if env.get(k)), "")
         if not password and database_container:
@@ -675,17 +717,26 @@ def reconstruct(home: str) -> Tuple[List[Row], List[Row], List[str]]:
                              if k in DB_PASSWORD_ENV and v), "")
         if not password:
             password = PLACEHOLDER
-            review.append(f"{name}: db_password is not in the container "
-                          f"environment — set it before the next update run")
+            # Update only: container2backup.yaml has no db_password key at all —
+            # its encryption credentials come from a .env file.
+            review.append(ReviewNote(
+                UPDATE_ONLY, f"{name}: db_password is not in the container "
+                             f"environment — set it before the next update run"))
 
+        # Ports are an update concern: the backup talks to the containers, not
+        # to a published port.
         host_port = _published(odoo, "8069")
         if not host_port:
             host_port = PLACEHOLDER
-            review.append(f"{name}: port 8069 is not published — no host port to read")
+            review.append(ReviewNote(
+                UPDATE_ONLY,
+                f"{name}: port 8069 is not published — no host port to read"))
         poll_port = _published(odoo, "8072")
         if not poll_port:
             poll_port = PLACEHOLDER
-            review.append(f"{name}: port 8072 is not published — no host port to read")
+            review.append(ReviewNote(
+                UPDATE_ONLY,
+                f"{name}: port 8072 is not published — no host port to read"))
 
         databases = (databases_in(db_name_of_container, user)
                      if database_container and user != PLACEHOLDER else [])
@@ -698,22 +749,26 @@ def reconstruct(home: str) -> Tuple[List[Row], List[Row], List[str]]:
             matches = [d for d in databases if stem and stem in d]
             database = matches[0] if len(matches) == 1 else PLACEHOLDER
             if database == PLACEHOLDER:
-                review.append(f"{name}: {len(databases)} databases behind "
-                              f"{db_name_of_container} ({', '.join(databases)}) "
-                              f"— pick the right one")
+                review.append(ReviewNote(
+                    BOTH, f"{name}: {len(databases)} databases behind "
+                          f"{db_name_of_container} ({', '.join(databases)}) "
+                          f"— pick the right one"))
         else:
             database = PLACEHOLDER
-            review.append(f"{name}: could not list databases in "
-                          f"{db_name_of_container or 'its database container'}")
+            review.append(ReviewNote(
+                BOTH, f"{name}: could not list databases in "
+                      f"{db_name_of_container or 'its database container'}"))
 
         version = _odoo_version(odoo, home, db_name_of_container, user, database)
         if version == PLACEHOLDER:
-            review.append(f"{name}: odoo_version could not be determined")
+            review.append(ReviewNote(
+                UPDATE_ONLY, f"{name}: odoo_version could not be determined"))
 
         build_folder = os.path.join(home, "docker-builds", name) + "/"
         if not os.path.isdir(build_folder):
-            review.append(f"{name}: {build_folder} does not exist — "
-                          f"check dockerfile_path")
+            review.append(ReviewNote(
+                UPDATE_ONLY, f"{name}: {build_folder} does not exist — "
+                             f"check dockerfile_path"))
 
         update_rows.append(Row(values={
             "type": "F",
@@ -740,16 +795,32 @@ def reconstruct(home: str) -> Tuple[List[Row], List[Row], List[str]]:
                 "data_container": name,
                 "retention_days": "14",
             }, active=True))
+        else:
+            # A backup entry needs a database name; without one there is
+            # nothing to write. Saying so is the whole point: the generated
+            # file otherwise looks complete while this instance is not backed
+            # up at all — a far worse outcome than a missing update entry,
+            # which merely means nobody updates it.
+            missing = (f"{name}: NO BACKUP ENTRY was written — its database "
+                       f"could not be identified")
+            if db_name_of_container:
+                missing += f" in {db_name_of_container}"
+            review.append(ReviewNote(
+                BACKUP_ONLY, missing + ". This instance is not backed up until "
+                                       "you add it by hand."))
 
     if update_rows:
-        review.append("type (M/F/N), delay_time and translate were operator "
-                      "choices that are stored nowhere on the machine — "
-                      "defaults F / 10 / Y were used")
+        review.append(ReviewNote(
+            UPDATE_ONLY, "type (M/F/N), delay_time and translate were operator "
+                         "choices that are stored nowhere on the machine — "
+                         "defaults F / 10 / Y were used"))
     if backup_rows:
-        review.append("retention_days is not recoverable either — 14 was used "
-                      "for every database")
+        review.append(ReviewNote(
+            BACKUP_ONLY, "retention_days is not recoverable either — 14 was "
+                         "used for every database"))
     if not odoo_containers:
-        review.append("no Odoo container found — nothing to reconstruct")
+        review.append(ReviewNote(
+            BOTH, "no Odoo container found — nothing to reconstruct"))
 
     # FastReport lives in container2backup.yaml as a per-database fast_report
     # block. Which instance a given fr container serves is not visible from
@@ -758,9 +829,11 @@ def reconstruct(home: str) -> Tuple[List[Row], List[Row], List[str]]:
     fr_containers = [_name_of(c) for c in containers
                      if "fr-api" in _image_of(c).lower()]
     if fr_containers:
-        review.append(f"FastReport container(s) found ({', '.join(fr_containers)}) "
-                      f"— add fast_report.path per database by hand if those "
-                      f"templates should be backed up")
+        review.append(ReviewNote(
+            BACKUP_ONLY,
+            f"FastReport container(s) found ({', '.join(fr_containers)}) "
+            f"— add fast_report.path per database by hand if those "
+            f"templates should be backed up"))
 
     return update_rows, backup_rows, review
 
@@ -934,9 +1007,15 @@ def reconstruct_from_docker(home: str, dry_run: bool = False) -> List[Result]:
         results.append(_install(text, os.path.join(home, BACKUP_YAML), home,
                                 [], time.strftime("%Y%m%d_%H%M%S"), "backup",
                                 dry_run))
+    # Each file counts only the points its own header lists. A shared total
+    # would send the reader hunting through a header for questions that were
+    # never printed there.
     for result in results:
-        result.detail += f" · {len(review)} point(s) need review"
+        own = [note for note in review if note.concerns(result.name)]
+        result.detail += f" · {len(own)} point(s) need review"
     if results:
+        # The full list, untagged by file: --dry-run writes no header at all,
+        # and an operator deciding whether to run it needs to see everything.
         results[0].review = review
     return results
 
@@ -972,8 +1051,12 @@ def print_results(results: List[Result], stream=None) -> None:
         if result.archived:
             print(f"      originals moved to "
                   f"{os.path.dirname(result.archived[0])}", file=stream)
+        # Tagged on screen, because this list is the union of both files'
+        # points and --dry-run never writes the headers that would separate
+        # them.
         for note in result.review:
-            print(f"      {yellow}·{reset} {note}", file=stream)
+            print(f"      {yellow}·{reset} [{note.target}] {note.text}",
+                  file=stream)
     print("=" * 60, file=stream)
     print("", file=stream)
 
@@ -1005,7 +1088,7 @@ def main(argv=None) -> int:
             for result in results:
                 print(f"Nothing reconstructed: {result.detail}")
                 for note in result.review:
-                    print(f"  · {note}")
+                    print(f"  · [{note.target}] {note.text}")
             return 1
         print("Review the REVIEW block at the top of each file before the next "
               "update or backup run, then check with: doval")
