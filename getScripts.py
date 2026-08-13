@@ -136,7 +136,7 @@ if os.environ.get('GETSCRIPTS_DEBUG', '').lower() in ('1', 'true', 'yes'):
     logger.debug("Debug logging enabled")
 
 # Script version and date
-SCRIPT_VERSION = "9.15.0"
+SCRIPT_VERSION = "9.15.1"
 SCRIPT_DATE = "13.08.2026"
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -3904,6 +3904,31 @@ def copy_scripts(_myhome: str, myodoo_docker: str) -> None:
         target = os.path.join(_myhome, script)
         if os.path.exists(source):
             run_command(f"cp {source} {target}")
+            _ensure_executable(target)
+
+
+def _ensure_executable(path: str) -> None:
+    """Give a delivered file the execute bit when it declares an interpreter.
+
+    `cp` carries the source mode over, so a script committed without +x arrives
+    without +x, and the alias that calls it dies with "exists but is not an
+    executable file" — on the customer's terminal, at the moment they needed it.
+    That happened to ownerp_cron.py and ownerp_migrate.py.
+
+    A shebang is the file saying it is meant to be run, and it is a property of
+    the content rather than of whoever last touched the permissions. Data files
+    delivered by the same loop (myodoo-maintenance.cron, .logrotate) have none
+    and are left at their mode. tests/test_delivered_scripts.py keeps the
+    repository side honest so this stays a safety net rather than the fix.
+    """
+    try:
+        with open(path, "rb") as handle:
+            if handle.read(2) != b"#!":
+                return
+        mode = os.stat(path).st_mode
+        os.chmod(path, mode | 0o111)
+    except OSError as exc:
+        logger.warning(f"Could not make {os.path.basename(path)} executable: {exc}")
 
 
 def print_readiness_report(_myhome: str) -> None:

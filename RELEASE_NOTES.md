@@ -6,6 +6,24 @@
 fish/functions/linux/ownerp-help.fish v1.0.1 (new) · fish/conf.d/50-prompt.fish v1.1.0 ·
 fish/conf.d/30-aliases-system.fish v1.1.0*
 
+### Fixed
+
+- **`docron` and `ownerp_migrate.py` arrived on the server unexecutable.** Both were committed
+  `100644`. `copy_scripts()` delivers with `cp`, which carries the source mode over, so the alias
+  died with `exists but is not an executable file` — on the customer's terminal, at the moment the
+  reconstruction was needed. `odoo_build_cache.py` had the same mode and only worked because cron
+  calls it through `/usr/bin/python3`.
+
+  All three are `100755` now, and `copy_scripts()` sets the execute bit on any delivered file that
+  starts with `#!` — a shebang is the file saying it is meant to be run, and it is a property of
+  the content rather than of whoever last touched the permissions. Data files delivered by the
+  same loop (`myodoo-maintenance.cron`, `.logrotate`) have none and keep their mode.
+  `tests/test_delivered_scripts.py` fails the suite if a shebang script is ever committed without
+  the bit again, so the delivery-time repair stays a safety net rather than the fix.
+
+  **On an already-updated server:** `chmod +x /root/ownerp_cron.py /root/ownerp_migrate.py`, or
+  simply run `ups` again.
+
 ### Added
 
 - **`ownerp_migrate.py --from-docker` reconstructs both configs from the running containers.**
