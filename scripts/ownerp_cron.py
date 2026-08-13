@@ -3,7 +3,7 @@
 # ==============================================================================
 # Title:            ownerp_cron.py
 # Description:      Overview and guided editing of the myodoo maintenance cron.
-# Version:          1.0.0
+# Version:          1.0.1
 # Date:             13.08.2026
 # Author:           Equitania Software GmbH
 # ==============================================================================
@@ -65,7 +65,7 @@ import time
 from dataclasses import dataclass, field
 from typing import List, Optional, Tuple
 
-SCRIPT_VERSION = "1.0.0"
+SCRIPT_VERSION = "1.0.1"
 SCRIPT_DATE = "13.08.2026"
 
 CRON_PATH = "/etc/cron.d/myodoo-maintenance"
@@ -558,9 +558,16 @@ def print_report(cron: CronFile, brief: bool = False, stream=None) -> None:
     if cron.customised:
         summary += " · locally customised"
     print(summary, file=stream)
-    if not brief:
-        print("  Edit with 'tui' (key t) or: ownerp_cron.py --set <job> "
-              "--schedule '0 2 * * *'", file=stream)
+    # The hint belongs in BOTH modes. `ups` prints the brief form, and that is
+    # the only place most operators ever see this table — a schedule they
+    # cannot act on is a schedule they will change by hand in an editor, which
+    # is the unvalidated write this tool exists to replace.
+    if brief:
+        print("  Edit: tui (key t)  ·  docron --help", file=stream)
+    else:
+        print("  Edit with 'tui' (key t), or:", file=stream)
+        print("    docron --set <job> --schedule '0 2 * * *'", file=stream)
+        print("    docron --disable <job>   ·   docron --enable <job>", file=stream)
     print("=" * width, file=stream)
     print("", file=stream)
 

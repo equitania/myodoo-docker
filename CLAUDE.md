@@ -435,6 +435,29 @@ myodoo-docker/
   `setup-maintenance-cron.sh` restores the repository schedule and discards the
   customisation — that is its job, and the tool says so before it writes
 
+#### 10. ownerp_migrate.py (v1.0.0)
+- **Purpose**: One-way conversion of the legacy CSV configurations to YAML —
+  `container2backup.csv` + `container2backup_path.csv` + `rsync_targets.csv` →
+  `container2backup.yaml`, `docker2update.csv` → `docker2update.yaml`
+- **Runs from every `ups`**, after `copy_scripts()` and **before**
+  `cleanup_legacy_files()`, and is silent once there is nothing to convert
+- **Why the ordering matters**: those four CSVs used to be listed in
+  `cleanup_legacy.txt`, which deletes what it names on a fresh Fish install —
+  the very run that lifts an old server onto the new stack. The configuration
+  was destroyed by the upgrade that needed to read it. They are off that list;
+  this script owns them
+- **Never overwrites an existing YAML** — writes `<name>.yaml.from-csv` beside
+  it instead and leaves the CSV in place for comparison
+- **Never installs a config that fails validation** — `ownerp_validate.py` runs
+  against the generated file first (with the matching `--backup`/`--update`
+  flag). Errors block, warnings never do
+- **Never deletes**: consumed CSVs move to `$HOME/legacy-csv/<timestamp>/`,
+  created `0700`; generated YAML is written `0600` — `docker2update.csv` carries
+  database passwords in clear text
+- **A commented-out CSV row stays switched off**: `active: false` in
+  `docker2update.yaml`; `container2backup.yaml` has no such key, so those rows
+  become a commented-out block rather than vanishing or silently activating
+
 ### Development Patterns
 
 1. **Configuration Management**: All tools use YAML as primary configuration format

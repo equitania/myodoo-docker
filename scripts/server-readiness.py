@@ -96,6 +96,7 @@ DELIVERED_SCRIPTS = (
     "server-readiness.py",
     "odoo_build_cache.py",
     "ownerp_cron.py",
+    "ownerp_migrate.py",
 )
 
 # Job names that must run from /etc/cron.d/myodoo-maintenance and nowhere else.

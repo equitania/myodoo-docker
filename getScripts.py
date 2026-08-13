@@ -136,7 +136,7 @@ if os.environ.get('GETSCRIPTS_DEBUG', '').lower() in ('1', 'true', 'yes'):
     logger.debug("Debug logging enabled")
 
 # Script version and date
-SCRIPT_VERSION = "9.14.0"
+SCRIPT_VERSION = "9.15.0"
 SCRIPT_DATE = "13.08.2026"
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -3881,6 +3881,7 @@ def copy_scripts(_myhome: str, myodoo_docker: str) -> None:
         "ownerp_validate.py",
         "ownerp_wizard.py",
         "ownerp_cron.py",
+        "ownerp_migrate.py",
         "cleanup-weblogs.py",
         "container2backup.py",
         "restore-zip.sh",
@@ -3929,6 +3930,35 @@ def print_readiness_report(_myhome: str) -> None:
         subprocess.run([sys.executable, script, "--brief"], timeout=120)
     except Exception as e:
         logger.warning(f"Readiness report could not be generated: {e}")
+
+
+def migrate_legacy_csv(_myhome: str) -> None:
+    """Convert leftover CSV configurations to YAML before anything else runs.
+
+    Runs on EVERY update, not only on a fresh Fish install: a server can carry
+    CSVs long after Fish arrived, and the conversion is a no-op with no output
+    once there is nothing left to convert.
+
+    Ordering is the point. cleanup_legacy_files() used to delete these four
+    files, so the run that lifted an old server onto the new stack destroyed
+    its configuration before anything could read it. They are off that list now
+    and this owns them — but this must still run first, because it also decides
+    the fate of files a later step might otherwise touch.
+
+    Non-fatal in every direction, like the readiness report: a failed
+    conversion must not fail an `ups` that installed its packages correctly.
+    """
+    script = os.path.join(_myhome, "ownerp_migrate.py")
+    if not os.path.exists(script):
+        logger.debug("ownerp_migrate.py not present - skipping CSV migration")
+        return
+
+    try:
+        # Streamed: the summary is for the operator, and it stays silent when
+        # there is nothing to migrate.
+        subprocess.run([sys.executable, script, "--home", _myhome], timeout=120)
+    except Exception as e:
+        logger.warning(f"Legacy CSV migration could not run: {e}")
 
 
 def print_cron_overview(_myhome: str) -> None:
@@ -4125,6 +4155,11 @@ def main() -> None:
 
         # Copy scripts (without update_docker_myodoo.py - deprecated)
         copy_scripts(_myhome, myodoo_docker)
+
+        # Convert leftover CSV configurations to YAML. Must run AFTER
+        # copy_scripts (which delivers ownerp_migrate.py) and BEFORE the legacy
+        # cleanup below, which is where the CSVs used to be destroyed.
+        migrate_legacy_csv(_myhome)
 
         # Clean up legacy files ONLY on fresh Fish installation
         # This prevents running cleanup on every script execution

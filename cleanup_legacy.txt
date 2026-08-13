@@ -18,10 +18,21 @@ update_docker_myodoo.py
 # =============================================================================
 # DEPRECATED CSV CONFIGURATIONS (replaced by YAML)
 # =============================================================================
-container2backup.csv
-container2backup_path.csv
-docker2update.csv
-rsync_targets.csv
+# NOT listed here any more, deliberately. These four files ARE the customer's
+# configuration, and this list deletes what it names — on a fresh Fish install,
+# which is exactly the run that lifts an old server onto the new stack. The
+# configuration was therefore deleted by the very upgrade that needed to read
+# it, and the first anyone knew was a readiness report saying
+# "container2backup.yaml not found" with no CSV left to convert.
+#
+# ownerp_migrate.py owns them now: it converts them to YAML and MOVES the
+# originals to $HOME/legacy-csv/<timestamp>/. One file, one owner — and this
+# owner archives instead of deleting.
+#
+#   container2backup.csv
+#   container2backup_path.csv
+#   docker2update.csv
+#   rsync_targets.csv
 
 # =============================================================================
 # ZSH/OH-MY-ZSH ARTIFACTS (Fish is now primary shell)

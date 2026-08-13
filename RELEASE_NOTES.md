@@ -1,5 +1,65 @@
 # Release Notes
 
+## The Upgrade Deleted the Configuration It Was Supposed to Convert (13.08.2026)
+
+*scripts/ownerp_migrate.py v1.0.0 (new) · cleanup_legacy.txt · getScripts.py v9.15.0 ·
+scripts/ownerp_cron.py v1.0.1*
+
+### Fixed
+
+- **`cleanup_legacy.txt` listed the customer's configuration for deletion.** The four legacy
+  CSV files — `container2backup.csv`, `container2backup_path.csv`, `docker2update.csv`,
+  `rsync_targets.csv` — were on the cleanup list, and `cleanup_legacy_files()` removes what that
+  list names on a fresh Fish installation. That is precisely the run which lifts an old server
+  onto the new stack. The configuration was therefore destroyed by the upgrade that needed to read
+  it, and the first sign was a readiness report saying `container2backup.yaml not found`, with no
+  CSV left to convert. Every affected customer had to rebuild their backup and update
+  configuration by hand.
+
+  The four files are off that list. `ownerp_migrate.py` owns them now — one file, one owner, and
+  this owner archives instead of deleting.
+
+- **The cron overview showed a schedule nobody could act on.** `ups` prints the table in `--brief`
+  mode, which suppressed the editing hint — so the only place most operators ever see the schedule
+  was the one place that did not say how to change it. A schedule you cannot act on is a schedule
+  you edit by hand in `mcedit`, which is exactly the unvalidated write `ownerp_cron.py` exists to
+  replace. Both modes carry the hint now.
+
+### Added
+
+- **`ownerp_migrate.py` (new): the CSV to YAML migration happens by itself.** It runs from every
+  `ups`, before the legacy cleanup, and stays completely silent once there is nothing left to
+  convert.
+
+  | legacy file | becomes |
+  |---|---|
+  | `container2backup.csv` | `databases:` in `container2backup.yaml` |
+  | `container2backup_path.csv` | `defaults.backup_path` |
+  | `rsync_targets.csv` | `rsync.commands` |
+  | `docker2update.csv` | `containers:` in `docker2update.yaml` |
+
+  What it refuses to do is the substance:
+  - **Never overwrites an existing YAML.** A server that already has one is already migrated, or
+    was configured by hand; either way the CSV is not the authority. The conversion is written
+    beside it as `<name>.yaml.from-csv` and the CSV stays put for comparison.
+  - **Never installs a config that does not validate.** `ownerp_validate.py` runs against the
+    generated file first, with the right schema flag per config. Errors block installation and
+    keep the file as `.from-csv`; warnings never block, because a build folder that does not exist
+    yet is a finding, not a reason to withhold the whole configuration.
+  - **Never deletes.** Consumed CSVs move to `$HOME/legacy-csv/<timestamp>/`, created `0700`
+    because `docker2update.csv` holds database passwords in clear text. The generated YAML is
+    written `0600` for the same reason.
+
+  A row commented out in the CSV meant "switched off", and it still does: in `docker2update.yaml`
+  it becomes `active: false`; `container2backup.yaml` has no such key, so those rows are emitted
+  as a commented-out block. Dropping them would lose configuration, and activating them would
+  silently start backing up a database somebody deliberately turned off.
+
+  Two details the conversion adds rather than copies, both flagged in the generated file: the
+  `services:` block (nginx, letsencrypt, docker-builds — the CSV format had no equivalent) and
+  `db_password_via_env: true`, the current runner's secure default, because an argv password is
+  visible to every local user through `ps aux`.
+
 ## One Customer's DNS Edit Took Ten Sites Down, and Nothing Saw It Coming (13.08.2026)
 
 *scripts/nginx-cert-guard.py v1.2.0 · scripts/server-readiness.py v1.4.0 ·
