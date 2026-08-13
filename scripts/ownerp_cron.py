@@ -3,7 +3,7 @@
 # ==============================================================================
 # Title:            ownerp_cron.py
 # Description:      Overview and guided editing of the myodoo maintenance cron.
-# Version:          1.0.1
+# Version:          1.0.2
 # Date:             13.08.2026
 # Author:           Equitania Software GmbH
 # ==============================================================================

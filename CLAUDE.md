@@ -423,7 +423,7 @@ myodoo-docker/
   less often cannot rot unnoticed. Duplicate names and a port's localhost bind
   address are handled there rather than in the prompts
 
-#### 8. ownerp_cron.py (v1.0.0)
+#### 8. ownerp_cron.py (v1.0.2)
 - **Purpose**: Overview and guided editing of `/etc/cron.d/myodoo-maintenance` —
   the backup, cert-renewal, DNS-guard and cleanup jobs an ownERP server runs
 - **Two consumers, one implementation**: `getScripts.py` prints `--brief` after
