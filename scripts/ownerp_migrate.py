@@ -3,7 +3,7 @@
 # ==============================================================================
 # Title:            ownerp_migrate.py
 # Description:      Convert the legacy CSV configurations to YAML, once, safely.
-# Version:          1.1.1
+# Version:          1.2.0
 # Date:             13.08.2026
 # Author:           Equitania Software GmbH
 # ==============================================================================
@@ -83,7 +83,7 @@ import time
 from dataclasses import dataclass, field
 from typing import List, Optional, Tuple
 
-SCRIPT_VERSION = "1.1.1"
+SCRIPT_VERSION = "1.2.0"
 SCRIPT_DATE = "13.08.2026"
 
 BACKUP_CSV = "container2backup.csv"
@@ -253,7 +253,11 @@ def _provenance(source_files: List[str], review: Optional[List[str]] = None) -> 
     ]
     for note in review:
         lines.append(f"#   * {note}")
-    lines.append(f"# Anything still reading {PLACEHOLDER} must be filled in by hand.")
+    # Only when there is actually one to find. A standing warning about
+    # placeholders on a file that has none trains the reader to skip the block.
+    if any(PLACEHOLDER in note for note in review):
+        lines.append(f"# Anything still reading {PLACEHOLDER} must be filled in "
+                     f"by hand before this file is used.")
     lines.append("#")
     return lines
 
@@ -511,11 +515,25 @@ def _volume_argument(container: dict) -> str:
 
 
 def is_odoo(container: dict) -> bool:
-    """An Odoo container publishes or exposes 8069, or says so in its image."""
+    """Whether this container runs Odoo.
+
+    Port 8069 is the decisive signal — it is what Odoo listens on and what the
+    runner always maps. The image name is only a fallback, and a narrow one:
+    `"odoo" in image` matched `registry.gitlab.ownerp.io/ci-myodoo/fr-api`,
+    the FastReport server, because the namespace is spelled `ci-myodoo`. Two
+    FastReport containers were reconstructed as Odoo instances with placeholder
+    databases, which then collided with each other in validation. So the
+    fallback compares path components, never the whole reference.
+    """
     exposed = (container.get("Config") or {}).get("ExposedPorts") or {}
     if "8069/tcp" in exposed:
         return True
-    return "odoo" in _image_of(container).lower()
+    parts = [p.lower() for p in _image_of(container).split("/")]
+    if not parts:
+        return False
+    # `odoo/live` (namespace odoo) and `odoo:16` / `odoo-custom` (repository
+    # starting with odoo) qualify; `ci-myodoo/fr-api` does not.
+    return parts[0] == "odoo" or parts[-1].startswith("odoo")
 
 
 def is_postgres(container: dict) -> bool:
@@ -528,12 +546,20 @@ def is_postgres(container: dict) -> bool:
 def databases_in(container_name: str, user: str) -> List[str]:
     """List the non-system databases of a Postgres container.
 
-    Read-only (`psql -l`). A container that is not running, or a wrong user,
-    yields nothing — the caller then falls back to a placeholder rather than
-    inventing a database name.
+    Read-only. A container that is not running, or a wrong user, yields nothing
+    — the caller then falls back to a placeholder rather than inventing a
+    database name.
+
+    `-d postgres` is not optional. Without it libpq connects to a database
+    named after the connecting user, so `psql -U ownerp` fails with
+    `FATAL: database "ownerp" does not exist` on every cluster created with
+    POSTGRES_DB=postgres — which is all of ours. The same omission was fixed in
+    pg-local-deploy.sh's pg_isready calls; this is that bug in a second place.
+    The maintenance database `postgres` exists after every initdb, which is
+    exactly why it is the right one to connect to.
     """
     code, output = _docker([
-        "exec", container_name, "psql", "-U", user, "-Atqc",
+        "exec", container_name, "psql", "-U", user, "-d", "postgres", "-Atqc",
         "SELECT datname FROM pg_database WHERE datistemplate = false",
     ])
     if code != 0:
@@ -563,11 +589,41 @@ def _pair_database_container(odoo: dict, postgres: List[dict]) -> Optional[dict]
     return postgres[0] if len(postgres) == 1 else None
 
 
-def _odoo_version(container: dict, home: str) -> str:
-    """Best available reading of the Odoo major version."""
+def odoo_version_in(container_name: str, user: str, database: str) -> Optional[str]:
+    """Major Odoo version of a database, from the version of its `base` module.
+
+    The most authoritative source there is: it is not what somebody tagged an
+    image, it is what actually created these tables. Costs nothing extra —
+    the same psql exec already runs to list the databases.
+    """
+    code, output = _docker([
+        "exec", container_name, "psql", "-U", user, "-d", database, "-Atqc",
+        "SELECT latest_version FROM ir_module_module WHERE name = 'base'",
+    ])
+    if code != 0 or not output.strip():
+        return None
+    head = output.strip().splitlines()[0].split(".")[0]
+    return head if head.isdigit() else None
+
+
+def _odoo_version(container: dict, home: str,
+                  db_container: str = "", user: str = "",
+                  database: str = "") -> str:
+    """Best available reading of the Odoo major version.
+
+    In order of how much the source actually knows: an explicit image tag is
+    what the operator pinned; the database says what is really running; the
+    build folder's Dockerfile is what the next build would produce.
+    """
     tag = _tag_of(container)
     if tag and tag[0].isdigit():
         return tag.split(".")[0]
+
+    if db_container and user and database and database != PLACEHOLDER:
+        from_database = odoo_version_in(db_container, user, database)
+        if from_database:
+            return from_database
+
     dockerfile = os.path.join(home, "docker-builds", _name_of(container),
                               "Dockerfile")
     try:
@@ -650,7 +706,7 @@ def reconstruct(home: str) -> Tuple[List[Row], List[Row], List[str]]:
             review.append(f"{name}: could not list databases in "
                           f"{db_name_of_container or 'its database container'}")
 
-        version = _odoo_version(odoo, home)
+        version = _odoo_version(odoo, home, db_name_of_container, user, database)
         if version == PLACEHOLDER:
             review.append(f"{name}: odoo_version could not be determined")
 
@@ -694,6 +750,17 @@ def reconstruct(home: str) -> Tuple[List[Row], List[Row], List[str]]:
                       "for every database")
     if not odoo_containers:
         review.append("no Odoo container found — nothing to reconstruct")
+
+    # FastReport lives in container2backup.yaml as a per-database fast_report
+    # block. Which instance a given fr container serves is not visible from
+    # Docker — they sit on the default bridge with no link to anything — so it
+    # is mentioned rather than guessed.
+    fr_containers = [_name_of(c) for c in containers
+                     if "fr-api" in _image_of(c).lower()]
+    if fr_containers:
+        review.append(f"FastReport container(s) found ({', '.join(fr_containers)}) "
+                      f"— add fast_report.path per database by hand if those "
+                      f"templates should be backed up")
 
     return update_rows, backup_rows, review
 
@@ -774,10 +841,16 @@ def _install(text: str, target: str, home: str, sources: List[str],
     _write(pending, text)
     ok, output = _validate(pending, home, label)
     if not ok:
-        return Result(label, "invalid",
-                      f"the conversion does not validate and was NOT installed. "
-                      f"It is kept at {os.path.basename(pending)}:\n{output}",
-                      written=pending)
+        detail = (f"the conversion does not validate and was NOT installed. "
+                  f"It is kept at {os.path.basename(pending)}:\n{output}")
+        if PLACEHOLDER in text:
+            # A placeholder in a typed field (a port, most often) can never
+            # validate, by design — a plausible fake would be worse. Say what
+            # to do about it instead of leaving the operator with a rejection.
+            detail += (f"\n  Fill in the {PLACEHOLDER} values, then:\n"
+                       f"    {pending}  ->  {target}\n"
+                       f"    mv {pending} {target} && doval")
+        return Result(label, "invalid", detail, written=pending)
 
     os.replace(pending, target)
     archived = _archive(home, sources, stamp, dry_run=False)

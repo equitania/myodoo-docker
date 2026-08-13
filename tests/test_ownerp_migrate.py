@@ -269,13 +269,16 @@ class ReconstructFixture(MigrateFixture):
         super().setUp()
         self.stub(_stack(), {"live-db": ["live_db"]})
 
-    def stub(self, containers, databases):
+    def stub(self, containers, databases, version=None):
         original_inspect = om.inspect_containers
         original_databases = om.databases_in
+        original_version = om.odoo_version_in
         om.inspect_containers = lambda: containers
         om.databases_in = lambda name, user: databases.get(name, [])
+        om.odoo_version_in = lambda name, user, database: version
         self.addCleanup(lambda: (setattr(om, "inspect_containers", original_inspect),
-                                 setattr(om, "databases_in", original_databases)))
+                                 setattr(om, "databases_in", original_databases),
+                                 setattr(om, "odoo_version_in", original_version)))
 
 
 @unittest.skipUnless(HAVE_YAML, "the reconstruction is only meaningful if it parses")
@@ -342,6 +345,150 @@ class ReconstructTest(ReconstructFixture):
         self.stub([_stack()[1]], {})
         results = om.reconstruct_from_docker(self.home)
         self.assertTrue(all(r.status == "none" for r in results))
+
+
+def _ucore_stack():
+    """The stack that broke the first reconstruction, as `docker inspect` reports it.
+
+    Two Odoo instances, two Postgres containers on per-instance networks, and
+    two FastReport containers whose image namespace is spelled `ci-myodoo`.
+    The Odoo containers carry NO database environment — the credentials live
+    only on the Postgres side.
+    """
+    def odoo(name, network, http, poll):
+        return {"Name": f"/{name}",
+                "Config": {"Image": f"odoo/{name.split('-')[0]}",
+                           "ExposedPorts": {"8069/tcp": {}, "8072/tcp": {}},
+                           "Env": ["PATH=/usr/bin"]},
+                "NetworkSettings": {
+                    "Ports": {"8069/tcp": [{"HostIp": "127.0.0.1", "HostPort": http}],
+                              "8072/tcp": [{"HostIp": "127.0.0.1", "HostPort": poll}]},
+                    "Networks": {network: {}}},
+                "HostConfig": {"Binds": [f"/opt/odoo/{name.split('-')[0]}:/opt/odoo/data"],
+                               "NetworkMode": network}}
+
+    def postgres(name, network):
+        return {"Name": f"/{name}",
+                "Config": {"Image": "postgres:15.7-alpine",
+                           "ExposedPorts": {"5432/tcp": {}},
+                           "Env": ["POSTGRES_USER=ownerp", "POSTGRES_PASSWORD=pg-secret",
+                                   "POSTGRES_DB=postgres"]},
+                "NetworkSettings": {"Ports": {}, "Networks": {network: {}}},
+                "HostConfig": {"Binds": []}}
+
+    def fastreport(name, port):
+        return {"Name": f"/{name}",
+                "Config": {"Image": "registry.gitlab.ownerp.io/ci-myodoo/fr-api:2024.2.7.0",
+                           "ExposedPorts": {"5001/tcp": {}, "51020/tcp": {}},
+                           "Env": []},
+                "NetworkSettings": {
+                    "Ports": {"5001/tcp": [{"HostIp": "127.0.0.1", "HostPort": port}]},
+                    "Networks": {"bridge": {}}},
+                "HostConfig": {"Binds": [], "NetworkMode": "bridge"}}
+
+    return [odoo("live-odoo", "live-net", "11000", "12000"),
+            odoo("test-odoo", "test-net", "13000", "14000"),
+            postgres("live-db", "live-net"), postgres("test-db", "test-net"),
+            fastreport("fr-live", "8899"), fastreport("fr-test", "8898")]
+
+
+class IsOdooTest(unittest.TestCase):
+    def test_a_fastreport_image_is_not_odoo(self):
+        """`ci-myodoo/fr-api` contains "odoo" and is a FastReport server."""
+        container = {"Config": {
+            "Image": "registry.gitlab.ownerp.io/ci-myodoo/fr-api:2024.2.7.0",
+            "ExposedPorts": {"5001/tcp": {}}}}
+        self.assertFalse(om.is_odoo(container))
+
+    def test_port_8069_is_decisive(self):
+        container = {"Config": {"Image": "something/custom",
+                                "ExposedPorts": {"8069/tcp": {}}}}
+        self.assertTrue(om.is_odoo(container))
+
+    def test_the_odoo_namespace_still_counts(self):
+        container = {"Config": {"Image": "odoo/live", "ExposedPorts": {}}}
+        self.assertTrue(om.is_odoo(container))
+
+    def test_a_bare_odoo_repository_still_counts(self):
+        container = {"Config": {"Image": "odoo:16", "ExposedPorts": {}}}
+        self.assertTrue(om.is_odoo(container))
+
+
+class PsqlInvocationTest(unittest.TestCase):
+    def test_the_maintenance_database_is_named(self):
+        """Without -d, libpq falls back to a database named after the user."""
+        seen = {}
+
+        def fake_docker(args, timeout=30):
+            seen["args"] = args
+            return 0, "live_db\n"
+
+        original = om._docker
+        om._docker = fake_docker
+        self.addCleanup(lambda: setattr(om, "_docker", original))
+
+        om.databases_in("live-db", "ownerp")
+        self.assertIn("-d", seen["args"])
+        self.assertEqual(seen["args"][seen["args"].index("-d") + 1], "postgres")
+
+
+@unittest.skipUnless(HAVE_YAML, "the reconstruction is only meaningful if it parses")
+class UcoreReconstructionTest(ReconstructFixture):
+    def setUp(self):
+        MigrateFixture.setUp(self)
+        self.stub(_ucore_stack(),
+                  {"live-db": ["live_db"], "test-db": ["test_db"]},
+                  version="16")
+
+    def test_the_version_comes_from_the_database_when_the_image_has_no_tag(self):
+        """`odoo/live` carries no tag; the base module's version is decisive."""
+        om.reconstruct_from_docker(self.home)
+        live = yaml.safe_load(self.read(om.UPDATE_YAML))["containers"][0]
+        self.assertEqual(live["odoo_version"], "16")
+
+    def test_only_the_two_odoo_instances_are_reconstructed(self):
+        om.reconstruct_from_docker(self.home)
+        containers = yaml.safe_load(self.read(om.UPDATE_YAML))["containers"]
+        self.assertEqual([c["container_name"] for c in containers],
+                         ["live-odoo", "test-odoo"])
+
+    def test_credentials_come_from_the_postgres_side(self):
+        """The Odoo containers carry no database environment at all."""
+        om.reconstruct_from_docker(self.home)
+        live = yaml.safe_load(self.read(om.UPDATE_YAML))["containers"][0]
+        self.assertEqual(live["db_user"], "ownerp")
+        self.assertEqual(live["db_password"], "pg-secret")
+        self.assertEqual(live["db_host"], "live-db")
+
+    def test_each_instance_is_paired_by_its_own_network(self):
+        om.reconstruct_from_docker(self.home)
+        by_name = {c["container_name"]: c for c in
+                   yaml.safe_load(self.read(om.UPDATE_YAML))["containers"]}
+        self.assertEqual(by_name["live-odoo"]["database_name"], "live_db")
+        self.assertEqual(by_name["test-odoo"]["database_name"], "test_db")
+        self.assertEqual(by_name["test-odoo"]["db_host"], "test-db")
+
+    def test_the_result_validates_and_is_installed(self):
+        """No placeholders left, so nothing blocks the install."""
+        results = om.reconstruct_from_docker(self.home)
+        self.assertEqual({r.status for r in results}, {"migrated"})
+        # Checked on the parsed values, not the raw text: the header explains
+        # what a placeholder means and would match a substring search.
+        containers = yaml.safe_load(self.read(om.UPDATE_YAML))["containers"]
+        for entry in containers:
+            self.assertNotIn(om.PLACEHOLDER, [str(v) for v in entry.values()])
+
+    def test_the_backup_config_covers_both_databases(self):
+        om.reconstruct_from_docker(self.home)
+        data = yaml.safe_load(self.read(om.BACKUP_YAML))
+        self.assertEqual([d["name"] for d in data["databases"]],
+                         ["live_db", "test_db"])
+
+    def test_fastreport_containers_are_mentioned_not_guessed(self):
+        results = om.reconstruct_from_docker(self.home)
+        review = " ".join(results[0].review)
+        self.assertIn("fr-live", review)
+        self.assertIn("fast_report", review)
 
 
 class DockerParsingTest(unittest.TestCase):
