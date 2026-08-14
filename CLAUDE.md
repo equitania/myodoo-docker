@@ -193,7 +193,9 @@ dkstop    # Stop all containers
 dkrm      # Remove all containers
 
 # Image management
-dpi       # Show Docker images
+dpi       # Images as a table: repository:tag, ID, size, age. Ages are
+          # shortened (4mo) and marked once an image passes 90 days;
+          # dangling images are greyed and counted
 dkrmi     # Remove all images
 
 # Volume management
@@ -303,7 +305,7 @@ myodoo-docker/
   - Automated restart management
   - Module updates for Odoo
 
-#### 4. update_docker_odoo.py (v5.12.0)
+#### 4. update_docker_odoo.py (v5.13.0)
 - **Purpose**: Automated Docker container updates for v16+ Odoo instances
   (image rebuild, container re-creation, module update), driven by
   `docker2update.yaml`
@@ -317,6 +319,25 @@ myodoo-docker/
     recorded in the history and the run log header
   - Proxy support (`defaults.proxy`, `pre_build_files`); calls
     `odoo_build_cache.py sync` before the build
+- **A successful build is not a usable image** (v5.13.0, 14.08.2026).
+  `verify_built_image()` runs the built image's own entrypoint through
+  `test -x` before the update step. Docker ≥29 can export a **hollow** image
+  from the build cache (moby/moby#52431): every step `CACHED`, two seconds
+  total, plausible size, and not one file present at runtime. The container
+  then restart-loops with `exec /app/bin/boot: no such file or directory`,
+  which reads like a Dockerfile bug and is not one — seen on one customer server on
+  16.07.2026 and again on 14.08.2026
+- **It cannot roll back, and that is the point of naming it early.** The
+  previous image is deleted *before* the build (`docker rmi {image}:latest`,
+  with the container), so there is nothing left to fall back to. What the check
+  buys is the fault stated where it happens, with the way out in the message
+  (`docker builder prune -af`, rebuild, and `dmesg | grep overlayfs` if it
+  recurs) instead of a cryptic runtime error half a minute later
+- **No entrypoint means no verdict**: an installation may drive its container
+  through `CMD` alone, and failing that build would be a worse failure than the
+  one being guarded against
+- **`--no-cache`** forces a cache-free build, which is the fix for the above
+  once the cache is the suspect
 
 #### 5. odoo_build_cache.py (v1.5.0)
 - **Purpose**: Host-side cache of Odoo release archives, shared by every instance
@@ -642,9 +663,9 @@ myodoo-docker/
 - **No `odoodev` line** (14.08.2026): that CLI is workstation tooling and this
   panel is what an operator needs on a server
 
-#### 13. docker_table.py (v1.0.0)
-- **Purpose**: `docker ps` as a readable table — the renderer behind `dps` and
-  `dpsall`
+#### 13. docker_table.py (v1.1.0)
+- **Purpose**: `docker ps` and `docker images` as readable tables — the renderer
+  behind `dps`, `dpsall` and `dpi`
 - **Why it exists**: the aliases piped `docker ps --format table` into `sort`,
   which sorted the **header line along with the containers**. Under a UTF-8
   locale `NAMES` collates after `ivy-odoo`, so the column titles arrived at
@@ -665,8 +686,18 @@ myodoo-docker/
 - **The fish side keeps a fallback**: `__ownerp_docker_ps` falls back to
   `docker ps` + `awk` (header held back, rows sorted) when the renderer is not
   installed yet — `dps` is typed on servers where `ups` has not run
-- **An alias would shadow the function.** `dps`, `dpsall` and `cleandlog` are
-  functions now; nothing may reintroduce an alias under those names
+- **`--images` is the `dpi` view** (v1.1.0, 14.08.2026): repository:tag, ID,
+  size and **age**. Docker 29's `docker images` answers with DISK USAGE,
+  CONTENT SIZE and EXTRA and no age at all, which is the one question actually
+  asked of an image list on a server. Ages are shortened (`4 months ago` →
+  `4mo`) and amber past `STALE_DAYS` (90); dangling images are greyed and
+  counted separately in the summary line
+- **Wording the age parser does not recognise is passed through, never
+  guessed** — a row coloured on an invented number is worse than an uncoloured
+  one
+- **An alias would shadow the function.** `dps`, `dpsall`, `dpi` and
+  `cleandlog` are functions now; nothing may reintroduce an alias under those
+  names
 
 ### Development Patterns
 

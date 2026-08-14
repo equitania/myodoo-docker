@@ -1,5 +1,5 @@
 # Docker Aliases
-# Version 1.2.0 | 14.08.2026
+# Version 1.3.0 | 14.08.2026
 
 # Docker base
 alias dk='docker'
@@ -15,7 +15,10 @@ alias dk='docker'
 alias dkpsf='docker inspect -f "{{.Name}} {{.Config.Cmd}}" (docker ps -a -q)'
 
 # Image management
-alias dpi='docker images'
+#
+# dpi is a function too (functions/dpi.fish): `docker images` on Docker 29 lists
+# DISK USAGE, CONTENT SIZE and EXTRA and no age at all. An alias here would
+# shadow the function — nothing may reintroduce one under that name either.
 
 # Volume management
 alias dkvol='$HOME/myodoo-docker/scripts/check_docker_volumes.sh'

@@ -365,6 +365,75 @@ class RuntimeOverrideTest(unittest.TestCase):
         self.assertIsNone(args.update_type)
         self.assertIsNone(args.comment)
 
+    def test_no_cache_is_parsed_and_defaults_to_off(self):
+        self.assertTrue(self.parse(["--no-cache"]).no_cache)
+        self.assertFalse(self.parse([]).no_cache)
+
+
+class VerifyBuiltImageTest(unittest.TestCase):
+    """A build that reports success is not proof of a usable image.
+
+    Docker >=29 can export an image whose layers carry nothing (moby#52431):
+    the build is a two-second cache hit, the image has a plausible size, and
+    every file is missing at runtime. The old image is already gone by then -
+    update_docker_odoo.py removes it before building - so this cannot roll
+    anything back. What it does is name the fault where it happens instead of
+    letting it surface as a restart loop and an error naming the wrong file.
+    """
+
+    def setUp(self):
+        self.commands = []
+        self.original = udo.run_command
+
+    def tearDown(self):
+        udo.run_command = self.original
+
+    def fake_docker(self, entrypoint="/app/bin/boot", probe_ok=True,
+                    inspect_ok=True):
+        def run_command(command, *_args, **_kwargs):
+            self.commands.append(command)
+            if "image inspect" in command:
+                return (inspect_ok, entrypoint + "\n", 0, 0, 0)
+            return (probe_ok, "", 0, 0, 0)
+        udo.run_command = run_command
+
+    def test_a_populated_image_passes(self):
+        self.fake_docker(probe_ok=True)
+        usable, problem = udo.verify_built_image("odoo/staging")
+        self.assertTrue(usable)
+        self.assertEqual(problem, "")
+
+    def test_a_hollow_image_fails_and_names_the_way_out(self):
+        self.fake_docker(probe_ok=False)
+        usable, problem = udo.verify_built_image("odoo/staging")
+        self.assertFalse(usable)
+        self.assertIn("odoo/staging", problem)
+        self.assertIn("/app/bin/boot", problem)
+        self.assertIn("docker builder prune -af", problem)
+
+    def test_the_probe_tests_the_image_entrypoint(self):
+        """Both shapes of the fault have to be caught: a hollow image has no
+        /bin/sh and `docker run` itself refuses, and an image that merely lost
+        its last COPY still has a shell but no entrypoint."""
+        self.fake_docker(entrypoint="/app/bin/boot")
+        udo.verify_built_image("odoo/staging")
+        probe = self.commands[-1]
+        self.assertIn("--entrypoint /bin/sh", probe)
+        self.assertIn("test -x /app/bin/boot", probe)
+
+    def test_an_image_without_an_entrypoint_is_not_condemned(self):
+        """An installation may drive its container through CMD alone. Refusing
+        to build that would be a worse failure than the one guarded against."""
+        self.fake_docker(entrypoint="")
+        usable, _ = udo.verify_built_image("odoo/staging")
+        self.assertTrue(usable)
+        self.assertEqual(len(self.commands), 1, "no probe should have run")
+
+    def test_an_unreadable_image_inspect_is_not_condemned(self):
+        self.fake_docker(inspect_ok=False)
+        usable, _ = udo.verify_built_image("odoo/staging")
+        self.assertTrue(usable)
+
 
 @unittest.skipUnless(HAS_REAL_YAML, "needs real PyYAML to load a config file from disk")
 class MainAgainstARealConfigFileTest(unittest.TestCase):
@@ -428,6 +497,19 @@ class MainAgainstARealConfigFileTest(unittest.TestCase):
 
         self.assertEqual(exit_code, 0)
         self.assertEqual(before, after)
+
+    def test_no_cache_reaches_the_module_flag_the_build_reads(self):
+        """The flag travels as a module-level global rather than through six
+        call levels, so the wiring from argv to that global is the part that
+        can silently rot."""
+        original = udo.BUILD_NO_CACHE
+        try:
+            self.assertEqual(self.run_main(["--no-cache", "--validate"]), 0)
+            self.assertTrue(udo.BUILD_NO_CACHE)
+            self.assertEqual(self.run_main(["--validate"]), 0)
+            self.assertFalse(udo.BUILD_NO_CACHE)
+        finally:
+            udo.BUILD_NO_CACHE = original
 
     def test_an_unknown_specific_container_exits_non_zero(self):
         # Drives the real unknown-name check in main() rather than

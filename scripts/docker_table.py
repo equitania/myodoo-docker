@@ -57,7 +57,7 @@ import shutil
 import subprocess
 import sys
 
-SCRIPT_VERSION = "1.0.0"
+SCRIPT_VERSION = "1.1.0"
 SCRIPT_DATE = "14.08.2026"
 
 
@@ -87,8 +87,31 @@ DETAILED = [
     ("PORTS",   "{{.Ports}}",     True),
 ]
 
+# `docker images` on Docker 29 answers with DISK USAGE / CONTENT SIZE / EXTRA
+# and no age at all, which is the one question actually asked of an image list
+# on a server: how old is what is running here. IMAGE is not shrinkable — a
+# truncated repository:tag cannot be typed into `docker rmi`.
+IMAGES = [
+    ("IMAGE",  "{{.Repository}}:{{.Tag}}", False),
+    ("ID",     "{{.ID}}",                  False),
+    ("SIZE",   "{{.Size}}",                True),
+    ("AGE",    "{{.CreatedSince}}",        False),
+]
+
 MIN_WIDTH = 6      # a shrunk column never gets narrower than this
 ELLIPSIS = "…"
+
+# An image this old is worth a rebuild - on these servers a base image that has
+# not moved in a quarter has missed several security updates.
+STALE_DAYS = 90
+
+# docker's own wording (go-units), shortened. Ordered longest first so
+# "About a minute" is matched before "minute".
+AGE_UNITS = (
+    ("second", "s"), ("minute", "m"), ("hour", "h"), ("day", "d"),
+    ("week", "w"), ("month", "mo"), ("year", "y"),
+)
+AGE_DAYS = {"s": 0, "m": 0, "h": 0, "d": 1, "w": 7, "mo": 30, "y": 365}
 
 
 # ==============================================================================
@@ -262,9 +285,58 @@ def is_running(status):
     return status.lower().startswith("up")
 
 
+def compact_age(created_since):
+    """docker's "2 days ago" as "2d". Returns (text, days).
+
+    Unparsable input is passed through unchanged with days 0: an age that is
+    merely unfamiliar must still be readable, and guessing a number from it
+    would colour a row on an invention.
+    """
+    text = (created_since or "").strip()
+    if not text:
+        return "", 0
+    lowered = text.lower()
+    if lowered.startswith("less than a second"):
+        return "0s", 0
+
+    match = re.match(r"^(?:about\s+)?(\d+|an?)\s+(\w+?)s?\s+ago$", lowered)
+    if not match:
+        return text, 0
+    count = 1 if match.group(1) in ("a", "an") else int(match.group(1))
+    for name, short in AGE_UNITS:
+        if match.group(2) == name:
+            return f"{count}{short}", count * AGE_DAYS[short]
+    return text, 0
+
+
+def age_cell(created_since):
+    """The age, shortened, amber once an image is older than STALE_DAYS."""
+    text, days = compact_age(created_since)
+    return Cell.plain(text, "yellow" if days >= STALE_DAYS else None)
+
+
+def image_cell(name):
+    """repository:tag, greyed out when the image is dangling."""
+    return Cell.plain(name, "grey" if name.startswith("<none>") else None)
+
+
 # ==============================================================================
 # Data
 # ==============================================================================
+
+def docker_images(columns, runner=None):
+    """The raw image rows, sorted by repository:tag.
+
+    Same reason as docker_ps: piping `docker images` into sort put the header
+    in the middle of the list.
+    """
+    template = "\t".join(t for _, t, _ in columns)
+    runner = runner or _run
+    code, out, err = runner(["docker", "images", "--format", template])
+    if code != 0:
+        raise DockerError(err or out or "docker images failed", code)
+    return _rows(out, len(columns))
+
 
 def docker_ps(columns, runner=None):
     """The raw rows, sorted by name.
@@ -278,15 +350,19 @@ def docker_ps(columns, runner=None):
     code, out, err = runner(["docker", "ps", "-a", "--format", template])
     if code != 0:
         raise DockerError(err or out or "docker ps failed", code)
+    return _rows(out, len(columns))
 
+
+def _rows(out, width):
+    """Tab-separated docker output as padded, name-sorted rows."""
     rows = []
     for line in out.splitlines():
         if not line.strip():
             continue
         fields = line.split("\t")
         # Never let a short line shift the columns; pad instead.
-        fields += [""] * (len(columns) - len(fields))
-        rows.append(fields[:len(columns)])
+        fields += [""] * (width - len(fields))
+        rows.append(fields[:width])
     rows.sort(key=lambda r: r[0].lower())
     return rows
 
@@ -322,6 +398,10 @@ def build_cells(rows, columns, box):
                 cells.append(ports_cell(value, box["arrow"]))
             elif title == "STATUS":
                 cells.append(status_cell(value, box["dot"]))
+            elif title == "AGE":
+                cells.append(age_cell(value))
+            elif title == "IMAGE" and "AGE" in titles:
+                cells.append(image_cell(value))
             else:
                 cells.append(Cell.plain(value))
 
@@ -367,7 +447,7 @@ def column_widths(table, columns, available):
 # Rendering
 # ==============================================================================
 
-def render(rows, columns, stream, colour=None, width=None):
+def render(rows, columns, stream, colour=None, width=None, summary_fn=None):
     box = glyphs(stream)
     c = palette(stream, colour)
     table = build_cells(rows, columns, box)
@@ -392,7 +472,22 @@ def render(rows, columns, stream, colour=None, width=None):
         print(f"{box['v']} {line} {box['v']}", file=stream)
 
     print(rule(box["bl"], box["bm"], box["br"]), file=stream)
-    print(summary(rows, columns, c, box["sep"]), file=stream)
+    print((summary_fn or summary)(rows, columns, c, box["sep"]), file=stream)
+
+
+def images_summary(rows, columns, c, sep="·"):
+    """One line under the image table: how many, and how many need attention."""
+    titles = [t for t, _, _ in columns]
+    dangling = sum(1 for row in rows if row[titles.index("IMAGE")].startswith("<none>"))
+    stale = sum(1 for row in rows if compact_age(row[titles.index("AGE")])[1] >= STALE_DAYS)
+    total = len(rows)
+    line = (f"  {c['grey']}{total} image{'s' if total != 1 else ''}{c['reset']}")
+    if stale:
+        line += (f" {c['grey']}{sep}{c['reset']} {c['yellow']}{stale} older than "
+                 f"{STALE_DAYS} days{c['reset']}")
+    if dangling:
+        line += (f" {c['grey']}{sep} {dangling} dangling{c['reset']}")
+    return line
 
 
 def summary(rows, columns, c, sep="·"):
@@ -418,6 +513,8 @@ def main(argv=None, stream=None):
         description="docker ps as a readable table (dps / dpsall)")
     parser.add_argument("--details", action="store_true",
                         help="add ID, COMMAND and CREATED columns (dpsall)")
+    parser.add_argument("--images", action="store_true",
+                        help="list images with their age instead of containers (dpi)")
     parser.add_argument("--no-color", "--no-colour", dest="colour",
                         action="store_false", default=None,
                         help="never emit colour codes")
@@ -427,19 +524,26 @@ def main(argv=None, stream=None):
                         version=f"docker_table.py {SCRIPT_VERSION} ({SCRIPT_DATE})")
     args = parser.parse_args(argv)
 
-    columns = DETAILED if args.details else BASIC
+    if args.images:
+        columns, collect, empty = IMAGES, docker_images, "no images"
+        summary_fn = images_summary
+    else:
+        columns = DETAILED if args.details else BASIC
+        collect, empty, summary_fn = docker_ps, "no containers", summary
+
     try:
-        rows = docker_ps(columns)
+        rows = collect(columns)
     except DockerError as error:
         print(str(error), file=sys.stderr)
         return error.code
 
     if not rows:
         c = palette(stream, args.colour)
-        print(f"  {c['grey']}no containers{c['reset']}", file=stream)
+        print(f"  {c['grey']}{empty}{c['reset']}", file=stream)
         return 0
 
-    render(rows, columns, stream, colour=args.colour, width=args.width)
+    render(rows, columns, stream, colour=args.colour, width=args.width,
+           summary_fn=summary_fn)
     return 0
 
 

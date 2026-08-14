@@ -1,8 +1,8 @@
 #!/usr/bin/python3
 # -*- coding: utf-8 -*-
 # This script performs an update of an Odoo database in a Docker container
-# Version 5.12.0
-# Date 11.08.2026
+# Version 5.13.0
+# Date 14.08.2026
 ##############################################################################
 #
 #    Shell Script for Odoo, Open Source Management Solution
@@ -77,8 +77,13 @@ logger = logging.getLogger(__name__)
 # Kept in sync with the header comment above. Printed at the start of every run
 # so a pasted log says which version produced it — the single most common
 # question when a report comes back from a server.
-SCRIPT_VERSION = "5.12.0"
-SCRIPT_DATE = "11.08.2026"
+SCRIPT_VERSION = "5.13.0"
+SCRIPT_DATE = "14.08.2026"
+
+# Set by --no-cache. A module-level flag rather than another parameter through
+# process_container(): the build is six call levels below the argument parser,
+# and this switch is reached for on a bad day, not on a normal one.
+BUILD_NO_CACHE = False
 
 # Column at which the dots of a compact step line end
 STEP_WIDTH = 44
@@ -920,6 +925,12 @@ Note: DNS optimization is automatically applied to containers if host DNS is not
     parser.add_argument('--comment', metavar='TEXT',
                         help='Recorded in the run log header and the run history')
 
+    parser.add_argument('--no-cache',
+                        action='store_true',
+                        help='Build without the BuildKit cache. Needed when a '
+                             'cached build exports an image with no filesystem '
+                             '(Docker >=29, moby/moby#52431).')
+
     parser.add_argument('--validate',
                         action='store_true',
                         help='Only validate the configuration without performing updates')
@@ -1309,6 +1320,66 @@ def build_proxy_build_args(proxy_settings):
         args.append(f'--build-arg {key}="{value}"')
         args.append(f'--build-arg {key.upper()}="{value}"')
     return " ".join(args) + " "
+
+def verify_built_image(image):
+    """Check that a freshly built image actually carries a filesystem.
+
+    Docker >=29 can export a HOLLOW image (moby#52431, open): the build reports
+    success in seconds because every step came from the BuildKit cache, the
+    image has a plausible size, and at runtime every single file is missing.
+    The container then restart-loops with
+
+        exec /app/bin/boot: no such file or directory
+
+    which reads like a Dockerfile bug and is not one. Seen on one customer server on
+    16.07.2026 and again on 14.08.2026.
+
+    This cannot roll anything back - the previous image is removed before the
+    build, several steps up. What it buys is that the failure is named where it
+    happens, with the command that fixes it, instead of surfacing half a minute
+    later as a restart loop and an error message that points at the wrong file.
+
+    The probe runs the image's own entrypoint executable through `test -x`, so
+    it fails in both shapes the fault takes: a hollow image has no /bin/sh and
+    `docker run` itself refuses, and an image that merely lost its last COPY
+    still has a shell but fails the test.
+
+    Args:
+        image: Image name without a tag (the build tags it as-is)
+
+    Returns:
+        tuple: (usable, message) - message is empty when usable
+    """
+    success, output, *_ = run_command(
+        f"docker image inspect --format '{{{{index .Config.Entrypoint 0}}}}' {image}",
+        show_output=False, timeout=60)
+    entrypoint = (output or "").strip().splitlines()
+    entrypoint = entrypoint[-1].strip() if entrypoint else ""
+    if not success or not entrypoint or not entrypoint.startswith("/"):
+        # No entrypoint to probe. Not a verdict on the image: an installation
+        # may legitimately drive its container through CMD alone, and refusing
+        # to build that would be a worse failure than the one guarded against.
+        logger.debug(f"No absolute entrypoint on {image} - skipping the image probe")
+        return True, ""
+
+    success, _, *_ = run_command(
+        f'docker run --rm --entrypoint /bin/sh {image} -c "test -x {entrypoint}"',
+        show_output=False, filter_output=True, timeout=120)
+    if success:
+        return True, ""
+
+    return False, (
+        f"The image {image} was built but does not carry {entrypoint}.\n"
+        "This is the hollow-image export of Docker >=29 (moby/moby#52431):\n"
+        "the build succeeds from cache and the result has no filesystem.\n"
+        "\n"
+        "  docker builder prune -af      discard the build cache\n"
+        f"  {os.path.basename(sys.argv[0])} -s <container>   build again\n"
+        "\n"
+        "If the rebuild is hollow again, overlay mounts from an earlier store\n"
+        "are still in place and only a reboot clears them. Check with:\n"
+        "  dmesg -T | grep -i overlayfs | tail")
+
 
 def copy_pre_build_files(container, path):
     """Copy customer-specific files/directories into the build folder before docker build.
@@ -1796,10 +1867,11 @@ def _process_container(container, proxy_settings=None, dockerfiles_source=None,
 
     build_env = dict(proxy_env or {})
     build_env["DOCKER_BUILDKIT"] = "1"
+    cache_arg = "--no-cache " if BUILD_NO_CACHE else ""
 
     success, _, info, warn, err = run_stream(
         f"build image {image}",
-        f"docker build {proxy_build_args}-t {image} .",
+        f"docker build {cache_arg}{proxy_build_args}-t {image} .",
         timeout=3600, env=build_env,
         filter_output=should_filter,
         show_progress=should_filter,
@@ -1819,7 +1891,22 @@ def _process_container(container, proxy_settings=None, dockerfiles_source=None,
         except:
             pass
         return False, total_info, total_warnings, total_errors
-    
+
+    # A build that reports success is not proof of a usable image on Docker >=29
+    started = time.time()
+    usable, problem = verify_built_image(image)
+    print_step(f"verify image {image}", "ok" if usable else "FAILED",
+               time.time() - started)
+    if not usable:
+        total_errors += 1
+        logger.error(problem)
+        print(problem)
+        try:
+            os.chdir(original_dir)  # Change back to original directory
+        except:
+            pass
+        return False, total_info, total_warnings, total_errors
+
     # Set translation parameter
     load_translation = " --i18n-overwrite --load-language=all" if translation.upper() == "Y" else ""
     
@@ -2004,7 +2091,10 @@ def main():
     
     # Parse command line arguments
     args = parse_arguments()
-    
+
+    global BUILD_NO_CACHE
+    BUILD_NO_CACHE = args.no_cache
+
     # Set logging level based on verbosity
     if args.verbose:
         logger.setLevel(logging.INFO)

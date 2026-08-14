@@ -395,5 +395,111 @@ class EntryPoint(unittest.TestCase):
         self.assertIn("daemon is down", errors.getvalue())
 
 
+# ==============================================================================
+# Images (dpi)
+# ==============================================================================
+
+IMAGE_SAMPLE = (
+    "odoo/live:latest\t6e0f69d120fa\t2.14GB\t2 days ago\n"
+    "myodoo/prepare-v19:26.07.16\t2c97d308cb12\t1.63GB\t4 months ago\n"
+    "postgres:16.14\t8a4b04588618\t451MB\tAbout an hour ago\n"
+    "<none>:<none>\tdeadbeef1234\t2.14GB\tLess than a second ago\n"
+)
+
+
+class Age(unittest.TestCase):
+    """`docker images` on Docker 29 shows DISK USAGE, CONTENT SIZE and EXTRA —
+    and no age, which is the question actually asked of an image list."""
+
+    def test_dockers_wording_becomes_a_short_age(self):
+        for text, expected in (("2 days ago", "2d"),
+                               ("4 months ago", "4mo"),
+                               ("About an hour ago", "1h"),
+                               ("About a minute ago", "1m"),
+                               ("7 minutes ago", "7m"),
+                               ("3 weeks ago", "3w"),
+                               ("2 years ago", "2y"),
+                               ("Less than a second ago", "0s")):
+            self.assertEqual(dt.compact_age(text)[0], expected, text)
+
+    def test_the_age_in_days_is_what_decides_the_colour(self):
+        self.assertEqual(dt.compact_age("4 months ago")[1], 120)
+        self.assertEqual(dt.compact_age("2 weeks ago")[1], 14)
+        self.assertEqual(dt.compact_age("5 hours ago")[1], 0)
+
+    def test_wording_it_does_not_know_is_passed_through_not_invented(self):
+        """Colouring a row on a guessed number is worse than not colouring it."""
+        self.assertEqual(dt.compact_age("since the war"), ("since the war", 0))
+        self.assertEqual(dt.compact_age(""), ("", 0))
+
+    def test_a_stale_image_is_marked_and_a_fresh_one_is_not(self):
+        self.assertEqual(dt.age_cell("4 months ago").fragments[0][1], "yellow")
+        self.assertIsNone(dt.age_cell("2 days ago").fragments[0][1])
+
+
+class Images(unittest.TestCase):
+
+    def _with_docker(self, out=IMAGE_SAMPLE, code=0, err=""):
+        real = dt._run
+        dt._run = lambda _c: (code, out, err)
+        self.addCleanup(lambda: setattr(dt, "_run", real))
+
+    def render(self, width=100):
+        self._with_docker()
+        stream = Terminal()
+        self.assertEqual(dt.main(["--images", "--width", str(width)], stream), 0)
+        return visible(stream.getvalue()).splitlines()
+
+    def test_the_header_is_the_first_row_not_the_last(self):
+        lines = self.render()
+        self.assertIn("IMAGE", lines[1])
+        self.assertIn("AGE", lines[1])
+
+    def test_rows_are_sorted_by_name(self):
+        rows = dt.docker_images(dt.IMAGES, runner=lambda _c: (0, IMAGE_SAMPLE, ""))
+        self.assertEqual([r[0] for r in rows],
+                         ["<none>:<none>", "myodoo/prepare-v19:26.07.16",
+                          "odoo/live:latest", "postgres:16.14"])
+
+    def test_the_age_column_is_shortened(self):
+        body = " ".join(self.render()[3:])
+        self.assertIn("2d", body)
+        self.assertIn("4mo", body)
+        self.assertNotIn("days ago", body)
+
+    def test_the_summary_counts_stale_and_dangling(self):
+        summary = self.render()[-1]
+        self.assertIn("4 images", summary)
+        self.assertIn("1 older than 90 days", summary)
+        self.assertIn("1 dangling", summary)
+
+    def test_an_image_name_is_never_truncated(self):
+        """A shortened repository:tag cannot be typed into `docker rmi`."""
+        self.assertFalse(dict((t, s) for t, _, s in dt.IMAGES)["IMAGE"])
+
+    def test_no_images_is_a_sentence_not_an_empty_frame(self):
+        self._with_docker(out="")
+        stream = Terminal()
+        self.assertEqual(dt.main(["--images"], stream), 0)
+        self.assertIn("no images", stream.getvalue())
+        self.assertNotIn("┌", stream.getvalue())
+
+    def test_a_broken_daemon_exits_with_dockers_code_and_no_traceback(self):
+        self._with_docker(out="", code=1, err="daemon is down")
+        stream, errors = Terminal(), io.StringIO()
+        with contextlib.redirect_stderr(errors):
+            self.assertEqual(dt.main(["--images"], stream), 1)
+        self.assertIn("daemon is down", errors.getvalue())
+
+    def test_the_container_view_is_untouched_by_the_image_columns(self):
+        """Same renderer, two shapes — the summary must follow the shape."""
+        real = dt._run
+        dt._run = runner_for(SAMPLE)
+        self.addCleanup(lambda: setattr(dt, "_run", real))
+        stream = Terminal()
+        self.assertEqual(dt.main(["--width", "200"], stream), 0)
+        self.assertIn("running", visible(stream.getvalue()).splitlines()[-1])
+
+
 if __name__ == "__main__":
     unittest.main()

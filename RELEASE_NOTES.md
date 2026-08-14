@@ -1,5 +1,74 @@
 # Release Notes
 
+## `dpi` Now Says How Old an Image Is (14.08.2026)
+
+*scripts/docker_table.py v1.1.0 · fish/functions/linux/dpi.fish (new) ·
+fish/conf.d/32-aliases-docker.fish v1.3.0*
+
+`dpi` was `docker images`, and Docker 29 answers that with DISK USAGE, CONTENT
+SIZE and EXTRA — and no age at all, which is the one question actually asked of
+an image list on a server.
+
+### Added
+
+- **An AGE column**, in the same renderer as `dps`/`dpsall` rather than a second
+  half-built one. Ages are shortened the way the port column is (`4 months ago`
+  → `4mo`) and turn amber past 90 days, because a base image that has not moved
+  in a quarter has missed several security updates.
+- **Dangling images are greyed out** and counted separately in the summary line:
+  `4 images · 1 older than 90 days · 1 dangling`.
+- Wording the age parser does not recognise is passed through unchanged and
+  counts as zero days. A row coloured on a guessed number is worse than an
+  uncoloured one.
+
+### Changed
+
+- `dpi` is a **function** now, not an alias — an alias would shadow the
+  function fish has already autoloaded. Like `dps`, it falls back to
+  `docker images` + `awk` (header held back, rows sorted) on a server where
+  `ups` has not run yet.
+
+## A Build Reported Success and Shipped an Image With No Filesystem (14.08.2026)
+
+*scripts/update_docker_odoo.py v5.13.0*
+
+On one customer server a `doup` finished with `build image odoo/staging ... ok (2s)` and left
+the instance in a restart loop:
+
+```
+exec /app/bin/boot: no such file or directory
+```
+
+The Dockerfile was fine. The image had no filesystem at all — not even
+`/bin/sh`. Docker ≥29 can export a hollow image from the build cache
+(moby/moby#52431, open): every step reports `CACHED`, the export takes 0.0s, the
+image carries a plausible size, and every file is missing at runtime. Same
+server, same fault as 16.07.2026.
+
+### Added
+
+- **`verify_built_image()` runs after every build**, before the update step. It
+  reads the image's own entrypoint and probes it with
+  `docker run --rm --entrypoint /bin/sh <image> -c "test -x <entrypoint>"`,
+  which catches both shapes of the fault: a hollow image has no shell and
+  `docker run` refuses outright, an image that merely lost its last `COPY` has a
+  shell and fails the test. Three seconds per run.
+- **The failure message carries the way out** — `docker builder prune -af`,
+  rebuild, and `dmesg -T | grep -i overlayfs` if it recurs — because the error
+  that surfaces without it points at the wrong file and costs an hour.
+- **An image without an absolute entrypoint is not condemned.** An installation
+  may drive its container through `CMD` alone; failing that build would be a
+  worse failure than the one being guarded against.
+- **`--no-cache`** on `doup`, so the fix for a poisoned build cache does not
+  require typing `docker build` by hand in the build folder.
+
+### Fixed
+
+- Nothing here can roll back: the previous image is removed *before* the build
+  (`docker rmi {image}:latest`), together with the container. That is why a
+  hollow build is an outage rather than an inconvenience, and why the check has
+  to speak at the moment it happens.
+
 ## The Command Overview Never Appeared on a Customer Server (14.08.2026)
 
 *fish/conf.d/50-prompt.fish v1.2.0*
