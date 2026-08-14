@@ -468,7 +468,7 @@ myodoo-docker/
   `setup-maintenance-cron.sh` restores the repository schedule and discards the
   customisation — that is its job, and the tool says so before it writes
 
-#### 9. ownerp_migrate.py (v1.3.0)
+#### 9. ownerp_migrate.py (v1.4.0)
 - **Purpose**: One-way conversion of the legacy CSV configurations to YAML —
   `container2backup.csv` + `container2backup_path.csv` + `rsync_targets.csv` →
   `container2backup.yaml`, `docker2update.csv` → `docker2update.yaml`
@@ -504,6 +504,11 @@ myodoo-docker/
   carries `update`, `backup` or `both`, `_provenance()` filters on it, and the
   per-file count follows — a header stating seven points while listing three
   sends the reader hunting for four that were never printed
+- **Silent on an empty run** (v1.4.0). `print_results()` always was; `main()`
+  printed "Nothing to migrate" underneath it anyway, on every `ups`. A server
+  whose CSVs were converted long ago is then told forever, which is how the
+  block stops being read on the one server where it says something. `--quiet`
+  (what `ups` passes) suppresses only the empty case
 - **An instance missing from the backup file is named, not omitted quietly**
   (v1.3.0). A backup entry needs a database name; without one no row is written.
   Saying so is the point — the file otherwise looks complete while one
@@ -549,6 +554,19 @@ myodoo-docker/
 - **Never the only route**: `dostat`, `wiz`, `docron`, `doval` cover the same
   ground without Textual. Missing library → one re-exec through
   `uv run --with`, then a message naming those four
+- **Installing it is `ups`'s job, and it has to be checked there** (v1.1.1,
+  14.08.2026). A server ran `konsole` after many updates and got "Textual is
+  not available". `warm_console_cache()` existed, but ran `python3 -c pass` —
+  which proves an environment can be built and imports nothing the console
+  needs, so it could not fail. It imports `textual` and `yaml` now, installs a
+  missing uv instead of skipping silently, and writes the outcome to the
+  **install report**: every failure path used to be a `logger` call, and under
+  the lean output policy those are invisible on screen
+- **The message names `ups`, never `pip install --user`** — Debian 12+ refuses
+  that outright (externally-managed-environment). It also separates a missing
+  uv (an update fixes it) from an unreachable PyPI (nothing typed there will),
+  and a non-zero `uv run` falls through to it rather than exiting on uv's own
+  error
 - **`uv run --with` is an ISOLATED environment** — the system site-packages
   are not on its path. PyYAML is therefore declared next to Textual; without
   it every section reported "unknown", which looks exactly like a broken

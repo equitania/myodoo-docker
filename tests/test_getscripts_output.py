@@ -166,5 +166,107 @@ class ExcerptTest(unittest.TestCase):
         self.assertEqual(gs._child_output_excerpt(result), "")
 
 
+class ConsoleWarmUpTest(unittest.TestCase):
+    """`konsole` must be startable after ups, and say so when it is not.
+
+    All three of these came from one server where the console had never been
+    able to start: the warm-up verified nothing, reported nothing an operator
+    would see, and skipped a missing uv in silence.
+    """
+
+    def setUp(self):
+        self.calls = []
+        self.report = list(gs._install_report)
+        gs._install_report.clear()
+        self.addCleanup(lambda: (gs._install_report.clear(),
+                                 gs._install_report.extend(self.report)))
+        self.patch("_console_dependencies",
+                   lambda: ["textual>=8,<9", "pyyaml>=6"])
+        self.patch("is_uv_installed", lambda: True)
+        self.patch("install_uv", lambda: False)
+
+    def patch(self, name, replacement):
+        original = getattr(gs, name)
+        setattr(gs, name, replacement)
+        self.addCleanup(setattr, gs, name, original)
+
+    def run_command_returning(self, returncode):
+        def runner(command, **_kwargs):
+            self.calls.append(command)
+            return types.SimpleNamespace(returncode=returncode)
+        self.patch("run_command", runner)
+
+    def statuses(self):
+        return {name: status for name, status, _detail in gs._install_report}
+
+    def test_pyyaml_is_imported_under_its_module_name(self):
+        """The distribution is pyyaml; the module it installs is yaml."""
+        self.assertEqual(gs._import_names(["textual>=8,<9", "pyyaml>=6"]),
+                         ["textual", "yaml"])
+
+    def test_extras_and_exact_pins_still_resolve_to_a_module(self):
+        self.assertEqual(gs._import_names(["textual[syntax]==8.1", "rich >= 13"]),
+                         ["textual", "rich"])
+
+    def test_the_warm_up_imports_rather_than_running_pass(self):
+        """`python3 -c pass` proves an environment can be built, nothing more.
+
+        It is a check that cannot fail, which is how a server ended up being
+        told its console was cached while it could never start.
+        """
+        self.run_command_returning(0)
+        gs.warm_console_cache()
+        self.assertEqual(len(self.calls), 1)
+        self.assertIn("import textual, yaml", self.calls[0])
+        self.assertNotIn("-c pass", self.calls[0])
+
+    def test_a_successful_warm_up_is_reported_as_ok(self):
+        self.run_command_returning(0)
+        gs.warm_console_cache()
+        self.assertEqual(self.statuses().get("console (konsole)"), "ok")
+
+    def test_an_unreachable_index_reaches_the_install_report(self):
+        """Not a logger call: under lean output that is invisible on screen."""
+        self.run_command_returning(1)
+        gs.warm_console_cache()
+        self.assertEqual(self.statuses().get("console (konsole)"), "failed")
+
+    def test_a_missing_uv_is_installed_rather_than_skipped(self):
+        installed = []
+        self.patch("is_uv_installed", lambda: False)
+        self.patch("install_uv", lambda: installed.append(True) or True)
+        self.run_command_returning(0)
+        gs.warm_console_cache()
+        self.assertEqual(installed, [True])
+        self.assertEqual(self.statuses().get("console (konsole)"), "ok")
+
+    def test_a_missing_uv_that_cannot_be_installed_is_reported(self):
+        self.patch("is_uv_installed", lambda: False)
+        self.patch("install_uv", lambda: False)
+        self.run_command_returning(0)
+        gs.warm_console_cache()
+        self.assertEqual(self.statuses().get("console (konsole)"), "failed")
+        self.assertEqual(self.calls, [])
+
+    def test_unreadable_specs_are_reported_rather_than_guessed(self):
+        self.patch("_console_dependencies", list)
+        self.run_command_returning(0)
+        gs.warm_console_cache()
+        self.assertEqual(self.statuses().get("console (konsole)"), "failed")
+
+    def test_a_warm_up_that_raises_does_not_take_the_update_with_it(self):
+        def boom(*_args, **_kwargs):
+            raise OSError("no such thing")
+        self.patch("run_command", boom)
+        gs.warm_console_cache()
+        self.assertEqual(self.statuses().get("console (konsole)"), "failed")
+
+    def test_the_specs_are_read_from_the_console_rather_than_duplicated(self):
+        """A pin that drifts here looks exactly like a successful warm-up."""
+        specs = gs._console_dependencies()
+        self.assertTrue(any(s.startswith("textual") for s in specs), specs)
+        self.assertTrue(any(s.startswith("pyyaml") for s in specs), specs)
+
+
 if __name__ == "__main__":
     unittest.main()

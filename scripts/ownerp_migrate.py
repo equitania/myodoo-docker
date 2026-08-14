@@ -3,8 +3,8 @@
 # ==============================================================================
 # Title:            ownerp_migrate.py
 # Description:      Convert the legacy CSV configurations to YAML, once, safely.
-# Version:          1.3.0
-# Date:             13.08.2026
+# Version:          1.4.0
+# Date:             14.08.2026
 # Author:           Equitania Software GmbH
 # ==============================================================================
 # Why this exists:
@@ -83,8 +83,8 @@ import time
 from dataclasses import dataclass, field
 from typing import List, NamedTuple, Optional, Tuple
 
-SCRIPT_VERSION = "1.3.0"
-SCRIPT_DATE = "13.08.2026"
+SCRIPT_VERSION = "1.4.0"
+SCRIPT_DATE = "14.08.2026"
 
 BACKUP_CSV = "container2backup.csv"
 BACKUP_PATH_CSV = "container2backup_path.csv"
@@ -1073,6 +1073,9 @@ def build_parser() -> argparse.ArgumentParser:
                         help="rebuild both configs from the running containers, "
                              "for servers whose CSVs are already gone. Opt-in; "
                              "never runs from ups.")
+    parser.add_argument("--quiet", action="store_true",
+                        help="say nothing when there is nothing to migrate "
+                             "(used by ups, which runs this on every pass)")
     parser.add_argument("--version", action="version",
                         version=f"ownerp_migrate.py {SCRIPT_VERSION} ({SCRIPT_DATE})")
     return parser
@@ -1097,9 +1100,15 @@ def main(argv=None) -> int:
     results = migrate(args.home, dry_run=args.dry_run)
     print_results(results)
     if all(r.status == "none" for r in results):
-        print("Nothing to migrate — no legacy CSV configuration found.")
-        print("If the CSVs are already gone, rebuild from the running "
-              "containers with: ownerp_migrate.py --from-docker")
+        # Silent under --quiet. This runs from every ups, and a server whose
+        # CSVs were converted years ago - or never had any - is told the same
+        # two lines forever. print_results() already understood that; main()
+        # printed underneath it anyway. Typed by hand the answer is still
+        # worth having, which is why it is a flag and not a deletion.
+        if not args.quiet:
+            print("Nothing to migrate — no legacy CSV configuration found.")
+            print("If the CSVs are already gone, rebuild from the running "
+                  "containers with: ownerp_migrate.py --from-docker")
         return 0
     return 1 if any(r.status == "invalid" for r in results) else 0
 

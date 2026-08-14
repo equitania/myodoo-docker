@@ -14,12 +14,15 @@ Run from the repository root:
     python3 -m unittest tests.test_ownerp_migrate -v
 """
 
+import contextlib
+import io
 import os
 import sys
 import tempfile
 import textwrap
 import unittest
 
+REPO = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..")
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "scripts"))
 
 import ownerp_migrate as om  # noqa: E402
@@ -72,6 +75,47 @@ class MigrateFixture(unittest.TestCase):
 
     def result(self, results, name):
         return next(r for r in results if r.name == name)
+
+
+class QuietTest(MigrateFixture):
+    """This runs from every ups, on servers that have nothing left to convert.
+
+    Being told "no legacy CSV configuration found" on every update is how a
+    block stops being read - including on the one server where it would have
+    said something. Typed by hand the answer is still worth having, so it is a
+    flag rather than a deletion.
+    """
+
+    def run_main(self, argv):
+        out = io.StringIO()
+        with contextlib.redirect_stdout(out):
+            code = om.main(argv)
+        return code, out.getvalue()
+
+    def test_quiet_says_nothing_when_there_is_nothing_to_do(self):
+        code, output = self.run_main(["--home", self.home, "--quiet"])
+        self.assertEqual(code, 0)
+        self.assertEqual(output.strip(), "")
+
+    def test_without_quiet_it_still_answers(self):
+        code, output = self.run_main(["--home", self.home])
+        self.assertEqual(code, 0)
+        self.assertIn("Nothing to migrate", output)
+
+    def test_quiet_never_hides_an_actual_conversion(self):
+        """Silence is only for the empty case - a write is always reported."""
+        self.write(om.UPDATE_CSV, UPDATE_CSV)
+        _code, output = self.run_main(["--home", self.home, "--quiet"])
+        self.assertIn("Legacy CSV migration", output)
+        self.assertIn("docker2update.yaml", output)
+
+    def test_ups_passes_the_flag(self):
+        """The caller is the whole reason the flag exists."""
+        with open(os.path.join(REPO, "getScripts.py"), encoding="utf-8") as h:
+            source = h.read()
+        start = source.index("def migrate_legacy_csv")
+        body = source[start:source.index("\ndef ", start + 1)]
+        self.assertIn('"--quiet"', body)
 
 
 class ReadingTest(MigrateFixture):

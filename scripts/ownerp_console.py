@@ -4,7 +4,7 @@
 # Title:            ownerp_console.py
 # Description:      The ownERP console: server state, and the configuration
 #                   editing that used to mean hand-writing YAML.
-# Version:          1.1.0
+# Version:          1.1.1
 # Date:             14.08.2026
 # Author:           Equitania Software GmbH
 # ==============================================================================
@@ -53,7 +53,7 @@
 import os
 import sys
 
-SCRIPT_VERSION = "1.1.0"
+SCRIPT_VERSION = "1.1.1"
 SCRIPT_DATE = "14.08.2026"
 
 # The dependencies, in one place. Textual is pinned to a major version: it
@@ -71,11 +71,7 @@ DEPENDENCIES = (TEXTUAL_SPEC, YAML_SPEC)
 HERE = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, HERE)
 
-NO_TEXTUAL = f"""\
-The console needs Textual, and it is not available.
-
-    pip install --user '{TEXTUAL_SPEC}'
-
+FALLBACKS = """\
 Everything the console does also works without it:
 
     dostat     the state of this server, as text
@@ -85,6 +81,33 @@ Everything the console does also works without it:
 """
 
 
+def no_textual_message(uv_found=None):
+    """Why the console cannot start, and what actually fixes it on this server.
+
+    It used to say `pip install --user textual`, which is wrong twice over: on
+    Debian 12 and later that refuses with an externally-managed-environment
+    error, and installing it by hand is not how anything else on an ownERP
+    server arrives. `ups` installs it - naming anything else sends an operator
+    down a path this project does not maintain.
+
+    The cause is split out because the two are not the same problem. Missing uv
+    is fixed by an update; an unreachable PyPI is not fixed by anything the
+    operator types here, and saying so is more useful than a command that will
+    fail again.
+    """
+    import shutil
+    if uv_found is None:
+        uv_found = shutil.which("uv") is not None
+    cause = ("Textual could not be fetched - this server has no route to PyPI, "
+             "or a proxy sits in front of it."
+             if uv_found else
+             "uv is missing, and that is what the console installs Textual with.")
+    return (f"The console needs Textual, and it is not available.\n"
+            f"{cause}\n\n"
+            f"    ups        installs it - that is where this belongs\n\n"
+            f"{FALLBACKS}")
+
+
 def _reexec_through_uv():
     """Restart through `uv run --with textual`, once.
 
@@ -92,6 +115,11 @@ def _reexec_through_uv():
     environment - the network is touched on the first start and not again. The
     guard variable is what keeps a failure from looping: if the re-executed
     process still cannot import Textual, it prints the message and stops.
+
+    A non-zero exit from uv itself falls through to the message rather than
+    exiting on it. uv's own error explains what it could not download; it does
+    not say that `ups` is what installs this, or that dostat covers most of
+    what the operator came for.
     """
     import shutil
     import subprocess
@@ -109,6 +137,8 @@ def _reexec_through_uv():
         completed = subprocess.run(command, env=environment, check=False)
     except OSError:
         return False
+    if completed.returncode != 0:
+        return False
     sys.exit(completed.returncode)
 
 
@@ -123,7 +153,7 @@ try:
                                  TabbedContent, TabPane)
 except ImportError:                              # pragma: no cover - by design
     if __name__ == "__main__" and _reexec_through_uv() is False:
-        print(NO_TEXTUAL, file=sys.stderr)
+        print(no_textual_message(), file=sys.stderr)
         sys.exit(2)
     raise
 

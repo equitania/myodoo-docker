@@ -1,5 +1,53 @@
 # Release Notes
 
+## The Console Was Never Installed (14.08.2026)
+
+*getScripts.py v9.20.0 · scripts/ownerp_console.py v1.1.1 ·
+scripts/ownerp_migrate.py v1.4.0*
+
+`konsole` answered "The console needs Textual, and it is not available" on a server
+that had been updated many times. Everything built for it was unreachable, and the
+update that was supposed to install it reported success.
+
+### Fixed
+
+- **The warm-up verified nothing.** `warm_console_cache()` ran
+
+      uv run --with textual --with pyyaml python3 -c pass
+
+  which proves an environment can be built and never imports a single thing the
+  console needs. A check that cannot fail is not a check. It now imports what the
+  console imports — `textual` and `yaml`, the latter under its module name rather
+  than its distribution name.
+
+- **Every failure was a logger call.** Under the lean output policy those go to
+  `~/getscripts.log`, so an operator watching `ups` scroll past saw a clean update
+  and met the missing library days later, in a different context, with no reason to
+  connect the two. The outcome is an entry in the install report now — the part that
+  is actually read — and a failure names what it means: `konsole` will not start,
+  `dostat` and `wiz` still work.
+
+- **A missing uv was skipped in silence**, with `install_uv()` sitting in the same
+  file. uv is a prerequisite of this project, not an optional extra; it is installed
+  and the result recorded.
+
+- **The console's own message pointed at `pip install --user`.** That is wrong twice
+  over: Debian 12 and later refuse it outright (externally-managed-environment), and
+  nothing else on an ownERP server arrives by hand. It names `ups`, and it separates
+  the two causes — a missing uv, which an update fixes, from an unreachable PyPI,
+  which nothing the operator types here will fix. A non-zero exit from `uv run`
+  falls through to that message instead of exiting on uv's error alone.
+
+### Changed
+
+- **`ups` no longer says "Nothing to migrate" on every run.** `print_results()`
+  already stayed silent when there was nothing to convert; `main()` printed two
+  lines underneath it anyway. It runs from every update, so a server whose CSVs were
+  converted long ago — or never existed — was told forever, which is how a block
+  stops being read on the one server where it matters. `--quiet` (used by `ups`)
+  suppresses only the empty case; a real conversion still prints in full, and typed
+  by hand the answer is still there.
+
 ## The Console Gets a Menu and a Form (14.08.2026)
 
 *scripts/ownerp_console.py v1.1.0 · scripts/ownerp_wizard.py v1.2.0*

@@ -142,10 +142,48 @@ class RefusalTest(unittest.TestCase):
     def test_the_missing_library_message_names_all_four_fallbacks(self):
         """Read from the source, so it holds even without Textual installed."""
         source = console_source()
-        message = re.search(r"NO_TEXTUAL = f?\"\"\"\\?\n(.*?)\"\"\"",
+        message = re.search(r"FALLBACKS = \"\"\"\\?\n(.*?)\"\"\"",
                             source, re.DOTALL).group(1)
         for command in ("dostat", "wiz", "docron", "doval"):
             self.assertIn(command, message)
+
+    def test_the_missing_library_message_points_at_ups_not_at_pip(self):
+        """`pip install --user` is wrong on every server this runs on.
+
+        Debian 12 and later refuse it outright (externally-managed-environment),
+        and nothing else on an ownERP server is installed by hand. `ups` is the
+        route; naming another sends an operator somewhere unmaintained. Read
+        from the rendered message rather than the source, or the docstring
+        explaining why pip is gone counts as pip being back.
+        """
+        if not HAVE_TEXTUAL:
+            self.skipTest("needs the module importable")
+        for found in (True, False):
+            message = self.console.no_textual_message(uv_found=found)
+            self.assertIn("ups", message)
+            self.assertNotIn("pip install", message)
+
+    def test_the_message_separates_a_missing_uv_from_an_unreachable_pypi(self):
+        """Two different problems: one an update fixes, the other it cannot."""
+        if not HAVE_TEXTUAL:
+            self.skipTest("needs the module importable")
+        without_uv = self.console.no_textual_message(uv_found=False)
+        with_uv = self.console.no_textual_message(uv_found=True)
+        self.assertIn("uv is missing", without_uv)
+        self.assertIn("PyPI", with_uv)
+        self.assertNotEqual(without_uv, with_uv)
+
+    def test_a_failing_uv_run_falls_through_to_the_message(self):
+        """uv explains what it could not download; it does not mention ups."""
+        source = console_source()
+        start = source.index("def _reexec_through_uv")
+        body = source[start:source.index("\ntry:", start)]
+        self.assertIn("if completed.returncode != 0:", body)
+
+    def test_the_reexec_cannot_loop(self):
+        """A guard variable, or a server spins up uv processes forever."""
+        source = console_source()
+        self.assertIn("OWNERP_CONSOLE_REEXEC", source)
 
     def test_the_reexec_cannot_loop(self):
         """A guard variable, or a server spins up uv processes forever."""
