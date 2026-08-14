@@ -27,6 +27,18 @@ The evidence against it, before any test was run:
   runs. **5/5 clean, zero overlayfs kernel messages.** The workload was not a
   toy: same size as the real `odoo/staging` image (2.14 GB) and twice its layer
   count. The pass/fail rules were fixed in writing before the run.
+- **The control arm was run too**, and it is the more interesting half: the same
+  box with `overlay2` pinned and rebooted was **5/5 clean as well**. Had it
+  failed, our own pin would have been the cause of what we blamed on the store.
+  It did not — so by elimination the hollow images on that one server come from
+  neither store. They come from the machine: overlapping overlay mounts reported
+  there since 12.08.2026, and the build cache that grew out of them. Nothing
+  reproduces on a fresh host with either setting.
+- **Observed, not acted on:** `overlay2` built 44% faster (20s vs 36s), evenly
+  across all rounds, so not a warm-up artefact. On a workload where the export
+  is nearly the whole runtime. Whether any of that reaches a real Odoo build —
+  dominated by downloading and unpacking modules — this test does not say, so it
+  is not a reason to change the default.
 - **The pin is now opt-in**: `DOCKER_STORAGE_DRIVER=overlay2 ./bootstrap.sh`
   for a host where a store fault is actually observed. Fresh installs get
   Docker's own default. Existing servers keep their pin — `bootstrap.sh` removes
