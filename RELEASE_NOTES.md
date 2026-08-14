@@ -1,5 +1,46 @@
 # Release Notes
 
+## bootstrap.sh: the Pin Was Written, Never Verified (14.08.2026)
+
+*scripts/bootstrap.sh v1.12.0 · tests/test_bootstrap.py (new)*
+
+`bootstrap.sh` has pinned `storage-driver: overlay2` before the daemon's first
+start since 1.7.0. The one customer server incident of the same day showed the two things
+that pin does not cover.
+
+### Fixed
+
+- **An existing `daemon.json` skipped the pin entirely.** The check was
+  `if [ ! -f /etc/docker/daemon.json ]`, with a warning in the else branch. That
+  file is on plenty of hosts for reasons unrelated to the storage driver —
+  `log-opts`, a registry mirror, a DNS list — and every one of them came up on
+  the containerd store while the install log said nothing was wrong. One server
+  behaving unlike all the others is exactly the shape of fault that costs a day
+  to find. `ensure_overlay2_pin()` now merges the single key in and keeps every
+  other setting; a file that already names a *different* driver is reported and
+  left alone, because overriding a deliberate choice unattended is worse than
+  the bug being guarded against; a file that cannot be parsed is never written
+  over, since a half-written `daemon.json` stops docker from starting at all.
+
+### Added
+
+- **`verify_overlay2_active()`** — "we wrote the file" is not "it is in effect".
+  A pin that lands after the first daemon start, a typo, or a hand-edit never
+  followed by a restart all leave it inert, and the host looks healthy right up
+  to the first large build.
+- **`verify_docker_can_build()`** — builds a two-line image and runs it. A
+  Docker ≥29 host can build, tag and report success for an image with no
+  filesystem at all; every other check in this script passes on such a host, and
+  the fault surfaces days later as an Odoo container restart-looping on
+  `exec /app/bin/boot: no such file or directory`. Sixty seconds here against an
+  afternoon there. Never fatal — an unreachable registry is not a broken daemon,
+  and the message says so. `DOCKER_SMOKE_TEST=0` switches it off. It also runs
+  in the "Docker already present" branch, which is what `--harden` takes on an
+  existing server — precisely where a daemon has had time to start doing this.
+- **`tests/test_bootstrap.py`** — the script had no tests at all. `main "$@"` is
+  now behind `BOOTSTRAP_NO_MAIN`, so the suite can source the file and exercise
+  the merge against a temp file instead of provisioning the machine it runs on.
+
 ## `dpi` Now Says How Old an Image Is (14.08.2026)
 
 *scripts/docker_table.py v1.1.0 · fish/functions/linux/dpi.fish (new) ·

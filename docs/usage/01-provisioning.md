@@ -85,6 +85,15 @@ unattended-upgrades, Python-Abhängigkeiten; klont das Repo und ruft am Ende
 > `bootstrap.sh` ≥ 1.7.0 pinnt deshalb den klassischen `overlay2`-Treiber in
 > `/etc/docker/daemon.json`. Auf Servern, die **ohne** aktuelles Bootstrap
 > aufgesetzt wurden: Symptome und Heilung siehe [Troubleshooting](08-troubleshooting.md#de-16-troubleshooting).
+>
+> Ab **1.12.0** wird eine bereits vorhandene `daemon.json` **ergänzt** statt
+> übersprungen — sie existiert häufig wegen `log-opts` oder einer Registry, und
+> der Pin fiel dann still aus. Nur der Schlüssel `storage-driver` wird gesetzt;
+> ein absichtlich anderer Treiber bleibt stehen und wird gemeldet. Anschließend
+> prüft das Skript den **tatsächlich aktiven** Treiber und baut ein
+> zweizeiliges Image, das es startet: Ein Daemon, der Images ohne Dateisystem
+> exportiert, besteht jede andere Prüfung. Der Bautest lässt sich mit
+> `DOCKER_SMOKE_TEST=0` abschalten (Host ohne Registry-Zugang).
 
 <a id="de-4-schritt-2-getscriptspy"></a>
 ## Schritt 2: getScripts.py
@@ -212,6 +221,14 @@ unattended-upgrades, Python dependencies; clones the repo and finally runs
 > `bootstrap.sh` ≥ 1.7.0 therefore pins the classic `overlay2` driver in
 > `/etc/docker/daemon.json`. For servers set up **without** a current
 > bootstrap: symptoms and cure in [Troubleshooting](08-troubleshooting.md#en-16-troubleshooting).
+>
+> Since **1.12.0** an existing `daemon.json` is **merged into** rather than
+> skipped — it is often there for `log-opts` or a registry mirror, and the pin
+> silently did not happen. Only the `storage-driver` key is set; a deliberately
+> different driver is left alone and reported. The script then verifies the
+> driver that is **actually in effect** and builds and runs a two-line image: a
+> daemon that exports images with no filesystem passes every other check.
+> `DOCKER_SMOKE_TEST=0` disables that build (host without registry access).
 
 <a id="en-4-step-2-getscriptspy"></a>
 ## Step 2: getScripts.py
