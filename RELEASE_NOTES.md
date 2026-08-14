@@ -1,5 +1,69 @@
 # Release Notes
 
+## The Console Gets a Menu and a Form (14.08.2026)
+
+*scripts/ownerp_console.py v1.1.0 · scripts/ownerp_wizard.py v1.2.0*
+
+The console could already edit a configuration. It did it by asking which field, then
+asking for the value — the prompt wizard's logic wearing a nicer coat, and an operator
+told us plainly that changing the YAML by hand was faster.
+
+### Added
+
+- **Select a row, get a menu.** ctop's shape: a small box at the top left, over the
+  table it acts on, one letter per action. It is placed there rather than centred so
+  the row it belongs to stays visible. What each tab offers is data (`ACTIONS`), and
+  the System tab offers nothing — readiness findings are facts, not settings.
+
+- **`[e]` opens the whole entry as a form.** Every field at once, booleans as a switch
+  instead of a box you type `true` into, and the focused field's help at the bottom.
+  The prompt wizard printed that help per question; a form that dropped it would be
+  prettier and less informative.
+
+- **`ownerp_wizard.set_fields()` — a whole form in one write.** This is what makes the
+  form permissible at all. The two modals existed because a form that writes field by
+  field can half-apply: reject the third of five changes and the entry is left in a
+  state nobody asked for, with a `.bak-*` per keystroke-session. `set_fields()`
+  validates the whole set once and replaces the file once. `set_field()` is now that
+  call with one entry in the dict, so both paths cannot drift apart.
+
+  The order inside it is the substance rather than tidiness. A recorded line number
+  describes the file as it was *read*: replacing a line keeps every other number
+  valid, while inserting one shifts everything below it. Fields that already have a
+  line are patched first, and only then are absent ones appended, each recomputing the
+  entry's end against the lines as they now stand. The regression test uses **two**
+  absent fields — with one, the wrong order passes just as well.
+
+- **New entries are suggested in two passes.** A sequential prompt knows the container
+  name by the time it reaches the build folder; a form showing every field at once does
+  not. So whatever can be known up front is filled in at open time, and whatever the
+  operator left blank is suggested once the name exists — which is what turns an empty
+  build folder into `$HOME/docker-builds/<name>/`, exactly as the prompt does.
+
+### Fixed
+
+- **The action menu rendered without its keys.** `[e]` is valid Rich markup for a style
+  tag, so a Textual `Label` renders it as nothing at all: every line lost the letter
+  that reaches it, which is the entire point of the menu. Forty-five green tests said
+  nothing, because they asserted on the `ACTIONS` constant instead of on the screen.
+  Found by looking at a rendered screenshot. `markup=False`, and the test now reads
+  what is displayed.
+
+- **A menu label ran past the box.** "database only, no filest" is not a shorter way of
+  saying the same thing — it is a different sentence, and the menu clips rather than
+  wraps. Labels are held under `MENU_LABEL_WIDTH` by a test.
+
+### Unchanged on purpose
+
+- **The console still starts nothing.** "Run backup now" is deliberately not in any
+  menu. Having no process supervision, no cancel path and no log pane is what a tool
+  that starts nothing may do; a twenty-minute backup behind a keystroke would need all
+  three.
+
+- **`wizup`/`wizbk` stay**, because a terminal that cannot run Textual still needs
+  them. They now say so in their first line: the console edits the same file as a form,
+  and this prompt is the fallback.
+
 ## `dps` Puts Its Header Back on Top (14.08.2026)
 
 *scripts/docker_table.py v1.0.0 (new) · getScripts.py v9.19.0 ·

@@ -976,6 +976,111 @@ class WriteApiTest(ConfigFixture):
                          UPDATE_CONFIG)
 
 
+class SetFieldsTest(ConfigFixture):
+    """A whole form in one write — what makes the console's form safe.
+
+    The interesting half is the ordering. A recorded line number describes the
+    file as it was read: replacing a line keeps every other number valid, while
+    inserting one shifts everything below it. Patch-then-insert is therefore
+    not a style choice, and the two "absent" tests below are the ones that
+    catch it going wrong — they pass trivially if only one field is absent.
+    """
+
+    def test_two_present_fields_change_together(self):
+        result = wiz.set_fields(self.update, 0,
+                                {"delay_time": 45, "type": "M"})
+        self.assertTrue(result.ok, result.error)
+        entry = self.parsed(self.update)["containers"][0]
+        self.assertEqual(entry["delay_time"], 45)
+        self.assertEqual(entry["type"], "M")
+
+    def test_a_form_is_one_write_not_one_per_field(self):
+        wiz.set_fields(self.update, 0, {"delay_time": 45, "type": "M",
+                                        "odoo_version": "19"})
+        backups = [f for f in os.listdir(self.dir) if ".bak-" in f]
+        self.assertEqual(len(backups), 1)
+        self.assertEqual(self.read(os.path.join(self.dir, backups[0])),
+                         UPDATE_CONFIG)
+
+    def test_two_absent_fields_are_both_inserted(self):
+        # Neither only_sql_dump nor stream exists in BACKUP_CONFIG. Inserting
+        # the first shifts the file; a stale line number would put the second
+        # somewhere else entirely, or overwrite an unrelated line.
+        result = wiz.set_fields(self.backup, 0,
+                                {"only_sql_dump": True, "stream": True},
+                                kind=wiz.BACKUP)
+        self.assertTrue(result.ok, result.error)
+        entry = self.parsed(self.backup)["databases"][0]
+        self.assertIs(entry["only_sql_dump"], True)
+        self.assertIs(entry["stream"], True)
+
+    def test_a_present_and_an_absent_field_together(self):
+        result = wiz.set_fields(self.backup, 0,
+                                {"retention_days": 21, "stream": True},
+                                kind=wiz.BACKUP)
+        self.assertTrue(result.ok, result.error)
+        entry = self.parsed(self.backup)["databases"][0]
+        self.assertEqual(entry["retention_days"], 21)
+        self.assertIs(entry["stream"], True)
+
+    def test_nothing_else_in_the_file_moves(self):
+        wiz.set_fields(self.backup, 0, {"only_sql_dump": True, "stream": True},
+                       kind=wiz.BACKUP)
+        data = self.parsed(self.backup)
+        self.assertEqual(data["defaults"]["compression"],
+                         {"format": "7z", "level": 5})
+        self.assertEqual(data["databases"][0]["name"], "live_db")
+        self.assertEqual(data["databases"][0]["sql_container"], "live-db")
+
+    def test_a_rejected_set_writes_none_of_it(self):
+        before = self.read(self.update)
+        result = wiz.set_fields(self.update, 0,
+                                {"delay_time": 45, "type": "nonsense"})
+        self.assertFalse(result.ok)
+        self.assertEqual(self.read(self.update), before)
+        self.assertEqual([f for f in os.listdir(self.dir) if ".bak-" in f], [])
+
+    def test_a_duplicate_name_stops_the_whole_set(self):
+        path = self.write("two.yaml", UPDATE_CONFIG + SECOND_CONTAINER)
+        before = self.read(path)
+        result = wiz.set_fields(path, 1, {"container_name": "live-odoo",
+                                          "delay_time": 45})
+        self.assertFalse(result.ok)
+        self.assertIn("already in use", result.error)
+        self.assertEqual(self.read(path), before)
+
+    def test_a_port_in_a_set_still_keeps_its_bind_address(self):
+        result = wiz.set_fields(self.update, 0,
+                                {"port": 19000, "longpolling_port": 19001})
+        self.assertTrue(result.ok, result.error)
+        entry = self.parsed(self.update)["containers"][0]
+        self.assertEqual(entry["port"], "127.0.0.1:19000")
+        self.assertEqual(entry["longpolling_port"], "127.0.0.1:19001")
+
+    def test_a_list_valued_field_refuses_the_set_rather_than_part_of_it(self):
+        path = self.write("withlist.yaml", UPDATE_CONFIG
+                          + "    pre_build_files:\n"
+                            "      - /root/certs/ca.crt\n")
+        before = self.read(path)
+        result = wiz.set_fields(path, 0, {"delay_time": 45,
+                                          "pre_build_files": "x"})
+        self.assertFalse(result.ok)
+        self.assertIn("not a scalar", result.error)
+        self.assertEqual(self.read(path), before)
+
+    def test_an_empty_change_set_is_a_write_of_nothing_not_a_crash(self):
+        result = wiz.set_fields(self.update, 0, {})
+        self.assertTrue(result.ok, result.error)
+        self.assertEqual(self.parsed(self.update), self.parsed(self.update))
+
+    def test_set_field_still_works_and_goes_through_the_same_path(self):
+        result = wiz.set_field(self.backup, 0, "retention_days", 21,
+                               kind=wiz.BACKUP)
+        self.assertTrue(result.ok, result.error)
+        self.assertEqual(
+            self.parsed(self.backup)["databases"][0]["retention_days"], 21)
+
+
 class GenericCollectionTest(ConfigFixture):
     """The update-shaped names must stay exactly what they were."""
 

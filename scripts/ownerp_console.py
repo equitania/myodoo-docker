@@ -4,8 +4,8 @@
 # Title:            ownerp_console.py
 # Description:      The ownERP console: server state, and the configuration
 #                   editing that used to mean hand-writing YAML.
-# Version:          1.0.0
-# Date:             13.08.2026
+# Version:          1.1.0
+# Date:             14.08.2026
 # Author:           Equitania Software GmbH
 # ==============================================================================
 # Stage 3 of docs/superpowers/specs/2026-08-13-ownerp-console-design.md.
@@ -53,8 +53,8 @@
 import os
 import sys
 
-SCRIPT_VERSION = "1.0.0"
-SCRIPT_DATE = "13.08.2026"
+SCRIPT_VERSION = "1.1.0"
+SCRIPT_DATE = "14.08.2026"
 
 # The dependencies, in one place. Textual is pinned to a major version: it
 # moves fast and a widget API is not a stable interface across majors.
@@ -119,7 +119,8 @@ try:
     from textual.containers import Grid, Horizontal, Vertical, VerticalScroll
     from textual.screen import ModalScreen
     from textual.widgets import (Button, DataTable, Footer, Header, Input,
-                                 Label, Static, TabbedContent, TabPane)
+                                 Label, ListItem, ListView, Static, Switch,
+                                 TabbedContent, TabPane)
 except ImportError:                              # pragma: no cover - by design
     if __name__ == "__main__" and _reexec_through_uv() is False:
         print(NO_TEXTUAL, file=sys.stderr)
@@ -176,60 +177,192 @@ class Confirm(ModalScreen):
         self.dismiss(event.button.id == "yes")
 
 
-class EditField(ModalScreen):
-    """One field of one entry. Returns the new value, or None on cancel.
+# The menu box is 32 wide: 2 for the border, 2 for padding, 2 for the list's
+# own padding. Anything longer is clipped, not wrapped.
+MENU_LABEL_WIDTH = 26
 
-    A field at a time rather than a whole-entry form: that is what set_field()
-    writes, and a form that collected ten fields and wrote them one by one
-    could half-apply. Ten small validated writes with ten chances to refuse
-    beats one big one that cannot be rolled back.
+
+class ActionMenu(ModalScreen):
+    """What to do with the selected row. Returns an action name, or None.
+
+    ctop's menu: a small box at the top left, one letter per action, the
+    keystroke and the list entry doing the same thing so neither hand nor eye
+    has to switch. It decides nothing — it names what the caller offered and
+    hands one of those names back.
     """
 
     BINDINGS = [Binding("escape", "cancel", "Cancel")]
 
-    def __init__(self, field, current):
+    def __init__(self, title, actions):
+        """actions: a list of (key, label, name)."""
         super().__init__()
-        self.field = field
-        self.current = current
+        self.title_text = title
+        self.actions = list(actions)
 
     def compose(self) -> ComposeResult:
-        secret = wizard is not None and wizard.validator.redacted(self.field.name)
-        with Vertical(classes="dialog"):
-            yield Label(self.field.label, classes="dialog-title")
-            yield Label(self.field.help, classes="dialog-detail")
-            yield Input(
-                value="" if secret else str(self.current or ""),
-                password=secret,
-                placeholder="not shown" if secret else "",
-                id="value")
-            with Horizontal(classes="dialog-buttons"):
-                yield Button("Save", variant="primary", id="save")
-                yield Button("Cancel", id="cancel")
+        with Vertical(classes="menu"):
+            yield Label(self.title_text, classes="menu-title")
+            # markup=False, or the whole point of the menu disappears: "[e]"
+            # is valid Rich markup for a style tag, so a Label renders it as
+            # nothing at all and every line loses its key.
+            yield ListView(
+                *[ListItem(Label(f"[{key}] {label}", markup=False),
+                           id=f"act-{name}")
+                  for key, label, name in self.actions],
+                id="actions")
 
     def on_mount(self) -> None:
-        self.query_one("#value", Input).focus()
+        self.query_one("#actions", ListView).focus()
 
     def action_cancel(self) -> None:
         self.dismiss(None)
 
-    @on(Input.Submitted)
-    def _submitted(self) -> None:
-        self._save()
+    def on_key(self, event) -> None:
+        """The letter shortcuts. The list handles arrows and Enter itself."""
+        for key, _label, name in self.actions:
+            if event.key == key:
+                event.stop()
+                self.dismiss(None if name == "cancel" else name)
+                return
 
-    @on(Button.Pressed, "#save")
-    def _save_pressed(self) -> None:
-        self._save()
+    @on(ListView.Selected)
+    def _selected(self, event: ListView.Selected) -> None:
+        name = (event.item.id or "").removeprefix("act-")
+        self.dismiss(None if name == "cancel" else name)
+
+
+class EntryForm(ModalScreen):
+    """A whole entry as a form. Returns {field: value} of what changed, or None.
+
+    This replaces a pick-a-field/enter-a-value pair of modals, and the reason
+    it may is ownerp_wizard.set_fields(): the whole set is validated once and
+    the file is replaced once, so a form cannot half-apply. Without that this
+    would be several writes wearing one dialog's clothes — which is exactly
+    what the two modals were avoiding.
+
+    A boolean is a Switch, not a field where someone types "true". The help
+    text of the focused field is shown at the bottom rather than beside every
+    row: the prompt wizard printed it per question, and a form that dropped it
+    would be prettier and less informative.
+    """
+
+    BINDINGS = [
+        Binding("ctrl+s", "save", "Save"),
+        Binding("escape", "cancel", "Cancel"),
+    ]
+
+    def __init__(self, title, kind, fields, current, creating=False):
+        super().__init__()
+        self.title_text = title
+        self.kind = kind
+        self.fields = list(fields)
+        self.current = dict(current or {})
+        self.creating = creating
+
+    def compose(self) -> ComposeResult:
+        with Vertical(classes="form"):
+            yield Label(self.title_text, classes="dialog-title")
+            with VerticalScroll(id="form-rows"):
+                for field in self.fields:
+                    yield Label(field.label, classes="form-label")
+                    yield self._widget_for(field)
+            yield Label("", id="form-help", classes="dialog-detail")
+            with Horizontal(classes="dialog-buttons"):
+                yield Button("Save", variant="primary", id="save")
+                yield Button("Cancel", id="cancel")
+
+    def _widget_for(self, field):
+        value = self.current.get(field.name)
+        if _is_secret(field.name):
+            # Never render the stored password, not even masked into a value
+            # that could be written straight back. Empty means "leave it".
+            return Input(value="", password=True,
+                         placeholder="unchanged" if not self.creating else "",
+                         id=f"f-{field.name}", classes="form-input")
+        if _is_boolean(self.kind, field.name):
+            return Switch(value=bool(value), id=f"f-{field.name}",
+                          classes="form-switch")
+        return Input(value="" if value is None else str(value),
+                     id=f"f-{field.name}", classes="form-input")
+
+    def on_mount(self) -> None:
+        first = self.query(".form-input, .form-switch")
+        if first:
+            first[0].focus()
+
+    def on_descendant_focus(self, event) -> None:
+        """Show the focused field's help — the prompt wizard's one advantage."""
+        name = (getattr(event.widget, "id", "") or "").removeprefix("f-")
+        for field in self.fields:
+            if field.name == name:
+                self.query_one("#form-help", Label).update(field.help or "")
+                return
+
+    def action_cancel(self) -> None:
+        self.dismiss(None)
 
     @on(Button.Pressed, "#cancel")
     def _cancel_pressed(self) -> None:
         self.dismiss(None)
 
-    def _save(self) -> None:
-        text = self.query_one("#value", Input).value
-        if not text.strip():
-            self.notify("A value is required.", severity="warning")
+    @on(Button.Pressed, "#save")
+    def _save_pressed(self) -> None:
+        self.action_save()
+
+    def action_save(self) -> None:
+        changes, bad = {}, None
+        for field in self.fields:
+            widget = self.query_one(f"#f-{field.name}")
+            if isinstance(widget, Switch):
+                value = widget.value
+                if self.creating or value != bool(self.current.get(field.name)):
+                    changes[field.name] = value
+                continue
+
+            text = widget.value
+            if _is_secret(field.name):
+                # An untouched password field means "unchanged", never "".
+                if text:
+                    changes[field.name] = text
+                continue
+            if not self.creating and text == _as_text(self.current.get(field.name)):
+                continue
+            if not text.strip() and not self.creating:
+                bad = bad or f"{field.label} cannot be emptied here."
+                continue
+            try:
+                changes[field.name] = wizard.coerce(field.name, text, self.kind)
+            except ValueError:
+                bad = bad or f"{field.label} expects a number."
+
+        if bad:
+            self.notify(bad, severity="error")
             return
-        self.dismiss(text)
+        if not changes and not self.creating:
+            self.dismiss(None)
+            return
+        self.dismiss(changes)
+
+
+def _is_secret(name):
+    return wizard is not None and wizard.validator.redacted(name)
+
+
+def _is_boolean(kind, name):
+    """Whether the schema types this field as a boolean.
+
+    Read from the validator's schema rather than from the current value: a
+    field that is absent has no value to infer a type from, and rendering it
+    as a text box is how "true" ends up quoted in the file.
+    """
+    if wizard is None:
+        return False
+    rule = wizard.KINDS[kind]["fields"]().get(name, {})
+    return rule.get("type") is bool
+
+
+def _as_text(value):
+    return "" if value is None else str(value)
 
 
 class Reschedule(ModalScreen):
@@ -298,6 +431,30 @@ class Console(App):
     .dialog-detail { color: $text-muted; padding-bottom: 1; }
     .dialog-buttons { height: auto; padding-top: 1; align-horizontal: right; }
     .dialog-buttons Button { margin-left: 2; }
+
+    /* The action menu sits top left, over the table it acts on - ctop's
+       placement, and the reason it is not centred: the row it belongs to
+       must stay visible while the menu is open. */
+    ActionMenu { align: left top; }
+    .menu {
+        width: 32; height: auto; margin: 3 0 0 2; padding: 0 1;
+        background: $panel; border: round $accent;
+    }
+    .menu-title { text-style: bold; padding: 0 0 1 0; }
+    .menu ListView { height: auto; background: $panel; }
+    .menu ListItem { background: $panel; padding: 0 1; }
+
+    .form {
+        width: 76; height: 80%; padding: 1 2;
+        background: $panel; border: thick $primary;
+    }
+    #form-rows { height: 1fr; }
+    /* Two columns: a fixed label gutter wide enough for the longest label in
+       either form, and the input taking the rest. */
+    #form-rows { layout: grid; grid-size: 2; grid-columns: 34 1fr;
+                 grid-rows: 3; grid-gutter: 0 1; }
+    .form-label { padding: 1 0 0 0; }
+    .form-switch { height: 3; }
     #tiles { grid-size: 2; grid-gutter: 1 2; padding: 1 2; height: auto; }
     .tile { border: round $primary; padding: 0 1; height: auto; min-height: 7; }
     .tile-title { text-style: bold; }
@@ -308,6 +465,7 @@ class Console(App):
     BINDINGS = [
         Binding("q", "quit", "Quit"),
         Binding("r", "reload", "Reload"),
+        Binding("n", "new_entry", "New"),
         Binding("escape", "quit", "Quit", show=False),
     ]
 
@@ -436,34 +594,102 @@ class Console(App):
                           finding.title, finding.detail)
 
     # -- editing ---------------------------------------------------------
+    #
+    # One route for every change: select a row, get the menu of what this tab
+    # can do with it, and land either in the form or in a single toggle. The
+    # menu is what the row offers, not what the console decides.
+
+    # Labels are kept inside MENU_LABEL_WIDTH: the box does not grow to fit,
+    # it clips, and a clipped entry reads as a different setting than the one
+    # it toggles ("database only, no filest").
+    ACTIONS = {
+        "instances": (("e", "edit entry", "edit"),
+                      ("n", "new instance", "new"),
+                      ("a", "toggle updates on/off", "toggle-active"),
+                      ("c", "cancel", "cancel")),
+        "backup": (("e", "edit entry", "edit"),
+                   ("n", "new database", "new"),
+                   ("s", "toggle SQL-only backup", "toggle-sql"),
+                   ("c", "cancel", "cancel")),
+        "maintenance": (("e", "change schedule", "schedule"),
+                        ("t", "switch job on/off", "toggle"),
+                        ("c", "cancel", "cancel")),
+    }
+
+    KINDS_BY_TABLE = {"instances": "update", "backup": "backup"}
+
+    # The one field each toggle flips, and the label the notification uses.
+    TOGGLES = {
+        "toggle-active": ("active", "Take part in updates"),
+        "toggle-sql": ("only_sql_dump", "Database only, no filestore"),
+    }
 
     @on(DataTable.RowSelected)
     def _row_selected(self, event: DataTable.RowSelected) -> None:
         table_id = event.data_table.id
         index = self._rows.get(table_id, {}).get(event.row_key)
-        if index is None:
+        if index is None or table_id not in self.ACTIONS:
             return
-        if table_id == "instances":
-            self._edit_entry(wizard.UPDATE, index,
-                             self.server.instances.entries[index].name)
-        elif table_id == "backup":
-            self._edit_entry(wizard.BACKUP, index,
-                             self.server.backups.entries[index].database)
-        elif table_id == "maintenance":
-            self._edit_job(self.server.maintenance.jobs[index])
+        self.push_screen(
+            ActionMenu(self._row_title(table_id, index),
+                       self.ACTIONS[table_id]),
+            lambda action: self._act(table_id, index, action))
 
-    def _edit_entry(self, kind, index, label) -> None:
-        """Pick a field of this entry, then change it."""
+    def _row_title(self, table_id, index) -> str:
+        if table_id == "instances":
+            return self.server.instances.entries[index].name
+        if table_id == "backup":
+            return self.server.backups.entries[index].database
+        return self.server.maintenance.jobs[index].job_id
+
+    def _act(self, table_id, index, action) -> None:
+        if action is None:
+            return
+        if table_id == "maintenance":
+            self._act_on_job(self.server.maintenance.jobs[index], action)
+            return
+        if not self._have_wizard():
+            return
+        kind = self.KINDS_BY_TABLE[table_id]
+        if action == "edit":
+            self._open_form(kind, index)
+        elif action == "new":
+            self._new_entry(kind)
+        elif action in self.TOGGLES:
+            self._toggle(kind, index, *self.TOGGLES[action])
+
+    def action_new_entry(self) -> None:
+        """New entry for the visible tab, without selecting a row first.
+
+        An empty table has no row to select, which is exactly the state a new
+        server is in.
+        """
+        table_id = self.query_one("#tabs", TabbedContent).active.removeprefix(
+            "tab-")
+        if table_id not in self.KINDS_BY_TABLE:
+            return
+        if self._have_wizard():
+            self._new_entry(self.KINDS_BY_TABLE[table_id])
+
+    def _have_wizard(self) -> bool:
         if wizard is None:
             self.notify("ownerp_wizard.py is not installed - run ups.",
                         severity="error")
-            return
-        path = self._path_for(kind)
-        lines, data, error = wizard.load_config(path)
+            return False
+        return True
+
+    def _load(self, kind):
+        """(entries, error-shown). The console never parses a file itself."""
+        _lines, data, error = wizard.load_config(self._path_for(kind))
         if error:
             self.notify(error, severity="error")
+            return None
+        return wizard.entries_of(data, kind)
+
+    def _open_form(self, kind, index) -> None:
+        entries = self._load(kind)
+        if entries is None:
             return
-        entries = wizard.entries_of(data, kind)
         if not 0 <= index < len(entries):
             self.action_reload()
             return
@@ -472,27 +698,59 @@ class Console(App):
         # Scalars only: a list or a mapping has no single line to replace.
         fields = [f for f in wizard.KINDS[kind]["form"]
                   if not isinstance(current.get(f.name), (list, dict))]
+        label = current.get(wizard.KINDS[kind]["unique"][0], "entry")
         self.push_screen(
-            PickField(label, fields, current),
-            lambda field: self._change_field(kind, index, field, current))
+            EntryForm(f"{wizard.KINDS[kind]['label']} · {label}",
+                      kind, fields, current),
+            lambda changes: self._save_changes(kind, index, changes))
 
-    def _change_field(self, kind, index, field, current) -> None:
-        if field is None:
+    def _save_changes(self, kind, index, changes) -> None:
+        if not changes:
+            return
+        result = wizard.set_fields(self._path_for(kind), index, changes, kind)
+        self._report(result, f"{len(changes)} field(s) changed")
+
+    def _toggle(self, kind, index, field, label) -> None:
+        entries = self._load(kind)
+        if entries is None or not 0 <= index < len(entries):
+            return
+        new_value = not bool(entries[index].get(field))
+        result = wizard.set_field(self._path_for(kind), index, field,
+                                  new_value, kind)
+        self._report(result, f"{label}: {'yes' if new_value else 'no'}")
+
+    def _new_entry(self, kind) -> None:
+        entries = self._load(kind)
+        if entries is None:
             return
         self.push_screen(
-            EditField(field, current.get(field.name)),
-            lambda text: self._write_field(kind, index, field, text))
+            EntryForm(f"New {wizard.KINDS[kind]['label']}", kind,
+                      list(wizard.KINDS[kind]["form"]),
+                      _suggested(kind, entries), creating=True),
+            lambda values: self._create(kind, entries, values))
 
-    def _write_field(self, kind, index, field, text) -> None:
-        if text is None:
+    def _create(self, kind, entries, values) -> None:
+        if not values:
             return
-        try:
-            value = wizard.coerce(field.name, text, kind)
-        except ValueError:
-            self.notify(f"{field.label} expects a number.", severity="error")
+        entry = _complete(kind, entries, values)
+        missing = [f.label for f in wizard.KINDS[kind]["form"]
+                   if wizard.validator.is_empty(entry.get(f.name))
+                   and f.name in wizard.KINDS[kind]["unique"]]
+        if missing:
+            self.notify(f"{missing[0]} is required.", severity="error")
             return
-        result = wizard.set_field(self._path_for(kind), index, field.name,
-                                  value, kind)
+        self.push_screen(
+            Confirm(f"Add {entry.get(wizard.KINDS[kind]['unique'][0])}?",
+                    "\n".join(wizard.summary_lines(
+                        entry, wizard.KINDS[kind]["form"]))),
+            lambda yes: yes and self._write_new(kind, entry))
+
+    def _write_new(self, kind, entry) -> None:
+        result = wizard.add_entry(self._path_for(kind), entry, kind)
+        self._report(result, f"{entry.get(wizard.KINDS[kind]['unique'][0])} added")
+
+    def _report(self, result, success) -> None:
+        """One place turns a WriteResult into a message and a reload."""
         if result.error:
             self.notify(result.error, severity="error")
             return
@@ -502,20 +760,14 @@ class Console(App):
             self.notify("Not written: " + (errors[0] if errors else "invalid"),
                         severity="error")
             return
-        self.notify(f"{field.label} changed. Backup: "
-                    f"{os.path.basename(result.backup)}")
+        self.notify(f"{success}. Backup: {os.path.basename(result.backup)}")
         self.action_reload()
 
-    def _edit_job(self, job) -> None:
+    def _act_on_job(self, job, action) -> None:
         if cron is None:
             self.notify("ownerp_cron.py is not installed - run ups.",
                         severity="error")
             return
-        self.push_screen(
-            PickJobAction(job),
-            lambda action: self._apply_job_action(job, action))
-
-    def _apply_job_action(self, job, action) -> None:
         if action == "toggle":
             self._write_cron(lambda file: cron.set_active(file, job.job_id,
                                                           not job.active))
@@ -550,65 +802,52 @@ class Console(App):
             else "container2backup.yaml")
 
 
-class PickField(ModalScreen):
-    """Which field of this entry. Returns the Field, or None."""
+# ==============================================================================
+# Suggestions for a new entry
+# ==============================================================================
+#
+# The prompt wizard asks field by field, so by the time it reaches the build
+# folder it knows the container name and can suggest a path from it. A form
+# shows every field at once and therefore cannot: at open time the name is
+# still blank. Hence two passes — suggest what can be known up front, and fill
+# whatever the operator left empty once the name exists.
 
-    BINDINGS = [Binding("escape", "cancel", "Cancel")]
-
-    def __init__(self, label, fields, current):
-        super().__init__()
-        self.label = label
-        self.fields = fields
-        self.current = current
-
-    def compose(self) -> ComposeResult:
-        with Vertical(classes="dialog"):
-            yield Label(self.label, classes="dialog-title")
-            table = DataTable(id="fields")
-            table.cursor_type = "row"
-            yield table
-
-    def on_mount(self) -> None:
-        table = self.query_one("#fields", DataTable)
-        table.add_columns("Field", "Value")
-        for field in self.fields:
-            value = self.current.get(field.name, "-")
-            if wizard.validator.redacted(field.name):
-                value = wizard.MASK
-            table.add_row(field.label, str(value))
-        table.focus()
-
-    def action_cancel(self) -> None:
-        self.dismiss(None)
-
-    @on(DataTable.RowSelected)
-    def _selected(self, event: DataTable.RowSelected) -> None:
-        self.dismiss(self.fields[event.cursor_row])
+def _suggest_one(field, entries, entry):
+    """One suggestion, or None. A helper must never be the thing that fails."""
+    if field.suggest is None:
+        return None
+    try:
+        return field.suggest(entries, entry)
+    except Exception:
+        return None
 
 
-class PickJobAction(ModalScreen):
-    """Switch a job on/off, or reschedule it."""
+def _suggested(kind, entries):
+    """Pre-fill for a new entry: everything that does not need the name yet."""
+    entry = {}
+    for field in wizard.KINDS[kind]["form"]:
+        value = _suggest_one(field, entries, entry)
+        if value is not None and not wizard.validator.is_empty(value):
+            entry[field.name] = value
+    return entry
 
-    BINDINGS = [Binding("escape", "dismiss(None)", "Cancel")]
 
-    def __init__(self, job):
-        super().__init__()
-        self.job = job
+def _complete(kind, entries, values):
+    """The operator's values, plus a suggestion for each one left blank.
 
-    def compose(self) -> ComposeResult:
-        with Vertical(classes="dialog"):
-            yield Label(self.job.job_id, classes="dialog-title")
-            yield Label(cron.describe(self.job) if cron else self.job.schedule,
-                        classes="dialog-detail")
-            with Horizontal(classes="dialog-buttons"):
-                yield Button("Switch off" if self.job.active else "Switch on",
-                             id="toggle")
-                yield Button("Reschedule", variant="primary", id="schedule")
-                yield Button("Cancel", id="cancel")
-
-    @on(Button.Pressed)
-    def _pressed(self, event: Button.Pressed) -> None:
-        self.dismiss(None if event.button.id == "cancel" else event.button.id)
+    Run after the form closes, when container_name is finally known — this is
+    what turns an empty build folder into $HOME/docker-builds/<name>/ the way
+    the prompt wizard does.
+    """
+    entry = {name: value for name, value in values.items()
+             if not wizard.validator.is_empty(value)}
+    for field in wizard.KINDS[kind]["form"]:
+        if field.name in entry:
+            continue
+        value = _suggest_one(field, entries, entry)
+        if value is not None and not wizard.validator.is_empty(value):
+            entry[field.name] = value
+    return entry
 
 
 # ==============================================================================

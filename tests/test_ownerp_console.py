@@ -283,78 +283,297 @@ class WriteTest(ConsoleFixture):
         return [f for f in self.console.wizard.KINDS[kind]["form"]
                 if f.name == name][0]
 
-    def test_a_backup_field_is_written_through_the_wizard(self):
+    def save(self, kind, changes, index=0):
         async def body(app, pilot):
-            app._write_field(self.console.wizard.BACKUP, 0,
-                             self.field(self.console.wizard.BACKUP,
-                                        "retention_days"), "21")
+            app._save_changes(kind, index, changes)
             await pilot.pause()
         self.run_app(body)
+
+    def test_a_backup_field_is_written_through_the_wizard(self):
+        self.save(self.console.wizard.BACKUP, {"retention_days": 21})
         self.assertEqual(
             self.parsed("container2backup.yaml")["databases"][0]["retention_days"],
             21)
 
     def test_an_update_field_is_written_through_the_wizard(self):
-        async def body(app, pilot):
-            app._write_field(self.console.wizard.UPDATE, 0,
-                             self.field(self.console.wizard.UPDATE,
-                                        "delay_time"), "45")
-            await pilot.pause()
-        self.run_app(body)
+        self.save(self.console.wizard.UPDATE, {"delay_time": 45})
         self.assertEqual(
             self.parsed("docker2update.yaml")["containers"][0]["delay_time"], 45)
+
+    def test_a_whole_form_lands_in_one_write_with_one_backup(self):
+        """The reason a form may replace field-at-a-time editing at all."""
+        self.save(self.console.wizard.UPDATE,
+                  {"delay_time": 45, "type": "M", "odoo_version": "19"})
+        entry = self.parsed("docker2update.yaml")["containers"][0]
+        self.assertEqual((entry["delay_time"], entry["type"]), (45, "M"))
+        self.assertEqual(
+            len([f for f in os.listdir(self.home) if ".bak-" in f]), 1)
 
     def test_a_write_leaves_a_backup_of_the_previous_content(self):
         with open(os.path.join(self.home, "container2backup.yaml"),
                   encoding="utf-8") as handle:
             before = handle.read()
-
-        async def body(app, pilot):
-            app._write_field(self.console.wizard.BACKUP, 0,
-                             self.field(self.console.wizard.BACKUP,
-                                        "retention_days"), "21")
-            await pilot.pause()
-        self.run_app(body)
+        self.save(self.console.wizard.BACKUP, {"retention_days": 21})
         backups = [f for f in os.listdir(self.home) if ".bak-" in f]
         self.assertEqual(len(backups), 1)
         with open(os.path.join(self.home, backups[0]), encoding="utf-8") as h:
             self.assertEqual(h.read(), before)
 
-    def test_a_non_numeric_value_is_refused_and_nothing_is_written(self):
-        with open(os.path.join(self.home, "container2backup.yaml"),
+    def test_a_rejected_value_is_refused_and_nothing_is_written(self):
+        with open(os.path.join(self.home, "docker2update.yaml"),
                   encoding="utf-8") as handle:
             before = handle.read()
-
-        async def body(app, pilot):
-            app._write_field(self.console.wizard.BACKUP, 0,
-                             self.field(self.console.wizard.BACKUP,
-                                        "retention_days"), "not-a-number")
-            await pilot.pause()
-        self.run_app(body)
-        with open(os.path.join(self.home, "container2backup.yaml"),
+        self.save(self.console.wizard.UPDATE, {"type": "nonsense"})
+        with open(os.path.join(self.home, "docker2update.yaml"),
                   encoding="utf-8") as handle:
             self.assertEqual(handle.read(), before)
         self.assertEqual([f for f in os.listdir(self.home) if ".bak-" in f], [])
 
     def test_a_port_keeps_its_bind_address_when_changed(self):
-        async def body(app, pilot):
-            app._write_field(self.console.wizard.UPDATE, 0,
-                             self.field(self.console.wizard.UPDATE, "port"),
-                             "19000")
-            await pilot.pause()
-        self.run_app(body)
+        self.save(self.console.wizard.UPDATE, {"port": 19000})
         self.assertEqual(self.parsed("docker2update.yaml")["containers"][0]["port"],
                          "127.0.0.1:19000")
 
     def test_the_table_reflects_the_change_afterwards(self):
         """A write that does not refresh the view invites a second one."""
         async def body(app, pilot):
-            app._write_field(self.console.wizard.BACKUP, 0,
-                             self.field(self.console.wizard.BACKUP,
-                                        "retention_days"), "21")
+            app._save_changes(self.console.wizard.BACKUP, 0,
+                              {"retention_days": 21})
             await pilot.pause()
             return app.query_one("#backup", self.console.DataTable).get_row_at(0)
         self.assertIn("21", str(self.run_app(body)))
+
+    def test_a_toggle_flips_the_stored_value(self):
+        async def body(app, pilot):
+            app._toggle(self.console.wizard.UPDATE, 0, "active",
+                        "Take part in updates")
+            await pilot.pause()
+        self.run_app(body)
+        self.assertIs(
+            self.parsed("docker2update.yaml")["containers"][0]["active"], False)
+
+    def test_a_toggle_inserts_the_field_when_it_is_absent(self):
+        """only_sql_dump is not in the shipped backup entry."""
+        async def body(app, pilot):
+            app._toggle(self.console.wizard.BACKUP, 0, "only_sql_dump",
+                        "Database only")
+            await pilot.pause()
+        self.run_app(body)
+        self.assertIs(
+            self.parsed("container2backup.yaml")["databases"][0]["only_sql_dump"],
+            True)
+
+    def test_an_empty_change_set_writes_nothing(self):
+        async def body(app, pilot):
+            app._save_changes(self.console.wizard.BACKUP, 0, {})
+            await pilot.pause()
+        self.run_app(body)
+        self.assertEqual([f for f in os.listdir(self.home) if ".bak-" in f], [])
+
+
+class MenuTest(ConsoleFixture):
+    """Selecting a row offers what that tab can do with it."""
+
+    def test_selecting_an_instance_row_opens_the_menu(self):
+        async def body(app, pilot):
+            app.query_one("#instances", self.console.DataTable).focus()
+            await pilot.press("enter")
+            await pilot.pause()
+            return type(app.screen).__name__
+        self.assertEqual(self.run_app(body), "ActionMenu")
+
+    def test_the_menu_offers_edit_new_and_a_toggle(self):
+        names = [name for _key, _label, name in
+                 load_console().Console.ACTIONS["backup"]]
+        self.assertEqual(names, ["edit", "new", "toggle-sql", "cancel"])
+
+    def test_a_letter_picks_its_action(self):
+        async def body(app, pilot):
+            app.query_one("#backup", self.console.DataTable).focus()
+            await pilot.press("enter")
+            await pilot.pause()
+            await pilot.press("e")
+            await pilot.pause()
+            return type(app.screen).__name__
+        self.assertEqual(self.run_app(body), "EntryForm")
+
+    def test_cancel_closes_the_menu_without_a_form(self):
+        async def body(app, pilot):
+            app.query_one("#backup", self.console.DataTable).focus()
+            await pilot.press("enter")
+            await pilot.pause()
+            await pilot.press("c")
+            await pilot.pause()
+            return type(app.screen).__name__
+        self.assertNotIn(self.run_app(body), ("ActionMenu", "EntryForm"))
+
+    def test_the_system_tab_has_no_actions(self):
+        """Readiness findings are facts, not settings."""
+        self.assertNotIn("system", load_console().Console.ACTIONS)
+
+    def test_no_label_is_wider_than_the_box(self):
+        """The menu clips rather than wraps, and a clipped label misleads.
+
+        "[s] database only, no filest" is not a shorter way of saying the same
+        thing - it is a different sentence, and it was on screen.
+        """
+        console = load_console()
+        for table, actions in console.Console.ACTIONS.items():
+            for key, label, _name in actions:
+                self.assertLessEqual(len(f"[{key}] {label}"),
+                                     console.MENU_LABEL_WIDTH,
+                                     f"{table}: {label}")
+
+    def test_the_key_letters_survive_rendering(self):
+        """"[e]" is valid Rich markup for a style tag.
+
+        Rendered with markup on, every line loses its key and the menu becomes
+        a list of things you cannot reach by keyboard. Asserting on ACTIONS
+        alone would never have caught it - this reads what is on screen.
+        """
+        async def body(app, pilot):
+            app.query_one("#backup", self.console.DataTable).focus()
+            await pilot.press("enter")
+            await pilot.pause()
+            return [str(label.render()) for label in
+                    app.screen.query(self.console.Label)]
+        rendered = " ".join(self.run_app(body))
+        for key in ("[e]", "[n]", "[s]", "[c]"):
+            self.assertIn(key, rendered)
+
+
+class FormTest(ConsoleFixture):
+    """The form itself: what it renders, and what it hands back."""
+
+    def form_for(self, kind, index=0):
+        """Open the real form over the real configuration."""
+        async def body(app, pilot):
+            app._open_form(kind, index)
+            await pilot.pause()
+            return app.screen
+        return body
+
+    def test_a_boolean_field_is_a_switch_not_a_text_box(self):
+        async def body(app, pilot):
+            app._open_form(self.console.wizard.BACKUP, 0)
+            await pilot.pause()
+            return type(app.screen.query_one("#f-only_sql_dump")).__name__
+        self.assertEqual(self.run_app(body), "Switch")
+
+    def test_the_password_field_starts_empty_and_is_masked(self):
+        async def body(app, pilot):
+            app._open_form(self.console.wizard.UPDATE, 0)
+            await pilot.pause()
+            widget = app.screen.query_one("#f-db_password")
+            return widget.value, widget.password
+        value, masked = self.run_app(body)
+        self.assertEqual(value, "")
+        self.assertTrue(masked)
+
+    def test_an_untouched_form_reports_no_changes(self):
+        async def body(app, pilot):
+            app._open_form(self.console.wizard.UPDATE, 0)
+            await pilot.pause()
+            screen = app.screen
+            screen.action_save()
+            await pilot.pause()
+            return screen.query("#f-db_password")
+        self.run_app(body)
+        # Nothing written means no backup file, and above all no password
+        # rewritten from a masked placeholder.
+        self.assertEqual([f for f in os.listdir(self.home) if ".bak-" in f], [])
+        self.assertEqual(self.parsed("docker2update.yaml")["containers"][0]
+                         ["db_password"], "secret")
+
+    def test_a_changed_field_is_written_end_to_end(self):
+        async def body(app, pilot):
+            app._open_form(self.console.wizard.BACKUP, 0)
+            await pilot.pause()
+            app.screen.query_one("#f-retention_days").value = "21"
+            app.screen.action_save()
+            await pilot.pause()
+        self.run_app(body)
+        self.assertEqual(
+            self.parsed("container2backup.yaml")["databases"][0]["retention_days"],
+            21)
+
+    def test_a_non_numeric_value_never_reaches_the_file(self):
+        with open(os.path.join(self.home, "container2backup.yaml"),
+                  encoding="utf-8") as handle:
+            before = handle.read()
+
+        async def body(app, pilot):
+            app._open_form(self.console.wizard.BACKUP, 0)
+            await pilot.pause()
+            app.screen.query_one("#f-retention_days").value = "not-a-number"
+            app.screen.action_save()
+            await pilot.pause()
+            return type(app.screen).__name__
+        self.assertEqual(self.run_app(body), "EntryForm")
+        with open(os.path.join(self.home, "container2backup.yaml"),
+                  encoding="utf-8") as handle:
+            self.assertEqual(handle.read(), before)
+
+    def test_every_form_field_carries_its_help_text(self):
+        """The prompt wizard printed it per question; losing it is a regression."""
+        console = load_console()
+        for kind in (console.wizard.UPDATE, console.wizard.BACKUP):
+            for field in console.wizard.KINDS[kind]["form"]:
+                self.assertTrue(field.help, f"{kind}.{field.name}")
+
+
+class NewEntryTest(ConsoleFixture):
+    """Adding an entry, and the suggestions that make it bearable."""
+
+    def test_suggestions_fill_what_can_be_known_before_the_name(self):
+        console = load_console()
+        entries = [{"container_name": "test-odoo", "db_user": "ownerp",
+                    "port": "127.0.0.1:13000",
+                    "longpolling_port": "127.0.0.1:14000",
+                    "dockerfile_path": "/root/docker-builds/test-odoo/",
+                    "docker_image_name": "odoo/test"}]
+        suggested = console._suggested(console.wizard.UPDATE, entries)
+        self.assertEqual(suggested["db_user"], "ownerp")
+        self.assertIn("port", suggested)
+
+    def test_the_build_folder_follows_the_name_the_operator_typed(self):
+        """Suggested after the form closes - at open time there was no name."""
+        console = load_console()
+        entries = [{"container_name": "test-odoo",
+                    "dockerfile_path": "/root/docker-builds/test-odoo/",
+                    "docker_image_name": "odoo/test"}]
+        entry = console._complete(console.wizard.UPDATE, entries,
+                                  {"container_name": "shop-odoo",
+                                   "database_name": "shop_db"})
+        self.assertEqual(entry["dockerfile_path"],
+                         "/root/docker-builds/shop-odoo/")
+        self.assertEqual(entry["docker_image_name"], "odoo/shop")
+
+    def test_a_blank_field_is_dropped_rather_than_written_empty(self):
+        console = load_console()
+        entry = console._complete(console.wizard.BACKUP, [],
+                                  {"name": "shop_db", "db_user": ""})
+        self.assertEqual(entry["name"], "shop_db")
+        self.assertNotIn("db_user", entry)
+
+    def test_a_new_entry_asks_before_it_writes(self):
+        async def body(app, pilot):
+            app._create(self.console.wizard.BACKUP, [], {"name": "shop_db"})
+            await pilot.pause()
+            return type(app.screen).__name__
+        self.assertEqual(self.run_app(body), "Confirm")
+        self.assertEqual([f for f in os.listdir(self.home) if ".bak-" in f], [])
+
+    def test_a_confirmed_new_entry_reaches_the_file(self):
+        async def body(app, pilot):
+            app._write_new(self.console.wizard.BACKUP,
+                           {"name": "shop_db", "sql_container": "shop-db",
+                            "data_container": "shop-odoo"})
+            await pilot.pause()
+        self.run_app(body)
+        names = [d["name"] for d in
+                 self.parsed("container2backup.yaml")["databases"]]
+        self.assertIn("shop_db", names)
 
 
 class NavigationTest(ConsoleFixture):

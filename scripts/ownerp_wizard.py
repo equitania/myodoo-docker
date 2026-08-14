@@ -5,8 +5,8 @@
 # Description:      Guided editing of docker2update.yaml and
 #                   container2backup.yaml - add an entry, change a field.
 #                   Validates before it replaces anything.
-# Version:          1.1.0
-# Date:             13.08.2026
+# Version:          1.2.0
+# Date:             14.08.2026
 # Author:           Equitania Software GmbH
 # ==============================================================================
 #
@@ -40,8 +40,8 @@ try:
 except ImportError:  # pragma: no cover - depends on the installation
     validator = None
 
-SCRIPT_VERSION = "1.1.0"
-SCRIPT_DATE = "13.08.2026"
+SCRIPT_VERSION = "1.2.0"
+SCRIPT_DATE = "14.08.2026"
 
 DEFAULT_UPDATE_CONFIG = os.path.join(os.path.expanduser("~"), "docker2update.yaml")
 DEFAULT_BACKUP_CONFIG = os.path.join(os.path.expanduser("~"),
@@ -626,8 +626,22 @@ def duplicate_of(data, entry, kind=UPDATE, skip=None):
     return None
 
 
-def set_field(path, index, field, value, kind=UPDATE, now=None):
-    """Change one scalar field of one entry. No terminal involved."""
+def set_fields(path, index, changes, kind=UPDATE, now=None):
+    """Change several scalar fields of one entry in a SINGLE write.
+
+    A form edits an entry, not a field. Calling set_field once per changed
+    field would leave one timestamped backup per keystroke-session and, worse,
+    a half-applied entry whenever the third of five writes is rejected. This
+    validates the whole set once and replaces the file once: all of it, or
+    none of it.
+
+    The order of the two loops is the substance, not tidiness. A recorded line
+    number belongs to the file as it was read; replacing a line keeps every
+    other number valid, while inserting one shifts everything below it. So the
+    fields that already have a line are patched first, and only then are the
+    absent ones appended — each of which recomputes the entry's end against
+    the lines as they now stand.
+    """
     lines, data, error = load_config(path)
     if error:
         return WriteResult(error=error)
@@ -635,26 +649,47 @@ def set_field(path, index, field, value, kind=UPDATE, now=None):
     entries = entries_of(data, kind)
     if not 0 <= index < len(entries):
         return WriteResult(error=f"there is no entry {index} in {path}")
+    current = entries[index]
 
-    current = entries[index].get(field)
-    if isinstance(current, (list, dict)):
-        # A value spanning several lines has no single line to replace, and
-        # guessing at one is how a configuration gets quietly corrupted.
-        return WriteResult(error=f"{field} is not a scalar - edit it with mcedit")
+    prepared = []
+    for field, value in changes.items():
+        existing = current.get(field)
+        if isinstance(existing, (list, dict)):
+            # A value spanning several lines has no single line to replace,
+            # and guessing at one is how a configuration gets quietly
+            # corrupted.
+            return WriteResult(
+                error=f"{field} is not a scalar - edit it with mcedit")
 
-    if field in KINDS[kind]["unique"]:
-        clash = duplicate_of(data, {field: value}, kind, skip=index)
-        if clash:
-            return WriteResult(error=f"{field} {value!r} is already in use")
+        if field in KINDS[kind]["unique"]:
+            clash = duplicate_of(data, {field: value}, kind, skip=index)
+            if clash:
+                return WriteResult(
+                    error=f"{field} {value!r} is already in use")
 
-    if validator.parse_port(current) is not None:
-        # Changing a port must not silently unbind it from localhost.
-        value = keep_bind_address(current, value)
+        if validator.parse_port(existing) is not None:
+            # Changing a port must not silently unbind it from localhost.
+            value = keep_bind_address(existing, value)
 
-    ok, findings, backup = safe_write(
-        path, patch_entry_field(lines, data, index, field, value, kind),
-        now=now, kind=kind)
+        prepared.append((field, value, validator.line_of(current, field)))
+
+    new_lines = list(lines)
+    for _field, value, line_number in prepared:
+        if line_number:
+            new_lines[line_number - 1] = patch_line(
+                new_lines[line_number - 1], value)
+    for field, value, line_number in prepared:
+        if not line_number:
+            new_lines = patch_entry_field(new_lines, data, index, field,
+                                          value, kind)
+
+    ok, findings, backup = safe_write(path, new_lines, now=now, kind=kind)
     return WriteResult(ok=ok, findings=tuple(findings), backup=backup)
+
+
+def set_field(path, index, field, value, kind=UPDATE, now=None):
+    """Change one scalar field of one entry. No terminal involved."""
+    return set_fields(path, index, {field: value}, kind=kind, now=now)
 
 
 def add_entry(path, entry, kind=UPDATE, now=None):
@@ -991,6 +1026,13 @@ def main(argv=None):
         print(f"\n  {error}")
         print("  Fix it first - 'doval' shows every finding with its line.")
         return 2
+
+    # Say once where the better route is. This prompt walks one field at a
+    # time because it has to work on a terminal that cannot run Textual; when
+    # Textual is available the console edits the same file as a form, and an
+    # operator who does not know that keeps coming back here.
+    print("\n  konsole edits this file as a form - this prompt is the "
+          "fallback.")
 
     label = KINDS[kind]["label"]
     print(f"\n  1) Add a{'n' if label[0] in 'aeiou' else ''} {label}"

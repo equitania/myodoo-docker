@@ -382,7 +382,7 @@ myodoo-docker/
 - **`update_docker_odoo.py --validate` and `container2backup.py --validate`**
   both delegate to it
 
-#### 7. ownerp_wizard.py (v1.1.0)
+#### 7. ownerp_wizard.py (v1.2.0)
 - **Purpose**: Guided editing of `docker2update.yaml` **and**
   `container2backup.yaml` — add an entry, or change one field of an existing
   one. `wiz` asks which file, `wizup`/`wizbk` go straight there
@@ -426,6 +426,22 @@ myodoo-docker/
   stage 3 consumes it and the interactive wizard runs on it, so the path used
   less often cannot rot unnoticed. Duplicate names and a port's localhost bind
   address are handled there rather than in the prompts
+- **`set_fields()` — a whole form in one write** (v1.2.0). A form edits an
+  entry, not a field: one write per changed field would leave a `.bak-*` per
+  keystroke-session and, worse, a half-applied entry when the third of five is
+  rejected. The whole set is validated once and the file replaced once.
+  `set_field()` is now that call with one entry in the dict
+- **The order inside it is the substance, not tidiness**: a recorded line
+  number describes the file as it was *read*. Replacing a line keeps every
+  other number valid; inserting one shifts everything below it. So fields that
+  already have a line are patched first, and only then are absent ones
+  appended — each recomputing the entry's end against the lines as they now
+  stand. Two absent fields in one call is the case that catches a regression
+  here; one absent field passes either way
+- **The prompt path now names the better route** (v1.2.0): one line saying the
+  console edits the same file as a form. It stays because a terminal that
+  cannot run Textual still needs it — but an operator who does not know about
+  `konsole` keeps coming back to a field-at-a-time prompt
 
 #### 8. ownerp_cron.py (v1.0.2)
 - **Purpose**: Overview and guided editing of `/etc/cron.d/myodoo-maintenance` —
@@ -519,7 +535,7 @@ myodoo-docker/
 - **Exit code** `0` clean / `1` needs attention / `2` broken, plus `--json`, so
   cron and monitoring never parse the text
 
-#### 11. ownerp_console.py (v1.0.0)
+#### 11. ownerp_console.py (v1.1.0)
 - **Purpose**: The ownERP console — server state and configuration editing in
   a full-screen interface. Started with `konsole`; stage 3 (last) of
   `docs/superpowers/specs/2026-08-13-ownerp-console-design.md`
@@ -539,6 +555,38 @@ myodoo-docker/
   server. `getScripts.py` warms that cache at install time and parses the
   specs out of this file rather than duplicating them
 - **Textual pinned `>=8,<9`**: a widget API is not stable across majors
+- **Select a row → an action menu, ctop-style** (v1.1.0): a small box at the
+  top left over the table it acts on, one letter per action. It is placed
+  there rather than centred so the row it belongs to stays visible. `ACTIONS`
+  says what each tab offers; the System tab has none, because readiness
+  findings are facts, not settings
+- **`[e]` in a `Label` is Rich markup for a style tag** and renders as
+  nothing. Every menu line silently lost its key, which is the whole menu —
+  `markup=False`, and a test that reads what is on screen rather than what is
+  in `ACTIONS`
+- **The menu clips, it does not wrap**: "database only, no filest" is not a
+  shorter way of saying the same thing, it is a different sentence. Labels are
+  held under `MENU_LABEL_WIDTH` by a test
+- **`[e]` opens the whole entry as a form** (v1.1.0), replacing the
+  pick-a-field/enter-a-value pair. What allows it is `wizard.set_fields()`: a
+  form that wrote field by field could half-apply, which is exactly what the
+  two modals were avoiding. A boolean is a `Switch`, typed from the
+  validator's schema rather than inferred from a value that may be absent
+- **The password field starts empty and means "unchanged"**: the stored value
+  is never rendered, not even masked — a mask that round-trips is a mask that
+  gets written back as the new password
+- **The focused field's help is shown at the bottom.** The prompt wizard
+  printed it per question; a form that dropped it would be prettier and less
+  informative, which is not the trade being made here
+- **Suggestions for a new entry run in two passes**: what can be known before
+  the name is filled in at open time, and whatever the operator left blank is
+  suggested once `container_name` exists — that is what turns an empty build
+  folder into `$HOME/docker-builds/<name>/`. A form cannot do it in one pass
+  the way a sequential prompt can
+- **Still starts nothing.** "run backup now" is deliberately not in any menu:
+  the console has no process supervision, no cancel path and no log pane
+  precisely because it never starts anything, and a 20-minute backup behind a
+  keystroke would need all three
 
 #### 12. Login command overview (fish)
 - **`fish/functions/linux/ownerp-help.fish`** prints the dozen commands an
