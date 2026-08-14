@@ -4,7 +4,7 @@
 # Title:            ownerp_console.py
 # Description:      The ownERP console: server state, and the configuration
 #                   editing that used to mean hand-writing YAML.
-# Version:          1.1.1
+# Version:          1.1.2
 # Date:             14.08.2026
 # Author:           Equitania Software GmbH
 # ==============================================================================
@@ -53,7 +53,7 @@
 import os
 import sys
 
-SCRIPT_VERSION = "1.1.1"
+SCRIPT_VERSION = "1.1.2"
 SCRIPT_DATE = "14.08.2026"
 
 # The dependencies, in one place. Textual is pinned to a major version: it
@@ -130,16 +130,42 @@ def _reexec_through_uv():
         return False
     environment = dict(os.environ, OWNERP_CONSOLE_REEXEC="1")
     try:
-        command = [uv, "run", "--quiet", "--no-project"]
-        for spec in DEPENDENCIES:
-            command += ["--with", spec]
-        command += [sys.executable, os.path.abspath(__file__)] + sys.argv[1:]
-        completed = subprocess.run(command, env=environment, check=False)
+        completed = subprocess.run(uv_command(sys.argv[1:], uv),
+                                   env=environment, check=False)
     except OSError:
         return False
+    if completed.returncode == ALREADY_REPORTED:
+        # The child is this same script and has already printed the message.
+        # Printing it a second time from here says nothing new and reads like
+        # two separate failures.
+        sys.exit(ALREADY_REPORTED)
     if completed.returncode != 0:
         return False
     sys.exit(completed.returncode)
+
+
+# Our own "I have already explained this" exit code, distinct from uv's.
+ALREADY_REPORTED = 2
+
+
+def uv_command(argv=(), uv="uv"):
+    """The exact command that starts the console through uv.
+
+    One builder, because the warm-up in getScripts.py must run the command the
+    console actually runs. It did not, and the difference was invisible: the
+    warm-up passed `python3`, this passed `sys.executable`.
+
+    That single word is the whole bug. `uv run --with textual python3` lets uv
+    resolve the interpreter inside the environment it just built; handing it
+    /usr/bin/python3 starts the system interpreter instead, which cannot see
+    those packages - a virtualenv takes effect through its own binary, not
+    through PATH. So the warm-up reported success while every real start
+    failed, on the same machine, minutes apart.
+    """
+    command = [uv, "run", "--quiet", "--no-project"]
+    for spec in DEPENDENCIES:
+        command += ["--with", spec]
+    return command + ["python3", os.path.abspath(__file__)] + list(argv)
 
 
 try:
@@ -154,7 +180,7 @@ try:
 except ImportError:                              # pragma: no cover - by design
     if __name__ == "__main__" and _reexec_through_uv() is False:
         print(no_textual_message(), file=sys.stderr)
-        sys.exit(2)
+        sys.exit(ALREADY_REPORTED)
     raise
 
 import importlib.util
@@ -969,7 +995,16 @@ def main(argv=None):
     if "--help" in argv or "-h" in argv:
         print(__doc__ or "ownerp_console.py - the ownERP console")
         print("  --version    print the version\n"
+              "  --check      report whether the console can start\n"
               "  --home PATH  where the configurations live")
+        return 0
+    if "--check" in argv:
+        # Reaching this line IS the check: the import at the top of this file
+        # succeeded, in this process, having come through whatever re-exec was
+        # needed. That is why ups runs the console itself rather than a
+        # rebuilt approximation of its command - the approximation passed while
+        # the real thing failed, and nothing could see the difference.
+        print(f"console: ok (textual available, {SCRIPT_VERSION})")
         return 0
 
     home = None

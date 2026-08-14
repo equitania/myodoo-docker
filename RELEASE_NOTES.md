@@ -1,5 +1,38 @@
 # Release Notes
 
+## One Word Made Every Console Start Fail (14.08.2026)
+
+*getScripts.py v9.20.1 · scripts/ownerp_console.py v1.1.2*
+
+`ups` reported `✓ console (konsole): ok — textual>=8,<9, pyyaml>=6`, and thirty
+seconds later `konsole` on the same machine answered that Textual could not be
+fetched. Both were telling the truth.
+
+### Fixed
+
+- **`uv run --with textual sys.executable` cannot see what uv just installed.**
+  The re-exec handed uv an absolute path to the system interpreter. uv builds the
+  environment correctly and then starts something that is not its Python: a
+  virtualenv takes effect through its own binary, not through `PATH`. Writing
+  `python3` instead lets uv resolve the interpreter inside the environment it just
+  built. Reproduced in one line, off the affected server entirely:
+
+      uv run --with 'textual>=8,<9' python3       -c 'import textual'   # ok
+      uv run --with 'textual>=8,<9' /usr/bin/python3 -c 'import textual'   # fails
+
+- **The warm-up rebuilt the console's command instead of running it**, and that is
+  why nothing caught the above. Two spellings of the same intention, one in
+  getScripts.py and one in the console, differing in exactly that word — the
+  warm-up tested the spelling that worked while the console used the other. The
+  command now has one builder (`uv_command()`), and `ups` no longer approximates
+  anything: it runs `ownerp_console.py --check`, which *is* the console starting
+  and confirming its own import. A check that does not exercise the real path
+  proves nothing about it, however carefully it is written.
+
+- **The message printed twice.** Parent and child are the same script, and both
+  explained the same failure. The child's exit code says "already reported"; the
+  parent stays quiet.
+
 ## The Console Was Never Installed (14.08.2026)
 
 *getScripts.py v9.20.0 · scripts/ownerp_console.py v1.1.1 ·

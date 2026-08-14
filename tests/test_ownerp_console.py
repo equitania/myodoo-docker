@@ -20,10 +20,13 @@ With Textual available:
 """
 
 import asyncio
+import contextlib
 import importlib.util
+import io
 import os
 import re
 import shutil
+import sys
 import tempfile
 import time
 import unittest
@@ -179,6 +182,48 @@ class RefusalTest(unittest.TestCase):
         start = source.index("def _reexec_through_uv")
         body = source[start:source.index("\ntry:", start)]
         self.assertIn("if completed.returncode != 0:", body)
+
+    def test_the_reexec_asks_uv_for_the_interpreter_it_just_built(self):
+        """The bug that made every start fail while every warm-up passed.
+
+        `uv run --with textual python3` resolves the interpreter inside the
+        environment uv just built. Handing it sys.executable - an absolute
+        path to the system interpreter - starts something that cannot see
+        those packages: a virtualenv takes effect through its own binary, not
+        through PATH. Both spellings look correct; only one works.
+        """
+        if not HAVE_TEXTUAL:
+            self.skipTest("needs the module importable")
+        command = self.console.uv_command(["--check"], uv="uv")
+        self.assertIn("python3", command)
+        self.assertNotIn(sys.executable, command)
+        self.assertEqual(command[-1], "--check", command)
+
+    def test_one_builder_for_the_command_the_console_starts_with(self):
+        """getScripts must run this, not a second spelling of it."""
+        source = console_source()
+        self.assertIn("def uv_command", source)
+        start = source.index("def _reexec_through_uv")
+        body = source[start:source.index("\n# Our own", start)]
+        self.assertIn("uv_command(", body)
+        self.assertNotIn("sys.executable", body)
+
+    def test_the_child_does_not_print_the_message_twice(self):
+        """Parent and child are the same script; one explanation is enough."""
+        source = console_source()
+        self.assertIn("ALREADY_REPORTED", source)
+        start = source.index("def _reexec_through_uv")
+        body = source[start:source.index("\n# Our own", start)]
+        self.assertIn("if completed.returncode == ALREADY_REPORTED:", body)
+
+    def test_check_reports_that_the_console_can_start(self):
+        if not HAVE_TEXTUAL:
+            self.skipTest("needs the module importable")
+        out = io.StringIO()
+        with contextlib.redirect_stdout(out):
+            code = self.console.main(["--check"])
+        self.assertEqual(code, 0)
+        self.assertIn("ok", out.getvalue())
 
     def test_the_reexec_cannot_loop(self):
         """A guard variable, or a server spins up uv processes forever."""

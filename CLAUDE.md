@@ -554,14 +554,30 @@ myodoo-docker/
 - **Never the only route**: `dostat`, `wiz`, `docron`, `doval` cover the same
   ground without Textual. Missing library → one re-exec through
   `uv run --with`, then a message naming those four
+- **`uv run --with X <absolute-interpreter>` cannot see X** (v1.1.2). The
+  re-exec passed `sys.executable`; uv builds the environment and then starts
+  something that is not its Python, because a virtualenv takes effect through
+  its own binary and not through `PATH`. `python3` lets uv resolve the
+  interpreter *inside* the environment. That one word was the difference
+  between `ups` reporting ok and `konsole` refusing to start on the same
+  machine
+- **`uv_command()` is the single builder**, and `ups` runs
+  `ownerp_console.py --check` rather than a second spelling of it. The bug
+  above survived precisely because there were two: getScripts wrote `python3`,
+  the console wrote `sys.executable`, and the warm-up therefore tested the one
+  that worked. A check that does not exercise the real path proves nothing
+  about it
 - **Installing it is `ups`'s job, and it has to be checked there** (v1.1.1,
   14.08.2026). A server ran `konsole` after many updates and got "Textual is
   not available". `warm_console_cache()` existed, but ran `python3 -c pass` —
   which proves an environment can be built and imports nothing the console
-  needs, so it could not fail. It imports `textual` and `yaml` now, installs a
-  missing uv instead of skipping silently, and writes the outcome to the
-  **install report**: every failure path used to be a `logger` call, and under
-  the lean output policy those are invisible on screen
+  needs, so it could not fail. It installs a missing uv instead of skipping
+  silently, and writes the outcome to the **install report**: every failure
+  path used to be a `logger` call, and under the lean output policy those are
+  invisible on screen
+- **Parent and child are the same script**, so only one of them explains a
+  failure. `ALREADY_REPORTED` (exit 2) is that signal; without it the message
+  appeared twice and read like two separate faults
 - **The message names `ups`, never `pip install --user`** — Debian 12+ refuses
   that outright (externally-managed-environment). It also separates a missing
   uv (an update fixes it) from an unreachable PyPI (nothing typed there will),

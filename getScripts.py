@@ -136,7 +136,7 @@ if os.environ.get('GETSCRIPTS_DEBUG', '').lower() in ('1', 'true', 'yes'):
     logger.debug("Debug logging enabled")
 
 # Script version and date
-SCRIPT_VERSION = "9.20.0"
+SCRIPT_VERSION = "9.20.1"
 SCRIPT_DATE = "14.08.2026"
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -3941,22 +3941,8 @@ def remove_retired_scripts(_myhome: str) -> None:
             logger.warning(f"Could not remove {name}: {exc}")
 
 
-# Import name per distribution name, for the verification below. pyyaml is the
-# reason this mapping exists at all: the package installs a module called yaml.
-CONSOLE_IMPORTS = {"pyyaml": "yaml"}
-
-
-def _import_names(specs: list) -> list:
-    """The modules a list of requirement specs actually provides."""
-    names = []
-    for spec in specs:
-        distribution = re.split(r"[<>=!~\[ ]", spec, maxsplit=1)[0].strip().lower()
-        names.append(CONSOLE_IMPORTS.get(distribution, distribution))
-    return names
-
-
 def warm_console_cache() -> None:
-    """Make `konsole` startable here, and say so when it is not.
+    """Start the console once, here, so `konsole` cannot fail later.
 
     ownerp_console.py re-executes itself through `uv run --with` when Textual
     is not installed system-wide. uv caches the resolved environment, so only
@@ -3964,55 +3950,55 @@ def warm_console_cache() -> None:
     here, during an `ups` the operator is already waiting through, rather than
     when they open the console to look at a server that is misbehaving.
 
-    Three things this learned the hard way, all on the same server:
+    This runs `ownerp_console.py --check`, which is the console starting for
+    real and reporting that its import worked. Everything else this function
+    has been is a lesson from one server that said "ok" here and "Textual is
+    not available" thirty seconds later:
 
-    * It verified nothing. The command was `python3 -c pass`, which proves the
-      environment could be built and never imports a single thing the console
-      needs. A warm-up that cannot fail is not a check.
-    * Every failure path was a logger call. Under the lean output policy those
-      go to ~/getscripts.log, so an operator watching `ups` scroll past saw a
-      successful update and then met "The console needs Textual" days later.
-      The outcome belongs in the install report, which is the part they read.
-    * A missing uv was skipped silently, even though install_uv() is right
-      here. uv is a prerequisite of this project, not an optional extra.
+    * A rebuilt approximation of the console's command is not the console's
+      command. The warm-up passed `python3` while the re-exec passed
+      `sys.executable`; uv resolves the first inside the environment it just
+      built and starts the system interpreter for the second, which cannot see
+      those packages. Both lines looked right. Only one worked, and the one
+      that worked was the one being tested.
+    * Before that it ran `python3 -c pass`, a check whose command cannot fail.
+    * Before that every failure was a logger call, invisible under lean output.
 
     Still never fatal: a machine without a route to PyPI keeps working, and
-    dostat, wiz, docron and doval need none of this. But it now says which of
-    those two worlds this server is in.
+    dostat, wiz, docron and doval need none of this.
     """
     if not is_uv_installed() and not install_uv():
         record_install("console (konsole)", "failed",
                        "uv unavailable - install it, then re-run ups")
         return
 
-    specs = _console_dependencies()
-    if not specs:
+    console = os.path.join(os.path.expanduser("~"), "ownerp_console.py")
+    if not os.path.isfile(console):
+        console = os.path.join(os.path.dirname(os.path.abspath(__file__)),
+                               "scripts", "ownerp_console.py")
+    if not os.path.isfile(console):
         record_install("console (konsole)", "failed",
-                       "could not read the dependency specs from "
-                       "ownerp_console.py")
+                       "ownerp_console.py was not delivered")
         return
 
-    command = "uv run --quiet --no-project"
-    for spec in specs:
-        command += f" --with '{spec}'"
-    # Import what the console imports. Building the environment is not the
-    # same as being able to use it, and this is the only place that difference
-    # can still be reported cheaply.
-    imports = ", ".join(_import_names(specs))
-    command += f" python3 -c 'import {imports}'"
-
     try:
-        result = run_command(command, capture_output=True, check=False)
+        # Generous timeout: the first run on a fresh server downloads Textual
+        # and its dependencies, and being killed halfway leaves a half-warmed
+        # cache that fails in exactly the way this exists to prevent.
+        result = subprocess.run([sys.executable, console, "--check"],
+                                capture_output=True, text=True, timeout=600)
     except Exception as exc:
         record_install("console (konsole)", "failed", f"warm-up error: {exc}")
         return
 
-    if result is None or getattr(result, "returncode", 1) != 0:
+    if result.returncode != 0:
         record_install("console (konsole)", "failed",
-                       "dependencies unreachable (proxy or no route to PyPI) "
-                       "- konsole will not start; dostat and wiz still work")
+                       "konsole cannot start (no route to PyPI, or a proxy in "
+                       "front of it) - dostat and wiz still work")
+        logger.warning(f"Console check failed: "
+                       f"{(result.stderr or result.stdout or '').strip()}")
         return
-    record_install("console (konsole)", "ok", ", ".join(specs))
+    record_install("console (konsole)", "ok", ", ".join(_console_dependencies()))
 
 
 def _console_dependencies() -> list:
