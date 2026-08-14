@@ -1,5 +1,5 @@
 # ownERP command overview
-# Version 1.4.0 | 13.08.2026
+# Version 1.5.0 | 14.08.2026
 #
 # Printed once per LOGIN (see conf.d/50-prompt.fish); `help` shows it again.
 #
@@ -38,8 +38,11 @@ function ownerp-help --description "Show the ownERP command overview"
     __ownerp_help_row "nginx"       ngxset "apply config"       'ngx!'    "test config"
     __ownerp_help_row ""            ngxr   "reload"             showcerts "certificates"
     __ownerp_help_row "Docker"      dps    "containers"         dpsall    "with details"
-    __ownerp_help_row ""            dkvol  "volumes"            cleandlog "trim logs"
+    __ownerp_help_row ""            dpi    "images"             dkvol     "volumes"
+    __ownerp_help_row ""            cleandlog "trim logs"       ct        "live monitor"
     echo "$d$rule$n"
-    echo "$d Odoo per version: odoodev start 19 --dev   ·   every alias: alias$n"
+    # No odoodev line: that CLI belongs to workstation development, and this
+    # panel is what an operator needs on a server at 3am.
+    echo "$d every alias: alias$n"
     echo ""
 end

@@ -1,12 +1,17 @@
 # Docker Aliases
-# Version 1.1.0 | 14.07.2026
+# Version 1.2.0 | 14.08.2026
 
 # Docker base
 alias dk='docker'
 
 # Container listing
-alias dps='docker ps -a --format "table {{.Names}}\t{{.ID}}\t{{.Image}}\t{{.Status}}\t{{.Ports}}" | sort'
-alias dpsall='docker ps -a --format "table {{.Names}}\t{{.ID}}\t{{.Image}}\t{{.Command}}\t{{.CreatedAt}}\t{{.Status}}\t{{.Ports}}" | sort'
+#
+# dps and dpsall are functions now (functions/dps.fish, functions/dpsall.fish),
+# not aliases. They used to pipe `docker ps --format table` into `sort`, which
+# sorted the header line along with the containers — under a UTF-8 locale
+# "NAMES" collates after "ivy-odoo", so the column titles ended up at the
+# bottom of every listing. An alias defined here would shadow the function, so
+# nothing may reintroduce one under either name.
 alias dkpsf='docker inspect -f "{{.Name}} {{.Config.Cmd}}" (docker ps -a -q)'
 
 # Image management

@@ -136,8 +136,8 @@ if os.environ.get('GETSCRIPTS_DEBUG', '').lower() in ('1', 'true', 'yes'):
     logger.debug("Debug logging enabled")
 
 # Script version and date
-SCRIPT_VERSION = "9.18.0"
-SCRIPT_DATE = "13.08.2026"
+SCRIPT_VERSION = "9.19.0"
+SCRIPT_DATE = "14.08.2026"
 
 # ─────────────────────────────────────────────────────────────────────────────
 # Install report
@@ -3883,6 +3883,7 @@ def copy_scripts(_myhome: str, myodoo_docker: str) -> None:
         "ownerp_migrate.py",
         "ownerp_state.py",
         "ownerp_console.py",
+        "docker_table.py",
         # ownerp_tui.py was here until 13.08.2026; see RETIRED_SCRIPTS below.
         "cleanup-weblogs.py",
         "container2backup.py",

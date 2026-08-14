@@ -183,8 +183,11 @@ konsole # ~/ownerp_console.py — the same, full screen, and editable. Starts
 
 ```bash
 # Container management
-dps       # List running containers
-dpsall    # Extended container listing
+dps       # Containers as a table: name, image, status, ports
+dpsall    # The same plus ID, command and creation time
+          # Both are fish functions over docker_table.py; ports are shortened
+          # (127.0.0.1:11600->8069/tcp becomes 11600→8069) and a bind that is
+          # NOT loopback keeps a visible, coloured marker (*:8080→80)
 dk        # Docker shortcut
 dkstop    # Stop all containers
 dkrm      # Remove all containers
@@ -230,7 +233,8 @@ prepatch  # Prepare update in screen session
 ups       # Update ownERP scripts
 
 # Cleanup and monitoring
-cleandlog # Clean Docker logs
+cleandlog # Truncate container logs (--dry-run reports without writing).
+          # Reads the data-root from `docker info`; never deletes a log file
 dusort    # Show directory sizes sorted
 f2b       # Fail2ban status
 
@@ -545,6 +549,34 @@ myodoo-docker/
 - **Curated, not generated** — but `tests/test_fish_help.py` asserts every
   advertised command still resolves to an alias or function, so a rename fails
   the suite instead of sending an operator to type something that is gone
+- **No `odoodev` line** (14.08.2026): that CLI is workstation tooling and this
+  panel is what an operator needs on a server
+
+#### 13. docker_table.py (v1.0.0)
+- **Purpose**: `docker ps` as a readable table — the renderer behind `dps` and
+  `dpsall`
+- **Why it exists**: the aliases piped `docker ps --format table` into `sort`,
+  which sorted the **header line along with the containers**. Under a UTF-8
+  locale `NAMES` collates after `ivy-odoo`, so the column titles arrived at
+  the bottom of every listing. Sorting rows without the header is the whole
+  reason for the file; the frame and the colours are what it does afterwards
+- **The rule the port column is built around**: a shortened port must never
+  hide that a port is reachable from outside. `127.0.0.1:11600->8069/tcp`
+  becomes `11600→8069` because loopback is the norm here — every other bind
+  keeps a visible marker (`*:8080→80`, or the literal address) and is coloured.
+  A dual-stack publish that Docker prints twice is listed once
+- **Degrades rather than fails**: no colour off a terminal, ASCII box
+  characters when the output encoding cannot carry the frame, no truncation
+  when the width is unknown (a pipe gets the full table). Docker's own error
+  text and exit code are passed through — never a traceback
+- **NAME and STATUS are protected, not sacred**: they are the last columns to
+  be shrunk, but on a narrow terminal they *are* shrunk, because a frame three
+  characters too wide wraps and the table stops being a table
+- **The fish side keeps a fallback**: `__ownerp_docker_ps` falls back to
+  `docker ps` + `awk` (header held back, rows sorted) when the renderer is not
+  installed yet — `dps` is typed on servers where `ups` has not run
+- **An alias would shadow the function.** `dps`, `dpsall` and `cleandlog` are
+  functions now; nothing may reintroduce an alias under those names
 
 ### Development Patterns
 

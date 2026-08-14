@@ -45,7 +45,8 @@ fish/
 | Alias | Description / Beschreibung |
 |-------|---------------------------|
 | `dk` | Docker shortcut |
-| `dps` | List containers (formatted) |
+| `dps` | List containers as a table (name, image, status, ports) / Container als Tabelle |
+| `dpsall` | The same with ID, command and creation time / Dasselbe mit ID, Kommando und Erstellzeit |
 | `dpi` | List images |
 | `dkstop` | Stop all containers |
 | `dkrm` | Remove all containers (with confirmation) |
@@ -77,7 +78,7 @@ fish/
 | `syspatch` | Full system update & cleanup |
 | `ups` | Update ownERP scripts |
 | `chk` | Server readiness report (read-only) / Readiness-Report (rein lesend) |
-| `cleandlog` | Clean Docker logs |
+| `cleandlog` | Truncate Docker container logs (`--dry-run` reports without writing) / Container-Logs leeren |
 
 ## Installation / Installation
 

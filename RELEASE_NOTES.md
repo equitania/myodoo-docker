@@ -1,5 +1,60 @@
 # Release Notes
 
+## `dps` Puts Its Header Back on Top (14.08.2026)
+
+*scripts/docker_table.py v1.0.0 (new) · getScripts.py v9.19.0 ·
+fish/conf.d/32-aliases-docker.fish v1.2.0 ·
+fish/conf.d/30-aliases-system.linux.fish v1.1.0 ·
+fish/functions/linux/ownerp-help.fish v1.5.0 · dps/dpsall/cleandlog (new functions)*
+
+### Added
+
+- **Containers as a table.** `dps` and `dpsall` are rendered by a new
+  `docker_table.py`: a framed table, colour by state, and a count of what is running
+  underneath it. They are fish **functions** now — an alias in conf.d would shadow the
+  function, so nothing may reintroduce one under either name.
+
+- **Ports are shortened, but never quietly.** `127.0.0.1:11600->8069/tcp` becomes
+  `11600→8069` because loopback is the norm on these hosts. Every other bind keeps a
+  visible, coloured marker — `*:8080→80` for a wildcard, the literal address for a
+  specific one. A shortened port must never hide that a port is reachable from
+  outside. A dual-stack publish, which Docker prints twice, is listed once.
+
+- **It degrades instead of failing.** No colour off a terminal, ASCII box characters
+  when the output encoding cannot carry the frame, no truncation into a pipe (a pipe
+  has no width, and truncating for a guessed one throws away information nobody asked
+  to lose). Docker's own error text and exit code are passed through — never a
+  traceback. `__ownerp_docker_ps` falls back to `docker ps` + `awk` where the renderer
+  is not installed yet, because `dps` gets typed on servers where `ups` has not run.
+
+### Fixed
+
+- **The column titles arrived at the bottom of every listing.** Both aliases piped
+  `docker ps --format table` into `sort`, which sorted the header line along with the
+  containers — and under a UTF-8 locale `NAMES` collates after `ivy-odoo`. Sorting
+  the rows without the header is the whole reason the renderer exists; the frame and
+  the colours are what it does afterwards.
+
+- **`cleandlog` could never truncate a single log.** It was
+
+      sudo sh -c "cat /dev/null > /var/lib/docker/containers/*/*-json.log"
+
+  A redirect takes exactly one target while a glob yields many, so at best one file was
+  emptied and the rest were handed to `cat` as arguments. Where the pattern matched
+  nothing — a relocated data-root, or the `local` log driver, whose files are not named
+  `*-json.log` — the shell answered "Directory nonexistent" and trimmed nothing at all.
+  It is a function now: it reads the data-root from `docker info`, finds both drivers'
+  files, truncates them with `find -exec` and reports how much it freed. `--dry-run`
+  says what it would do. It truncates and never deletes — the file belongs to the
+  daemon, and unlinking it under a running container leaves a writer holding a handle
+  to nothing.
+
+### Changed
+
+- **The login panel lists `dpi`, `dkvol` and `ct`**, and no longer advertises
+  `odoodev`: that CLI is workstation tooling, and this panel is what an operator needs
+  on a server.
+
 ## The TUI Is Withdrawn (13.08.2026)
 
 *scripts/ownerp_tui.py removed · getScripts.py v9.18.0 ·
