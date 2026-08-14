@@ -1,12 +1,12 @@
 """
-Tests for scripts/bootstrap.sh — the parts that decide whether a fresh server
-comes up on a storage driver that can export usable images.
+Tests for scripts/bootstrap.sh — the storage-driver pin.
 
-Only ensure_overlay2_pin() is exercised here, and it is the right one to pin:
-it is the single place where the moby#52431 workaround is decided, it edits a
-file that stops docker from starting when it is malformed, and it is the branch
-that was silently doing nothing on any host whose daemon.json existed for an
-unrelated reason.
+Since 1.13.0 the pin is opt-in (DOCKER_STORAGE_DRIVER); the A/B test of
+14.08.2026 found the containerd image store builds 2.2 GB / 22-layer images
+without fault on Docker 29.7.2, so pinning overlay2 by default had no grounds
+left. ensure_storage_driver_pin() stays because a host where a store fault is
+actually observed still needs it — and it is worth testing: it edits a file
+that stops docker from starting when it is malformed.
 
 The script is sourced with BOOTSTRAP_NO_MAIN=1 so nothing provisions the
 machine running the suite, and DOCKER_DAEMON_JSON points at a temp file.
@@ -60,7 +60,7 @@ class Overlay2PinTest(unittest.TestCase):
             return json.load(handle)
 
     def test_an_absent_file_is_created_with_the_pin(self):
-        result = call("ensure_overlay2_pin", self.path)
+        result = call("ensure_storage_driver_pin overlay2", self.path)
         self.assertEqual(result.returncode, 0, result.stderr)
         self.assertEqual(self.read(), {"storage-driver": "overlay2"})
 
@@ -71,19 +71,19 @@ class Overlay2PinTest(unittest.TestCase):
     def test_a_file_that_already_pins_overlay2_is_left_alone(self):
         self.write('{\n  "storage-driver": "overlay2"\n}\n')
         before = self.raw()
-        self.assertEqual(call("ensure_overlay2_pin", self.path).returncode, 0)
+        self.assertEqual(call("ensure_storage_driver_pin overlay2", self.path).returncode, 0)
         self.assertEqual(self.raw(), before)
 
     def test_other_settings_survive_the_merge(self):
-        """This is the case the previous version skipped with a warning:
-        daemon.json exists for log-opts or a registry mirror, the pin never
-        happens, and that one server comes up on the containerd store."""
+        """The case a `if [ ! -f daemon.json ]` guard skipped silently:
+        the file exists for log-opts or a registry mirror, and the pin an
+        operator explicitly asked for never happens."""
         self.write(json.dumps({
             "log-driver": "json-file",
             "log-opts": {"max-size": "10m", "max-file": "3"},
             "dns": ["1.1.1.1"],
         }))
-        self.assertEqual(call("ensure_overlay2_pin", self.path).returncode, 0)
+        self.assertEqual(call("ensure_storage_driver_pin overlay2", self.path).returncode, 0)
         data = self.read()
         self.assertEqual(data["storage-driver"], "overlay2")
         self.assertEqual(data["log-opts"], {"max-size": "10m", "max-file": "3"})
@@ -92,7 +92,7 @@ class Overlay2PinTest(unittest.TestCase):
 
     def test_a_deliberate_other_driver_is_reported_not_overridden(self):
         self.write(json.dumps({"storage-driver": "btrfs"}))
-        result = call("ensure_overlay2_pin", self.path)
+        result = call("ensure_storage_driver_pin overlay2", self.path)
         self.assertEqual(result.returncode, 0)
         self.assertEqual(self.read(), {"storage-driver": "btrfs"})
         self.assertIn("btrfs", result.stderr)
@@ -101,7 +101,7 @@ class Overlay2PinTest(unittest.TestCase):
         """A half-written daemon.json stops docker from starting at all, so the
         one thing this must never do is write over a file it cannot read."""
         self.write("{ this is not json")
-        result = call("ensure_overlay2_pin", self.path)
+        result = call("ensure_storage_driver_pin overlay2", self.path)
         self.assertEqual(result.returncode, 0)
         with open(self.path, encoding="utf-8") as handle:
             self.assertEqual(handle.read(), "{ this is not json")
@@ -123,6 +123,18 @@ class ScriptShapeTest(unittest.TestCase):
              f'export BOOTSTRAP_NO_MAIN=1; source "{BOOTSTRAP}"; echo sourced'],
             capture_output=True, text=True)
         self.assertIn("sourced", result.stdout)
+
+    def test_no_storage_driver_is_pinned_by_default(self):
+        """The 14.08.2026 A/B test removed the grounds for the default pin.
+        Reintroducing one has to be a decision, not a leftover."""
+        with open(BOOTSTRAP, encoding="utf-8") as handle:
+            text = handle.read()
+        code = [line for line in text.splitlines()
+                if not line.lstrip().startswith("#")]
+        calls = [line for line in code if "ensure_storage_driver_pin " in line]
+        self.assertEqual(len(calls), 1, calls)
+        self.assertIn('"${DOCKER_STORAGE_DRIVER}"', calls[0])
+        self.assertRegex(text, r'DOCKER_STORAGE_DRIVER="\$\{DOCKER_STORAGE_DRIVER:-\}"')
 
     def test_the_version_header_matches_the_constant(self):
         with open(BOOTSTRAP, encoding="utf-8") as handle:

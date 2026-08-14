@@ -79,21 +79,35 @@ unattended-upgrades, Python-Abhängigkeiten; klont das Repo und ruft am Ende
 `getScripts.py` auf. Einzelne Schritte lassen sich per ENV abschalten
 (`INSTALL_NGINX=0`, `INSTALL_DOCKER=0`, `RUN_GETSCRIPTS=0`, …).
 
-> ⚠️ **Erfahrungswert (Docker ≥ 29):** Neuinstallationen von Docker ≥ 29
-> aktivieren standardmäßig den containerd Image Store, dessen Image-Export
-> für große Builds kaputt ist ([moby/moby#52431](https://github.com/moby/moby/issues/52431)).
-> `bootstrap.sh` ≥ 1.7.0 pinnt deshalb den klassischen `overlay2`-Treiber in
-> `/etc/docker/daemon.json`. Auf Servern, die **ohne** aktuelles Bootstrap
-> aufgesetzt wurden: Symptome und Heilung siehe [Troubleshooting](08-troubleshooting.md#de-16-troubleshooting).
+> ℹ️ **Storage-Treiber: Docker entscheidet, nicht wir** (seit `bootstrap.sh`
+> 1.13.0). Die Versionen 1.7.0 bis 1.12.0 pinnten `overlay2` in
+> `/etc/docker/daemon.json`, weil Docker ≥ 29 Neuinstallationen auf den
+> containerd Image Store stellt und dessen Export bei großen Builds fehlschlug
+> ([moby/moby#52431](https://github.com/moby/moby/issues/52431)).
 >
-> Ab **1.12.0** wird eine bereits vorhandene `daemon.json` **ergänzt** statt
-> übersprungen — sie existiert häufig wegen `log-opts` oder einer Registry, und
-> der Pin fiel dann still aus. Nur der Schlüssel `storage-driver` wird gesetzt;
-> ein absichtlich anderer Treiber bleibt stehen und wird gemeldet. Anschließend
-> prüft das Skript den **tatsächlich aktiven** Treiber und baut ein
-> zweizeiliges Image, das es startet: Ein Daemon, der Images ohne Dateisystem
-> exportiert, besteht jede andere Prüfung. Der Bautest lässt sich mit
-> `DOCKER_SMOKE_TEST=0` abschalten (Host ohne Registry-Zugang).
+> **Am 14.08.2026 nachgemessen und verworfen:** Eine Wegwerf-Instanz mit
+> Debian 13 und Docker 29.7.2 baute auf dem containerd-Store fünfmal ein Image
+> mit 2,2 GB und 22 Schichten — kalt, warm und nach `docker system prune` —
+> ohne einen Fehlschlag und ohne eine einzige Kernelmeldung. Der Server, der
+> den Pin ausgelöst hatte, hatte inzwischen ein hohles Image gebaut, **während**
+> `overlay2` aktiv war. Der Pin war damit weder notwendig noch hinreichend.
+>
+> `DOCKER_STORAGE_DRIVER=overlay2 ./bootstrap.sh` setzt ihn weiterhin — für
+> einen Host, auf dem der Fehler tatsächlich beobachtet wird. Eine vorhandene
+> `daemon.json` wird dann **ergänzt** statt übersprungen (nur der Schlüssel
+> `storage-driver`; ein absichtlich anderer Treiber bleibt stehen und wird
+> gemeldet). Bestehende Server behalten ihren Pin — `bootstrap.sh` entfernt
+> nichts.
+>
+> **Unabhängig davon** baut das Skript nach der Installation ein zweizeiliges
+> Image und startet es: Ein Daemon, der Images ohne Dateisystem exportiert,
+> besteht jede andere Prüfung. `DOCKER_SMOKE_TEST=0` schaltet das ab (Host ohne
+> Registry-Zugang). Grenze dieser Prüfung: Sie ist grob — am 16.07.2026 baute
+> auf demselben Server ein 1-Schicht-Image sauber, während das 22-Schicht-Odoo-Image
+> hohl herauskam. Sie erkennt einen durchgehend kaputten Daemon, keinen
+> selektiv kaputten.
+>
+> Symptome und Heilung bei einem hohlen Image: [Troubleshooting](08-troubleshooting.md#de-16-troubleshooting).
 
 <a id="de-4-schritt-2-getscriptspy"></a>
 ## Schritt 2: getScripts.py
@@ -215,20 +229,33 @@ unattended-upgrades, Python dependencies; clones the repo and finally runs
 `getScripts.py`. Individual steps can be disabled via env vars
 (`INSTALL_NGINX=0`, `INSTALL_DOCKER=0`, `RUN_GETSCRIPTS=0`, …).
 
-> ⚠️ **Lesson learned (Docker ≥ 29):** Fresh installs of Docker ≥ 29 default
-> to the containerd image store, whose image export is broken for large
-> builds ([moby/moby#52431](https://github.com/moby/moby/issues/52431)).
-> `bootstrap.sh` ≥ 1.7.0 therefore pins the classic `overlay2` driver in
-> `/etc/docker/daemon.json`. For servers set up **without** a current
-> bootstrap: symptoms and cure in [Troubleshooting](08-troubleshooting.md#en-16-troubleshooting).
+> ℹ️ **Storage driver: Docker's choice, not ours** (since `bootstrap.sh`
+> 1.13.0). Versions 1.7.0 to 1.12.0 pinned `overlay2` in
+> `/etc/docker/daemon.json`, because Docker ≥ 29 puts fresh installs on the
+> containerd image store, whose export failed for large builds
+> ([moby/moby#52431](https://github.com/moby/moby/issues/52431)).
 >
-> Since **1.12.0** an existing `daemon.json` is **merged into** rather than
-> skipped — it is often there for `log-opts` or a registry mirror, and the pin
-> silently did not happen. Only the `storage-driver` key is set; a deliberately
-> different driver is left alone and reported. The script then verifies the
-> driver that is **actually in effect** and builds and runs a two-line image: a
-> daemon that exports images with no filesystem passes every other check.
-> `DOCKER_SMOKE_TEST=0` disables that build (host without registry access).
+> **Measured away on 14.08.2026:** a throwaway Debian 13 box on Docker 29.7.2
+> built a 2.2 GB / 22-layer image five times on the containerd store — cold,
+> warm, and after a `docker system prune` — with no failure and no kernel
+> complaint. The server that had motivated the pin meanwhile produced a hollow
+> image **while** pinned to `overlay2`. The pin was neither necessary nor
+> sufficient.
+>
+> `DOCKER_STORAGE_DRIVER=overlay2 ./bootstrap.sh` still sets it, for a host
+> where the fault is actually observed. An existing `daemon.json` is then
+> **merged into** rather than skipped (only the `storage-driver` key; a
+> deliberately different driver is left alone and reported). Existing servers
+> keep their pin — `bootstrap.sh` removes nothing.
+>
+> **Independently of all that**, the script builds and runs a two-line image
+> after the install: a daemon that exports images with no filesystem passes
+> every other check. `DOCKER_SMOKE_TEST=0` disables it (host without registry
+> access). Its limit: it is coarse — on 16.07.2026, on that same server, a
+> 1-layer image built cleanly while the 22-layer Odoo image came out hollow. It
+> catches a comprehensively broken daemon, not a selectively broken one.
+>
+> Symptoms and cure for a hollow image: [Troubleshooting](08-troubleshooting.md#en-16-troubleshooting).
 
 <a id="en-4-step-2-getscriptspy"></a>
 ## Step 2: getScripts.py

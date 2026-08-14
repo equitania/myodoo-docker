@@ -1,6 +1,6 @@
 #!/bin/bash
 # bootstrap.sh — Out-of-the-box initializer for fresh Debian/Ubuntu servers
-# Version 1.12.0 — 14.08.2026
+# Version 1.13.0 — 14.08.2026
 #
 # Supported: Debian 12 (bookworm) / 13 (trixie); Ubuntu 20.04/22.04/24.04/26.04
 # (focal/jammy/noble/resolute). OS + codename are auto-detected from os-release;
@@ -11,21 +11,22 @@
 #   1. Self-installs to /opt (so it stays available out-of-the-box)
 #   2. Installs base packages (ca-certificates, curl, gnupg, git)
 #      and ensures the en_US.UTF-8 locale is generated (minimal images)
-#   3. Installs Docker CE from the official Docker repository (deb822 format);
-#      pins the classic overlay2 storage driver via /etc/docker/daemon.json —
-#      Docker >= 29 defaults fresh installs to the containerd image store whose
-#      image export is broken for large builds (moby/moby#52431, still open as
-#      of 17.07.2026). An existing daemon.json is merged into rather than
-#      skipped: the file is often there for log-opts or a registry mirror, and
-#      silently leaving the pin out is how one server ends up different from
-#      every other. On a server where Docker is already installed and still on
-#      the containerd store, the pin is staged (file written) but never
-#      auto-applied — activating it needs a builder prune + restart + reboot,
-#      which this idempotent/non-destructive script does not do unattended.
-#      Writing the pin is then VERIFIED against the live driver, and a two-line
-#      image is built and run: "we wrote the file" is not "it is in effect",
-#      and a daemon that exports images with no filesystem passes every other
-#      check this script makes (one customer server, 14.08.2026).
+#   3. Installs Docker CE from the official Docker repository (deb822 format)
+#      and leaves the storage driver at Docker's own default. Versions 1.7.0 to
+#      1.12.0 pinned the classic overlay2 driver here because Docker >= 29 puts
+#      fresh installs on the containerd image store, whose image export failed
+#      for large builds (moby/moby#52431). That pin was MEASURED AWAY on
+#      14.08.2026: a throwaway Debian 13 box on Docker 29.7.2 built a 2.2 GB /
+#      22-layer image five times on the containerd store — cold, warm, and after
+#      a system prune — with no failure and no kernel complaint. The server that
+#      motivated the pin had meanwhile produced a hollow image WHILE pinned to
+#      overlay2, so the pin was neither necessary nor sufficient.
+#      DOCKER_STORAGE_DRIVER=overlay2 still pins it on demand, for a host where
+#      the fault is actually observed.
+#      What survives unconditionally is the check: a two-line image is built and
+#      run after the install, because a daemon that exports images with no
+#      filesystem passes every other check this script makes (one customer server,
+#      14.08.2026).
 #   4. Installs nginx from the official nginx.org repository (reverse proxy)
 #      and hardens its systemd unit with two drop-ins: Restart=on-failure — the
 #      nginx.org unit ships Restart=no, so a start that fails transiently (e.g.
@@ -83,7 +84,7 @@ set -Eeuo pipefail
 # Configuration
 # ──────────────────────────────────────────
 
-SCRIPT_VERSION="1.12.0"
+SCRIPT_VERSION="1.13.0"
 SCRIPT_DATE="14.08.2026"
 
 REPO_URL="${REPO_URL:-https://github.com/equitania/myodoo-docker.git}"
@@ -100,6 +101,10 @@ INSTALL_PYTHON_DEPS="${INSTALL_PYTHON_DEPS:-1}"
 # actually contain files. Costs one busybox pull. Set to 0 on a host without a
 # route to a registry, where the test can only report a network fault.
 DOCKER_SMOKE_TEST="${DOCKER_SMOKE_TEST:-1}"
+# Empty means "leave Docker's own default alone", which is what the 14.08.2026
+# A/B test says is correct. Set to a driver name (overlay2) to pin one on a host
+# where a store-related fault is actually observed.
+DOCKER_STORAGE_DRIVER="${DOCKER_STORAGE_DRIVER:-}"
 RUN_GETSCRIPTS="${RUN_GETSCRIPTS:-1}"
 SELF_INSTALL="${SELF_INSTALL:-1}"
 
@@ -282,32 +287,30 @@ setup_locale() {
     log "Locale en_US.UTF-8 generated and set as default."
 }
 
-# Make sure /etc/docker/daemon.json pins the classic overlay2 storage driver,
-# whatever else it may already contain.
+# Pin a storage driver in /etc/docker/daemon.json, whatever else the file may
+# already contain. Only called when DOCKER_STORAGE_DRIVER is set — the default
+# is to leave Docker's own choice alone (see the 14.08.2026 A/B test).
 #
-# The previous version wrote the file only when it was absent and warned
-# otherwise. That warning was the gap: daemon.json exists on plenty of hosts for
+# Why it merges rather than skipping: daemon.json exists on plenty of hosts for
 # reasons that have nothing to do with the storage driver — log-opts, a registry
-# mirror, a DNS list — and on every one of those the pin was silently skipped
-# and the server came up on the containerd store. One server behaving unlike all
-# the others is exactly the shape of fault that costs a day to find.
+# mirror, a DNS list. Writing only when the file is absent meant every one of
+# those hosts silently kept whatever driver it had while the install log said
+# nothing. One server behaving unlike all the others is exactly the shape of
+# fault that costs a day to find.
 #
 # Only the storage-driver key is touched. A file that already names a DIFFERENT
 # driver is left alone and reported: overriding a deliberate choice unattended
-# is worse than the bug being guarded against.
-ensure_overlay2_pin() {
+# is worse than any bug this could be guarding against.
+ensure_storage_driver_pin() {
+    local wanted="${1:?driver name}"
     # Overridable so the merge logic can be tested against a temp file rather
     # than against the machine running the suite. Never set in normal use.
     local file="${DOCKER_DAEMON_JSON:-/etc/docker/daemon.json}"
 
     if [ ! -f "${file}" ]; then
         $SUDO install -m 0755 -d "$(dirname "${file}")"
-        write_file "${file}" <<'EOF'
-{
-  "storage-driver": "overlay2"
-}
-EOF
-        log "Pinned storage-driver overlay2 in ${file} (moby#52431 workaround)."
+        printf '{\n  "storage-driver": "%s"\n}\n' "${wanted}" | write_file "${file}"
+        log "Pinned storage-driver ${wanted} in ${file}."
         return 0
     fi
 
@@ -322,19 +325,17 @@ except Exception:
 PY
 )" || {
         warn "${file} exists but could not be read as JSON — leaving it untouched."
-        warn "Check it by hand: without 'storage-driver: overlay2' this host is exposed"
-        warn "to moby/moby#52431 (hollow image exports)."
+        warn "Add '\"storage-driver\": \"${wanted}\"' by hand once the file parses again."
         return 0
     }
 
-    if [ "${current}" = "overlay2" ]; then
-        log "${file} already pins storage-driver overlay2."
+    if [ "${current}" = "${wanted}" ]; then
+        log "${file} already pins storage-driver ${wanted}."
         return 0
     fi
     if [ -n "${current}" ]; then
-        warn "${file} pins storage-driver '${current}' — left untouched. That is a"
-        warn "deliberate choice this script will not override, but note that anything"
-        warn "other than overlay2 is exposed to moby/moby#52431."
+        warn "${file} pins storage-driver '${current}', not '${wanted}' — left untouched."
+        warn "That is a deliberate choice this script will not override unattended."
         return 0
     fi
 
@@ -343,48 +344,58 @@ PY
     # failure leaves the original in place rather than a half-written daemon.json,
     # which would stop docker from starting at all.
     local merged
-    merged="$(python3 - "${file}" <<'PY' 2>/dev/null
+    merged="$(python3 - "${file}" "${wanted}" <<'PY' 2>/dev/null
 import json, sys
 with open(sys.argv[1], encoding="utf-8") as handle:
     data = json.load(handle)
-data["storage-driver"] = "overlay2"
+data["storage-driver"] = sys.argv[2]
 print(json.dumps(data, indent=2))
 PY
 )" || {
         warn "Could not merge the storage-driver pin into ${file} — add"
-        warn "'\"storage-driver\": \"overlay2\"' by hand (moby/moby#52431)."
+        warn "'\"storage-driver\": \"${wanted}\"' by hand."
         return 0
     }
     printf '%s\n' "${merged}" | write_file "${file}"
-    log "Added storage-driver overlay2 to the existing ${file}, other settings kept."
+    log "Added storage-driver ${wanted} to the existing ${file}, other settings kept."
 }
 
-# "We wrote the file" is not "it is in effect". A daemon.json that lands after
-# the daemon's first start, a typo in it, or a hand-edit that was never followed
-# by a restart all leave the pin inert — and the resulting host looks perfectly
-# healthy right up to the first large build.
-verify_overlay2_active() {
+# Report the driver that is actually in effect, and say so when a requested pin
+# did not take. "We wrote the file" is not "it is in effect": a daemon.json that
+# lands after the daemon's first start, a typo in it, or a hand-edit never
+# followed by a restart all leave the pin inert.
+report_storage_driver() {
     command -v docker >/dev/null 2>&1 || return 0
     local driver
     driver="$($SUDO docker info --format '{{.Driver}}' 2>/dev/null || echo "")"
-    case "${driver}" in
-        overlay2) log "Storage driver in effect: overlay2." ;;
-        "")       warn "Could not read the storage driver from 'docker info' — verify by hand." ;;
-        *)        warn "daemon.json pins overlay2 but the LIVE driver is '${driver}'."
-                  warn "The pin has not taken effect. Restart docker, then REBOOT the server"
-                  warn "(orphaned mounts of the old store otherwise cause non-deterministic"
-                  warn "hollow image exports), then re-pull images and recreate containers." ;;
-    esac
+    if [ -z "${driver}" ]; then
+        warn "Could not read the storage driver from 'docker info' — verify by hand."
+        return 0
+    fi
+    log "Storage driver in effect: ${driver}."
+    if [ -n "${DOCKER_STORAGE_DRIVER}" ] && [ "${driver}" != "${DOCKER_STORAGE_DRIVER}" ]; then
+        warn "You asked for '${DOCKER_STORAGE_DRIVER}' but the LIVE driver is '${driver}'."
+        warn "The pin has not taken effect. Restart docker, then REBOOT the server"
+        warn "(orphaned mounts of the previous store otherwise cause non-deterministic"
+        warn "image exports), then re-pull images and recreate containers."
+    fi
 }
 
 # Prove the daemon can produce an image that contains files.
 #
-# This exists because a Docker >=29 host can build, tag and report success for
-# an image with no filesystem at all — not even /bin/sh (moby/moby#52431). Every
-# other check in this script passes on such a host; the fault surfaces days
-# later as an Odoo container restart-looping on
-# `exec /app/bin/boot: no such file or directory`, which reads like a Dockerfile
-# bug. Sixty seconds here against an afternoon there.
+# This exists because a Docker host can build, tag and report success for an
+# image with no filesystem at all — not even /bin/sh. Every other check in this
+# script passes on such a host; the fault surfaces days later as an Odoo
+# container restart-looping on `exec /app/bin/boot: no such file or directory`,
+# which reads like a Dockerfile bug. Sixty seconds here against an afternoon
+# there. Observed on one customer server on 16.07.2026 and 14.08.2026; the cause is NOT
+# established — the A/B test of 14.08.2026 cleared the containerd image store,
+# so this check makes no claim about why, only that it happened.
+#
+# KNOWN LIMIT: a two-line image is a coarse probe. The July observation on
+# one customer server was that a 1-layer image built fine while the 22-layer Odoo image did
+# not, so a size- or layer-dependent fault would pass here. It catches a
+# comprehensively broken daemon, not a selectively broken one.
 #
 # Never fatal: an unreachable registry is not a broken daemon, and the wording
 # says so. The only thing removed is the tag built three lines above, by a name
@@ -403,11 +414,11 @@ verify_docker_can_build() {
         warn "no route to a registry, or the daemon is broken — check with:"
         warn "  docker build -t ${tag} ${dir}"
     elif ! $SUDO docker run --rm --entrypoint /bin/sh "${tag}" -c 'test -f /ownerp-marker' >/dev/null 2>&1; then
-        warn "Smoke test: the image built here has NO FILESYSTEM. This is the hollow"
-        warn "export of Docker >=29 (moby/moby#52431). Every build on this host will"
-        warn "produce a container that dies with 'no such file or directory'. Fix:"
+        warn "Smoke test: the image built here has NO FILESYSTEM. Every build on this"
+        warn "host will produce a container that dies with 'no such file or directory'."
+        warn "First step:"
         warn "  docker builder prune -af   then rebuild; if it recurs, reboot the server"
-        warn "  (dmesg -T | grep -i overlayfs shows the orphaned mounts)."
+        warn "  (dmesg -T | grep -i overlayfs shows overlapping mounts)."
     else
         log "Smoke test: docker builds a usable image."
     fi
@@ -428,26 +439,15 @@ install_docker() {
     # Just make sure the service is enabled and move on.
     if command -v docker >/dev/null 2>&1; then
         log "Docker already present: $(docker --version). Leaving apt repo untouched."
-        # Do NOT switch a LIVE store here (images/containers would become
-        # invisible until a restart+reboot) — but do surface the moby#52431
-        # exposure, and pre-stage the daemon.json pin (inert until applied) so
-        # an operator doesn't have to hand-type it during an incident.
-        if [ "$(docker info --format '{{.Driver}}' 2>/dev/null)" = "overlayfs" ]; then
-            warn "This Docker uses the containerd image store — image export of large builds"
-            warn "is broken there (moby/moby#52431: 'ref locked: unavailable' / hollow images)."
-            # Writes or merges the pin; on a file that already names another
-            # driver it reports and leaves it alone. Either way the result is
-            # inert until the daemon is restarted, which is the point.
-            ensure_overlay2_pin
-            warn "The pin is STAGED, not applied — restarting docker now would only make"
-            warn "current images/containers invisible. To activate: 'docker builder prune -af',"
-            warn "restart docker, then REBOOT THE SERVER (orphaned containerd mounts otherwise"
-            warn "cause non-deterministic hollow image exports) — then re-pull images and"
-            warn "recreate containers (bind mounts and named volumes survive the switch)."
-        fi
+        # Deliberately no storage-driver change on a running host: switching a
+        # LIVE store makes existing images and containers invisible until a
+        # restart and a reboot, and there is no longer a reason to. Until
+        # 1.12.0 this branch warned about the containerd store and staged a pin;
+        # the A/B test of 14.08.2026 removed the grounds for both.
         if command -v systemctl >/dev/null 2>&1; then
             $SUDO systemctl enable --now docker 2>/dev/null || true
         fi
+        report_storage_driver
         # Run the smoke test here too. This branch is what `--harden` takes on an
         # existing server, and an existing server is precisely where a daemon
         # that exports hollow images has had time to start doing so.
@@ -483,13 +483,14 @@ Architectures: ${ARCH}
 Signed-By: /etc/apt/keyrings/docker.asc
 EOF
 
-    # Pin the classic overlay2 storage driver BEFORE the package postinst starts
-    # dockerd for the first time. Docker >= 29 defaults FRESH installs to the
-    # containerd image store, whose image export is broken for large builds
-    # (moby/moby#52431: 'ref moby/1/... locked: unavailable', or hollow images
-    # missing even /bin/sh). Seen live on one customer server, 16.07.2026. Remove this pin
-    # once the upstream issue is fixed.
-    ensure_overlay2_pin
+    # Docker's own default storage driver is used unless one is asked for. If a
+    # driver IS requested, the pin has to land BEFORE the package postinst
+    # starts dockerd for the first time — a pin applied afterwards needs a
+    # restart and a reboot to take effect, and leaves orphaned mounts of the
+    # previous store behind in the meantime.
+    if [ -n "${DOCKER_STORAGE_DRIVER}" ]; then
+        ensure_storage_driver_pin "${DOCKER_STORAGE_DRIVER}"
+    fi
 
     apt_update
     $SUDO apt-get install -y \
@@ -502,7 +503,7 @@ EOF
         log "Docker service enabled and started."
     fi
 
-    verify_overlay2_active
+    report_storage_driver
 
     # Allow the (non-root) target user to use Docker without sudo.
     if [ "${TARGET_USER}" != "root" ]; then

@@ -1,5 +1,51 @@
 # Release Notes
 
+## The overlay2 Pin Was Measured Away (14.08.2026)
+
+*scripts/bootstrap.sh v1.13.0 · docs/usage/01-provisioning.md ·
+docs/usage/08-troubleshooting.md*
+
+`bootstrap.sh` pinned `storage-driver: overlay2` from 1.7.0 to 1.12.0, because
+Docker ≥29 puts fresh installs on the containerd image store whose export failed
+for large builds (moby/moby#52431). The Captain challenged the thesis rather than
+the symptom, and the challenge held.
+
+The evidence against it, before any test was run:
+
+- The upstream issue describes a **failed** build (`ref … locked`), not a hollow
+  image. The link to hollow images was our own inference from one server.
+- That server produced a hollow image on 14.08.2026 **while pinned to
+  overlay2**. The pin was not sufficient.
+- "Other Debian and Ubuntu servers never showed it" decides nothing — they were
+  installed on Docker ≤28 and were on overlay2 anyway.
+
+### Changed
+
+- **A/B test on a throwaway Debian 13 box, Docker 29.7.2, containerd store
+  active** (`driver: overlayfs`): five rounds building a 2.2 GB image of 22
+  layers — cold, warm, and after `docker system prune -f`, the sequence `doup`
+  runs. **5/5 clean, zero overlayfs kernel messages.** The workload was not a
+  toy: same size as the real `odoo/staging` image (2.14 GB) and twice its layer
+  count. The pass/fail rules were fixed in writing before the run.
+- **The pin is now opt-in**: `DOCKER_STORAGE_DRIVER=overlay2 ./bootstrap.sh`
+  for a host where a store fault is actually observed. Fresh installs get
+  Docker's own default. Existing servers keep their pin — `bootstrap.sh` removes
+  nothing.
+- **The "Docker already present" branch no longer warns about the containerd
+  store** or stages a pin behind the operator's back. It reports the driver in
+  effect and moves on.
+- `ensure_overlay2_pin()` → `ensure_storage_driver_pin(<driver>)`,
+  `verify_overlay2_active()` → `report_storage_driver()`. A test asserts there is
+  exactly one call site and that it is guarded by the variable: reintroducing a
+  default pin has to be a decision, not a leftover.
+- **The smoke test's limit is now written down** where it belongs, in the
+  function and in both language versions of the docs: a two-line busybox image
+  is a coarse probe, and the July observation on that server was that a 1-layer
+  image built fine while the 22-layer one did not. It catches a comprehensively
+  broken daemon, not a selectively broken one.
+- Troubleshooting no longer calls the hollow image an "aftermath of the store
+  bug". The cause is not established, and the row says so.
+
 ## bootstrap.sh: the Pin Was Written, Never Verified (14.08.2026)
 
 *scripts/bootstrap.sh v1.12.0 · tests/test_bootstrap.py (new)*
