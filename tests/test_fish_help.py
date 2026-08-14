@@ -52,6 +52,18 @@ def advertised_commands():
     return commands
 
 
+def code(path):
+    """The file without its comments.
+
+    A test that asks whether a construct is used must not read the paragraph
+    explaining why it is not: the comment above the gate names `status
+    is-login` precisely because that was the wrong answer.
+    """
+    lines = [line for line in read(path).splitlines()
+             if not line.lstrip().startswith("#")]
+    return "\n".join(lines)
+
+
 def defined_names():
     """Alias and function names this repository's fish config defines."""
     names = set()
@@ -99,10 +111,23 @@ class AdvertisedCommandsTest(unittest.TestCase):
 
 
 class LoginBehaviourTest(unittest.TestCase):
-    def test_the_panel_is_login_only(self):
+    def test_the_panel_is_shown_once_per_session(self):
         """A tmux session with six panes must not print it six times."""
         text = read(PROMPT)
-        self.assertIn("status is-login", text)
+        self.assertIn("OWNERP_HELP_SHOWN", text)
+        self.assertIn("not set -q OWNERP_HELP_SHOWN", text)
+
+    def test_the_marker_is_exported(self):
+        """`set -g` would not reach a child shell, so every tmux pane would
+        print the panel again — which is the case the gate exists to prevent."""
+        self.assertRegex(read(PROMPT), r"set -gx OWNERP_HELP_SHOWN")
+
+    def test_the_gate_is_not_the_login_test(self):
+        """`status is-login` was the first gate and never fired on a customer
+        server: operators reach root with `sudo su`, and `su` without `-`
+        starts an interactive shell that is not a login shell. fastfetch
+        appeared, the panel did not."""
+        self.assertNotIn("status is-login", code(PROMPT))
 
     def test_fastfetch_still_runs_on_every_interactive_shell(self):
         self.assertIn("fastfetch", read(PROMPT))

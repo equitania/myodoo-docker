@@ -625,9 +625,17 @@ myodoo-docker/
 #### 12. Login command overview (fish)
 - **`fish/functions/linux/ownerp-help.fish`** prints the dozen commands an
   operator actually needs; `help` is aliased to it
-- **Once per LOGIN shell**, not per interactive shell — `fastfetch` is four
-  lines and can run every time, this panel is fifteen and a tmux session with
-  six panes would print it six times. `status is-login` is that boundary
+- **Once per session**, not per interactive shell — `fastfetch` is four lines
+  and can run every time, this panel is fifteen and a tmux session with six
+  panes would print it six times
+- **The gate is an exported marker, not `status is-login`** (14.08.2026). The
+  login test never fired on a customer server: operators reach root with
+  `sudo su`, and `su` without `-` gives an interactive shell that is *not* a
+  login shell — fastfetch appeared, the panel did not. `OWNERP_HELP_SHOWN` is
+  inherited by everything started from that shell (tmux panes, subshells, `su`)
+  and reset by `sudo` and by a fresh ssh session, which is exactly where the
+  panel belongs. It must stay `set -gx`: a `set -g` would not reach a child
+  shell, and every pane would print it again
 - **Curated, not generated** — but `tests/test_fish_help.py` asserts every
   advertised command still resolves to an alias or function, so a rename fails
   the suite instead of sending an operator to type something that is gone

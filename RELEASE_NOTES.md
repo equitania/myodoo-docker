@@ -1,5 +1,29 @@
 # Release Notes
 
+## The Command Overview Never Appeared on a Customer Server (14.08.2026)
+
+*fish/conf.d/50-prompt.fish v1.2.0*
+
+`fastfetch` printed, the panel below it did not. The two hang on different
+conditions, and the second one was wrong for the way these servers are actually
+used.
+
+### Fixed
+
+- **`status is-login` is not the boundary it looked like.** Operators reach root
+  with `sudo su`, and `su` without `-` starts an interactive shell that is *not*
+  a login shell — so the test was false on every one of those sessions and the
+  panel was skipped in silence. Measured on the affected server: `is-login` no,
+  `is-interactive` yes, function present, configuration current.
+- **The gate is now an exported marker, `OWNERP_HELP_SHOWN`.** It keeps what the
+  login test was for — a tmux session with six panes must not print fifteen
+  lines six times — because everything started from that shell inherits it. A
+  fresh ssh session starts without it, and so does `sudo`, which resets the
+  environment: arriving as root is a new session and gets the panel.
+- The marker must stay `set -gx`. A `set -g` would not reach a child shell, and
+  every pane would print the panel again — pinned by a test, as is the absence
+  of `status is-login` from the executable lines.
+
 ## The Documentation Still Sent Operators to `tui` (14.08.2026)
 
 *ReadMe.md · docs/INSTALLATION_GUIDE.md · docs/usage/04-updates.md ·
