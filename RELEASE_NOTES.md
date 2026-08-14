@@ -1,5 +1,32 @@
 # Release Notes
 
+## The Documentation Still Sent Operators to `tui` (14.08.2026)
+
+*ReadMe.md · docs/INSTALLATION_GUIDE.md · docs/usage/04-updates.md ·
+docs/usage/05-backup-restore.md · docs/usage/09-reference.md*
+
+`ownerp_tui.py` was withdrawn on 13.08.2026 and removed from every server by
+`RETIRED_SCRIPTS`. The operating documentation kept advertising it in fourteen
+places, including a step-by-step section with commands to type. `tests/test_fish_help.py`
+guards the login panel against exactly this kind of rot; nothing guards prose.
+
+### Fixed
+
+- **Fourteen references to a command that no longer exists**, across both language
+  versions: the component list, the alias tables, the "TUI mode" section of the
+  update guide, the script reference table, and the two documentation indexes. The
+  update guide now documents what actually replaces it — `-s`, `--type` and
+  `--comment` on `doup`, which is what the screen was a front end for — and says
+  plainly that the screen is gone and where the overview lives now.
+
+### Changed
+
+- **`konsole`, `dostat` and `docron` are documented at all.** They have been the
+  central tools since 13.08.2026 and appeared in `ReadMe.md` exactly zero times,
+  while a withdrawn curses screen had its own paragraph. `dps`/`dpsall` and
+  `cleandlog` describe what they now do rather than what they used to, including
+  `cleandlog --dry-run`.
+
 ## One Word Made Every Console Start Fail (14.08.2026)
 
 *getScripts.py v9.20.1 · scripts/ownerp_console.py v1.1.2*

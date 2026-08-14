@@ -121,7 +121,7 @@ ersten `doup`).
 > zuständig. Ohne Terminal verweigert er den Start, ist also für Cronjobs
 > ungeeignet und dort auch nicht nötig.
 
-In der Auswahlmaske `tui` liegt derselbe Assistent auf der Taste `w`; danach
+In der Konsole `konsole` bearbeitet `[e]` denselben Eintrag als Formular; danach
 lädt die Maske die Liste neu, damit die neue Instanz sofort auswählbar ist.
 
 <a id="de-13-restore--notfall"></a>
@@ -258,7 +258,7 @@ populated by the first `doup`).
 > refuses to start without a terminal, so it is unsuitable for cron jobs, and
 > unnecessary there.
 
-Inside the `tui` selection screen the same assistant is on the `w` key; the
+In the console `konsole`, `[e]` edits the same entry as a form; the
 screen reloads the list afterwards, so the new instance can be selected right
 away.
 

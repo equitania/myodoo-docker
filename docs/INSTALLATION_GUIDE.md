@@ -40,7 +40,7 @@ durch eure Werte.
 | [01 Provisionierung und Härtung](usage/01-provisioning.md) | Überblick, Voraussetzungen, `bootstrap.sh`, `getScripts.py`, `server_hardening.py` |
 | [02 nginx und Zertifikate](usage/02-nginx-certs.md) | nginx-Basisdateien, Vhosts per Wizard, Let's Encrypt, Erreichbarkeit |
 | [03 PostgreSQL und Odoo-Container](usage/03-postgres-odoo.md) | `pg-local-deploy.sh`, Build-Ordner, Erststart von live und test |
-| [04 Updates einrichten und fahren](usage/04-updates.md) | `edup`, `doup`, die Auswahlmaske `tui`, der Assistent `wiz`, Laufhistorie |
+| [04 Updates einrichten und fahren](usage/04-updates.md) | `edup`, `doup`, die Konsole `konsole`, der Assistent `wiz`, Laufhistorie |
 | [05 Backup und Restore](usage/05-backup-restore.md) | `edbk`, `dobk`, Aufbewahrung, Verschlüsselung, Wiederherstellung, Notfall |
 | [06 Wartung und optionale Komponenten](usage/06-maintenance.md) | Wartungs-Cron, Bereitschaftsprüfung, FastReport, Debian-Major-Upgrade |
 | [07 Betrieb hinter HTTP-Proxy](usage/07-proxy.md) | Server, die nur über einen Firmen-Proxy ins Internet dürfen |
@@ -73,7 +73,7 @@ Sicherheitsupdates. Idempotent, jede Stufe abschaltbar.
 ### Schritt 2: getScripts.py
 
 Verteilt die Fish-Shell samt Aliasen und alle Verwaltungsskripte nach `/root`.
-Danach existieren `doup`, `dobk`, `doval`, `tui` und `wiz` als Befehle.
+Danach existieren `doup`, `dobk`, `doval`, `konsole`, `dostat` und `wiz` als Befehle.
 → [01 Provisionierung und Härtung](usage/01-provisioning.md#de-4-schritt-2-getscriptspy)
 
 <a id="de-5-schritt-3-server-härtung"></a>
@@ -205,7 +205,7 @@ with your values.
 | [01 Provisioning and Hardening](usage/01-provisioning.md) | Overview, prerequisites, `bootstrap.sh`, `getScripts.py`, `server_hardening.py` |
 | [02 nginx and Certificates](usage/02-nginx-certs.md) | nginx base files, vhosts via the wizard, Let's Encrypt, reachability |
 | [03 PostgreSQL and the Odoo Containers](usage/03-postgres-odoo.md) | `pg-local-deploy.sh`, build folders, first start of live and test |
-| [04 Setting Up and Running Updates](usage/04-updates.md) | `edup`, `doup`, the `tui` selection screen, the `wiz` assistant, run history |
+| [04 Setting Up and Running Updates](usage/04-updates.md) | `edup`, `doup`, the `konsole` console, the `wiz` assistant, run history |
 | [05 Backup and Restore](usage/05-backup-restore.md) | `edbk`, `dobk`, retention, encryption, restoring, emergencies |
 | [06 Maintenance and Optional Components](usage/06-maintenance.md) | Maintenance cron, readiness check, FastReport, Debian major upgrade |
 | [07 Operation Behind an HTTP Proxy](usage/07-proxy.md) | Servers that may only reach the internet through a corporate proxy |
@@ -237,7 +237,7 @@ Idempotent, every stage can be switched off.
 ### Step 2: getScripts.py
 
 Deploys the fish shell with its aliases and every management script to `/root`.
-Afterwards `doup`, `dobk`, `doval`, `tui` and `wiz` exist as commands.
+Afterwards `doup`, `dobk`, `doval`, `konsole`, `dostat` and `wiz` exist as commands.
 → [01 Provisioning and Hardening](usage/01-provisioning.md#en-4-step-2-getscriptspy)
 
 <a id="en-5-step-3-server-hardening"></a>

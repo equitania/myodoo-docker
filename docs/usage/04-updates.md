@@ -46,23 +46,25 @@ Nützliche Optionen: `doup --validate` (Config prüfen), `-s CONTAINER`
 (einzelner Container), `-v` (verbose). **Proxy-Kunden:** `defaults.proxy` und
 `pre_build_files` in der YAML, Daemon-Proxy via `getScripts.py --proxy-check`.
 
-### TUI-Modus
+### Einzelne Systeme, Modus und Kommentar
 
-`tui` startet die Auswahlmaske: alle Systeme aus `docker2update.yaml` mit Modus
-und letztem Lauf. Space wählt aus, `m` schaltet den Modus (M/F/N), `c` hinterlegt
-einen Kommentar, Enter startet. Die YAML wird dabei **nicht** verändert — Haken
-und Modus gelten nur für diesen Lauf.
+`doup` fährt alle aktiven Instanzen. Für einen einzelnen Lauf genügen Argumente —
+`-s` ist wiederholbar und stärker als `active: false` in der YAML, `--type`
+überschreibt den Modus einmalig, `--comment` landet in der Laufhistorie und im
+Kopf des Laufprotokolls.
 
 ```bash
-tui                                  # Auswahlmaske
-doup                                 # klassisch, oder TUI wenn als Standard gesetzt
-doup -s live-odoo --type F           # ohne TUI, ein System, Modus einmalig
+doup                                 # alle aktiven Instanzen
+doup -s live-odoo --type F           # ein System, Modus einmalig
+doup -s live-odoo,test-odoo          # mehrere
 doup -s live-odoo --comment "eq_stock nachgezogen"
 ```
 
-Mit `d` in der Maske (oder `ownerp_tui.py --make-default`) wird die TUI zum
-Standard für `doup`. Mit Argumenten oder ohne Terminal läuft immer das klassische
-Skript — ein Cronjob kann nie in der Maske hängenbleiben.
+> **Die Auswahlmaske `tui` gibt es seit dem 13.08.2026 nicht mehr.** Sie war eine
+> Oberfläche für `doup` und beantwortete eine Frage, die Operatoren nicht stellen —
+> `doup -s live` tat das immer schon. Welche Instanzen es gibt und wie sie
+> konfiguriert sind, zeigt und bearbeitet `konsole`; den Zustand als Text liefert
+> `dostat`.
 
 Jeder Lauf landet in `~/update-history.jsonl`: wann, welches System, welcher
 Modus, welches Ergebnis, welcher Kommentar.
@@ -156,23 +158,24 @@ Useful options: `doup --validate` (check config), `-s CONTAINER` (single
 container), `-v` (verbose). **Proxy customers:** `defaults.proxy` and
 `pre_build_files` in the YAML, daemon proxy via `getScripts.py --proxy-check`.
 
-### TUI mode
+### Single systems, mode and comment
 
-`tui` opens the selection screen: every system from `docker2update.yaml` with its
-mode and its last run. Space selects, `m` cycles the mode (M/F/N), `c` records a
-comment, Enter starts. The YAML is **not** modified — ticks and mode apply to
-this run only.
+`doup` runs every active instance. A single run needs nothing but arguments:
+`-s` is repeatable and stronger than `active: false` in the YAML, `--type`
+overrides the mode just this once, and `--comment` lands in the run history and
+in the header of the run log.
 
 ```bash
-tui                                  # selection screen
-doup                                 # classic, or the TUI when set as default
-doup -s live-odoo --type F           # no TUI, one system, mode just this once
+doup                                 # every active instance
+doup -s live-odoo --type F           # one system, mode just this once
+doup -s live-odoo,test-odoo          # several
 doup -s live-odoo --comment "pulled in eq_stock"
 ```
 
-`d` in the screen (or `ownerp_tui.py --make-default`) makes the TUI the default
-for `doup`. With arguments, or without a terminal, the classic script always runs
-— no cron job can end up waiting in the screen.
+> **The `tui` selection screen was withdrawn on 13.08.2026.** It was a front end
+> for `doup` and answered a question operators do not ask — `doup -s live` always
+> did that. What instances exist and how they are configured is shown and edited
+> by `konsole`; `dostat` gives the same state as text.
 
 Every run is recorded in `~/update-history.jsonl`: when, which system, which
 mode, which result, which comment.

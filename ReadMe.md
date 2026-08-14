@@ -90,7 +90,9 @@ Die Tools sind auf einen klaren Ablauf abgestimmt:
   - Auswahl für einen einzelnen Lauf, ohne die YAML anzufassen: `-s` nimmt mehrere Namen (wiederholt oder kommagetrennt), `--type M|F|N` überschreibt den Modus dieses Laufs, `--comment "…"` hält fest, warum er stattfand. **`-s` sticht `active: false`** — ein ausdrücklich benannter Container läuft, auch wenn er in der Konfiguration geparkt ist; ein unbekannter Name bricht ab, statt stillschweigend nichts zu tun
   - Jeder Container-Lauf hinterlässt eine Zeile in `~/update-history.jsonl`: wann, welches System, welcher Modus, Ergebnis, Dauer, Protokollpfad und Kommentar. Geschrieben vom Skript selbst, also auch bei klassischen und Cron-Läufen. Aufbewahrung über `defaults.history_retention_days` (Standard 365 Tage, `0` = unbegrenzt)
 
-- **ownerp_tui.py** (v1.1.0) — Auswahlmaske für Ad-hoc-Updates, gestartet mit `tui`. Listet alle Systeme aus `docker2update.yaml` mit Modus und letztem Lauf; Space wählt aus, `m` schaltet den Modus (M/F/N), `c` hinterlegt einen Kommentar, `w` ruft den Assistenten `ownerp_wizard.py` auf und lädt die Liste danach neu, Enter startet. **Die YAML wird nie verändert** — `active:` und `type:` sind die Vorauswahl, der Lauf selbst geht als Argumente an `update_docker_odoo.py`; es gibt danach nichts zurückzustellen. Ein Neutralize (`N`) in der Auswahl verlangt eine zweite Bestätigung mit Nennung der betroffenen Datenbanken. Ohne Terminal, bei `TERM=dumb` oder unter 80×20 Zeichen verweigert die Maske den Start mit einem klaren Satz — ein Cronjob bleibt nie in ihr hängen
+- **ownerp_console.py** (v1.1.2) — die ownERP-Konsole, gestartet mit `konsole`: fünf Reiter (Übersicht, Instanzen, Backup, Wartung, System). Eine Zeile auswählen öffnet ein Aktionsmenü im ctop-Stil, `[e]` den ganzen Eintrag als **Formular** — alle Felder gleichzeitig, Booleans als Schalter, Hilfetext zum fokussierten Feld. **Besitzt keine eigenen Daten und keinen eigenen Schreibpfad**: Fakten aus `ownerp_state.py`, Konfigurationsänderungen über `ownerp_wizard.py`, Cron über `ownerp_cron.py`. **Startet nichts** — keine Updates, keine Backups, keine Container-Operationen; genau das erlaubt den Verzicht auf Prozessüberwachung und Log-Fenster. Fehlt Textual, nennt sie `dostat`, `wiz`, `docron` und `doval` als vollwertige Alternativen
+- **ownerp_state.py** (v1.0.0) — der ganze Server auf einer Seite, gestartet mit `dostat`: Instanzen, Backup-Alter und -Größen, Wartungsjobs, Readiness-Prüfungen. Exitcode `0` sauber / `1` Aufmerksamkeit / `2` kaputt, dazu `--json` für Monitoring. **Schreibt nie.** Jede Quelle ist optional: Docker aus, PyYAML fehlt, YAML unlesbar — jedes kostet genau einen Abschnitt, der Rest der Seite steht weiter
+- **docker_table.py** (v1.0.0) — `docker ps` als lesbare Tabelle, der Renderer hinter `dps` und `dpsall`. Ports werden gekürzt (`127.0.0.1:11600->8069/tcp` → `11600→8069`), **aber nie so, dass eine Erreichbarkeit von außen verschwindet**: jede Bindung außer Loopback behält eine sichtbare, farbige Markierung (`*:8080→80`). Ohne Terminal keine Farben, ohne UTF-8 ein ASCII-Rahmen, in einer Pipe keine Kürzung; Dockers eigene Fehlermeldung wird durchgereicht, nie ein Traceback
 - **odoo_build_cache.py** (v1.5.x) — Host-Cache der Release-Archive unter `/opt/odoo-build-cache`, den sich alle Instanzen desselben Release teilen: ein Build lädt nur noch, was sich geändert hat. Blockiert nie einen Build — was der Cache nicht liefert, holt `build_odoo.py` wie zuvor selbst. Pflegt zusätzlich Dockerfile und `odoo.conf` des Build-Ordners, die sonst nichts aktualisiert: fehlende Image-Direktiven (`HEALTHCHECK`, `VOLUME`, `EXPOSE`) werden ergänzt, ein `ADD` an das `COPY` der Vorlage angeglichen, wo beides dasselbe tut, und ungesetzte verwaltete Konfigurationsschlüssel (`http_interface`) aus der Vorlage gefüllt — Passwörter bleiben unberührt, alles nur Abweichende wird gemeldet. `stats` zeigt die Belegung, `gc` räumt nach 30 Tagen auf (Wartungs-Cron)
 - **ownerp_validate.py** (v1.0.0) — rein lesende Prüfung von `docker2update.yaml` und `container2backup.yaml` gegen ihr jeweiliges Schema, gestartet mit `doval`. Prüft Pflichtfelder, Typen, Portform (`11000`, `"11000"`, `"127.0.0.1:11000"`, `"[::1]:11000"`), doppelte Container-/Datenbanknamen und doppelte Host-Ports (**nur unter aktiven Einträgen**), ob konfigurierte Pfade existieren (Warnung), und unbekannte Schlüssel mit Vorschlag für den nächstliegenden bekannten Namen (ebenfalls Warnung). Ein Block mit `active: false` wird vollständig geprüft, seine Befunde werden aber zu Warnungen mit dem Präfix `(inactive)` herabgestuft — ein geparkter Block färbt den Exitcode nie rot. Schreibt nie, zeigt nie den Wert eines auf `password` endenden Schlüssels. **Exitcode**: `0` keine Fehler (Warnungen können vorhanden sein und wirken sich nie auf den Exitcode aus), `1` mindestens ein Fehler, `2` Datei fehlt/unlesbar/nicht parsebar oder PyYAML fehlt. `update_docker_odoo.py --validate` und `container2backup.py --validate` rufen es intern auf
 - **ownerp_wizard.py** (v1.0.0) — geführtes Bearbeiten von `docker2update.yaml`, gestartet mit `wiz`: eine Instanz hinzufügen oder ein einzelnes Feld eines bestehenden Eintrags ändern. Liest die Konfiguration, bevor er etwas fragt, und schlägt aus ihr vor — den nächsten freien Host-Port (über **beide** Port-Felder **aller** Einträge, auch inaktiver), einen `db_user`/`db_host`, auf den sich alle Einträge einigen, das gemeinsame Muster des Build-Ordners mit eingesetztem neuem Namen, den gemeinsamen Präfix der Image-Namen. Der Vorschlag steht in Klammern und wird mit Enter übernommen; sind sich die Einträge uneinig, schlägt er nichts vor, statt zu raten. **Das einzige Werkzeug dieser Sammlung, das in eine Kundenkonfiguration schreibt** — deshalb ist der Schreibweg die Substanz: Sicherung nach `<Pfad>.bak-<JJJJmmtt_HHMMSS>` → Aufbau im Speicher → temporäre Datei **im selben Verzeichnis** → `ownerp_validate.py` prüft genau diese Datei → **Fehler: temporäre Datei *und* Sicherung werden entfernt, das Original bleibt Byte für Byte unverändert** → **sauber: `os.replace()`**, die Sicherung bleibt. Warnungen blockieren nie, denn ein noch nicht existierender Build-Ordner ist bei einer neuen Instanz der Normalfall. **Verweigert statt zu raten**: ohne Terminal (nennt `edup`), ohne `ownerp_validate.py` daneben (nennt `ups`), bei nicht parsebarer Konfiguration (verweist auf `doval`). Ein doppelter Container- oder Datenbankname wird schon am Prompt abgelehnt, nicht erst bei der Prüfung. Bearbeitet **nur Skalare** (`pre_build_files` und `proxy` werden gezeigt, nie geändert) und **entfernt nie einen Eintrag**. `db_password` wird nie vorgeschlagen, nie angezeigt (`getpass`) und erscheint in jeder Zusammenfassung als `********`. Sein einziger Schreibzugriff außerhalb der YAML ist der leere Build-Ordner, den er anzulegen anbietet — hineinkopiert wird nichts, das Befüllen gehört zu `odoo_build_cache.py`
@@ -145,7 +147,7 @@ Die Fish-Konfiguration enthält ~80 Aliase und Funktionen. Unten die wichtigsten
 - `ups` *(Funktion)* — ownERP-Skripte aus dem Repository aktualisieren
 - `chk` *(Funktion)* — Readiness-Report: ist der Server auf Stand, was fehlt noch? (rein lesend)
 - `prepatch` — Systemupdate in einer Screen-Session vorbereiten
-- `cleandlog` — Docker-Container-Logs leeren
+- `cleandlog` *(Funktion)* — Container-Logs leeren: liest das Data-Root aus `docker info`, findet json-file- **und** local-Treiber, `--dry-run` meldet nur. Leert, löscht nie
 - `dusort` — Verzeichnisgrößen sortiert anzeigen
 - `f2b` — `fail2ban-client status`
 - `fishcfg` — Fish-Konfiguration bearbeiten
@@ -153,11 +155,13 @@ Die Fish-Konfiguration enthält ~80 Aliase und Funktionen. Unten die wichtigsten
 ##### ownERP / Backup
 - `dobk` — Backup-Skript ausführen (`container2backup.py`)
 - `edbk` — Backup-Konfiguration bearbeiten (`container2backup.yaml`)
-- `tui` — Auswahlmaske für Updates (`ownerp_tui.py`): System, Modus und Kommentar wählen, dann starten
-- `doup` *(Funktion)* — Docker-Container aktualisieren (`update_docker_odoo.py`). Startet die Maske statt des Skripts, sobald `~/.ownerp_tui_default` existiert (in der Maske mit `d` umschaltbar) — aber nur ohne Argumente und nur in einer interaktiven Shell. Mit Argumenten oder ohne Terminal läuft immer das Skript
+- `konsole` — die Konsole (`ownerp_console.py`): Serverzustand **und** Konfiguration bearbeiten, im Vollbild. Zeile wählen → Aktionsmenü → `[e]` öffnet den Eintrag als Formular. Startet selbst nichts
+- `dostat` — dieselben Fakten als Text (`ownerp_state.py`), pipe- und cron-tauglich, `--json` für Monitoring
+- `doup` *(Funktion)* — Docker-Container aktualisieren (`update_docker_odoo.py`)
+- `docron` — Wartungs-Cron: was läuft wann, und wann lief es zuletzt (`ownerp_cron.py`)
 - `edup` — Update-Konfiguration bearbeiten (`docker2update.yaml`)
 - `doval` — beide YAML-Konfigurationen prüfen (`ownerp_validate.py`): rein lesend, Exitcode `0`/`1`/`2`, Warnungen zählen nicht
-- `wiz` — Instanz hinzufügen oder ein Feld ändern (`ownerp_wizard.py`): geführt, mit Vorschlägen aus der bestehenden Konfiguration. Prüft, bevor er ersetzt; verweigert ohne Terminal; entfernt nie einen Eintrag. In der Maske `tui` liegt derselbe Assistent auf der Taste `w`
+- `wiz` / `wizup` / `wizbk` — Eintrag hinzufügen oder ein Feld ändern (`ownerp_wizard.py`): geführt, mit Vorschlägen aus der bestehenden Konfiguration. Prüft, bevor er ersetzt; verweigert ohne Terminal; entfernt nie einen Eintrag. **Der Fallback für Terminals ohne Textual** — `konsole` bearbeitet dieselben Dateien als Formular
 - `llbk` / `cdbk` / `cpbk` — Backup-Verzeichnis `/opt/backups/docker` auflisten / hineinwechseln / kopieren
 
 ##### Nginx
@@ -169,7 +173,7 @@ Die Fish-Konfiguration enthält ~80 Aliase und Funktionen. Unten die wichtigsten
 
 ##### Docker
 - `dk` — Shortcut für `docker`
-- `dps` / `dpsall` — Container übersichtlich auflisten
+- `dps` / `dpsall` *(Funktionen)* — Container als Tabelle: Name, Image, Status, Ports (plus ID, Kommando und Erstellzeit bei `dpsall`). Sortiert, Überschrift oben, Ports gekürzt — eine Bindung außerhalb von Loopback bleibt farbig markiert
 - `dpi` — Images anzeigen
 - `dkvol` — Docker-Volumes prüfen (`check_docker_volumes.sh`)
 - `dkstop` — alle Container stoppen
@@ -215,7 +219,7 @@ zweisprachig, jede für sich lesbar:
 | [01 Provisionierung und Härtung](docs/usage/01-provisioning.md) | Überblick, Voraussetzungen, `bootstrap.sh`, `getScripts.py`, `server_hardening.py` |
 | [02 nginx und Zertifikate](docs/usage/02-nginx-certs.md) | Basisdateien, Vhosts per Wizard, Let's Encrypt, Erreichbarkeit |
 | [03 PostgreSQL und Odoo-Container](docs/usage/03-postgres-odoo.md) | `pg-local-deploy.sh`, Build-Ordner, Erststart von live und test |
-| [04 Updates einrichten und fahren](docs/usage/04-updates.md) | `edup`, `doup`, Auswahlmaske `tui`, Assistent `wiz`, Laufhistorie |
+| [04 Updates einrichten und fahren](docs/usage/04-updates.md) | `edup`, `doup`, Konsole `konsole`, Assistent `wiz`, Laufhistorie |
 | [05 Backup und Restore](docs/usage/05-backup-restore.md) | `edbk`, `dobk`, Aufbewahrung, Verschlüsselung, Wiederherstellung, Notfall |
 | [06 Wartung und optionale Komponenten](docs/usage/06-maintenance.md) | Wartungs-Cron, Bereitschaftsprüfung, FastReport, Debian-Major-Upgrade |
 | [07 Betrieb hinter HTTP-Proxy](docs/usage/07-proxy.md) | Server, die nur über einen Firmen-Proxy ins Internet dürfen |
@@ -238,7 +242,7 @@ zweisprachig, jede für sich lesbar:
 | nginx-Basis + Vhosts | `deploy-nginx-base.sh`, `ngx-conf-wizard.sh`, `ngxset` | [nginx & Zertifikate](docs/usage/02-nginx-certs.md#de-6-schritt-4-nginx-basis--vhosts) |
 | PostgreSQL deployen | `pg-local-deploy.sh` | [PostgreSQL & Odoo](docs/usage/03-postgres-odoo.md#de-7-schritt-5-postgresql-live-dbtest-db) |
 | Odoo-Container starten | `docker run … start` | [PostgreSQL & Odoo](docs/usage/03-postgres-odoo.md#de-8-schritt-6-odoo-container-erststarten) |
-| Updates | `edup` (Config) / `doup` (Lauf) / `tui` (Auswahlmaske) | [Updates](docs/usage/04-updates.md#de-10-schritt-8-updates-einrichten-edupdoup) |
+| Updates | `edup` (Config) / `doup` (Lauf) / `konsole` (Konsole) | [Updates](docs/usage/04-updates.md#de-10-schritt-8-updates-einrichten-edupdoup) |
 | Instanz hinzufügen | `wiz` (geführt, prüft vor dem Schreiben) | [Updates](docs/usage/04-updates.md#de-10-schritt-8-updates-einrichten-edupdoup) |
 | Backups | `edbk` (Config) / `dobk` (Lauf) / `llbk` | [Backup & Restore](docs/usage/05-backup-restore.md#de-11-schritt-9-backups-einrichten-edbkdobk) |
 | Konfiguration prüfen | `doval` (beide YAMLs, rein lesend) | [Backup & Restore](docs/usage/05-backup-restore.md#de-11-schritt-9-backups-einrichten-edbkdobk) |
@@ -335,7 +339,9 @@ The tools follow a clear sequence:
   - Picking systems for a single run without touching the YAML: `-s` takes several names (repeated or comma-separated), `--type M|F|N` overrides the mode for that run, `--comment "…"` records why it happened. **`-s` overrides `active: false`** — a container named explicitly runs even when the configuration has it parked; an unknown name aborts instead of silently doing nothing
   - Every container run appends a line to `~/update-history.jsonl`: when, which system, which mode, result, duration, log path and comment. Written by the script itself, so classic and cron runs are recorded too. Retention via `defaults.history_retention_days` (365 days by default, `0` = keep forever)
 
-- **ownerp_tui.py** (v1.1.0) — selection screen for ad-hoc updates, started with `tui`. Lists every system from `docker2update.yaml` with its mode and its last run; Space selects, `m` cycles the mode (M/F/N), `c` records a comment, `w` calls the assistant `ownerp_wizard.py` and reloads the list afterwards, Enter starts. **The YAML is never modified** — `active:` and `type:` are the pre-selection, the run itself is passed as arguments to `update_docker_odoo.py`; there is nothing to turn back afterwards. A Neutralize (`N`) in the selection requires a second confirmation naming the affected databases. Without a terminal, on `TERM=dumb`, or below 80×20 characters the screen refuses to start with a plain sentence — no cron job can end up waiting in it
+- **ownerp_console.py** (v1.1.2) — the ownERP console, started with `konsole`: five tabs (overview, instances, backup, maintenance, system). Selecting a row opens a ctop-style action menu; `[e]` opens the whole entry as a **form** — every field at once, booleans as switches, the focused field's help at the bottom. **It owns no data and no write path**: facts from `ownerp_state.py`, configuration changes through `ownerp_wizard.py`, cron through `ownerp_cron.py`. **It starts nothing** — no updates, no backups, no container operations; that is exactly what lets it do without process supervision and a log pane. When Textual is missing it names `dostat`, `wiz`, `docron` and `doval` as full alternatives
+- **ownerp_state.py** (v1.0.0) — the whole server on one page, started with `dostat`: instances, backup ages and sizes, maintenance jobs, readiness checks. Exit code `0` clean / `1` needs attention / `2` broken, plus `--json` for monitoring. **It never writes.** Every source is optional: Docker down, PyYAML missing, unparseable YAML — each costs exactly one section and the rest of the page still stands
+- **docker_table.py** (v1.0.0) — `docker ps` as a readable table, the renderer behind `dps` and `dpsall`. Ports are shortened (`127.0.0.1:11600->8069/tcp` → `11600→8069`) **but never in a way that hides reachability from outside**: every bind except loopback keeps a visible, coloured marker (`*:8080→80`). No colour off a terminal, an ASCII frame without UTF-8, no truncation in a pipe; Docker's own error text is passed through, never a traceback
 - **odoo_build_cache.py** (v1.5.x) — host-side cache of the release archives under `/opt/odoo-build-cache`, shared by every instance on the same release: a build downloads only what actually changed. Never blocks a build — whatever the cache does not supply, `build_odoo.py` fetches itself as before. Also maintains the build folder's Dockerfile and `odoo.conf`, which nothing else updates: absent image directives (`HEALTHCHECK`, `VOLUME`, `EXPOSE`) are filled in, an `ADD` is aligned with the reference's `COPY` where the two do the same thing, and unset managed config keys (`http_interface`) are taken from the template — passwords are never touched, anything that merely differs is reported. `stats` shows the size, `gc` cleans up after 30 days (maintenance cron)
 - **ownerp_validate.py** (v1.0.0) — read-only validation of `docker2update.yaml` and `container2backup.yaml` against their declared schema, started with `doval`. Checks required fields, types, port form (`11000`, `"11000"`, `"127.0.0.1:11000"`, `"[::1]:11000"`), duplicate container/database names and duplicate host ports (**among active entries only**), whether configured paths exist (warning), and unknown keys with a suggestion for the closest known name (also a warning). A block with `active: false` is checked in full, but its findings are downgraded to warnings prefixed `(inactive)` — a parked block never turns the exit code red. Never writes, never prints the value of a key whose name ends in `password`. **Exit code**: `0` no errors (warnings may be present and never affect the exit code), `1` at least one error, `2` a file is missing, unreadable, unparseable, or PyYAML is absent. `update_docker_odoo.py --validate` and `container2backup.py --validate` both call it internally
 - **ownerp_wizard.py** (v1.0.0) — guided editing of `docker2update.yaml`, started with `wiz`: add an instance, or change a single field of an existing entry. It reads the configuration before it asks anything and proposes values from it — the next free host port (across **both** port fields of **every** entry, active or not), a `db_user`/`db_host` the existing entries agree on, the shared build-folder pattern with the new name substituted, the shared image-name prefix. A suggestion sits in brackets and is taken with Enter; where the entries disagree it suggests nothing rather than guessing. **The only tool in this set that writes to a customer configuration** — which is why the write path is the substance: a backup to `<path>.bak-<YYYYmmdd_HHMMSS>` → the new text built in memory → a temporary file **in the same directory** → `ownerp_validate.py` run against that file → **any error: the temporary file *and* the backup are removed and the original is left byte-identical** → **clean: `os.replace()`**, and the backup stays. Warnings never block, because a build folder that does not exist yet is the normal state for a new instance. It **refuses rather than guesses**: without a terminal (naming `edup`), without `ownerp_validate.py` beside it (naming `ups`), on a configuration that does not parse (pointing at `doval`). A duplicate container or database name is rejected at the prompt, not at validation. It edits **scalars only** (`pre_build_files` and `proxy` are shown, never changed) and **never removes an entry**. `db_password` is never suggested, never echoed (`getpass`), and appears as `********` in every summary. Its one write outside the YAML is the empty build folder it offers to create — nothing is copied into it; populating a build folder belongs to `odoo_build_cache.py`
@@ -390,7 +396,7 @@ The Fish configuration ships ~80 aliases and functions. The most important are b
 - `ups` *(function)* — update ownERP scripts from the repository
 - `chk` *(function)* — readiness report: is the server up to date, what is missing? (read-only)
 - `prepatch` — prepare a system update in a screen session
-- `cleandlog` — clear Docker container logs
+- `cleandlog` *(function)* — truncate container logs: reads the data-root from `docker info`, finds both the json-file and the local driver, `--dry-run` only reports. Truncates, never deletes
 - `dusort` — show directory sizes sorted
 - `f2b` — `fail2ban-client status`
 - `fishcfg` — edit the Fish configuration
@@ -398,11 +404,13 @@ The Fish configuration ships ~80 aliases and functions. The most important are b
 ##### ownERP / Backup
 - `dobk` — run the backup script (`container2backup.py`)
 - `edbk` — edit the backup configuration (`container2backup.yaml`)
-- `tui` — selection screen for updates (`ownerp_tui.py`): pick system, mode and comment, then start
-- `doup` *(function)* — update Docker containers (`update_docker_odoo.py`). Starts the screen instead of the script once `~/.ownerp_tui_default` exists (toggled with `d` inside the screen) — but only without arguments and only in an interactive shell. With arguments, or without a terminal, the script always runs
+- `konsole` — the console (`ownerp_console.py`): server state **and** configuration editing, full screen. Select a row → action menu → `[e]` opens the entry as a form. It starts nothing itself
+- `dostat` — the same facts as text (`ownerp_state.py`), fit for a pipe and for cron, `--json` for monitoring
+- `doup` *(function)* — update Docker containers (`update_docker_odoo.py`)
+- `docron` — the maintenance cron: what runs when, and when it last ran (`ownerp_cron.py`)
 - `edup` — edit the update configuration (`docker2update.yaml`)
 - `doval` — validate both YAML configurations (`ownerp_validate.py`): read-only, exit code `0`/`1`/`2`, warnings do not count
-- `wiz` — add an instance or change a field (`ownerp_wizard.py`): guided, with suggestions drawn from the existing configuration. Validates before it replaces anything; refuses without a terminal; never removes an entry. Inside the `tui` screen the same assistant is the `w` key
+- `wiz` / `wizup` / `wizbk` — add an entry or change a field (`ownerp_wizard.py`): guided, with suggestions drawn from the existing configuration. Validates before it replaces anything; refuses without a terminal; never removes an entry. **The fallback for terminals without Textual** — `konsole` edits the same files as a form
 - `llbk` / `cdbk` / `cpbk` — list / cd into / copy from the backup directory `/opt/backups/docker`
 
 ##### Nginx
@@ -414,7 +422,7 @@ The Fish configuration ships ~80 aliases and functions. The most important are b
 
 ##### Docker
 - `dk` — shortcut for `docker`
-- `dps` / `dpsall` — list containers in a clear format
+- `dps` / `dpsall` *(functions)* — containers as a table: name, image, status, ports (plus ID, command and creation time for `dpsall`). Sorted, header on top, ports shortened — a bind outside loopback keeps a coloured marker
 - `dpi` — show images
 - `dkvol` — check Docker volumes (`check_docker_volumes.sh`)
 - `dkstop` — stop all containers
@@ -460,7 +468,7 @@ bilingual, each readable on its own:
 | [01 Provisioning and Hardening](docs/usage/01-provisioning.md) | Overview, prerequisites, `bootstrap.sh`, `getScripts.py`, `server_hardening.py` |
 | [02 nginx and Certificates](docs/usage/02-nginx-certs.md) | Base files, vhosts via the wizard, Let's Encrypt, reachability |
 | [03 PostgreSQL and the Odoo Containers](docs/usage/03-postgres-odoo.md) | `pg-local-deploy.sh`, build folders, first start of live and test |
-| [04 Setting Up and Running Updates](docs/usage/04-updates.md) | `edup`, `doup`, the `tui` selection screen, the `wiz` assistant, run history |
+| [04 Setting Up and Running Updates](docs/usage/04-updates.md) | `edup`, `doup`, the `konsole` console, the `wiz` assistant, run history |
 | [05 Backup and Restore](docs/usage/05-backup-restore.md) | `edbk`, `dobk`, retention, encryption, restoring, emergencies |
 | [06 Maintenance and Optional Components](docs/usage/06-maintenance.md) | Maintenance cron, readiness check, FastReport, Debian major upgrade |
 | [07 Operation Behind an HTTP Proxy](docs/usage/07-proxy.md) | Servers that may only reach the internet through a corporate proxy |
@@ -483,7 +491,7 @@ bilingual, each readable on its own:
 | nginx base + vhosts | `deploy-nginx-base.sh`, `ngx-conf-wizard.sh`, `ngxset` | [nginx & certificates](docs/usage/02-nginx-certs.md#en-6-step-4-nginx-base--vhosts) |
 | Deploy PostgreSQL | `pg-local-deploy.sh` | [PostgreSQL & Odoo](docs/usage/03-postgres-odoo.md#en-7-step-5-postgresql-live-dbtest-db) |
 | Start Odoo containers | `docker run … start` | [PostgreSQL & Odoo](docs/usage/03-postgres-odoo.md#en-8-step-6-first-start-of-the-odoo-containers) |
-| Updates | `edup` (config) / `doup` (run) / `tui` (selection screen) | [Updates](docs/usage/04-updates.md#en-10-step-8-set-up-updates-edupdoup) |
+| Updates | `edup` (config) / `doup` (run) / `konsole` (console) | [Updates](docs/usage/04-updates.md#en-10-step-8-set-up-updates-edupdoup) |
 | Add an instance | `wiz` (guided, validates before writing) | [Updates](docs/usage/04-updates.md#en-10-step-8-set-up-updates-edupdoup) |
 | Backups | `edbk` (config) / `dobk` (run) / `llbk` | [Backup & restore](docs/usage/05-backup-restore.md#en-11-step-9-set-up-backups-edbkdobk) |
 | Validate configuration | `doval` (both YAMLs, read-only) | [Backup & restore](docs/usage/05-backup-restore.md#en-11-step-9-set-up-backups-edbkdobk) |
