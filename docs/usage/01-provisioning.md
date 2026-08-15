@@ -79,25 +79,35 @@ unattended-upgrades, Python-Abhängigkeiten; klont das Repo und ruft am Ende
 `getScripts.py` auf. Einzelne Schritte lassen sich per ENV abschalten
 (`INSTALL_NGINX=0`, `INSTALL_DOCKER=0`, `RUN_GETSCRIPTS=0`, …).
 
-> ℹ️ **Storage-Treiber: Docker entscheidet, nicht wir** (seit `bootstrap.sh`
-> 1.13.0). Die Versionen 1.7.0 bis 1.12.0 pinnten `overlay2` in
-> `/etc/docker/daemon.json`, weil Docker ≥ 29 Neuinstallationen auf den
-> containerd Image Store stellt und dessen Export bei großen Builds fehlschlug
-> ([moby/moby#52431](https://github.com/moby/moby/issues/52431)).
+> ℹ️ **Storage-Treiber: `overlay2`, wegen der Geschwindigkeit** (seit
+> `bootstrap.sh` 1.14.0). Die Versionen 1.7.0 bis 1.12.0 pinnten ihn schon
+> einmal, damals als Notbehelf gegen einen kaputten Image-Export auf dem
+> containerd-Store ([moby/moby#52431](https://github.com/moby/moby/issues/52431)).
+> Diese Begründung wurde am **14.08.2026 weggemessen** — fünf Builds mit 2,2 GB
+> auf dem containerd-Store kamen fehlerfrei heraus.
 >
-> **Am 14.08.2026 nachgemessen und verworfen:** Eine Wegwerf-Instanz mit
-> Debian 13 und Docker 29.7.2 baute auf dem containerd-Store fünfmal ein Image
-> mit 2,2 GB und 22 Schichten — kalt, warm und nach `docker system prune` —
-> ohne einen Fehlschlag und ohne eine einzige Kernelmeldung. Der Server, der
-> den Pin ausgelöst hatte, hatte inzwischen ein hohles Image gebaut, **während**
-> `overlay2` aktiv war. Der Pin war damit weder notwendig noch hinreichend.
+> **Am 15.08.2026 wurde dann der echte Odoo-Build gemessen**, dieselbe
+> Wegwerf-Instanz, Docker 29.7.2, 394 Modul-Archive vorab lokal — genau so, wie
+> `odoo_build_cache.py` es im Betrieb macht:
 >
-> `DOCKER_STORAGE_DRIVER=overlay2 ./bootstrap.sh` setzt ihn weiterhin — für
-> einen Host, auf dem der Fehler tatsächlich beobachtet wird. Eine vorhandene
-> `daemon.json` wird dann **ergänzt** statt übersprungen (nur der Schlüssel
-> `storage-driver`; ein absichtlich anderer Treiber bleibt stehen und wird
-> gemeldet). Bestehende Server behalten ihren Pin — `bootstrap.sh` entfernt
-> nichts.
+> | | overlay2 | containerd |
+> |---|---|---|
+> | kalter Build | **14 s** | 37 s (2,6×) |
+> | davon Export | 3,5 s | 19,7 s (5,6×) |
+> | warmer Build | **0–1 s** | 35–36 s |
+>
+> Die letzte Zeile ist die entscheidende: Auf dem containerd-Store überlebt der
+> Build-Cache das `docker system prune -f` nicht, das `update_docker_odoo.py`
+> nach **jedem** Update ausführt — dort wäre also jeder `doup` ein Vollbau. Und
+> die Vorteile des neuen Stores bekommen wir ohnehin nicht: Diese Images werden
+> lokal gebaut, nie gepusht, eine Plattform, keine Attestations.
+>
+> `DOCKER_STORAGE_DRIVER="" ./bootstrap.sh` lässt Dockers Voreinstellung stehen.
+> Eine vorhandene `daemon.json` wird **ergänzt** statt übersprungen (nur der
+> Schlüssel `storage-driver`; ein absichtlich anderer Treiber bleibt stehen und
+> wird gemeldet). Auf einem **laufenden** Server wird nichts umgestellt — das
+> würde vorhandene Images bis zu Neustart und Reboot unsichtbar machen;
+> `bootstrap.sh` sagt nur, was es kostet.
 >
 > **Unabhängig davon** baut das Skript nach der Installation ein zweizeiliges
 > Image und startet es: Ein Daemon, der Images ohne Dateisystem exportiert,
@@ -229,24 +239,35 @@ unattended-upgrades, Python dependencies; clones the repo and finally runs
 `getScripts.py`. Individual steps can be disabled via env vars
 (`INSTALL_NGINX=0`, `INSTALL_DOCKER=0`, `RUN_GETSCRIPTS=0`, …).
 
-> ℹ️ **Storage driver: Docker's choice, not ours** (since `bootstrap.sh`
-> 1.13.0). Versions 1.7.0 to 1.12.0 pinned `overlay2` in
-> `/etc/docker/daemon.json`, because Docker ≥ 29 puts fresh installs on the
-> containerd image store, whose export failed for large builds
-> ([moby/moby#52431](https://github.com/moby/moby/issues/52431)).
+> ℹ️ **Storage driver: `overlay2`, for speed** (since `bootstrap.sh` 1.14.0).
+> Versions 1.7.0 to 1.12.0 already pinned it, back then as a workaround for a
+> broken image export on the containerd store
+> ([moby/moby#52431](https://github.com/moby/moby/issues/52431)). That
+> justification was **measured away on 14.08.2026** — five 2.2 GB builds on the
+> containerd store came out correct.
 >
-> **Measured away on 14.08.2026:** a throwaway Debian 13 box on Docker 29.7.2
-> built a 2.2 GB / 22-layer image five times on the containerd store — cold,
-> warm, and after a `docker system prune` — with no failure and no kernel
-> complaint. The server that had motivated the pin meanwhile produced a hollow
-> image **while** pinned to `overlay2`. The pin was neither necessary nor
-> sufficient.
+> **On 15.08.2026 the real Odoo build was measured**, same throwaway box, Docker
+> 29.7.2, 394 module archives pre-fetched exactly as `odoo_build_cache.py` does
+> in production:
 >
-> `DOCKER_STORAGE_DRIVER=overlay2 ./bootstrap.sh` still sets it, for a host
-> where the fault is actually observed. An existing `daemon.json` is then
-> **merged into** rather than skipped (only the `storage-driver` key; a
-> deliberately different driver is left alone and reported). Existing servers
-> keep their pin — `bootstrap.sh` removes nothing.
+> | | overlay2 | containerd |
+> |---|---|---|
+> | cold build | **14 s** | 37 s (2.6×) |
+> | of which export | 3.5 s | 19.7 s (5.6×) |
+> | warm build | **0–1 s** | 35–36 s |
+>
+> The last row is the decisive one: on the containerd store the build cache does
+> not survive the `docker system prune -f` that `update_docker_odoo.py` runs
+> after **every** update, so every `doup` there would be a full rebuild. And we
+> get none of that store's benefits anyway: these images are built locally,
+> never pushed, single-platform, no attestations.
+>
+> `DOCKER_STORAGE_DRIVER="" ./bootstrap.sh` leaves Docker's default in place. An
+> existing `daemon.json` is **merged into** rather than skipped (only the
+> `storage-driver` key; a deliberately different driver is left alone and
+> reported). Nothing is switched on a **running** server — that would hide
+> existing images until a restart and a reboot; `bootstrap.sh` only says what it
+> costs.
 >
 > **Independently of all that**, the script builds and runs a two-line image
 > after the install: a daemon that exports images with no filesystem passes

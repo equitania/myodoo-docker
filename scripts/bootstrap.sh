@@ -1,6 +1,6 @@
 #!/bin/bash
 # bootstrap.sh — Out-of-the-box initializer for fresh Debian/Ubuntu servers
-# Version 1.13.0 — 14.08.2026
+# Version 1.14.0 — 15.08.2026
 #
 # Supported: Debian 12 (bookworm) / 13 (trixie); Ubuntu 20.04/22.04/24.04/26.04
 # (focal/jammy/noble/resolute). OS + codename are auto-detected from os-release;
@@ -12,17 +12,23 @@
 #   2. Installs base packages (ca-certificates, curl, gnupg, git)
 #      and ensures the en_US.UTF-8 locale is generated (minimal images)
 #   3. Installs Docker CE from the official Docker repository (deb822 format)
-#      and leaves the storage driver at Docker's own default. Versions 1.7.0 to
-#      1.12.0 pinned the classic overlay2 driver here because Docker >= 29 puts
-#      fresh installs on the containerd image store, whose image export failed
-#      for large builds (moby/moby#52431). That pin was MEASURED AWAY on
-#      14.08.2026: a throwaway Debian 13 box on Docker 29.7.2 built a 2.2 GB /
-#      22-layer image five times on the containerd store — cold, warm, and after
-#      a system prune — with no failure and no kernel complaint. The server that
-#      motivated the pin had meanwhile produced a hollow image WHILE pinned to
-#      overlay2, so the pin was neither necessary nor sufficient.
-#      DOCKER_STORAGE_DRIVER=overlay2 still pins it on demand, for a host where
-#      the fault is actually observed.
+#      and pins the classic overlay2 storage driver — FOR SPEED, which is not
+#      the reason it was pinned before. Versions 1.7.0 to 1.12.0 pinned it as a
+#      workaround for moby/moby#52431 (broken image export on the containerd
+#      store); that justification was measured away on 14.08.2026, when five
+#      2.2 GB builds on the containerd store came out correct.
+#      The real Odoo build was then measured on 15.08.2026, same throwaway box,
+#      Docker 29.7.2, 394 module archives pre-fetched exactly as
+#      odoo_build_cache.py does in production:
+#        cold build   overlay2 14s   containerd 37s   (2.6x)
+#        export step  overlay2 3.5s  containerd 19.7s (5.6x)
+#        warm build   overlay2  0-1s containerd 35-36s
+#      The last line is the one that matters: on the containerd store the build
+#      cache does not survive the `docker system prune -f` that
+#      update_docker_odoo.py runs after every update, so every doup would be a
+#      full rebuild. We get none of that store's benefits either — these images
+#      are built locally, never pushed, single-platform, no attestations.
+#      DOCKER_STORAGE_DRIVER="" leaves Docker's default in place.
 #      What survives unconditionally is the check: a two-line image is built and
 #      run after the install, because a daemon that exports images with no
 #      filesystem passes every other check this script makes (one customer server,
@@ -84,8 +90,8 @@ set -Eeuo pipefail
 # Configuration
 # ──────────────────────────────────────────
 
-SCRIPT_VERSION="1.13.0"
-SCRIPT_DATE="14.08.2026"
+SCRIPT_VERSION="1.14.0"
+SCRIPT_DATE="15.08.2026"
 
 REPO_URL="${REPO_URL:-https://github.com/equitania/myodoo-docker.git}"
 REPO_BRANCH="${REPO_BRANCH:-2026}"
@@ -101,10 +107,9 @@ INSTALL_PYTHON_DEPS="${INSTALL_PYTHON_DEPS:-1}"
 # actually contain files. Costs one busybox pull. Set to 0 on a host without a
 # route to a registry, where the test can only report a network fault.
 DOCKER_SMOKE_TEST="${DOCKER_SMOKE_TEST:-1}"
-# Empty means "leave Docker's own default alone", which is what the 14.08.2026
-# A/B test says is correct. Set to a driver name (overlay2) to pin one on a host
-# where a store-related fault is actually observed.
-DOCKER_STORAGE_DRIVER="${DOCKER_STORAGE_DRIVER:-}"
+# overlay2, for speed — measured on 15.08.2026, see the header. Set to an empty
+# string to leave Docker's own default (the containerd image store) alone.
+DOCKER_STORAGE_DRIVER="${DOCKER_STORAGE_DRIVER-overlay2}"
 RUN_GETSCRIPTS="${RUN_GETSCRIPTS:-1}"
 SELF_INSTALL="${SELF_INSTALL:-1}"
 
@@ -373,6 +378,16 @@ report_storage_driver() {
         return 0
     fi
     log "Storage driver in effect: ${driver}."
+    if [ "${driver}" = "overlayfs" ]; then
+        warn "This host uses the containerd image store. Measured on 15.08.2026 for a"
+        warn "real Odoo build: 2.6x slower cold (37s vs 14s), and the build cache does"
+        warn "not survive the 'docker system prune -f' that doup runs, so every update"
+        warn "is a full rebuild (35s vs 1s). Switching is not done here because it"
+        warn "hides existing images until a restart and a reboot. To switch by hand:"
+        warn "  /etc/docker/daemon.json -> {\"storage-driver\": \"overlay2\"}"
+        warn "  docker builder prune -af · systemctl restart docker · REBOOT"
+        warn "  then re-pull images and recreate containers (volumes survive)."
+    fi
     if [ -n "${DOCKER_STORAGE_DRIVER}" ] && [ "${driver}" != "${DOCKER_STORAGE_DRIVER}" ]; then
         warn "You asked for '${DOCKER_STORAGE_DRIVER}' but the LIVE driver is '${driver}'."
         warn "The pin has not taken effect. Restart docker, then REBOOT the server"
@@ -441,9 +456,8 @@ install_docker() {
         log "Docker already present: $(docker --version). Leaving apt repo untouched."
         # Deliberately no storage-driver change on a running host: switching a
         # LIVE store makes existing images and containers invisible until a
-        # restart and a reboot, and there is no longer a reason to. Until
-        # 1.12.0 this branch warned about the containerd store and staged a pin;
-        # the A/B test of 14.08.2026 removed the grounds for both.
+        # restart and a reboot. report_storage_driver() points out what it
+        # costs and leaves the decision, and the timing of it, to a human.
         if command -v systemctl >/dev/null 2>&1; then
             $SUDO systemctl enable --now docker 2>/dev/null || true
         fi

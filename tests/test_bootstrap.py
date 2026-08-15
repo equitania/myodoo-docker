@@ -124,9 +124,14 @@ class ScriptShapeTest(unittest.TestCase):
             capture_output=True, text=True)
         self.assertIn("sourced", result.stdout)
 
-    def test_no_storage_driver_is_pinned_by_default(self):
-        """The 14.08.2026 A/B test removed the grounds for the default pin.
-        Reintroducing one has to be a decision, not a leftover."""
+    def test_overlay2_is_the_default_and_can_be_switched_off(self):
+        """overlay2 is pinned again since 1.14.0, for speed: on a real Odoo
+        build the containerd store was 2.6x slower cold, and its build cache did
+        not survive the `docker system prune -f` doup runs after every update.
+
+        The `:-` vs `-` distinction is the substance. With `:-`, an explicit
+        DOCKER_STORAGE_DRIVER="" would fall back to overlay2 and there would be
+        no way to ask for Docker's own default at all."""
         with open(BOOTSTRAP, encoding="utf-8") as handle:
             text = handle.read()
         code = [line for line in text.splitlines()
@@ -134,7 +139,23 @@ class ScriptShapeTest(unittest.TestCase):
         calls = [line for line in code if "ensure_storage_driver_pin " in line]
         self.assertEqual(len(calls), 1, calls)
         self.assertIn('"${DOCKER_STORAGE_DRIVER}"', calls[0])
-        self.assertRegex(text, r'DOCKER_STORAGE_DRIVER="\$\{DOCKER_STORAGE_DRIVER:-\}"')
+        self.assertRegex(text, r'DOCKER_STORAGE_DRIVER="\$\{DOCKER_STORAGE_DRIVER-overlay2\}"')
+
+    def test_an_empty_value_really_means_dockers_default(self):
+        result = subprocess.run(
+            ["bash", "-c",
+             f'export BOOTSTRAP_NO_MAIN=1 DOCKER_STORAGE_DRIVER=""; '
+             f'source "{BOOTSTRAP}"; echo "driver=[${{DOCKER_STORAGE_DRIVER}}]"'],
+            capture_output=True, text=True)
+        self.assertIn("driver=[]", result.stdout)
+
+    def test_unset_means_overlay2(self):
+        result = subprocess.run(
+            ["bash", "-c",
+             f'export BOOTSTRAP_NO_MAIN=1; unset DOCKER_STORAGE_DRIVER; '
+             f'source "{BOOTSTRAP}"; echo "driver=[${{DOCKER_STORAGE_DRIVER}}]"'],
+            capture_output=True, text=True)
+        self.assertIn("driver=[overlay2]", result.stdout)
 
     def test_the_version_header_matches_the_constant(self):
         with open(BOOTSTRAP, encoding="utf-8") as handle:

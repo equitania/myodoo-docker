@@ -1,5 +1,55 @@
 # Release Notes
 
+## The overlay2 Pin Comes Back — for a Different Reason (15.08.2026)
+
+*scripts/bootstrap.sh v1.14.0 · docs/usage/01-provisioning.md*
+
+Yesterday the pin was removed because its justification (a broken image export
+on the containerd store) did not survive measurement. Today the *real* Odoo build
+was measured on the same throwaway box — Docker 29.7.2, 394 module archives
+pre-fetched exactly as `odoo_build_cache.py` does in production — and the pin
+comes back on entirely different grounds.
+
+| | overlay2 | containerd |
+|---|---|---|
+| cold build | **14 s** | 37 s (2.6×) |
+| of which export | 3.5 s | 19.7 s (5.6×) |
+| warm build | **0–1 s** | 35–36 s |
+
+### Changed
+
+- **`DOCKER_STORAGE_DRIVER` defaults to `overlay2` again**, with speed as the
+  stated reason. `DOCKER_STORAGE_DRIVER=""` leaves Docker's default in place —
+  note the `${VAR-default}` form rather than `${VAR:-default}`, so an explicit
+  empty value really means "Docker's choice" instead of falling back.
+- **The warm row is why.** On the containerd store the build cache does not
+  survive the `docker system prune -f` that `update_docker_odoo.py` runs after
+  every update: the warm build takes as long as the cold one and its longest
+  step is `build_odoo.py` running again. Every `doup` there would be a full
+  rebuild. (Observed, not explained — the mechanism was not chased down.)
+- **The mechanism check passed**: the totals moved *and* the export step moved
+  with them, 5.6×. Had the totals differed while the export step did not, the
+  storage driver would not have been the cause and the explanation offered for
+  it — content blob plus snapshot, i.e. the data written twice — would have been
+  wrong.
+- **Nothing is switched on a running server.** That hides existing images until
+  a restart and a reboot. `report_storage_driver()` states the cost and the
+  manual steps, and leaves the timing to a human.
+- `docs/usage/01-provisioning.md` carries the table in both languages, including
+  what the containerd store buys — multi-platform images, attestations,
+  encrypted images, lazy pulls — and why none of it applies here: these images
+  are built locally, never pushed, single-platform.
+
+### Correction
+
+The benchmark's first `use-containerd` step was wrong and cost an arm: removing
+`daemon.json` only removes the *pin*. The containerd store is the default for
+**fresh installs**; once an installation holds state in the classic store Docker
+stays there rather than making every image invisible. The switch is
+`{"features": {"containerd-snapshotter": true}}`. The bench script now asserts
+the live driver matches the arm's name before recording anything — mislabelled
+numbers would have compared an arm against itself.
+
 ## The overlay2 Pin Was Measured Away (14.08.2026)
 
 *scripts/bootstrap.sh v1.13.0 · docs/usage/01-provisioning.md ·
