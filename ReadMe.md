@@ -45,11 +45,13 @@ Die Tools sind auf einen klaren Ablauf abgestimmt:
 
 #### 1. Provisionierung & Härtung
 
-- **bootstrap.sh** (v1.6.x)
+- **bootstrap.sh** (v1.14.x)
   - Out-of-the-box-Initialisierung für frische **Debian 12/13** und **Ubuntu 20.04/22.04/24.04/26.04**
   - Installiert Docker CE (offizielles Repo), nginx (nginx.org), certbot, UFW (installiert, aber bewusst DEAKTIVIERT), fail2ban-Baseline, unattended-upgrades
   - Generiert `en_US.UTF-8`-Locale auf Minimal-Images (z. B. IONOS), bei denen SSH mit `LANG=en_US.UTF-8` verbindet, die Locale aber nicht installiert ist (perl/apt-Warnungen)
   - Self-Install nach `/opt`, idempotent, jede Stufe per Umgebungsvariable abschaltbar (`INSTALL_DOCKER`, `INSTALL_NGINX`, `INSTALL_CERTBOT`, `INSTALL_UFW`, `INSTALL_FAIL2BAN`, `INSTALL_UNATTENDED`)
+  - Pinnt den Storage-Treiber `overlay2` — **wegen der Geschwindigkeit**, gemessen am 15.08.2026 an einem echten Odoo-Build: kalt 14 s gegen 37 s, warm 0–1 s gegen 35–36 s, weil der containerd-Store seinen Build-Cache an das `docker system prune -f` verliert, das `doup` nach jedem Update ausführt. `DOCKER_STORAGE_DRIVER=""` schaltet das ab
+  - Baut nach der Installation ein zweizeiliges Image und startet es: Ein Daemon, der Images ohne Dateisystem exportiert, besteht jede andere Prüfung. `DOCKER_SMOKE_TEST=0` schaltet es ab
 
 - **server_hardening.py** (v1.5.x)
   - Config-getriebenes Audit-/Apply-Tool (`hardening_config.yaml`)
@@ -174,7 +176,7 @@ Die Fish-Konfiguration enthält ~80 Aliase und Funktionen. Unten die wichtigsten
 ##### Docker
 - `dk` — Shortcut für `docker`
 - `dps` / `dpsall` *(Funktionen)* — Container als Tabelle: Name, Image, Status, Ports (plus ID, Kommando und Erstellzeit bei `dpsall`). Sortiert, Überschrift oben, Ports gekürzt — eine Bindung außerhalb von Loopback bleibt farbig markiert
-- `dpi` — Images anzeigen
+- `dpi` *(Funktion)* — Images als Tabelle: Repository:Tag, ID, Größe und **Alter**. Gekürzt (`4mo`), ab 90 Tagen markiert, verwaiste Images grau und gezählt
 - `dkvol` — Docker-Volumes prüfen (`check_docker_volumes.sh`)
 - `dkstop` — alle Container stoppen
 - `dkrm` / `dkrmi` / `dkrmv` *(Funktionen)* — alle Container / Images / Volumes entfernen (mit Bestätigung)
@@ -294,11 +296,13 @@ The tools follow a clear sequence:
 
 #### 1. Provisioning & Hardening
 
-- **bootstrap.sh** (v1.6.x)
+- **bootstrap.sh** (v1.14.x)
   - Out-of-the-box initializer for fresh **Debian 12/13** and **Ubuntu 20.04/22.04/24.04/26.04**
   - Installs Docker CE (official repo), nginx (nginx.org), certbot, UFW (installed but deliberately DISABLED), fail2ban baseline, unattended-upgrades
   - Generates the `en_US.UTF-8` locale on minimal cloud images (e.g. IONOS) where SSH connects with `LANG=en_US.UTF-8` but the locale is not installed (eliminates perl/apt warnings)
   - Self-installs to `/opt`, idempotent, every stage toggleable via env var (`INSTALL_DOCKER`, `INSTALL_NGINX`, `INSTALL_CERTBOT`, `INSTALL_UFW`, `INSTALL_FAIL2BAN`, `INSTALL_UNATTENDED`)
+  - Pins the `overlay2` storage driver — **for speed**, measured on 15.08.2026 against a real Odoo build: 14 s vs 37 s cold, 0–1 s vs 35–36 s warm, because the containerd store loses its build cache to the `docker system prune -f` that `doup` runs after every update. `DOCKER_STORAGE_DRIVER=""` opts out
+  - Builds and runs a two-line image after the install: a daemon that exports images with no filesystem passes every other check. `DOCKER_SMOKE_TEST=0` disables it
 
 - **server_hardening.py** (v1.5.x)
   - Config-driven audit/apply tool (`hardening_config.yaml`)
@@ -423,7 +427,7 @@ The Fish configuration ships ~80 aliases and functions. The most important are b
 ##### Docker
 - `dk` — shortcut for `docker`
 - `dps` / `dpsall` *(functions)* — containers as a table: name, image, status, ports (plus ID, command and creation time for `dpsall`). Sorted, header on top, ports shortened — a bind outside loopback keeps a coloured marker
-- `dpi` — show images
+- `dpi` *(function)* — images as a table: repository:tag, ID, size and **age**. Shortened (`4mo`), marked past 90 days, dangling images greyed and counted
 - `dkvol` — check Docker volumes (`check_docker_volumes.sh`)
 - `dkstop` — stop all containers
 - `dkrm` / `dkrmi` / `dkrmv` *(functions)* — remove all containers / images / volumes (with confirmation)

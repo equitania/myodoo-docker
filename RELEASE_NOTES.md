@@ -1,5 +1,30 @@
 # Release Notes
 
+## A Version Header Lagged Its Constant, for the Second Time (15.08.2026)
+
+*scripts/docker_table.py v1.1.0 · tests/test_delivered_scripts.py · ReadMe.md ·
+docs/usage/09-reference.md*
+
+### Fixed
+
+- **`docker_table.py` announced 1.0.0 in its header while `SCRIPT_VERSION` said
+  1.1.0.** Cosmetic with an operational cost: the header is what a reader sees
+  when they open the file, the constant is what lands in a pasted log, and when
+  the two disagree a support conversation starts from the wrong version.
+- **A test now guards it**, because this is the second time — `ownerp_cron.py`
+  had the same defect (commit aa29034). `VersionHeaderTest` compares every
+  script's `# Version` header against its `SCRIPT_VERSION`, checks only files
+  that carry both, and comes with a test asserting the check can actually fail.
+  Verified by reintroducing the mismatch.
+
+### Changed
+
+- **Documentation caught up with what shipped this week.** `ReadMe.md` still
+  described `dpi` as "Images anzeigen" and `bootstrap.sh` as v1.6.x;
+  `docs/usage/09-reference.md` listed `dpi` as plain `docker images` and
+  bootstrap as 1.7.0. Both language versions of both files now carry the age
+  column, the overlay2 measurement and the post-install build check.
+
 ## The overlay2 Pin Comes Back — for a Different Reason (15.08.2026)
 
 *scripts/bootstrap.sh v1.14.0 · docs/usage/01-provisioning.md*

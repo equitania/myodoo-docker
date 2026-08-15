@@ -4,7 +4,7 @@
 # Title:            docker_table.py
 # Description:      `docker ps` as a readable table — the renderer behind
 #                   dps and dpsall.
-# Version:          1.0.0
+# Version:          1.1.0
 # Date:             14.08.2026
 # Author:           Equitania Software GmbH
 # ==============================================================================

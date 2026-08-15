@@ -186,3 +186,43 @@ class RetiredScriptsTest(unittest.TestCase):
                 handle.write("#!/usr/bin/python3\n")
             gs.remove_retired_scripts(tmp)
             self.assertFalse(os.path.exists(victim))
+
+
+class VersionHeaderTest(unittest.TestCase):
+    """A script's comment header must agree with the constant it prints.
+
+    This has now gone wrong twice: ownerp_cron.py (commit aa29034) and
+    docker_table.py (15.08.2026). It is a cosmetic bug with an operational
+    cost — the header is what a reader sees when they open the file, and the
+    constant is what lands in a pasted log. When the two disagree, a support
+    conversation starts from the wrong version and everything reasoned from it
+    is off.
+
+    Only files carrying BOTH are checked; a script may legitimately have just
+    one of them.
+    """
+
+    HEADER = re.compile(r'^#\s*Version[: ]\s*([0-9]+\.[0-9]+\.[0-9]+)', re.M)
+    CONSTANT = re.compile(
+        r'^(?:SCRIPT_VERSION|_VERSION)\s*=\s*"([0-9]+\.[0-9]+\.[0-9]+)"', re.M)
+
+    def test_every_header_matches_its_constant(self):
+        mismatches = []
+        for name in sorted(os.listdir(SCRIPTS)):
+            path = os.path.join(SCRIPTS, name)
+            if not os.path.isfile(path) or not name.endswith(".py"):
+                continue
+            with open(path, encoding="utf-8") as handle:
+                text = handle.read()
+            header = self.HEADER.search(text[:2000])
+            constant = self.CONSTANT.search(text)
+            if header and constant and header.group(1) != constant.group(1):
+                mismatches.append(
+                    f"{name}: header {header.group(1)} != constant {constant.group(1)}")
+        self.assertEqual(mismatches, [], "\n".join(mismatches))
+
+    def test_the_check_can_actually_fail(self):
+        """A test that cannot fail proves nothing about the files it reads."""
+        text = '# Version: 1.0.0\n\nSCRIPT_VERSION = "1.1.0"\n'
+        self.assertNotEqual(self.HEADER.search(text).group(1),
+                            self.CONSTANT.search(text).group(1))

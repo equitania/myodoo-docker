@@ -16,7 +16,7 @@ Alle Skripte des Repos (`scripts/`, Stand 16.07.2026):
 
 | Skript | Zweck | Aufruf |
 |---|---|---|
-| `bootstrap.sh` (1.7.0) | Grundausstattung frischer Server (Docker, nginx, certbot, UFW, fail2ban) | `curl … bootstrap.sh -o /opt/… && /opt/myodoo-bootstrap.sh` |
+| `bootstrap.sh` (1.14.0) | Grundausstattung frischer Server (Docker, nginx, certbot, UFW, fail2ban) | `curl … bootstrap.sh -o /opt/… && /opt/myodoo-bootstrap.sh` |
 | `getScripts.py` (9.7.3) | fish-Shell, Aliase, Verwaltungsskripte nach `/root` | `./getScripts.py [--dns-check\|--proxy-check\|--reconfigure]` |
 | `server_hardening.py` (1.8.0) | Audit + Härtung (UFW, fail2ban, SSH, sysctl, auditd, AIDE) | `sudo python3 server_hardening.py [--apply] [-m MODUL …]` |
 | `deploy-nginx-base.sh` (1.3.0) | nginx-Basis: Includes, Wartungsseite, nginx.conf (mit Rollback) | `./deploy-nginx-base.sh [--dry-run] [--no-main-conf]` |
@@ -72,7 +72,7 @@ Die wichtigsten Aliase/Funktionen nach Kategorie:
 | Alias | Befehl / Zweck |
 |---|---|
 | `dps` / `dpsall` | Container-Übersicht (formatiert, sortiert) |
-| `dpi` | `docker images` |
+| `dpi` | Images als Tabelle mit Alter (`docker_table.py --images`) |
 | `dkvol` | Volumes + referenzierende Container |
 | `dkstop` | Alle Container stoppen |
 | `exec-live` / `exec-test` | Shell im live-/test-Container |
@@ -115,7 +115,7 @@ All scripts in this repository (`scripts/`, as of 16.07.2026):
 
 | Script | Purpose | Invocation |
 |---|---|---|
-| `bootstrap.sh` (1.7.0) | Baseline for fresh servers (Docker, nginx, certbot, UFW, fail2ban) | `curl … bootstrap.sh -o /opt/… && /opt/myodoo-bootstrap.sh` |
+| `bootstrap.sh` (1.14.0) | Baseline for fresh servers (Docker, nginx, certbot, UFW, fail2ban) | `curl … bootstrap.sh -o /opt/… && /opt/myodoo-bootstrap.sh` |
 | `getScripts.py` (9.7.3) | fish shell, aliases, management scripts into `/root` | `./getScripts.py [--dns-check\|--proxy-check\|--reconfigure]` |
 | `server_hardening.py` (1.8.0) | Audit + hardening (UFW, fail2ban, SSH, sysctl, auditd, AIDE) | `sudo python3 server_hardening.py [--apply] [-m MODULE …]` |
 | `deploy-nginx-base.sh` (1.3.0) | nginx base: includes, maintenance page, nginx.conf (with rollback) | `./deploy-nginx-base.sh [--dry-run] [--no-main-conf]` |
@@ -171,7 +171,7 @@ The most important aliases/functions by category:
 | Alias | Command / purpose |
 |---|---|
 | `dps` / `dpsall` | Container overview (formatted, sorted) |
-| `dpi` | `docker images` |
+| `dpi` | Images as a table with their age (`docker_table.py --images`) |
 | `dkvol` | Volumes + referencing containers |
 | `dkstop` | Stop all containers |
 | `exec-live` / `exec-test` | Shell into the live/test container |
