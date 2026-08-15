@@ -1331,8 +1331,8 @@ def verify_built_image(image):
 
         exec /app/bin/boot: no such file or directory
 
-    which reads like a Dockerfile bug and is not one. Seen on one customer server on
-    16.07.2026 and again on 14.08.2026.
+    which reads like a Dockerfile bug and is not one. Seen on one customer
+    server on 16.07.2026 and again on 14.08.2026.
 
     This cannot roll anything back - the previous image is removed before the
     build, several steps up. What it buys is that the failure is named where it

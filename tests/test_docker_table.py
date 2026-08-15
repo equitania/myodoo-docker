@@ -271,7 +271,10 @@ class Frame(unittest.TestCase):
         narrow = dt.column_widths(
             dt.build_cells(dt.docker_ps(dt.BASIC, runner=runner_for(SAMPLE)),
                            dt.BASIC, dt.BOX_UNICODE), dt.BASIC, 40)
-        self.assertEqual(wide[0], len("ivy-odoo"))
+        # The widest name in the sample, computed rather than spelled out: the
+        # literal that stood here happened to be as long as another row's name,
+        # so the assertion passed for the wrong reason until a rename exposed it.
+        self.assertEqual(wide[0], max(len(row[0]) for row in SAMPLE))
         self.assertLess(narrow[0], wide[0])
         self.assertGreaterEqual(min(narrow), dt.MIN_WIDTH)
 

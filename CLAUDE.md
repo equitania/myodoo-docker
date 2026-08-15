@@ -325,8 +325,8 @@ myodoo-docker/
   from the build cache (moby/moby#52431): every step `CACHED`, two seconds
   total, plausible size, and not one file present at runtime. The container
   then restart-loops with `exec /app/bin/boot: no such file or directory`,
-  which reads like a Dockerfile bug and is not one — seen on one customer server on
-  16.07.2026 and again on 14.08.2026
+  which reads like a Dockerfile bug and is not one — seen on one customer
+  server on 16.07.2026 and again on 14.08.2026
 - **It cannot roll back, and that is the point of naming it early.** The
   previous image is deleted *before* the build (`docker rmi {image}:latest`,
   with the container), so there is nothing left to fall back to. What the check

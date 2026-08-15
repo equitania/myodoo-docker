@@ -138,7 +138,7 @@ The evidence against it, before any test was run:
 *scripts/bootstrap.sh v1.12.0 · tests/test_bootstrap.py (new)*
 
 `bootstrap.sh` has pinned `storage-driver: overlay2` before the daemon's first
-start since 1.7.0. The one customer server incident of the same day showed the two things
+start since 1.7.0. The incident of the same day showed the two things
 that pin does not cover.
 
 ### Fixed
@@ -206,7 +206,7 @@ an image list on a server.
 
 *scripts/update_docker_odoo.py v5.13.0*
 
-On one customer server a `doup` finished with `build image odoo/staging ... ok (2s)` and left
+On a customer server a `doup` finished with `build image odoo/staging ... ok (2s)` and left
 the instance in a restart loop:
 
 ```

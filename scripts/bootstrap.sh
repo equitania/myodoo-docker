@@ -31,8 +31,8 @@
 #      DOCKER_STORAGE_DRIVER="" leaves Docker's default in place.
 #      What survives unconditionally is the check: a two-line image is built and
 #      run after the install, because a daemon that exports images with no
-#      filesystem passes every other check this script makes (one customer server,
-#      14.08.2026).
+#      filesystem passes every other check this script makes (observed on a
+#      customer server, 14.08.2026).
 #   4. Installs nginx from the official nginx.org repository (reverse proxy)
 #      and hardens its systemd unit with two drop-ins: Restart=on-failure — the
 #      nginx.org unit ships Restart=no, so a start that fails transiently (e.g.
@@ -403,12 +403,13 @@ report_storage_driver() {
 # script passes on such a host; the fault surfaces days later as an Odoo
 # container restart-looping on `exec /app/bin/boot: no such file or directory`,
 # which reads like a Dockerfile bug. Sixty seconds here against an afternoon
-# there. Observed on one customer server on 16.07.2026 and 14.08.2026; the cause is NOT
+# there. Observed on one customer server on 16.07.2026 and 14.08.2026; the
+# cause is NOT
 # established — the A/B test of 14.08.2026 cleared the containerd image store,
 # so this check makes no claim about why, only that it happened.
 #
 # KNOWN LIMIT: a two-line image is a coarse probe. The July observation on
-# one customer server was that a 1-layer image built fine while the 22-layer Odoo image did
+# that server was that a 1-layer image built fine while the 22-layer Odoo did
 # not, so a size- or layer-dependent fault would pass here. It catches a
 # comprehensively broken daemon, not a selectively broken one.
 #
