@@ -305,7 +305,7 @@ myodoo-docker/
   - Automated restart management
   - Module updates for Odoo
 
-#### 4. update_docker_odoo.py (v5.15.0)
+#### 4. update_docker_odoo.py (v5.16.0)
 - **Purpose**: Automated Docker container updates for v16+ Odoo instances
   (image rebuild, container re-creation, module update), driven by
   `docker2update.yaml`
@@ -332,14 +332,35 @@ myodoo-docker/
   with the container), so there is nothing left to fall back to. What the check
   buys is the fault stated where it happens, with the way out in the message,
   instead of a cryptic runtime error half a minute later
-- **The cause is the daemon's overlay mounts, not the build cache** (v5.14.1,
-  17.08.2026). Measured on a customer server, Docker 29.7.2: the build failed
-  with `exec: "/bin/sh": stat /bin/sh: no such file or directory`, then produced
-  a hollow image that `verify_built_image()` caught. **`docker builder prune -af`
-  did not help, and neither did `--no-cache`** — the earlier advice was
-  therefore incomplete. `systemctl restart docker` fixed it, and the next build
-  took 14 seconds and passed the check. Containers with `restart=always` come
-  back by themselves, so the restart costs seconds, not an outage
+- **It is SPORADIC, and one automatic retry is the answer** (v5.16.0,
+  17.08.2026). This is the single most useful fact about the defect and the
+  hardest-won: on one server it appeared in **both** shapes within an hour — the
+  build failing on `exec: "/bin/sh": stat /bin/sh: no such file or directory`,
+  and a "successful" build whose image `verify_built_image()` found empty — and a
+  **plain rebuild succeeded right after each of them**. The build step therefore
+  retries **once**, and only when `build_looks_hollow()` matches the signature: a
+  Dockerfile error, a full disk or a timed-out download must not be repeated,
+  that would burn the same minutes twice before the real message. Since the
+  previous image is deleted before the build, giving up on the first attempt is
+  an outage rather than a failed step — that is what this buys
+- **Do not build an escalation ladder out of a handful of runs.** During that
+  incident three explanations were proposed and all three died: sibling
+  containers running during the build, a poisoned build cache, a broken base
+  image. A reboot of a production host was recommended for something a retry
+  fixed. What survives as evidence: `docker builder prune -af` and `--no-cache`
+  both failed to help while `systemctl restart docker` did — so the daemon's
+  overlay mounts are the better suspect than the cache, and the pin does not
+  cover them. But that is the second step, after the retry
+- **A warning for a correct state is silenced, not hidden** (v5.16.0).
+  `update-ca-certificates` runs `openssl rehash` over `/etc/ssl/certs`, where
+  Debian also keeps the bundle `ca-certificates.crt`; rehash needs one
+  certificate per file and skips the bundle on **every** run — including the runs
+  that reported `2 added, 0 removed` and whose certificates then verified an LDAP
+  connection. `BENIGN_CHILD_NOISE` keeps `classify_line()` from counting it, so
+  the recap does not carry a permanent warning on every build that touches the
+  trust store. The line still appears in the build log verbatim. The list is
+  deliberately tiny and a test holds it that way: each entry silences a warning
+  forever, so it may only hold lines whose harmlessness is established
 - **A pinned overlay2 storage driver does not prevent it.** That server had
   `{"storage-driver": "overlay2"}` in `daemon.json` and a classic image store —
   `containerd` appeared only as a runtime, which is normal since Docker 20. The

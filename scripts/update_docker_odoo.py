@@ -1,7 +1,7 @@
 #!/usr/bin/python3
 # -*- coding: utf-8 -*-
 # This script performs an update of an Odoo database in a Docker container
-# Version 5.15.0
+# Version 5.16.0
 # Date 17.08.2026
 ##############################################################################
 #
@@ -77,7 +77,7 @@ logger = logging.getLogger(__name__)
 # Kept in sync with the header comment above. Printed at the start of every run
 # so a pasted log says which version produced it — the single most common
 # question when a report comes back from a server.
-SCRIPT_VERSION = "5.15.0"
+SCRIPT_VERSION = "5.16.0"
 SCRIPT_DATE = "17.08.2026"
 
 # Set by --no-cache. A module-level flag rather than another parameter through
@@ -511,6 +511,22 @@ def _level_bucket(level):
     return 'INFO'
 
 
+# Lines that read like a warning and describe a correct state. Kept as a
+# deliberately short, exact-substring list: every entry here is a warning the
+# recap will never show again, so it has to be a line whose harmlessness is
+# established, not merely assumed.
+#
+# update-ca-certificates runs `openssl rehash` over /etc/ssl/certs, where Debian
+# also keeps the bundle ca-certificates.crt. rehash needs exactly one
+# certificate per file and skips the bundle, saying so on every single run -
+# including the runs that reported "2 added, 0 removed" and whose certificates
+# then verified an LDAP connection. Counting it would put a permanent warning in
+# the recap of every build that touches the trust store.
+BENIGN_CHILD_NOISE = (
+    'rehash: warning: skipping ca-certificates.crt',
+)
+
+
 def classify_line(line):
     """Determine the log level of a child-process line and format it for display.
 
@@ -545,6 +561,9 @@ def classify_line(line):
         level = match.group('level')
         display = f"{LEVEL_ALIASES.get(level, level):<5} {match.group('rest')}"
         return _level_bucket(level), display
+
+    if any(noise in stripped for noise in BENIGN_CHILD_NOISE):
+        return 'INFO', stripped
 
     lower = stripped.lower()
     if lower.startswith('error') or lower.startswith('exception') or 'error: ' in lower:
@@ -1184,6 +1203,49 @@ def build_proxy_build_args(proxy_settings):
         args.append(f'--build-arg {key.upper()}="{value}"')
     return " ".join(args) + " "
 
+# The signature of Docker's hollow-layer defect in a FAILED build. The layers
+# exist and carry nothing, so the first RUN that needs a shell cannot start -
+# which surfaces as a build error naming /bin/sh rather than as a hollow image.
+# Same defect, other shape: seen both ways on one server on 17.08.2026.
+HOLLOW_BUILD_SIGNATURES = (
+    'stat /bin/sh: no such file or directory',
+    'runc run failed: unable to start container process',
+)
+
+# One retry is worth its seconds, so the advice below is what remains after the
+# retry has also failed. Shared by both shapes of the fault.
+HOLLOW_IMAGE_ADVICE = (
+    "This is the hollow-layer defect of Docker >=29 (moby/moby#52431), and it is\n"
+    "SPORADIC - a plain rebuild often succeeds, which is why one was already\n"
+    "attempted. That it failed twice makes the daemon's state the next suspect.\n"
+    "\n"
+    "The overlay mounts held by the RUNNING DAEMON are the usual cause, not the\n"
+    "build cache: on a customer server on 17.08.2026 'docker builder prune -af'\n"
+    "and --no-cache both failed to help while a daemon restart did.\n"
+    "\n"
+    "  systemctl restart docker     release the daemon's overlay mounts\n"
+    "  <this script> -s <container>   build again\n"
+    "\n"
+    "Containers with restart=always come back on their own. If it is still\n"
+    "hollow after that, only a reboot clears the mounts.\n"
+    "\n"
+    "A pinned overlay2 storage driver does NOT prevent this: the fault is in the\n"
+    "mounts, not in the image store - that server had the pin set. The kernel\n"
+    "names it, but the message tracks mount activity, not faults:\n"
+    "  dmesg -T | grep -i 'lowerdir is in-use' | tail")
+
+
+def build_looks_hollow(output):
+    """Whether a FAILED build carries the hollow-layer signature.
+
+    The distinction matters because the retry hangs off it: a Dockerfile error,
+    a full disk or a download that timed out must not be retried - that would
+    only burn the same minutes twice and delay the real message.
+    """
+    text = (output or "")
+    return any(signature in text for signature in HOLLOW_BUILD_SIGNATURES)
+
+
 def verify_built_image(image):
     """Check that a freshly built image actually carries a filesystem.
 
@@ -1233,25 +1295,8 @@ def verify_built_image(image):
 
     return False, (
         f"The image {image} was built but does not carry {entrypoint}.\n"
-        "This is the hollow-image export of Docker >=29 (moby/moby#52431):\n"
-        "the build reports success and the result has no filesystem.\n"
-        "\n"
-        "The overlay mounts held by the RUNNING DAEMON are the usual cause,\n"
-        "not the build cache. Measured on a customer server on 17.08.2026:\n"
-        "'docker builder prune -af' and --no-cache both failed to help, a\n"
-        "daemon restart fixed it on the next build.\n"
-        "\n"
-        "  systemctl restart docker     release the daemon's overlay mounts\n"
-        f"  {os.path.basename(sys.argv[0])} -s <container>   build again\n"
-        "\n"
-        "Containers with restart=always come back on their own. If the rebuild\n"
-        "is hollow again, only a reboot clears the mounts.\n"
-        "\n"
-        "A pinned overlay2 storage driver does NOT prevent this: the fault is\n"
-        "in the mounts, not in the image store - that server had the pin set.\n"
-        "The kernel names it, and the message is a symptom of mount activity,\n"
-        "not a count of faults:\n"
-        "  dmesg -T | grep -i 'lowerdir is in-use' | tail")
+        + HOLLOW_IMAGE_ADVICE.replace(
+            "<this script>", os.path.basename(sys.argv[0])))
 
 
 def copy_pre_build_files(container, path):
@@ -1762,35 +1807,63 @@ def _process_container(container, proxy_settings=None, dockerfiles_source=None,
     build_env["DOCKER_BUILDKIT"] = "1"
     cache_arg = "--no-cache " if BUILD_NO_CACHE else ""
 
-    success, _, info, warn, err = run_stream(
-        f"build image {image}",
-        f"docker build {cache_arg}{proxy_build_args}-t {image} .",
-        timeout=3600, env=build_env,
-        filter_output=should_filter,
-        show_progress=should_filter,
-        progress_msg="  building image")
-    total_info += info
-    total_warnings += warn
-    total_errors += err
-    if not success:
-        print("ERROR: Failed to build Docker image")
-        print("This may be due to:")
-        print("- Network timeout while downloading modules")
-        print("- Insufficient disk space")
-        print("- Build process was interrupted")
-        print("You can retry the build by running the script again")
-        try:
-            os.chdir(original_dir)  # Change back to original directory
-        except:
-            pass
-        return False, total_info, total_warnings, total_errors
+    build_command = f"docker build {cache_arg}{proxy_build_args}-t {image} ."
 
-    # A build that reports success is not proof of a usable image on Docker >=29
-    started = time.time()
-    usable, problem = verify_built_image(image)
-    print_step(f"verify image {image}", "ok" if usable else "FAILED",
-               time.time() - started)
-    if not usable:
+    # Docker >=29 sporadically produces layers that carry nothing (moby#52431),
+    # in two shapes: the build failing because the first RUN finds no /bin/sh, or
+    # a "successful" build whose image has no filesystem. Same defect. On
+    # 17.08.2026 a plain rebuild succeeded right after each shape had occurred,
+    # so ONE retry is worth its seconds - the previous image was deleted before
+    # this build, which makes giving up here an outage rather than a failed step.
+    #
+    # The retry hangs off the hollow signature, not off failure in general: a
+    # Dockerfile error, a full disk or a timed-out download must not be repeated,
+    # that would only burn the same minutes twice before the real message.
+    for attempt in (1, 2):
+        success, output, info, warn, err = run_stream(
+            f"build image {image}" if attempt == 1 else f"rebuild image {image}",
+            build_command,
+            timeout=3600, env=build_env,
+            filter_output=should_filter,
+            show_progress=should_filter,
+            progress_msg="  building image")
+        total_info += info
+        total_warnings += warn
+        total_errors += err
+
+        if success:
+            # A build reporting success is not proof of a usable image
+            started = time.time()
+            usable, problem = verify_built_image(image)
+            print_step(f"verify image {image}", "ok" if usable else "FAILED",
+                       time.time() - started)
+            if usable:
+                break
+        elif build_looks_hollow(output):
+            usable = False
+            problem = (f"The build of {image} failed on a missing /bin/sh.\n"
+                       + HOLLOW_IMAGE_ADVICE.replace(
+                           "<this script>", os.path.basename(sys.argv[0])))
+        else:
+            print("ERROR: Failed to build Docker image")
+            print("This may be due to:")
+            print("- Network timeout while downloading modules")
+            print("- Insufficient disk space")
+            print("- Build process was interrupted")
+            print("You can retry the build by running the script again")
+            try:
+                os.chdir(original_dir)  # Change back to original directory
+            except:
+                pass
+            return False, total_info, total_warnings, total_errors
+
+        if attempt == 1:
+            total_warnings += 1
+            logger.warning(
+                f"{image}: hollow layers from Docker's exporter. Rebuilding "
+                "once - this is sporadic and a second attempt usually works.")
+            continue
+
         total_errors += 1
         logger.error(problem)
         print(problem)

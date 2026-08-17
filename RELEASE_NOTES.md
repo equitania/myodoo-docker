@@ -1,5 +1,50 @@
 # Release Notes
 
+## The Hollow Build Is Sporadic, So the Build Retries Once (17.08.2026)
+
+*scripts/update_docker_odoo.py v5.16.0 · tests/test_update_docker_odoo.py ·
+CLAUDE.md*
+
+### Added
+
+- **One automatic retry when a build comes out hollow.** Docker >=29 sporadically
+  produces layers that carry nothing (moby#52431), in two shapes: the build
+  failing because the first `RUN` finds no `/bin/sh`, or a build reporting success
+  whose image `verify_built_image()` then finds empty. On a customer server both
+  shapes occurred within an hour, and **a plain rebuild succeeded right after each
+  of them**. Since the previous image is deleted before the build, giving up on
+  the first attempt is an outage rather than a failed step — on that server the
+  live instance was down for 13 minutes for exactly this reason.
+- **The retry hangs off a signature, not off failure in general.**
+  `build_looks_hollow()` matches `stat /bin/sh: no such file or directory` and
+  `runc run failed: unable to start container process`. A Dockerfile error, a full
+  disk or a timed-out download is **not** retried — that would burn the same
+  minutes twice and delay the message that actually helps. Tests cover all four
+  negative cases.
+- **Both shapes now give the same advice**, from one shared `HOLLOW_IMAGE_ADVICE`
+  — they are one defect seen from two sides, and the instructions had drifted into
+  only one of the two paths.
+
+### Changed
+
+- **The advice says SPORADIC first.** The previous wording sent the reader
+  straight to a daemon restart and then to a reboot. During this incident that
+  cost a recommendation to reboot a production host over something a retry fixed.
+  What survives as evidence: `docker builder prune -af` and `--no-cache` both
+  failed to help while `systemctl restart docker` did, so the daemon's overlay
+  mounts remain the better suspect than the cache — but that is step two.
+- **`rehash: warning: skipping ca-certificates.crt` no longer counts as a
+  warning.** `update-ca-certificates` runs `openssl rehash` over `/etc/ssl/certs`,
+  where Debian also keeps the bundle; rehash needs one certificate per file and
+  skips the bundle on every single run — including the runs that reported
+  `2 added, 0 removed` and whose certificates then verified an LDAP connection.
+  It appeared in the `warnings & errors` recap of every build touching the trust
+  store, which is precisely how a recap stops being read.
+  `BENIGN_CHILD_NOISE` exempts it from `classify_line()`; the build log keeps the
+  line verbatim. **Deliberately not filtered in the Dockerfile** — a
+  `| grep -v` there would replace the exit code of `update-ca-certificates` with
+  grep's and swallow real failures. The list is tiny and a test keeps it that way.
+
 ## The Cleanup After a Build Deleted Two Customer Containers (17.08.2026)
 
 *scripts/update_docker_odoo.py v5.15.0 · tests/test_update_docker_odoo.py ·

@@ -442,6 +442,75 @@ class VerifyBuiltImageTest(unittest.TestCase):
         self.assertTrue(usable)
 
 
+class BuildLooksHollowTest(unittest.TestCase):
+    """The retry after a failed build hangs off this predicate, so it has to
+    separate the sporadic Docker defect from a real build failure. Retrying a
+    Dockerfile error or a full disk would burn the same minutes twice and delay
+    the message that actually helps."""
+
+    HOLLOW = ('#16 0.226 runc run failed: unable to start container process: '
+              'error during container init: exec: "/bin/sh": stat /bin/sh: '
+              'no such file or directory')
+
+    def test_the_missing_shell_is_recognised(self):
+        self.assertTrue(udo.build_looks_hollow(self.HOLLOW))
+
+    def test_a_dockerfile_error_is_not(self):
+        self.assertFalse(udo.build_looks_hollow(
+            "failed to solve: dockerfile parse error on line 12"))
+
+    def test_a_full_disk_is_not(self):
+        self.assertFalse(udo.build_looks_hollow(
+            "write /var/lib/docker/tmp/x: no space left on device"))
+
+    def test_a_download_timeout_is_not(self):
+        self.assertFalse(udo.build_looks_hollow(
+            "failed to fetch https://example.invalid/odoo.zip: timeout"))
+
+    def test_no_output_at_all_is_not(self):
+        """A build that produced nothing must not be retried on a guess."""
+        self.assertFalse(udo.build_looks_hollow(None))
+        self.assertFalse(udo.build_looks_hollow(""))
+
+    def test_the_advice_is_shared_by_both_shapes(self):
+        """The failed-build path and the hollow-image path must give the same
+        instructions - they are the same defect seen from two sides."""
+        self.assertIn("systemctl restart docker", udo.HOLLOW_IMAGE_ADVICE)
+        self.assertIn("SPORADIC", udo.HOLLOW_IMAGE_ADVICE)
+        self.assertIn("does NOT prevent", udo.HOLLOW_IMAGE_ADVICE)
+
+
+class BenignChildNoiseTest(unittest.TestCase):
+    """A warning for a correct state, repeated on every build, is how a recap
+    stops being read. This one is `openssl rehash` skipping the certificate
+    bundle - which it must, since a bundle is not a single certificate."""
+
+    REHASH = ('rehash: warning: skipping ca-certificates.crt, it does not '
+              'contain exactly one certificate or CRL')
+
+    def test_the_rehash_notice_is_not_counted_as_a_warning(self):
+        level, _ = udo.classify_line(self.REHASH)
+        self.assertEqual(level, 'INFO')
+
+    def test_the_line_is_still_shown_verbatim(self):
+        """Not counted is not the same as hidden: the build log keeps it."""
+        _, display = udo.classify_line(self.REHASH)
+        self.assertIn("rehash", display)
+
+    def test_a_real_warning_still_counts(self):
+        level, _ = udo.classify_line("warning: certificate has expired")
+        self.assertEqual(level, 'WARNING')
+
+    def test_a_real_error_still_counts(self):
+        level, _ = udo.classify_line("ERROR: failed to build")
+        self.assertEqual(level, 'ERROR')
+
+    def test_the_exemption_list_stays_short(self):
+        """Every entry silences a warning forever, so the list may only hold
+        lines whose harmlessness is established rather than assumed."""
+        self.assertLessEqual(len(udo.BENIGN_CHILD_NOISE), 3)
+
+
 class CleanDockerSystemTest(unittest.TestCase):
     """`docker system prune -f` removes every STOPPED container on the host, and
     every unused network, with no project filter of any kind.
