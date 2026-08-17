@@ -50,7 +50,7 @@ Die Tools sind auf einen klaren Ablauf abgestimmt:
   - Installiert Docker CE (offizielles Repo), nginx (nginx.org), certbot, UFW (installiert, aber bewusst DEAKTIVIERT), fail2ban-Baseline, unattended-upgrades
   - Generiert `en_US.UTF-8`-Locale auf Minimal-Images (z. B. IONOS), bei denen SSH mit `LANG=en_US.UTF-8` verbindet, die Locale aber nicht installiert ist (perl/apt-Warnungen)
   - Self-Install nach `/opt`, idempotent, jede Stufe per Umgebungsvariable abschaltbar (`INSTALL_DOCKER`, `INSTALL_NGINX`, `INSTALL_CERTBOT`, `INSTALL_UFW`, `INSTALL_FAIL2BAN`, `INSTALL_UNATTENDED`)
-  - Pinnt den Storage-Treiber `overlay2` — **wegen der Geschwindigkeit**, gemessen am 15.08.2026 an einem echten Odoo-Build: kalt 14 s gegen 37 s, warm 0–1 s gegen 35–36 s, weil der containerd-Store seinen Build-Cache an das `docker system prune -f` verliert, das `doup` nach jedem Update ausführt. `DOCKER_STORAGE_DRIVER=""` schaltet das ab
+  - Pinnt den Storage-Treiber `overlay2` — **wegen der Geschwindigkeit**, gemessen am 15.08.2026 an einem echten Odoo-Build: kalt 14 s gegen 37 s, warm 0–1 s gegen 35–36 s, weil der containerd-Store seinen Build-Cache an den Prune verliert, den `doup` nach jedem Update ausführt (bis `update_docker_odoo.py` v5.14.x ein `docker system prune -f`, seit v5.15.0 `docker image prune -f` + `docker builder prune -f` — der Build-Cache geht so oder so). `DOCKER_STORAGE_DRIVER=""` schaltet das ab
   - Baut nach der Installation ein zweizeiliges Image und startet es: Ein Daemon, der Images ohne Dateisystem exportiert, besteht jede andere Prüfung. `DOCKER_SMOKE_TEST=0` schaltet es ab
 
 - **server_hardening.py** (v1.5.x)
@@ -301,7 +301,7 @@ The tools follow a clear sequence:
   - Installs Docker CE (official repo), nginx (nginx.org), certbot, UFW (installed but deliberately DISABLED), fail2ban baseline, unattended-upgrades
   - Generates the `en_US.UTF-8` locale on minimal cloud images (e.g. IONOS) where SSH connects with `LANG=en_US.UTF-8` but the locale is not installed (eliminates perl/apt warnings)
   - Self-installs to `/opt`, idempotent, every stage toggleable via env var (`INSTALL_DOCKER`, `INSTALL_NGINX`, `INSTALL_CERTBOT`, `INSTALL_UFW`, `INSTALL_FAIL2BAN`, `INSTALL_UNATTENDED`)
-  - Pins the `overlay2` storage driver — **for speed**, measured on 15.08.2026 against a real Odoo build: 14 s vs 37 s cold, 0–1 s vs 35–36 s warm, because the containerd store loses its build cache to the `docker system prune -f` that `doup` runs after every update. `DOCKER_STORAGE_DRIVER=""` opts out
+  - Pins the `overlay2` storage driver — **for speed**, measured on 15.08.2026 against a real Odoo build: 14 s vs 37 s cold, 0–1 s vs 35–36 s warm, because the containerd store loses its build cache to the prune `doup` runs after every update (a `docker system prune -f` up to `update_docker_odoo.py` v5.14.x, `docker image prune -f` + `docker builder prune -f` since v5.15.0 — the build cache goes either way). `DOCKER_STORAGE_DRIVER=""` opts out
   - Builds and runs a two-line image after the install: a daemon that exports images with no filesystem passes every other check. `DOCKER_SMOKE_TEST=0` disables it
 
 - **server_hardening.py** (v1.5.x)

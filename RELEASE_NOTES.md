@@ -44,6 +44,16 @@ CLAUDE.md*
   line verbatim. **Deliberately not filtered in the Dockerfile** — a
   `| grep -v` there would replace the exit code of `update-ca-certificates` with
   grep's and swallow real failures. The list is tiny and a test keeps it that way.
+- **Documentation caught up with the same day's findings.**
+  `docs/usage/08-troubleshooting.md` still sent the reader to
+  `docker builder prune -af` and `--no-cache` first — both of which failed on
+  17.08.2026 — and explained the overlay messages as orphaned mounts from a store
+  switch, which `/var/lib/docker` on that host refutes (no containerd snapshotter
+  directories at all). It now leads with the automatic retry, names the daemon
+  restart as step two, and states that the kernel-message count is neither an
+  alarm nor a metric: it went 92 → 114 across a daemon restart and a rebuild on a
+  system that verified clean afterwards. `ReadMe.md` (both languages) attributed
+  the lost build cache to a `docker system prune -f` that `doup` no longer runs.
 
 ## The Cleanup After a Build Deleted Two Customer Containers (17.08.2026)
 
