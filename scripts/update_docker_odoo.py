@@ -1,7 +1,7 @@
 #!/usr/bin/python3
 # -*- coding: utf-8 -*-
 # This script performs an update of an Odoo database in a Docker container
-# Version 5.14.0
+# Version 5.14.1
 # Date 17.08.2026
 ##############################################################################
 #
@@ -77,7 +77,7 @@ logger = logging.getLogger(__name__)
 # Kept in sync with the header comment above. Printed at the start of every run
 # so a pasted log says which version produced it — the single most common
 # question when a report comes back from a server.
-SCRIPT_VERSION = "5.14.0"
+SCRIPT_VERSION = "5.14.1"
 SCRIPT_DATE = "17.08.2026"
 
 # Set by --no-cache. A module-level flag rather than another parameter through
@@ -1234,14 +1234,24 @@ def verify_built_image(image):
     return False, (
         f"The image {image} was built but does not carry {entrypoint}.\n"
         "This is the hollow-image export of Docker >=29 (moby/moby#52431):\n"
-        "the build succeeds from cache and the result has no filesystem.\n"
+        "the build reports success and the result has no filesystem.\n"
         "\n"
-        "  docker builder prune -af      discard the build cache\n"
+        "The overlay mounts held by the RUNNING DAEMON are the usual cause,\n"
+        "not the build cache. Measured on a customer server on 17.08.2026:\n"
+        "'docker builder prune -af' and --no-cache both failed to help, a\n"
+        "daemon restart fixed it on the next build.\n"
+        "\n"
+        "  systemctl restart docker     release the daemon's overlay mounts\n"
         f"  {os.path.basename(sys.argv[0])} -s <container>   build again\n"
         "\n"
-        "If the rebuild is hollow again, overlay mounts from an earlier store\n"
-        "are still in place and only a reboot clears them. Check with:\n"
-        "  dmesg -T | grep -i overlayfs | tail")
+        "Containers with restart=always come back on their own. If the rebuild\n"
+        "is hollow again, only a reboot clears the mounts.\n"
+        "\n"
+        "A pinned overlay2 storage driver does NOT prevent this: the fault is\n"
+        "in the mounts, not in the image store - that server had the pin set.\n"
+        "The kernel names it, and the message is a symptom of mount activity,\n"
+        "not a count of faults:\n"
+        "  dmesg -T | grep -i 'lowerdir is in-use' | tail")
 
 
 def copy_pre_build_files(container, path):

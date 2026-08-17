@@ -305,7 +305,7 @@ myodoo-docker/
   - Automated restart management
   - Module updates for Odoo
 
-#### 4. update_docker_odoo.py (v5.14.0)
+#### 4. update_docker_odoo.py (v5.14.1)
 - **Purpose**: Automated Docker container updates for v16+ Odoo instances
   (image rebuild, container re-creation, module update), driven by
   `docker2update.yaml`
@@ -330,9 +330,28 @@ myodoo-docker/
 - **It cannot roll back, and that is the point of naming it early.** The
   previous image is deleted *before* the build (`docker rmi {image}:latest`,
   with the container), so there is nothing left to fall back to. What the check
-  buys is the fault stated where it happens, with the way out in the message
-  (`docker builder prune -af`, rebuild, and `dmesg | grep overlayfs` if it
-  recurs) instead of a cryptic runtime error half a minute later
+  buys is the fault stated where it happens, with the way out in the message,
+  instead of a cryptic runtime error half a minute later
+- **The cause is the daemon's overlay mounts, not the build cache** (v5.14.1,
+  17.08.2026). Measured on a customer server, Docker 29.7.2: the build failed
+  with `exec: "/bin/sh": stat /bin/sh: no such file or directory`, then produced
+  a hollow image that `verify_built_image()` caught. **`docker builder prune -af`
+  did not help, and neither did `--no-cache`** — the earlier advice was
+  therefore incomplete. `systemctl restart docker` fixed it, and the next build
+  took 14 seconds and passed the check. Containers with `restart=always` come
+  back by themselves, so the restart costs seconds, not an outage
+- **A pinned overlay2 storage driver does not prevent it.** That server had
+  `{"storage-driver": "overlay2"}` in `daemon.json` and a classic image store —
+  `containerd` appeared only as a runtime, which is normal since Docker 20. The
+  defect sits in the mounts of the running daemon, which the pin does not cover.
+  Reading `Storage Driver: overlay2` as "not affected" is the wrong conclusion,
+  and it was drawn once
+- **`dmesg` names it, but the count is not a warning signal**:
+  `overlayfs: lowerdir is in-use as upperdir/workdir of another mount, accessing
+  files from both mounts will result in undefined behavior`. It appears with
+  mount activity — a daemon restart plus a rebuild added 30 lines on a healthy
+  system — so a rising count proves nothing and a steady one guarantees nothing.
+  The reliable check is the image probe, not the kernel log
 - **No entrypoint means no verdict**: an installation may drive its container
   through `CMD` alone, and failing that build would be a worse failure than the
   one being guarded against
