@@ -1,8 +1,8 @@
 #!/usr/bin/python3
 # -*- coding: utf-8 -*-
 # This script performs an update of an Odoo database in a Docker container
-# Version 5.13.0
-# Date 14.08.2026
+# Version 5.14.0
+# Date 17.08.2026
 ##############################################################################
 #
 #    Shell Script for Odoo, Open Source Management Solution
@@ -77,8 +77,8 @@ logger = logging.getLogger(__name__)
 # Kept in sync with the header comment above. Printed at the start of every run
 # so a pasted log says which version produced it — the single most common
 # question when a report comes back from a server.
-SCRIPT_VERSION = "5.13.0"
-SCRIPT_DATE = "14.08.2026"
+SCRIPT_VERSION = "5.14.0"
+SCRIPT_DATE = "17.08.2026"
 
 # Set by --no-cache. A module-level flag rather than another parameter through
 # process_container(): the build is six call levels below the argument parser,
@@ -685,141 +685,6 @@ def expand_path(path):
     expanded_path = os.path.expandvars(expanded_path)
     return expanded_path
 
-def optimize_dns_for_container(volume_config):
-    """
-    Optimize DNS configuration for Docker containers.
-    
-    Args:
-        volume_config (str): Current volume configuration string
-        
-    Returns:
-        tuple: (optimized_volume_config, was_modified)
-    """
-    if not volume_config:
-        volume_config = ""
-    
-    # Recommended DNS servers for optimal performance
-    recommended_dns = ["1.1.1.1", "8.8.8.8", "9.9.9.9"]
-    
-    # Check if DNS is already configured in the container
-    if "--dns" in volume_config:
-        logger.info("DNS servers already configured in volume settings")
-        return volume_config, False
-    
-    # IMPORTANT: Docker containers do NOT inherit host DNS configuration by default!
-    # Docker uses its own DNS resolver (127.0.0.11) which may use different DNS servers
-    # than the host system. Therefore, we should ALWAYS optimize container DNS unless
-    # it's already explicitly configured.
-    
-    # Check host DNS for informational purposes only
-    host_dns_info = []
-    try:
-        if os.path.exists("/etc/resolv.conf"):
-            with open("/etc/resolv.conf", "r") as f:
-                content = f.read()
-                for line in content.split('\n'):
-                    if line.strip().startswith('nameserver'):
-                        nameserver = line.split()[1] if len(line.split()) > 1 else None
-                        if nameserver:
-                            host_dns_info.append(nameserver)
-    except Exception as e:
-        logger.warning(f"Could not check host DNS configuration: {e}")
-    
-    # Log host DNS information
-    if host_dns_info:
-        primary_dns = host_dns_info[0]
-        if primary_dns in recommended_dns:
-            logger.info(f"Host DNS is optimized with {primary_dns}, but containers need explicit DNS configuration")
-        else:
-            logger.info(f"Host DNS uses {primary_dns}, containers will be optimized with better DNS servers")
-    else:
-        logger.info("Could not determine host DNS configuration")
-    
-    # Always add DNS optimization to containers unless already configured
-    logger.info("Adding DNS optimization to container for better performance and reliability")
-    dns_args = " ".join([f"--dns {dns}" for dns in recommended_dns])
-    
-    # Add DNS configuration to volume string
-    if volume_config.strip():
-        volume_config = f"{volume_config} {dns_args}"
-    else:
-        volume_config = dns_args
-    
-    logger.info(f"Added DNS servers to container: {dns_args}")
-    return volume_config, True
-
-def save_updated_config(config, config_file):
-    """
-    SIMPLE and WORKING approach: Replace volume lines directly using string replacement.
-    This avoids complex YAML parsing issues.
-    
-    Args:
-        config (dict): Configuration dictionary
-        config_file (str): Path to configuration file
-    """
-    try:
-        # Create backup of original file
-        backup_file = f"{config_file}.backup"
-        if os.path.exists(config_file):
-            import shutil
-            shutil.copy2(config_file, backup_file)
-            logger.info(f"Backup created: {backup_file}")
-        
-        # Read the file as text
-        with open(config_file, 'r', encoding='utf-8') as f:
-            content = f.read()
-        
-        # For each container, find and replace its volume line
-        for container in config['containers']:
-            container_name = container.get('container_name', '')
-            new_volume = container.get('volume', '')
-            
-            # Skip if no volume configuration
-            if not new_volume or not container_name:
-                continue
-                
-            # Find the old volume line for this container
-            # Look for pattern: volume: "old_value" after container_name: "container_name"
-            lines = content.split('\n')
-            container_found = False
-            
-            for i, line in enumerate(lines):
-                # Look for container name
-                if f'container_name: "{container_name}"' in line:
-                    container_found = True
-                    continue
-                    
-                # If we found the container, look for the volume line
-                if container_found and 'volume:' in line:
-                    # Extract the indentation
-                    indent = len(line) - len(line.lstrip())
-                    indent_str = ' ' * indent
-                    
-                    # Replace the line with new volume configuration
-                    lines[i] = f'{indent_str}volume: "{new_volume}"'
-                    container_found = False  # Reset for next container
-                    break
-        
-        # Write the modified content back
-        modified_content = '\n'.join(lines)
-        with open(config_file, 'w', encoding='utf-8') as f:
-            f.write(modified_content)
-        
-        logger.info(f"Updated configuration saved to: {config_file} (preserving original format)")
-        return True
-        
-    except Exception as e:
-        logger.error(f"Failed to save updated configuration: {e}")
-        # Fallback to restore backup
-        try:
-            if os.path.exists(backup_file):
-                import shutil
-                shutil.copy2(backup_file, config_file)
-                logger.info("Restored original configuration from backup")
-        except Exception as restore_error:
-            logger.error(f"Failed to restore backup: {restore_error}")
-        return False
-
 def selected_container_names(args):
     """Flatten -s into a list of names; empty when the flag was not given.
 
@@ -860,7 +725,6 @@ Examples:
   python3 update_docker_odoo.py -s live-odoo --type F   # Override the YAML 'type' once
   python3 update_docker_odoo.py -s live-odoo --comment "eq_stock"   # Note it in the log/history
   python3 update_docker_odoo.py --validate            # Only validate config, don't update
-  python3 update_docker_odoo.py --dns-optimize        # Only optimize DNS configuration
   
 Configuration File Format (YAML):
   containers:
@@ -878,7 +742,7 @@ Configuration File Format (YAML):
       db_password_via_env: true                   # Pass password via PGPASSWORD env, not argv
                                                   # (hidden from ps; needs image >= 11.06.2026)
       db_host: "db-host"                          # Database hostname/IP
-      volume: "--network net -v /path:/data"      # Docker volume config (DNS auto-optimized)
+      volume: "--network net -v /path:/data"      # Raw docker run flags (-v, --dns, ...)
       odoo_version: "16"                          # Odoo version for scripts
       translate: "Y"                              # Load translations? Y/N
       proxy:                                      # Optional: per-container proxy override
@@ -896,8 +760,11 @@ Configuration File Format (YAML):
                                                   #   check_dockerimage_odoo.py / bin files
                                                   #   (default shown; kept current via 'ups')
 
-Note: DNS optimization is automatically applied to containers if host DNS is not optimal.
-      This helps resolve DNS issues between different cloud providers (e.g., Hetzner <-> DigitalOcean).
+Note: Container DNS is inherited from the host - Docker copies /etc/resolv.conf
+      into every container, filtering loopback addresses. Set explicit
+      "--dns <ip>" and "--dns-search <zone>" in 'volume' only when an instance
+      needs different resolvers than its host, which is the case on servers
+      with an internal DNS zone (AD domain, LDAP, internal hostnames).
       Build scripts are synced from the local myodoo-docker repository (newer
       version header wins); the release-manager wget only runs as fallback.
       Base image pulls are done by the Docker daemon itself - configure its proxy
@@ -934,10 +801,6 @@ Note: DNS optimization is automatically applied to containers if host DNS is not
     parser.add_argument('--validate',
                         action='store_true',
                         help='Only validate the configuration without performing updates')
-    
-    parser.add_argument('--dns-optimize', 
-                        action='store_true',
-                        help='Only optimize DNS configuration without performing updates')
     
     return parser.parse_args()
 
@@ -2125,44 +1988,6 @@ def main():
         logger.error(f"Failed to load configuration from {args.config}. Exiting.")
         return 1
     
-    # Optimize DNS configuration for containers (ALWAYS run, regardless of verbose mode)
-    config_modified = False
-    print("Checking DNS optimization for Docker containers...")
-    
-    for container in config['containers']:
-        if not container.get('active', True):
-            continue
-        
-        container_name = container.get('container_name', 'unknown')
-        current_volume = container.get('volume', '')
-        
-        # Optimize DNS configuration
-        optimized_volume, was_modified = optimize_dns_for_container(current_volume)
-        
-        if was_modified:
-            container['volume'] = optimized_volume
-            config_modified = True
-            # Always show DNS optimization
-            print(f"DNS optimization applied to container: {container_name}")
-        else:
-            print(f"DNS configuration already optimal for container: {container_name}")
-    
-    # Save updated configuration if modifications were made
-    if config_modified and args.validate:
-        # The fallback path lands here when the validator is not installed.
-        # --validate never writes, so report what a real run would change.
-        print("DNS optimizations would be applied (not written: "
-              "--validate is read-only)")
-    elif config_modified:
-        if save_updated_config(config, args.config):
-            # Always show this message
-            print("Configuration updated with DNS optimizations")
-        else:
-            print("ERROR: Failed to save DNS optimizations to configuration file")
-            return 1
-    else:
-        print("No DNS optimization needed - configuration is already optimal")
-    
     # Process active containers
     success_count = 0
     failure_count = 0
@@ -2193,8 +2018,9 @@ def main():
                 logger.info(f"Skipping inactive container: {container_name}")
             continue
 
-        # A copy, so the override cannot reach the structure that
-        # save_updated_config() writes back.
+        # A copy: the override belongs to this run alone and must not
+        # alter the loaded configuration that later steps and the history
+        # entry read back.
         if args.update_type:
             container = dict(container, type=args.update_type)
 
@@ -2208,8 +2034,8 @@ def main():
             total_error_count += 1
             continue
         
-        # If only validating or DNS optimizing, skip processing
-        if args.validate or args.dns_optimize:
+        # If only validating, skip processing
+        if args.validate:
             continue
         
         # Process container
@@ -2269,13 +2095,6 @@ def main():
     if args.validate:
         print_step("configuration validation", "done", execution_time)
         print_step("valid configurations", str(validate_count))
-        if failure_count > 0:
-            print_step("invalid configurations", str(failure_count))
-    elif args.dns_optimize:
-        print_step("dns optimization", "done", execution_time)
-        print_step("valid configurations", str(validate_count))
-        print_step("dns configuration",
-                   "updated" if config_modified else "already optimal")
         if failure_count > 0:
             print_step("invalid configurations", str(failure_count))
     else:

@@ -305,7 +305,7 @@ myodoo-docker/
   - Automated restart management
   - Module updates for Odoo
 
-#### 4. update_docker_odoo.py (v5.13.0)
+#### 4. update_docker_odoo.py (v5.14.0)
 - **Purpose**: Automated Docker container updates for v16+ Odoo instances
   (image rebuild, container re-creation, module update), driven by
   `docker2update.yaml`
@@ -338,8 +338,49 @@ myodoo-docker/
   one being guarded against
 - **`--no-cache`** forces a cache-free build, which is the fix for the above
   once the cache is the suspect
+- **It no longer writes to the customer's configuration at all** (v5.14.0,
+  17.08.2026). Until then every run appended
+  `--dns 1.1.1.1 --dns 8.8.8.8 --dns 9.9.9.9` to any `volume` string that had no
+  `--dns`, and wrote that back into the YAML. The premise in the code —
+  "containers do NOT inherit host DNS" — was simply wrong: Docker copies the
+  host's `/etc/resolv.conf` into every container, filtering loopback addresses,
+  so the default was already right. On a server with an internal DNS zone the
+  injection was actively harmful: the container could never resolve the
+  customer's AD or LDAP names. And *adding* the internal servers alongside does
+  not fix it — an NXDOMAIN from a public resolver listed first is a valid,
+  authoritative answer, so nothing asks the next one. Explicit `--dns` and
+  `--dns-search` in `volume` remain the way to override, unchanged
+- **`save_updated_config()` went with it**, and with it the last
+  string-replacement write path in this script. Configuration changes belong to
+  `ownerp_wizard.py` and the console, which have backup, temp file, validation
+  and an atomic replace. `--dns-optimize` is gone as well
+- **`ca-certificates/` in the build folder** (17.08.2026). The repository
+  Dockerfiles carry `COPY ca-certificates/ /usr/local/share/ca-certificates/`
+  and `RUN update-ca-certificates`, placed after `USER 0` because
+  `update-ca-certificates` writes to `/etc/ssl/certs` and would fail as `odoo`.
+  The directory ships empty; a README keeps it in git and explains the rest.
+  It exists because Odoo's `auth_ldap` builds `ldap://host:port` and calls
+  `start_tls_s()` while setting **no** TLS options at all — an LDAP/AD server
+  whose certificate comes from an internal CA therefore fails with
+  `unable to get local issuer certificate` (OpenSSL verify code 20, *not* 18
+  self-signed). **The host's trust store does not apply inside the container**:
+  the host can verify the very same connection successfully while the container
+  cannot, which is what makes this hard to place. Pair it with
+  `pre_build_files: [{source: "/usr/local/share/ca-certificates", target: "."}]`
+  so the host store stays the single source of truth
+- **That Dockerfile change reaches new installations only, and deliberately
+  says nothing to the others.** `ADDITIVE_KEYWORDS` in `odoo_build_cache.py`
+  covers `VOLUME`, `HEALTHCHECK` and `EXPOSE` — never `COPY`, which is the safe
+  behaviour: inserting the `COPY` into an existing build folder that has no
+  `ca-certificates/` directory would break every build there. But the reference
+  comparison reports every repository instruction a customer's Dockerfile lacks,
+  so without further ado these two lines would produce two permanent warnings on
+  every server that has no internal CA. `OPTIONAL_INSTRUCTIONS` in
+  `odoo_build_cache.py` v1.6.0 exempts them (see there). An existing
+  installation is patched by hand when it needs them — together with the
+  directory, because the `COPY` fails without it
 
-#### 5. odoo_build_cache.py (v1.5.0)
+#### 5. odoo_build_cache.py (v1.6.0)
 - **Purpose**: Host-side cache of Odoo release archives, shared by every instance
 - **Why**: `build_odoo.py` runs inside the build container and re-downloads all
   several hundred archives on every build; the Docker layer holding them is
@@ -381,6 +422,20 @@ myodoo-docker/
   `http_interface` is the first managed key: Odoo 19 warns when it is unset and
   **Odoo 20 defaults it to `127.0.0.1`**, which would leave every container
   unreachable through its published port
+- **`OPTIONAL_INSTRUCTIONS` — a repository instruction whose absence is not a
+  defect** (v1.6.0, 17.08.2026). The reference comparison reports every
+  instruction a customer's Dockerfile lacks, and that is right for almost all of
+  them. It is wrong for `COPY ca-certificates/` and `RUN update-ca-certificates`:
+  they serve installations whose LDAP/AD server uses an internal CA, most have
+  none, and they cannot be inserted automatically because the `COPY` needs a
+  directory that would not be there. Without the exemption every server without
+  an internal CA would carry two permanent warnings — and the code says why that
+  matters in its own words a few lines above: it *"would train everyone to ignore
+  these warnings, which is how the one that matters gets missed"*
+- **The exemption is normalised through `_normalise()`**, not written twice, so
+  the two spellings cannot drift apart. A test asserts the repository Dockerfiles
+  carry both instructions **and** the `ca-certificates/` directory beside them —
+  a `COPY` without its directory would break every fresh build
 
 #### 6. ownerp_validate.py (v1.0.0)
 - **Purpose**: Read-only validation of `docker2update.yaml` and
@@ -419,8 +474,10 @@ myodoo-docker/
   prefix. Enter takes the value in brackets; a disagreement suggests nothing
   rather than guessing
 - **Field edits address the line the positioned loader recorded** — not a
-  forward text search like `save_updated_config()`, which can land in the
-  following entry. Indentation and any trailing comment on that line survive
+  forward text search from the container name, which can land in the following
+  entry. That was `save_updated_config()` in `update_docker_odoo.py`, removed in
+  v5.14.0 along with the DNS injection that was its only caller. Indentation and
+  any trailing comment on the edited line survive
 - **Refuses** instead of guessing: no TTY (naming `edup`), no
   `ownerp_validate.py` beside it (naming `ups`), an unparseable configuration
   (pointing at `doval`). A duplicate container/database name is rejected at the

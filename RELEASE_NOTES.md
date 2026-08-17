@@ -1,5 +1,72 @@
 # Release Notes
 
+## The Trust Store Is the Container's, Not the Host's (17.08.2026)
+
+*Dockerfiles/v16-odoo · Dockerfiles/v18-odoo · Dockerfiles/v19-odoo ·
+scripts/update_docker_odoo.py v5.14.0 · scripts/odoo_build_cache.py v1.6.0 ·
+tests/test_odoo_build_cache.py · CLAUDE.md*
+
+### Added
+
+- **An empty `ca-certificates/` directory in every build folder**, copied into
+  `/usr/local/share/ca-certificates/` and registered by
+  `RUN update-ca-certificates`. Placed after `USER 0`, because
+  `update-ca-certificates` writes to `/etc/ssl/certs` and would fail as `odoo`.
+- **Why it has to exist at all**: Odoo's `auth_ldap` builds `ldap://host:port`
+  and calls `start_tls_s()` without setting a single TLS option, and it has no
+  field for a CA certificate. Validation therefore rests entirely on the
+  container's trust store. An LDAP/AD server presenting a certificate from an
+  internal CA fails with `error:0A000086 … unable to get local issuer
+  certificate` — OpenSSL verify code 20, issuer unknown, **not** code 18,
+  self-signed. Worth separating: the two send you looking in different places.
+- **The part that costs the afternoon**: the host's trust store does not apply
+  inside the container. A server can verify the very same connection
+  successfully — `openssl s_client` returns `Verify return code: 0 (ok)` —
+  while the container it runs cannot. Diagnosed on a customer server on
+  17.08.2026, where the CA had been installed on the host since 2022.
+- Pairs with `pre_build_files: [{source: "/usr/local/share/ca-certificates",
+  target: "."}]`, so the host store stays the single source of truth and a CA
+  added later reaches the image by itself. A missing source aborts the run, so
+  it cannot quietly vanish from a build.
+- **Reaches new installations only.** `ADDITIVE_KEYWORDS` in
+  `odoo_build_cache.py` covers `VOLUME`, `HEALTHCHECK` and `EXPOSE`, never
+  `COPY` — and that is the safe behaviour: inserting the `COPY` into an existing
+  build folder without the directory would break every build there.
+- **`OPTIONAL_INSTRUCTIONS`, so the others hear nothing about it**
+  (`odoo_build_cache.py` v1.6.0). The reference comparison reports every
+  repository instruction a customer's Dockerfile lacks, which is right for almost
+  all of them and wrong for these two: a server with no internal CA would have
+  carried two permanent warnings from this release onwards. The code already
+  argued the case for a different instruction a few lines above — reporting a
+  correct state *"would train everyone to ignore these warnings, which is how
+  the one that matters gets missed"*. The exemption is normalised through
+  `_normalise()` rather than written twice, and a test asserts the repository
+  Dockerfiles carry both instructions **and** the `ca-certificates/` directory
+  beside them, since a `COPY` without its directory would break every fresh
+  build. Verified by clearing the exemption and watching both warnings reappear.
+
+### Removed
+
+- **The hardcoded public DNS resolvers.** `optimize_dns_for_container()`
+  appended `--dns 1.1.1.1 --dns 8.8.8.8 --dns 9.9.9.9` to any `volume` string
+  that had no `--dns`, on every run. Its stated premise — "Docker containers do
+  NOT inherit host DNS configuration by default" — is wrong: Docker copies the
+  host's `/etc/resolv.conf` into every container, filtering loopback addresses.
+  The default was already correct.
+- **On a server with an internal DNS zone it was actively harmful**, because the
+  container could then never resolve the customer's AD or LDAP names. And
+  adding the internal servers *alongside* does not repair it: an NXDOMAIN from a
+  public resolver listed first is a valid, authoritative answer, so nothing asks
+  the next one. Explicit `--dns` and `--dns-search` in `volume` remain the way
+  to override, unchanged — that path was always the opt-out and still is.
+- **`save_updated_config()`**, whose only caller was that injection. With it
+  goes the last string-replacement write path in the script: it scanned forward
+  from the container name to the next `volume:` line, which is precisely the
+  technique `ownerp_wizard.py` exists to avoid. `update_docker_odoo.py` now
+  never writes to a customer's configuration.
+- **`--dns-optimize`**, which only made sense as a way to run that injection on
+  its own.
+
 ## A Version Header Lagged Its Constant, for the Second Time (15.08.2026)
 
 *scripts/docker_table.py v1.1.0 · tests/test_delivered_scripts.py · ReadMe.md ·

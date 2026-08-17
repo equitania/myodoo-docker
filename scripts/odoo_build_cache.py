@@ -5,8 +5,8 @@
 # Description:      Share one host-side cache of Odoo release archives across
 #                   every instance on the server, so a build downloads only
 #                   what actually changed.
-# Version:          1.5.0
-# Date:             06.08.2026
+# Version:          1.6.0
+# Date:             17.08.2026
 # Author:           Equitania Software GmbH
 # ==============================================================================
 # Why this exists:
@@ -81,8 +81,8 @@ import urllib.request
 import zipfile
 from urllib.parse import urlsplit
 
-SCRIPT_VERSION = "1.5.0"
-SCRIPT_DATE = "06.08.2026"
+SCRIPT_VERSION = "1.6.0"
+SCRIPT_DATE = "17.08.2026"
 
 CACHE_ROOT_DEFAULT = "/opt/odoo-build-cache"
 ZIP_DIR = "zips"
@@ -120,6 +120,21 @@ ADDITIVE_KEYWORDS = ("VOLUME", "HEALTHCHECK", "EXPOSE")
 # run) and the label carries no build behaviour.
 UNCOMPARED_KEYWORDS = ("FROM", "LABEL")
 MISSING_REPORTED_MAX = 5
+
+# Instructions the reference Dockerfile carries for the installations that need
+# them, and whose absence is therefore not a defect to report. ca-certificates/
+# exists for an installation whose LDAP/AD server presents a certificate from an
+# internal CA; most have none. They cannot be added automatically either: the
+# COPY needs a ca-certificates/ directory in the build folder, and inserting the
+# instruction without it would break every build there. So a new installation
+# gets them from the repository Dockerfile, an existing one is patched by hand
+# together with the directory — and neither is nagged in between. Reporting them
+# on every run is exactly what teaches people to ignore these warnings, which is
+# how the one that matters gets missed.
+OPTIONAL_INSTRUCTIONS = (
+    "COPY ca-certificates/ /usr/local/share/ca-certificates/",
+    "RUN update-ca-certificates",
+)
 
 # ADD and COPY are the same operation for a plain local path, which makes the
 # July 2026 move of bin/ from ADD to COPY the one rewrite of a line's content
@@ -526,6 +541,9 @@ def _apply_reference(lines, reference_lines):
         if _keyword(instruction) in UNCOMPARED_KEYWORDS:
             continue
         wanted = _normalise(instruction)
+        # Opt-in instructions are not reported when absent (see the constant).
+        if wanted in _OPTIONAL_NORMALISED:
+            continue
         # An instruction the customer EXTENDED counts as present: their build
         # RUN reads `cd /opt/odoo/ && python3 build_odoo.py && pip3 install ...`
         # and reporting that as missing would train everyone to ignore these
@@ -662,6 +680,11 @@ def _normalise(instruction):
     match its own original or the reference.
     """
     return " ".join(instruction.replace(MOUNT_FLAG, "").split())
+
+
+# Built here rather than beside OPTIONAL_INSTRUCTIONS because it needs
+# _normalise(), so the two spellings can never drift apart.
+_OPTIONAL_NORMALISED = frozenset(_normalise(i) for i in OPTIONAL_INSTRUCTIONS)
 
 
 def _dockerfile_regression(original, patched, allowed_additions=(),

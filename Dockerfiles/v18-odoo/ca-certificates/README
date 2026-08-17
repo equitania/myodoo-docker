@@ -1,0 +1,60 @@
+Extra CA certificates for this installation
+===========================================
+
+Everything in this directory is copied to /usr/local/share/ca-certificates/ in
+the image, and the following RUN update-ca-certificates registers it in the
+container's trust store at build time.
+
+Put PEM-encoded CA certificates here as *.crt files (not DER). Only *.crt is
+picked up; this README is ignored. It exists so the directory survives in git
+and the COPY in the Dockerfile always finds something to copy.
+
+
+Why this exists
+---------------
+
+Odoo's auth_ldap builds "ldap://host:port" and calls start_tls_s() without
+setting a single TLS option, so certificate validation relies entirely on this
+trust store. An LDAP/AD server whose certificate was issued by an internal CA
+therefore fails with:
+
+    error:0A000086:SSL routines::certificate verify failed
+    (unable to get local issuer certificate)
+
+That is OpenSSL verify code 20 (issuer unknown), not code 18 (self-signed) —
+worth distinguishing, because the two lead to different fixes.
+
+The host's trust store does not apply inside the container. The host may verify
+the very same connection successfully ("Verify return code: 0 (ok)") while the
+container does not, which is what makes this failure confusing to diagnose.
+
+Note that this cannot be fixed at runtime for good: a certificate copied into a
+running container lives in its writable layer. It survives docker restart and a
+reboot, but not the next update — the container is removed and recreated there.
+
+
+Keeping it in sync with the host
+--------------------------------
+
+When the CA is already installed on the host, do not maintain a second copy.
+Let the update run refresh this directory on every build, in docker2update.yaml:
+
+    pre_build_files:
+      - source: "/usr/local/share/ca-certificates"
+        target: "."
+
+The host store stays the single source of truth, and a CA added there later
+reaches the image on the next update by itself. A missing source is a hard
+error that aborts the run, so the CA cannot silently vanish from a build.
+
+
+Verifying
+---------
+
+    docker exec <container> sh -c 'ls /usr/local/share/ca-certificates/; \
+        ls /etc/ssl/certs/ | grep -i <ca-name>'
+    docker exec <container> python3 -c \
+        "import ldap; c=ldap.initialize('ldap://HOST:389'); \
+         c.start_tls_s(); print('STARTTLS OK')"
+
+The second command reproduces exactly what auth_ldap does.

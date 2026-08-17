@@ -389,6 +389,8 @@ RUN cd /opt/odoo/ && \\
 
 USER 0
 WORKDIR /app
+COPY ca-certificates/ /usr/local/share/ca-certificates/
+RUN update-ca-certificates
 VOLUME ["/opt/odoo/var", "/opt/odoo/data"]
 # Healthcheck: Verify Odoo responds on /web/health
 HEALTHCHECK --interval=60s --timeout=10s --start-period=60s --retries=3 \\
@@ -539,6 +541,42 @@ ADD bin /app/bin/
             content = open(path, encoding="utf8").read()
             for keyword in obc.ADDITIVE_KEYWORDS:
                 self.assertIn(keyword, content, f"v{version} lacks {keyword}")
+
+    def test_the_ca_certificates_instructions_are_not_reported_missing(self):
+        """They exist for an installation whose LDAP/AD server uses a
+        certificate from an internal CA; most installations have none. Their
+        absence is therefore correct, and a warning on every run for a correct
+        state is what teaches people to ignore these warnings."""
+        lines = self.LEGACY_INSTALL.splitlines()
+        _added, missing = obc._apply_reference(lines, self.REFERENCE.splitlines())
+        self.assertFalse([m for m in missing if "ca-certificates" in m])
+
+    def test_the_ca_certificates_instructions_are_not_inserted_either(self):
+        """Inserting the COPY without the ca-certificates/ directory it expects
+        would break every build in that folder — this is opt-in, by hand,
+        together with the directory."""
+        obc.ensure_dockerfile_current(self.path, self.reference)
+        self.assertNotIn("ca-certificates", self._content())
+
+    def test_the_repository_dockerfiles_carry_the_optional_instructions(self):
+        """The opt-in only reaches a NEW installation through the repository
+        Dockerfile, and the COPY there needs the directory to exist beside it.
+        A Dockerfile without the directory would break every fresh build, so
+        the two are asserted together."""
+        root = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
+                            "Dockerfiles")
+        for version in ("16", "18", "19"):
+            folder = os.path.join(root, f"v{version}-odoo")
+            path = os.path.join(folder, "Dockerfile")
+            if not os.path.isfile(path):
+                continue
+            content = open(path, encoding="utf8").read()
+            for instruction in obc.OPTIONAL_INSTRUCTIONS:
+                self.assertIn(instruction, content,
+                              f"v{version} Dockerfile lacks: {instruction}")
+            self.assertTrue(
+                os.path.isdir(os.path.join(folder, "ca-certificates")),
+                f"v{version} has the COPY but no ca-certificates/ directory")
 
 
 class AddToCopyTest(unittest.TestCase):

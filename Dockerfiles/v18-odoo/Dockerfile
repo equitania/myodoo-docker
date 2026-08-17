@@ -3,6 +3,7 @@ LABEL maintainer=info@ownerp.com
 # Mit diesem Skript überprüft das passende Dockerimage gemäß des Releasefiles
 # Date 17.03.2026 - Added HEALTHCHECK directive
 # Date 14.07.2026 - Replaced ADD with COPY for bin/ (security hardening, avoid unintended tar auto-extraction)
+# Date 17.08.2026 - ca-certificates/ carries an installation's internal CA (LDAP over STARTTLS)
 
 # create the odoo user
 RUN adduser --home=/opt/odoo --disabled-password --gecos "" --shell=/bin/bash odoo
@@ -38,6 +39,23 @@ RUN --mount=type=bind,source=zips,target=/opt/odoo/zips \
 # Execution environment
 USER 0
 WORKDIR /app
+
+# Trust the installation's own CA certificates. This must come after USER 0:
+# update-ca-certificates writes to /etc/ssl/certs and would fail as 'odoo'.
+#
+# Odoo's auth_ldap only calls start_tls_s() and sets no TLS options at all, so
+# an LDAP/AD server whose certificate comes from an internal CA fails with
+# "unable to get local issuer certificate" unless that CA is in THIS trust
+# store. The host's store does not apply inside the container.
+#
+# The directory ships empty. Either drop the CA into it, or let the instance
+# keep it in sync with the host via docker2update.yaml:
+#   pre_build_files:
+#     - source: "/usr/local/share/ca-certificates"
+#       target: "."
+COPY ca-certificates/ /usr/local/share/ca-certificates/
+RUN update-ca-certificates
+
 VOLUME ["/opt/odoo/var", "/opt/odoo/etc", "/opt/odoo/data"]
 # Healthcheck: Verify Odoo responds on /web/health
 HEALTHCHECK --interval=60s --timeout=10s --start-period=60s --retries=3 \
