@@ -1,7 +1,7 @@
 #!/usr/bin/python3
 # -*- coding: utf-8 -*-
 # This script performs an update of an Odoo database in a Docker container
-# Version 5.14.1
+# Version 5.15.0
 # Date 17.08.2026
 ##############################################################################
 #
@@ -77,7 +77,7 @@ logger = logging.getLogger(__name__)
 # Kept in sync with the header comment above. Printed at the start of every run
 # so a pasted log says which version produced it — the single most common
 # question when a report comes back from a server.
-SCRIPT_VERSION = "5.14.1"
+SCRIPT_VERSION = "5.15.0"
 SCRIPT_DATE = "17.08.2026"
 
 # Set by --no-cache. A module-level flag rather than another parameter through
@@ -1447,23 +1447,43 @@ def validate_container_config(container):
     return True
 
 def clean_docker_system():
-    """
-    Run docker system prune -f to clean up the Docker system.
-    Removes all stopped containers, networks not used by at least one container,
-    all dangling images, and unused build cache.
+    """Reclaim what a build leaves behind - without touching containers.
+
+    This ran `docker system prune -f` until v5.15.0, which ALSO removes every
+    stopped container and unused network on the host, with no project filter of
+    any kind. On 17.08.2026 that deleted two of a customer's Odoo containers: one
+    had been stopped by hand a minute earlier for a test, and the prune after the
+    next build took it with it. A container stopped for any unrelated reason -
+    another project, a manual `docker stop`, a crash awaiting diagnosis - goes
+    the same way. The repository's own Docker rule forbids exactly that.
+
+    Images and build cache are what a build actually leaves behind, and pruning
+    only those reclaims the same space: the 296MB of that run were image layers.
+    Networks are deliberately left alone - they free nothing and removing one is
+    never worth the risk of taking a network an instance still needs.
     """
     started = time.time()
-    success, output, info, warn, err = run_command(
-        "docker system prune -f", show_output=False, filter_output=True)
-
-    # The prune listing itself is noise; the reclaimed space is the one number
-    # worth carrying into the step line.
-    status = "ok" if success else "FAILED"
-    reclaimed = re.search(r'Total reclaimed space:\s*(.+)', output or "")
-    if success and reclaimed:
-        status = f"ok, {reclaimed.group(1).strip()} reclaimed"
-    print_step("docker system prune", status, time.time() - started)
-    return info, warn, err
+    total_info = total_warn = total_err = 0
+    reclaimed = []
+    # The listing itself is noise; the reclaimed space is the one number worth
+    # carrying into the step line.
+    for label, command in (("images", "docker image prune -f"),
+                           ("cache", "docker builder prune -f")):
+        success, output, info, warn, err = run_command(
+            command, show_output=False, filter_output=True)
+        total_info += info
+        total_warn += warn
+        total_err += err
+        if not success:
+            print_step("docker prune", f"FAILED ({label})",
+                       time.time() - started)
+            return total_info, total_warn, total_err
+        found = re.search(r'Total reclaimed space:\s*(.+)', output or "")
+        if found:
+            reclaimed.append(f"{label} {found.group(1).strip()}")
+    status = "ok, " + ", ".join(reclaimed) if reclaimed else "ok"
+    print_step("docker prune", status, time.time() - started)
+    return total_info, total_warn, total_err
 
 def process_container(container, proxy_settings=None, dockerfiles_source=None,
                       log_retention_days=None, run_comment=None):

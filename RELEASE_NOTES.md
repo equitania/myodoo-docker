@@ -1,5 +1,40 @@
 # Release Notes
 
+## The Cleanup After a Build Deleted Two Customer Containers (17.08.2026)
+
+*scripts/update_docker_odoo.py v5.15.0 · tests/test_update_docker_odoo.py ·
+CLAUDE.md*
+
+### Fixed
+
+- **`clean_docker_system()` ran `docker system prune -f` after every container
+  update.** That removes every **stopped container** on the host, plus unused
+  networks — with no project filter of any kind, in a script whose own
+  repository rule opens with "NEVER delete Docker resources without explicit
+  verification that they belong to the current project".
+- **It went off on 17.08.2026.** A diagnostic test called for stopping two of a
+  customer's Odoo instances before a build; the prune that followed the build
+  took the stopped container with it, and an earlier prune had already taken the
+  other. No data was lost — filestores and databases are bind mounts — but both
+  containers had to be rebuilt. A container stopped for any unrelated reason
+  (another project, a manual `docker stop`, a crash awaiting diagnosis) would
+  have gone the same way, on any server, at any time since this call existed.
+- **Now `docker image prune -f` plus `docker builder prune -f`.** Images and
+  build cache are what a build actually leaves behind, and that is where the
+  space is: the 296 MB reclaimed in that run were image layers. Containers and
+  networks are untouched — pruning a network frees nothing and can take one an
+  instance still needs.
+- **Never `-af` on the builder.** Discarding the whole cache would turn a warm
+  build from one second into half a minute; only unreferenced entries go. A test
+  asserts it.
+- **A test that had started passing for the wrong reason.**
+  `test_a_hollow_image_fails_and_names_the_way_out` asserted the message
+  contained `docker builder prune -af`. After the message was rewritten earlier
+  the same day, that string survived only inside the sentence explaining what did
+  **not** help — so the assertion still passed while no longer testing anything.
+  It now asserts the daemon restart and the overlay2-pin caveat, the two things
+  the message exists to convey.
+
 ## The Trust Store Is the Container's, Not the Host's (17.08.2026)
 
 *Dockerfiles/v16-odoo · Dockerfiles/v18-odoo · Dockerfiles/v19-odoo ·

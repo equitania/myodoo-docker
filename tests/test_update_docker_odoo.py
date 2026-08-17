@@ -2,9 +2,9 @@
 Tests for the run log of update_docker_odoo.py.
 
 Standard library only, like the rest of the suite. PyYAML is imported at module
-level by the script but only used by load_config/save_updated_config; none of
-the functions under test touch it, so a placeholder module stands in when it is
-absent (customer servers and CI have the real one).
+level by the script but only used by load_config; none of the functions under
+test touch it, so a placeholder module stands in when it is absent (customer
+servers and CI have the real one).
 
 Run from the repository root:
 
@@ -409,7 +409,14 @@ class VerifyBuiltImageTest(unittest.TestCase):
         self.assertFalse(usable)
         self.assertIn("odoo/staging", problem)
         self.assertIn("/app/bin/boot", problem)
-        self.assertIn("docker builder prune -af", problem)
+        # The daemon restart is the step that actually worked on 17.08.2026,
+        # where a builder prune and --no-cache both did not. Asserting on the
+        # prune instead would pass on the mere mention of it in the explanation
+        # of what did NOT help - which is how this assertion started passing
+        # for the wrong reason when the message was rewritten.
+        self.assertIn("systemctl restart docker", problem)
+        self.assertIn("does NOT prevent", problem,
+                      "the message must say the overlay2 pin is no protection")
 
     def test_the_probe_tests_the_image_entrypoint(self):
         """Both shapes of the fault have to be caught: a hollow image has no
@@ -433,6 +440,67 @@ class VerifyBuiltImageTest(unittest.TestCase):
         self.fake_docker(inspect_ok=False)
         usable, _ = udo.verify_built_image("odoo/staging")
         self.assertTrue(usable)
+
+
+class CleanDockerSystemTest(unittest.TestCase):
+    """`docker system prune -f` removes every STOPPED container on the host, and
+    every unused network, with no project filter of any kind.
+
+    On 17.08.2026 that deleted two of a customer's Odoo containers: one had been
+    stopped by hand a minute earlier for a test, and the prune following the next
+    build took it. A container stopped for any unrelated reason goes the same way.
+    This repository's own Docker rule forbids exactly that, so the cleanup is
+    limited to what a build actually leaves behind.
+    """
+
+    def setUp(self):
+        self.commands = []
+        self.original = udo.run_command
+        udo.run_command = self.record
+
+    def tearDown(self):
+        udo.run_command = self.original
+
+    def record(self, command, *_args, **_kwargs):
+        self.commands.append(command)
+        return (True, "Total reclaimed space: 296.4MB\n", 0, 0, 0)
+
+    def test_no_container_is_ever_pruned(self):
+        udo.clean_docker_system()
+        self.assertTrue(self.commands, "nothing ran at all")
+        for command in self.commands:
+            self.assertNotIn("system prune", command)
+            self.assertNotIn("container prune", command)
+
+    def test_networks_are_left_alone(self):
+        """Pruning one frees no space and can take a network an instance needs."""
+        udo.clean_docker_system()
+        for command in self.commands:
+            self.assertNotIn("network prune", command)
+
+    def test_images_and_build_cache_are_still_reclaimed(self):
+        """The point of the call is space. The 296MB of that run were image
+        layers, so restricting it to images and cache loses nothing."""
+        udo.clean_docker_system()
+        joined = " ".join(self.commands)
+        self.assertIn("docker image prune -f", joined)
+        self.assertIn("docker builder prune -f", joined)
+
+    def test_the_build_cache_is_not_pruned_wholesale(self):
+        """`-af` would discard the cache that makes a warm build take a second
+        instead of half a minute. Only unreferenced entries go."""
+        udo.clean_docker_system()
+        for command in self.commands:
+            self.assertNotIn("prune -af", command)
+
+    def test_a_failing_prune_stops_instead_of_carrying_on(self):
+        def failing(command, *_args, **_kwargs):
+            self.commands.append(command)
+            return (False, "", 0, 0, 1)
+        udo.run_command = failing
+        _info, _warn, err = udo.clean_docker_system()
+        self.assertEqual(len(self.commands), 1, "the second prune should not run")
+        self.assertEqual(err, 1)
 
 
 @unittest.skipUnless(HAS_REAL_YAML, "needs real PyYAML to load a config file from disk")

@@ -305,7 +305,7 @@ myodoo-docker/
   - Automated restart management
   - Module updates for Odoo
 
-#### 4. update_docker_odoo.py (v5.14.1)
+#### 4. update_docker_odoo.py (v5.15.0)
 - **Purpose**: Automated Docker container updates for v16+ Odoo instances
   (image rebuild, container re-creation, module update), driven by
   `docker2update.yaml`
@@ -346,6 +346,18 @@ myodoo-docker/
   defect sits in the mounts of the running daemon, which the pin does not cover.
   Reading `Storage Driver: overlay2` as "not affected" is the wrong conclusion,
   and it was drawn once
+- **The cleanup after a build no longer touches containers** (v5.15.0,
+  17.08.2026). `clean_docker_system()` ran `docker system prune -f`, which also
+  removes every **stopped container** and unused network on the host — with no
+  project filter of any kind, in a script whose own repository rule forbids
+  exactly that. On 17.08.2026 it deleted two of a customer's Odoo containers:
+  one had been stopped by hand a minute earlier for a diagnostic test, and the
+  prune after the next build took it. A container stopped for any unrelated
+  reason — another project, a manual `docker stop`, a crash awaiting diagnosis —
+  goes the same way. Now `docker image prune -f` plus `docker builder prune -f`:
+  same space reclaimed (the 296 MB of that run were image layers), no containers,
+  no networks. Never `-af` on the builder — that would discard the cache that
+  makes a warm build take a second instead of half a minute
 - **`dmesg` names it, but the count is not a warning signal**:
   `overlayfs: lowerdir is in-use as upperdir/workdir of another mount, accessing
   files from both mounts will result in undefined behavior`. It appears with
