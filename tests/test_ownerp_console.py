@@ -47,6 +47,13 @@ try:
 except ImportError:
     HAVE_YAML = False
 
+# For building real Finding/Severity/mute_finding objects — needed by no test
+# that requires Textual to be absent, so this import is unconditional.
+_sr_spec = importlib.util.spec_from_file_location(
+    "server_readiness", os.path.join(SCRIPTS, "server-readiness.py"))
+sr = importlib.util.module_from_spec(_sr_spec)
+_sr_spec.loader.exec_module(sr)
+
 
 def load_console():
     spec = importlib.util.spec_from_file_location("ownerp_console", CONSOLE)
@@ -273,6 +280,43 @@ class SystemTabActionsTest(unittest.TestCase):
         source = console_source()
         for forbidden in ("os.replace(", "os.chmod(", "shutil.copy2("):
             self.assertNotIn(forbidden, source)
+
+
+class SystemLinesTest(unittest.TestCase):
+    """_system_lines() feeds the Overview tile's System tile. It filters on
+    the literal strings ("WARN", "FAIL") rather than on Severity itself, so a
+    MUTED finding is excluded only because "MUTED" happens to match neither —
+    it works by accident today and should keep working on purpose.
+
+    _system_lines is a plain function with no Textual dependency of its own,
+    but the module cannot be imported at all without Textual (see the
+    try/except around the textual imports above), so this still skips
+    without it, following the rest of this file's convention."""
+
+    def setUp(self):
+        self.console = load_console() if HAVE_TEXTUAL else None
+
+    def test_a_muted_finding_is_not_counted_as_needing_attention(self):
+        if not HAVE_TEXTUAL:
+            self.skipTest("needs the module importable")
+        finding = sr.Finding("test_check", sr.Severity.FAIL, "Test check",
+                             "would fail here")
+        muted = sr.mute_finding(finding, "not relevant on this host")
+        section = self.console.state.Health("health", findings=[muted])
+        lines = self.console._system_lines(section)
+        self.assertEqual(lines, ["all 1 checks pass"])
+
+    def test_a_genuine_fail_finding_is_still_counted(self):
+        """The contrast to the muted case above: the filter must not have
+        stopped noticing WARN/FAIL findings altogether."""
+        if not HAVE_TEXTUAL:
+            self.skipTest("needs the module importable")
+        finding = sr.Finding("test_check", sr.Severity.FAIL, "Test check",
+                             "genuinely broken")
+        section = self.console.state.Health("health", findings=[finding])
+        lines = self.console._system_lines(section)
+        self.assertEqual(lines[0], "1 of 1 need attention")
+        self.assertIn("  Test check", lines)
 
 
 # ==============================================================================

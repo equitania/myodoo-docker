@@ -29,6 +29,13 @@ _spec = importlib.util.spec_from_file_location(
 st = importlib.util.module_from_spec(_spec)
 _spec.loader.exec_module(st)
 
+# For building real Finding/Severity/mute_finding objects — worst() reads
+# finding.severity.value, so the test needs the real enum, not a stand-in.
+_sr_spec = importlib.util.spec_from_file_location(
+    "server_readiness", os.path.join(SCRIPTS, "server-readiness.py"))
+sr = importlib.util.module_from_spec(_sr_spec)
+_sr_spec.loader.exec_module(sr)
+
 try:
     import yaml
     HAVE_YAML = True
@@ -372,6 +379,28 @@ class WorstTest(StateFixture):
         self.archive("live_db", "live-odoo", age_hours=2)
         self.archive("test_db", "test-odoo", age_hours=2)
         self.assertEqual(st.worst(self.state(instances=instances)), "OK")
+
+    def test_a_muted_fail_does_not_count(self):
+        """It works today only because 'MUTED' matches neither 'FAIL' nor
+        'WARN' — nothing currently makes that true on purpose. Pinned so a
+        muted FAIL never starts driving dostat's exit code."""
+        finding = sr.Finding("test_check", sr.Severity.FAIL, "Test check",
+                             "would fail here")
+        muted = sr.mute_finding(finding, "not relevant on this host")
+        health = st.Health("health", findings=[muted])
+        self.archive("live_db", "live-odoo", age_hours=2)
+        self.archive("test_db", "test-odoo", age_hours=2)
+        self.assertEqual(st.worst(self.state(health=health)), "OK")
+
+    def test_a_genuine_fail_finding_still_counts(self):
+        """The contrast to the muted case above: worst() must not have
+        stopped counting FAIL findings altogether."""
+        finding = sr.Finding("test_check", sr.Severity.FAIL, "Test check",
+                             "genuinely broken")
+        health = st.Health("health", findings=[finding])
+        self.archive("live_db", "live-odoo", age_hours=2)
+        self.archive("test_db", "test-odoo", age_hours=2)
+        self.assertEqual(st.worst(self.state(health=health)), "FAIL")
 
 
 @unittest.skipUnless(HAVE_YAML, "the json mirrors the collected state")

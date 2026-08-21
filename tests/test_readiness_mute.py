@@ -77,11 +77,6 @@ class MutedSeverityTest(unittest.TestCase):
         muted = sr.mute_finding(self.fail_finding, "test server")
         self.assertEqual(render([muted, self.ok_finding], "quiet"), "")
 
-    def test_a_muted_fail_does_not_set_the_exit_code(self):
-        muted = sr.mute_finding(self.fail_finding, "test server")
-        self.assertFalse(any(f.severity is sr.Severity.FAIL
-                             for f in [muted, self.ok_finding]))
-
     def test_the_label_column_still_lines_up(self):
         """[MUTED] is three characters wider than [OK]; the detail column of
         every row must still start in the same place."""
@@ -297,3 +292,50 @@ class MutedListingTest(MuteFixture):
     def test_muted_exits_zero_even_with_a_failing_check(self):
         """It is a listing, not a verdict."""
         self.assertEqual(self.run_cli("--muted")[0], 0)
+
+
+class ExitCodeMuteTest(MuteFixture):
+    """The thing that actually matters: main()'s exit code, driven end to
+    end through the CLI — not just the severity of findings nobody handed to
+    main(). A muted FAIL must not set the exit code; a genuine, unmuted one
+    must.
+
+    maintenance_cron_present is the check muted here. Verified by hand
+    (see the setUp comment) to be the only FAIL on a bare throwaway tree once
+    logrotate and the backup config are satisfied — otherwise muting it alone
+    would not bring the exit code down to 0, since two other checks
+    (logrotate_present, backup_config) FAIL on an untouched tree as well.
+    """
+
+    def setUp(self):
+        super().setUp()
+        # logrotate_present FAILs unless its drop-in exists under ctx.root.
+        logrotate_path = self.ctx.p(sr.LOGROTATE_DEST)
+        os.makedirs(os.path.dirname(logrotate_path), exist_ok=True)
+        with open(logrotate_path, "w", encoding="utf-8") as handle:
+            handle.write("/var/log/myodoo/*.log {}\n")
+        # backup_config FAILs unless container2backup.yaml exists under
+        # ctx.home and defines at least one database. Harmless when PyYAML
+        # is unavailable: that path returns SKIP before this file is read.
+        with open(os.path.join(self.ctx.home, "container2backup.yaml"),
+                  "w", encoding="utf-8") as handle:
+            handle.write("databases:\n"
+                         "  - name: test_db\n"
+                         "    sql_container: test-db\n"
+                         "    data_container: test-odoo\n")
+
+    def run_cli(self, *args):
+        out = io.StringIO()
+        with contextlib.redirect_stdout(out):
+            code = sr.main(["--home", self.home, "--root", self.home, *args])
+        return code, out.getvalue()
+
+    def test_a_genuine_unmuted_fail_sets_the_exit_code_to_one(self):
+        code, _text = self.run_cli()
+        self.assertEqual(code, 1)
+
+    def test_muting_the_only_failing_check_clears_the_exit_code(self):
+        self.write_mutes(
+            "maintenance_cron_present | 2026-08-21 | not scheduled here\n")
+        code, _text = self.run_cli()
+        self.assertEqual(code, 0)
