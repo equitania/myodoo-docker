@@ -1,5 +1,50 @@
 # Release Notes
 
+## The Build Context Is Checked Before the Build, Not by It (21.08.2026)
+
+*Dockerfiles/v16-odoo/, v18-odoo/, v19-odoo/check_dockerimage_odoo.py v3.4.0 ·
+tests/test_check_dockerimage.py · CLAUDE.md*
+
+### Added
+
+- **`check_build_context()` verifies the build folder and creates what may be
+  empty.** A manually created build folder has no `zips/`, and the Dockerfile
+  bind-mounts it. Docker aborts with `failed to compute cache key: ... "/zips"`,
+  which names neither the directory's purpose nor the way out — it reads like a
+  Dockerfile defect and is not one. `update_docker_odoo.py` creates `zips/` as a
+  fallback, but only on the `doup` path; the **first** build of a new instance is
+  regularly done by hand, which is exactly when the folder is newest and most
+  likely incomplete. Seen on the hyserve V16→V18 migration.
+- **`ca-certificates/` is the same trap one `COPY` further down.** It ships empty
+  (a README keeps it in git), so anyone assembling a build folder from an existing
+  one drops it just as easily — and `COPY ca-certificates/` fails without it.
+- **The check is Dockerfile-driven, not a list of known names.** An installation's
+  Dockerfile is the customer's file and may carry its own `COPY` lines; a
+  hard-coded list would not see them. `parse_context_sources()` reads the
+  instructions and classifies each source: a `--mount=type=bind` source and a
+  `COPY`/`ADD` source written with a trailing slash **may be empty** and are
+  created; everything else carries content nothing here can reconstruct and is
+  reported. Globs, remote URLs, `--from=` stage sources and the downloaded
+  `release.file` are skipped on purpose.
+- **A created directory is never a failure.** Most installations have no internal
+  CA, and an exit code for the normal state would put a permanent warning on every
+  build — which is how the one that matters gets missed, the same reasoning that
+  produced `OPTIONAL_INSTRUCTIONS` in `odoo_build_cache.py`. Only a missing file
+  exits non-zero, and `update_docker_odoo.py` turns that into a warning and carries
+  on, so a `doup` is never aborted by it.
+- **18 tests**, including one asserting the three shipped build folders pass their
+  own check, and one asserting v16/v18/v19 stay byte-identical — `sync_build_scripts()`
+  compares the `# Version` header, so a copy left behind is never distributed.
+
+### Fixed
+
+- **A missing `Dockerfile` no longer dies in `sed`.** `update_dockerfile()` ran
+  `sed -i` unconditionally; without the file, `check=True` raised
+  `CalledProcessError` and the operator got a traceback instead of a sentence.
+- **The module-level block is now `if __name__ == "__main__":`** (it was
+  `if __file__:`, which is always true). Importing the script no longer downloads
+  a release file or rewrites a Dockerfile — that is what makes it testable.
+
 ## The Hollow Build Is Sporadic, So the Build Retries Once (17.08.2026)
 
 *scripts/update_docker_odoo.py v5.16.0 · tests/test_update_docker_odoo.py ·

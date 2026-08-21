@@ -808,6 +808,44 @@ myodoo-docker/
   `cleandlog` are functions now; nothing may reintroduce an alias under those
   names
 
+#### 14. check_dockerimage_odoo.py (v3.4.0)
+- **Purpose**: Sets the build folder's `FROM` line from the release file (owns
+  that line — `odoo_build_cache.py` never touches it), and since v3.4.0 checks
+  the build context before the build gets to fail on it
+- **Lives in the build folder**, one byte-identical copy per version under
+  `Dockerfiles/v{16,18,19}-odoo/`. `sync_build_scripts()` distributes it by
+  comparing the `# Version X.Y.Z` header, so **a fix must land in all three** or
+  the installations on the other versions never receive it. A test holds the
+  three copies identical
+- **`zips/` is the reason it exists** (21.08.2026). The Dockerfile bind-mounts
+  it; without the directory Docker aborts with `failed to compute cache key:
+  ... "/zips"`, which names neither the purpose nor the way out and reads like a
+  Dockerfile defect. `update_docker_odoo.py` creates it as a fallback — but only
+  on the `doup` path, and the **first** build of a new instance is regularly a
+  manual `docker build`, which is precisely when the folder is newest and most
+  likely incomplete. `ca-certificates/` is the same trap one `COPY` further
+  down: it ships empty, so it is dropped just as easily when a build folder is
+  assembled from an existing one
+- **Dockerfile-driven, never a list of names**: an installation's Dockerfile is
+  the customer's file and may carry its own `COPY` lines, which a hard-coded
+  list would not see. `parse_context_sources()` classifies each source — a
+  `--mount=type=bind` source and a `COPY`/`ADD` source **written with a trailing
+  slash** may legitimately be empty and are created; anything else carries
+  content nothing here can reconstruct and is reported. Globs, remote URLs,
+  `--from=` stage sources and the downloaded `release.file` are skipped
+- **Creating a directory must never exit non-zero.** Most installations have no
+  internal CA; an exit code for the normal state would put a permanent warning
+  on every build, which is how the one that matters gets missed — the same
+  reasoning behind `OPTIONAL_INSTRUCTIONS` in `odoo_build_cache.py`. Only a
+  missing **file** fails, and `update_docker_odoo.py` turns that into a warning
+  and continues, so a `doup` is never aborted by this check
+- **`if __name__ == "__main__":`** (was `if __file__:`, always true). Importing
+  the script no longer downloads a release file or rewrites a Dockerfile — that
+  is what makes the check testable at all
+- **A missing `Dockerfile` is now a sentence, not a traceback**:
+  `update_dockerfile()` ran `sed -i` unconditionally and died in
+  `CalledProcessError`
+
 ### Development Patterns
 
 1. **Configuration Management**: All tools use YAML as primary configuration format
