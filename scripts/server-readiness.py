@@ -887,9 +887,15 @@ CHECKS: Tuple[Callable[[HealthContext], Finding], ...] = (
 
 
 def run_checks(ctx: HealthContext) -> List[Finding]:
-    """Run every check. A check that raises becomes a SKIP finding carrying the
-    error — one broken check must never cost the administrator the whole
-    report."""
+    """Run every check, then apply this host's mutes.
+
+    A check that raises becomes a SKIP finding carrying the error — one broken
+    check must never cost the administrator the whole report.
+
+    Muting happens here and nowhere else. Every consumer — chk, dostat, konsole,
+    the block after `ups`, the Monday cron — comes through this function, so one
+    filter reaches all of them and none of them can disagree about what is muted.
+    """
     findings = []
     for check in CHECKS:
         try:
@@ -899,7 +905,28 @@ def run_checks(ctx: HealthContext) -> List[Finding]:
                 check.__name__, Severity.SKIP, check.__name__,
                 f"check failed to run: {type(exc).__name__}: {exc}",
             ))
-    return findings
+
+    mutes = {entry.check_id: entry for entry in read_mutes(ctx)
+             if entry.check_id not in UNMUTABLE}
+    produced = {finding.check_id for finding in findings}
+
+    applied = []
+    for finding in findings:
+        entry = mutes.get(finding.check_id)
+        if entry is None or finding.severity is Severity.OK:
+            applied.append(finding)
+            continue
+        applied.append(mute_finding(finding, f"off since {entry.since} — {entry.reason}"))
+
+    stale = sorted(check_id for check_id in mutes if check_id not in produced)
+    if stale:
+        applied.append(Finding(
+            "mute_registry", Severity.WARN, "Mute registry",
+            f"{len(stale)} entr{'y' if len(stale) == 1 else 'ies'} name a check "
+            f"that does not exist: {', '.join(stale)}",
+            f"ownerp_mute.py --unmute {stale[0]}",
+        ))
+    return applied
 
 
 # ==============================================================================

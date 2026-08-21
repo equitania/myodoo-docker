@@ -156,3 +156,50 @@ class ReadMutesTest(MuteFixture):
 
     def test_the_path_is_built_from_the_context_not_from_root(self):
         self.assertTrue(sr.mutes_path(self.ctx).startswith(self.home))
+
+
+class ApplyMutesTest(MuteFixture):
+    """run_checks() against a throwaway tree: almost everything FAILs or SKIPs
+    there, which is fine — these tests only ask what muting did to the result."""
+
+    def find(self, findings, check_id):
+        for finding in findings:
+            if finding.check_id == check_id:
+                return finding
+        self.fail(f"no finding with check_id {check_id!r}")
+
+    def test_a_muted_check_comes_back_muted(self):
+        self.write_mutes("maintenance_cron_present | 2026-08-21 | not scheduled here\n")
+        finding = self.find(sr.run_checks(self.ctx), "maintenance_cron_present")
+        self.assertIs(finding.severity, sr.Severity.MUTED)
+        self.assertIn("not scheduled here", finding.note)
+        self.assertIn("2026-08-21", finding.note)
+
+    def test_an_unmuted_check_is_untouched(self):
+        self.write_mutes("maintenance_cron_present | 2026-08-21 | not scheduled here\n")
+        finding = self.find(sr.run_checks(self.ctx), "logrotate_present")
+        self.assertIsNot(finding.severity, sr.Severity.MUTED)
+
+    def test_without_a_mute_file_nothing_is_muted(self):
+        findings = sr.run_checks(self.ctx)
+        self.assertFalse(any(f.severity is sr.Severity.MUTED for f in findings))
+
+    def test_no_registry_finding_when_every_entry_resolves(self):
+        self.write_mutes("logrotate_present | 2026-08-21 | not used here\n")
+        ids = [f.check_id for f in sr.run_checks(self.ctx)]
+        self.assertNotIn("mute_registry", ids)
+
+    def test_a_stale_entry_is_reported(self):
+        """The silent failure this prevents: the message comes back one day and
+        the file still looks like it should be stopping it."""
+        self.write_mutes("backup_freshness | 2026-08-21 | renamed long ago\n")
+        finding = self.find(sr.run_checks(self.ctx), "mute_registry")
+        self.assertIs(finding.severity, sr.Severity.WARN)
+        self.assertIn("backup_freshness", finding.detail)
+        self.assertIn("ownerp_mute.py --unmute", finding.fix)
+
+    def test_the_registry_guard_cannot_mute_itself(self):
+        self.write_mutes("backup_freshness | 2026-08-21 | renamed\n"
+                         "mute_registry | 2026-08-21 | stop nagging\n")
+        finding = self.find(sr.run_checks(self.ctx), "mute_registry")
+        self.assertIs(finding.severity, sr.Severity.WARN)
