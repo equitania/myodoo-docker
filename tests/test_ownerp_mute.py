@@ -189,3 +189,18 @@ class CliTest(MuteWriteFixture):
                                   "--no-verify-id")
         self.assertEqual(code, 0)
         self.assertIn("backup", text.lower())
+
+    def test_an_unusable_reader_exits_2_not_1(self):
+        """Exit 2 means 'run ups'; exit 1 means 'you asked for something invalid'.
+        A caller that cannot tell them apart cannot act on either."""
+        original = om._readiness
+
+        def unavailable():
+            raise om.ReaderUnavailable("server-readiness.py is not usable — run ups")
+
+        om._readiness = unavailable
+        self.addCleanup(setattr, om, "_readiness", original)
+
+        code, text = self.run_cli("backup_recency", "--reason", "test")
+        self.assertEqual(code, 2)
+        self.assertIn("run ups", text)

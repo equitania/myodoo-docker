@@ -74,6 +74,15 @@ class MuteError(Exception):
     """Anything that must stop a write, with a sentence for the operator."""
 
 
+class ReaderUnavailable(MuteError):
+    """server-readiness.py cannot be loaded, so nothing here can run.
+
+    Its own class rather than a distinguishing phrase in the message: main()
+    maps it to a different exit code, and a control-flow decision that reads
+    a sentence written for humans breaks the moment that sentence is reworded.
+    """
+
+
 def _readiness():
     """server-readiness.py, imported by path. It owns the reader.
 
@@ -91,7 +100,7 @@ def _readiness():
     except MuteError:
         raise
     except Exception as exc:
-        raise MuteError(f"server-readiness.py is not usable ({exc}) — run ups")
+        raise ReaderUnavailable(f"server-readiness.py is not usable ({exc}) — run ups")
 
 
 def _context(home: str):
@@ -290,9 +299,12 @@ def main(argv=None) -> int:
         print("It still runs and still shows in `chk`; it no longer counts.")
         return 0
 
+    except ReaderUnavailable as exc:
+        print(str(exc), file=sys.stderr)
+        return 2
     except MuteError as exc:
         print(str(exc), file=sys.stderr)
-        return 2 if "run ups" in str(exc) else 1
+        return 1
     except OSError as exc:
         print(f"cannot write the mute file: {exc}", file=sys.stderr)
         return 1
