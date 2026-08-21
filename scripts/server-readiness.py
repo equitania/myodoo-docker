@@ -124,6 +124,15 @@ BACKUP_FAIL_AGE = 7 * 86400
 DISK_WARN_PCT = 85
 DISK_FAIL_PCT = 95
 
+# Checks muted on this host. Written by ownerp_mute.py, read here. Relative to
+# ctx.home rather than absolute so the checks stay testable off a real server.
+MUTES_RELATIVE = ".config/myodoo-docker/readiness-mutes.conf"
+MUTE_SEPARATOR = "|"
+
+# Findings that may never be muted. mute_registry reports a mute file that has
+# gone stale; muting it would switch off the guard against silent mutes.
+UNMUTABLE = ("mute_registry",)
+
 
 class Severity(Enum):
     OK = "OK"
@@ -146,6 +155,13 @@ class Finding:
     # Rendered under `detail` like `fix`, but without the "Fix:" label: it
     # explains why a finding does not count here, which is not something to act on.
     note: Optional[str] = None
+
+
+@dataclass
+class MuteEntry:
+    check_id: str
+    since: str
+    reason: str
 
 
 @dataclass
@@ -294,6 +310,38 @@ def mute_finding(finding: Finding, note: str) -> Finding:
     """
     return Finding(finding.check_id, Severity.MUTED, finding.title,
                    finding.detail, None, note)
+
+
+def mutes_path(ctx: HealthContext) -> str:
+    return os.path.join(ctx.home, MUTES_RELATIVE)
+
+
+def read_mutes(ctx: HealthContext) -> List[MuteEntry]:
+    """Parse the mute file. Missing, unreadable or partly malformed all yield
+    what could be read rather than an exception.
+
+    A single bad hand-edit must not cost the operator every other mute — and it
+    must not cost them the report either, which is what raising from here would
+    do. Lines that do not parse are simply not mutes; the entries that do parse
+    still apply.
+    """
+    text = _read(mutes_path(ctx))
+    if text is None:
+        return []
+    entries = []
+    for line in text.splitlines():
+        line = line.strip()
+        if not line or line.startswith("#"):
+            continue
+        # maxsplit=2: the reason is free text and may itself contain a pipe.
+        parts = line.split(MUTE_SEPARATOR, 2)
+        if len(parts) != 3:
+            continue
+        check_id, since, reason = (part.strip() for part in parts)
+        if not check_id or not reason:
+            continue
+        entries.append(MuteEntry(check_id, since, reason))
+    return entries
 
 
 # ==============================================================================

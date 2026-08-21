@@ -15,6 +15,7 @@ Run from the repository root:
 import io
 import os
 import sys
+import tempfile
 import unittest
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "scripts"))
@@ -90,3 +91,68 @@ class MutedSeverityTest(unittest.TestCase):
         columns = [line.index("Backup recency") if "Backup recency" in line
                    else line.index("Logrotate") for line in lines]
         self.assertEqual(columns[0], columns[1])
+
+
+class MuteFixture(unittest.TestCase):
+    """A throwaway home, so nothing here depends on a real server."""
+
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(self.tmp.cleanup)
+        self.home = self.tmp.name
+        self.ctx = sr.HealthContext(root=self.home, home=self.home,
+                                    repo=os.path.join(self.home, "myodoo-docker"))
+
+    def write_mutes(self, text):
+        path = sr.mutes_path(self.ctx)
+        os.makedirs(os.path.dirname(path), exist_ok=True)
+        with open(path, "w", encoding="utf-8") as handle:
+            handle.write(text)
+        return path
+
+
+class ReadMutesTest(MuteFixture):
+    def test_no_file_is_not_an_error(self):
+        self.assertEqual(sr.read_mutes(self.ctx), [])
+
+    def test_a_plain_entry_is_read(self):
+        self.write_mutes("certbot_timer_window | 2026-08-21 | own certificates\n")
+        entries = sr.read_mutes(self.ctx)
+        self.assertEqual(len(entries), 1)
+        self.assertEqual(entries[0].check_id, "certbot_timer_window")
+        self.assertEqual(entries[0].since, "2026-08-21")
+        self.assertEqual(entries[0].reason, "own certificates")
+
+    def test_comments_and_blank_lines_are_ignored(self):
+        self.write_mutes("# a comment\n\n  \nbackup_recency | 2026-08-21 | test server\n")
+        self.assertEqual([e.check_id for e in sr.read_mutes(self.ctx)],
+                         ["backup_recency"])
+
+    def test_surrounding_whitespace_is_stripped(self):
+        """The file is column-aligned by the writer and by hand."""
+        self.write_mutes("backup_recency       | 2026-08-21 | test server  \n")
+        entry = sr.read_mutes(self.ctx)[0]
+        self.assertEqual(entry.check_id, "backup_recency")
+        self.assertEqual(entry.reason, "test server")
+
+    def test_a_reason_may_contain_a_pipe(self):
+        """Split on the first two separators only — the reason is free text."""
+        self.write_mutes("backup_recency | 2026-08-21 | test | staging box\n")
+        self.assertEqual(sr.read_mutes(self.ctx)[0].reason, "test | staging box")
+
+    def test_a_malformed_line_is_skipped_not_fatal(self):
+        """One bad hand-edit must not cost the operator every other mute."""
+        self.write_mutes("nonsense\nbackup_recency | 2026-08-21 | test server\n")
+        self.assertEqual([e.check_id for e in sr.read_mutes(self.ctx)],
+                         ["backup_recency"])
+
+    def test_an_unreadable_file_yields_nothing_rather_than_raising(self):
+        path = self.write_mutes("backup_recency | 2026-08-21 | test\n")
+        os.chmod(path, 0o000)
+        self.addCleanup(os.chmod, path, 0o600)
+        if os.geteuid() == 0:
+            self.skipTest("root reads regardless of mode")
+        self.assertEqual(sr.read_mutes(self.ctx), [])
+
+    def test_the_path_is_built_from_the_context_not_from_root(self):
+        self.assertTrue(sr.mutes_path(self.ctx).startswith(self.home))
