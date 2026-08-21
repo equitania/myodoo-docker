@@ -1050,6 +1050,43 @@ def print_report(findings: List[Finding], mode: str = "full", stream=None) -> No
     emit()
 
 
+def print_muted(ctx: HealthContext, stream=None) -> None:
+    """List what is muted here, and where each mute comes from.
+
+    Derived mutes are labelled as such: an operator who sees one and then goes
+    looking for it in readiness-mutes.conf will not find it, and would
+    reasonably conclude the tool is lying to them.
+    """
+    stream = stream or sys.stdout
+    explicit = read_mutes(ctx)
+    derived = derived_mutes(ctx)
+    rows = [(entry.check_id, entry.since, entry.reason) for entry in explicit]
+    known = {entry.check_id for entry in explicit}
+    rows += [(check_id, "derived", reason)
+             for check_id, reason in sorted(derived.items())
+             if check_id not in known]
+
+    def emit(text: str = "") -> None:
+        print(text, file=stream)
+
+    emit()
+    emit("=" * 60)
+    emit("  Muted readiness checks")
+    emit("=" * 60)
+    if not rows:
+        emit("  No checks are muted on this host.")
+    else:
+        width = max(len(row[0]) for row in rows)
+        for check_id, since, reason in sorted(rows):
+            emit(f"  {check_id.ljust(width)}  {since:<10}  {reason}")
+        emit("-" * 60)
+        emit(f"  {len(rows)} muted · file: {mutes_path(ctx)}")
+        emit("  Add: ownerp_mute.py <check_id> --reason \"...\"")
+        emit("  Remove: ownerp_mute.py --unmute <check_id>")
+    emit("=" * 60)
+    emit()
+
+
 # ==============================================================================
 # Entry point
 # ==============================================================================
@@ -1064,6 +1101,8 @@ def build_parser() -> argparse.ArgumentParser:
                       help="only show findings that are not OK")
     mode.add_argument("--quiet", action="store_true",
                       help="like --brief, but print nothing when everything is OK (for cron)")
+    mode.add_argument("--muted", action="store_true",
+                      help="list the checks muted on this host and exit")
     parser.add_argument("--root", default="/",
                         help="path prefix to inspect instead of / (for testing)")
     parser.add_argument("--home", default=None,
@@ -1084,6 +1123,10 @@ def main(argv=None) -> int:
         home=home,
         repo=args.repo or os.path.join(home, "myodoo-docker"),
     )
+
+    if args.muted:
+        print_muted(ctx)
+        return 0
 
     findings = run_checks(ctx)
     mode = "quiet" if args.quiet else "brief" if args.brief else "full"

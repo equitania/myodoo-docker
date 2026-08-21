@@ -12,6 +12,7 @@ Run from the repository root:
     python3 -m unittest tests.test_readiness_mute -v
 """
 
+import contextlib
 import io
 import os
 import sys
@@ -255,3 +256,44 @@ class DerivedMuteTest(MuteFixture):
         finding = self.backup_finding()
         self.assertIs(finding.severity, sr.Severity.MUTED)
         self.assertIn("staging, never backed up", finding.note)
+
+
+class MutedListingTest(MuteFixture):
+    def run_cli(self, *args):
+        out = io.StringIO()
+        with contextlib.redirect_stdout(out):
+            code = sr.main(["--home", self.home, "--root", self.home, *args])
+        return code, out.getvalue()
+
+    def test_muted_lists_the_explicit_entries(self):
+        self.write_mutes("certbot_timer_window | 2026-08-21 | own certificates\n")
+        code, text = self.run_cli("--muted")
+        self.assertEqual(code, 0)
+        self.assertIn("certbot_timer_window", text)
+        self.assertIn("own certificates", text)
+        self.assertIn("2026-08-21", text)
+
+    def test_muted_says_so_when_nothing_is_muted(self):
+        code, text = self.run_cli("--muted")
+        self.assertEqual(code, 0)
+        self.assertIn("no checks are muted", text.lower())
+
+    def test_muted_names_a_derived_mute_as_derived(self):
+        """Otherwise an operator looks for it in the file and does not find it."""
+        path = self.ctx.p(sr.CRON_DEST)
+        os.makedirs(os.path.dirname(path), exist_ok=True)
+        with open(path, "w", encoding="utf-8") as handle:
+            handle.write("#OWNERP-DISABLED# 0 2 * * * root /root/container2backup.py\n")
+        code, text = self.run_cli("--muted")
+        self.assertEqual(code, 0)
+        self.assertIn("backup_recency", text)
+        self.assertIn("cron job disabled", text)
+
+    def test_muted_never_writes(self):
+        before = sorted(os.listdir(self.home))
+        self.run_cli("--muted")
+        self.assertEqual(sorted(os.listdir(self.home)), before)
+
+    def test_muted_exits_zero_even_with_a_failing_check(self):
+        """It is a listing, not a verdict."""
+        self.assertEqual(self.run_cli("--muted")[0], 0)
