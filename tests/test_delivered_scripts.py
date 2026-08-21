@@ -96,9 +96,21 @@ class DeliveredScriptsTest(unittest.TestCase):
 
     def test_the_new_tools_are_on_the_delivery_list(self):
         delivered = delivered_names()
-        for name in ("ownerp_cron.py", "ownerp_migrate.py",
+        for name in ("ownerp_cron.py", "ownerp_migrate.py", "ownerp_mute.py",
                      "nginx-cert-guard.py", "server-readiness.py"):
             self.assertIn(name, delivered)
+
+    def test_delivery_and_the_version_check_agree(self):
+        """Two lists, one fact. On ownerp_mute.py they disagreed once: ups would
+        install it and the version check would never notice a stale copy."""
+        import importlib.util
+        path = os.path.join(REPO, "scripts", "server-readiness.py")
+        spec = importlib.util.spec_from_file_location("server_readiness", path)
+        sr = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(sr)
+        for name in sr.DELIVERED_SCRIPTS:
+            self.assertIn(name, delivered_names(),
+                          f"{name} is version-checked but never delivered")
 
 
 class DeliveryHardeningTest(unittest.TestCase):

@@ -4,8 +4,8 @@
 # Title:            server-readiness.py
 # Description:      Report whether this server matches the state myodoo-docker
 #                   expects, and name the exact command that closes each gap.
-# Version:          1.4.1
-# Date:             13.08.2026
+# Version:          1.5.0
+# Date:             21.08.2026
 # Author:           Equitania Software GmbH
 # ==============================================================================
 # Why this exists:
@@ -28,6 +28,11 @@
 #   --quiet     Like --brief, but prints nothing at all when everything is OK.
 #               For cron: cron only mails when there is output, so a weekly job
 #               speaks up only on actual drift.
+#   --muted     List the checks this host deliberately does not count, and exit.
+#
+# A muted check still runs and still shows its line in the full report; it
+# carries no weight in --brief, --quiet or the exit code. Muting is written by
+# ownerp_mute.py; this script only reads the list, like everything else here.
 #
 # Exit codes: 0 when no FAIL is present, 1 otherwise. WARN and SKIP do not
 # affect the exit code.
@@ -63,8 +68,8 @@ from dataclasses import dataclass
 from enum import Enum
 from typing import Callable, List, Optional, Tuple
 
-SCRIPT_VERSION = "1.4.1"
-SCRIPT_DATE = "13.08.2026"
+SCRIPT_VERSION = "1.5.0"
+SCRIPT_DATE = "21.08.2026"
 
 # Where nginx keeps its customer vhosts (mirrors nginx-cert-guard.py).
 NGINX_CONF_D = "etc/nginx/conf.d"
@@ -96,6 +101,7 @@ DELIVERED_SCRIPTS = (
     "server-readiness.py",
     "odoo_build_cache.py",
     "ownerp_cron.py",
+    "ownerp_mute.py",
     "ownerp_migrate.py",
 )
 
@@ -107,6 +113,16 @@ MANAGED_JOBS = (
     "nightly-cleanup",
     "nginx-cert-guard",
 )
+
+# A check whose finding is fully explained by an ownERP job being switched off
+# on purpose. The cron file already records that decision (ownerp_cron.py parks
+# a disabled job behind a marker rather than deleting it), so it is read rather
+# than asking the operator to state the same fact again in the mute file.
+#
+# Data, not an `if`: a second pair is a line here.
+DERIVED_MUTES = {
+    "container2backup": "backup_recency",
+}
 
 BACKUP_LOG = "var/log/container2backup.log"
 # Must mirror container2backup.py: it reads defaults.backup_path and falls back
@@ -124,12 +140,25 @@ BACKUP_FAIL_AGE = 7 * 86400
 DISK_WARN_PCT = 85
 DISK_FAIL_PCT = 95
 
+# Checks muted on this host. Written by ownerp_mute.py, read here. Relative to
+# ctx.home rather than absolute so the checks stay testable off a real server.
+MUTES_RELATIVE = ".config/myodoo-docker/readiness-mutes.conf"
+MUTE_SEPARATOR = "|"
+
+# Findings that may never be muted. mute_registry reports a mute file that has
+# gone stale; muting it would switch off the guard against silent mutes.
+UNMUTABLE = ("mute_registry",)
+
 
 class Severity(Enum):
     OK = "OK"
     WARN = "WARN"
     FAIL = "FAIL"
     SKIP = "SKIP"
+    # A finding that is true and does not apply on this host. It still runs and
+    # still shows its line; it just carries no weight. See
+    # docs/superpowers/specs/2026-08-21-readiness-mute-design.md.
+    MUTED = "MUTED"
 
 
 @dataclass
@@ -139,6 +168,16 @@ class Finding:
     title: str
     detail: str
     fix: Optional[str] = None
+    # Rendered under `detail` like `fix`, but without the "Fix:" label: it
+    # explains why a finding does not count here, which is not something to act on.
+    note: Optional[str] = None
+
+
+@dataclass
+class MuteEntry:
+    check_id: str
+    since: str
+    reason: str
 
 
 @dataclass
@@ -276,6 +315,67 @@ def _ok(check_id: str, title: str, detail: str) -> Finding:
 
 def _skip(check_id: str, title: str, detail: str) -> Finding:
     return Finding(check_id, Severity.SKIP, title, detail)
+
+
+def mute_finding(finding: Finding, note: str) -> Finding:
+    """Same finding, no weight. The text is kept verbatim so the report still
+    says what was actually measured; only the severity and the advice change.
+
+    `fix` is dropped rather than kept: it is an instruction to act, and on a
+    muted finding acting is precisely what nobody should do.
+    """
+    return Finding(finding.check_id, Severity.MUTED, finding.title,
+                   finding.detail, None, note)
+
+
+def mutes_path(ctx: HealthContext) -> str:
+    return os.path.join(ctx.home, MUTES_RELATIVE)
+
+
+def parse_mutes(text: str) -> List[MuteEntry]:
+    """Parse mute-file text. Lines that do not parse are simply not mutes."""
+    entries = []
+    for line in text.splitlines():
+        line = line.strip()
+        if not line or line.startswith("#"):
+            continue
+        # maxsplit=2: the reason is free text and may itself contain a pipe.
+        parts = line.split(MUTE_SEPARATOR, 2)
+        if len(parts) != 3:
+            continue
+        check_id, since, reason = (part.strip() for part in parts)
+        if not check_id or not reason:
+            continue
+        entries.append(MuteEntry(check_id, since, reason))
+    return entries
+
+
+def read_mutes(ctx: HealthContext) -> List[MuteEntry]:
+    """This host's mutes. Missing or unreadable yields nothing rather than
+    raising: one bad hand-edit must cost neither the other mutes nor the report.
+    """
+    text = _read(mutes_path(ctx))
+    return parse_mutes(text) if text is not None else []
+
+
+def _disabled_jobs(ctx: HealthContext) -> List[str]:
+    """Basenames of the maintenance jobs switched off through ownerp_cron.py."""
+    text = _read(ctx.p(CRON_DEST))
+    if text is None:
+        return []
+    names = []
+    for line in _disabled_cron_lines(text):
+        normalised = _normalise_cron_line(line)
+        for job in DERIVED_MUTES:
+            if job in normalised:
+                names.append(job)
+    return names
+
+
+def derived_mutes(ctx: HealthContext) -> dict:
+    """check_id -> reason, for checks explained by a deliberately disabled job."""
+    return {DERIVED_MUTES[job]: "cron job disabled on this host"
+            for job in _disabled_jobs(ctx)}
 
 
 # ==============================================================================
@@ -821,9 +921,15 @@ CHECKS: Tuple[Callable[[HealthContext], Finding], ...] = (
 
 
 def run_checks(ctx: HealthContext) -> List[Finding]:
-    """Run every check. A check that raises becomes a SKIP finding carrying the
-    error — one broken check must never cost the administrator the whole
-    report."""
+    """Run every check, then apply this host's mutes.
+
+    A check that raises becomes a SKIP finding carrying the error — one broken
+    check must never cost the administrator the whole report.
+
+    Muting happens here and nowhere else. Every consumer — chk, dostat, konsole,
+    the block after `ups`, the Monday cron — comes through this function, so one
+    filter reaches all of them and none of them can disagree about what is muted.
+    """
     findings = []
     for check in CHECKS:
         try:
@@ -833,7 +939,32 @@ def run_checks(ctx: HealthContext) -> List[Finding]:
                 check.__name__, Severity.SKIP, check.__name__,
                 f"check failed to run: {type(exc).__name__}: {exc}",
             ))
-    return findings
+
+    mutes = {entry.check_id: f"off since {entry.since} — {entry.reason}"
+             for entry in read_mutes(ctx) if entry.check_id not in UNMUTABLE}
+    produced = {finding.check_id for finding in findings}
+    stale = sorted(check_id for check_id in mutes if check_id not in produced)
+
+    # Explicit last: an operator's own words beat a derived sentence.
+    reasons = derived_mutes(ctx)
+    reasons.update(mutes)
+
+    applied = []
+    for finding in findings:
+        reason = reasons.get(finding.check_id)
+        if reason is None or finding.severity is Severity.OK:
+            applied.append(finding)
+            continue
+        applied.append(mute_finding(finding, reason))
+
+    if stale:
+        applied.append(Finding(
+            "mute_registry", Severity.WARN, "Mute registry",
+            f"{len(stale)} entr{'y' if len(stale) == 1 else 'ies'} name a check "
+            f"that does not exist: {', '.join(stale)}",
+            f"ownerp_mute.py --unmute {stale[0]}",
+        ))
+    return applied
 
 
 # ==============================================================================
@@ -848,6 +979,7 @@ def _palette(stream) -> dict:
         Severity.WARN: "\033[1;33m",
         Severity.FAIL: "\033[0;31m",
         Severity.SKIP: "",
+        Severity.MUTED: "\033[2m",
         "reset": "\033[0m",
         "dim": "\033[2m",
     }
@@ -867,7 +999,8 @@ def print_report(findings: List[Finding], mode: str = "full", stream=None) -> No
     """
     stream = stream or sys.stdout
     counts = {level: sum(1 for f in findings if f.severity is level) for level in Severity}
-    noteworthy = [f for f in findings if f.severity is not Severity.OK]
+    quiet_levels = (Severity.OK, Severity.MUTED)
+    noteworthy = [f for f in findings if f.severity not in quiet_levels]
     actionable = [f for f in findings if f.severity in (Severity.WARN, Severity.FAIL)]
 
     if mode == "quiet" and not actionable:
@@ -889,11 +1022,13 @@ def print_report(findings: List[Finding], mode: str = "full", stream=None) -> No
         emit(f"  {colors[Severity.OK]}All {counts[Severity.OK]} checks passed.{colors['reset']}")
     for finding in shown:
         color = colors[finding.severity]
-        label = f"[{finding.severity.value}]".ljust(6)
+        label = f"[{finding.severity.value}]".ljust(7)
         emit(f"  {color}{label}{colors['reset']} {finding.title.ljust(width)}  {finding.detail}")
+        # Align under the detail column: 2 indent + 7 label + 1 gap + title + 2 gap.
+        indent = " " * (12 + width)
+        if finding.note:
+            emit(f"{indent}{colors['dim']}{finding.note}{colors['reset']}")
         if finding.fix:
-            # Align under the detail column: 2 indent + 6 label + 1 gap + title + 2 gap.
-            indent = " " * (11 + width)
             fix_lines = finding.fix.split("\n")
             emit(f"{indent}{colors['dim']}Fix:{colors['reset']} {fix_lines[0]}")
             # Continuation lines line up under the first one (past the "Fix: " label).
@@ -910,9 +1045,50 @@ def print_report(findings: List[Finding], mode: str = "full", stream=None) -> No
     emit("-" * 60)
     summary = (f"  {counts[Severity.OK]} OK · {counts[Severity.WARN]} WARN · "
                f"{counts[Severity.FAIL]} FAIL · {counts[Severity.SKIP]} skipped")
+    if counts[Severity.MUTED]:
+        # Never suppressed, not even in --brief: a report that quietly omits
+        # part of itself is lying about its own coverage.
+        summary += f" · {counts[Severity.MUTED]} muted"
     emit(summary)
     if mode != "full" and counts[Severity.OK]:
         emit(f"  {colors['dim']}Run server-readiness.py for the full list.{colors['reset']}")
+    emit("=" * 60)
+    emit()
+
+
+def print_muted(ctx: HealthContext, stream=None) -> None:
+    """List what is muted here, and where each mute comes from.
+
+    Derived mutes are labelled as such: an operator who sees one and then goes
+    looking for it in readiness-mutes.conf will not find it, and would
+    reasonably conclude the tool is lying to them.
+    """
+    stream = stream or sys.stdout
+    explicit = read_mutes(ctx)
+    derived = derived_mutes(ctx)
+    rows = [(entry.check_id, entry.since, entry.reason) for entry in explicit]
+    known = {entry.check_id for entry in explicit}
+    rows += [(check_id, "derived", reason)
+             for check_id, reason in sorted(derived.items())
+             if check_id not in known]
+
+    def emit(text: str = "") -> None:
+        print(text, file=stream)
+
+    emit()
+    emit("=" * 60)
+    emit("  Muted readiness checks")
+    emit("=" * 60)
+    if not rows:
+        emit("  No checks are muted on this host.")
+    else:
+        width = max(len(row[0]) for row in rows)
+        for check_id, since, reason in sorted(rows):
+            emit(f"  {check_id.ljust(width)}  {since:<10}  {reason}")
+        emit("-" * 60)
+        emit(f"  {len(rows)} muted · file: {mutes_path(ctx)}")
+        emit("  Add: ownerp_mute.py <check_id> --reason \"...\"")
+        emit("  Remove: ownerp_mute.py --unmute <check_id>")
     emit("=" * 60)
     emit()
 
@@ -931,6 +1107,8 @@ def build_parser() -> argparse.ArgumentParser:
                       help="only show findings that are not OK")
     mode.add_argument("--quiet", action="store_true",
                       help="like --brief, but print nothing when everything is OK (for cron)")
+    mode.add_argument("--muted", action="store_true",
+                      help="list the checks muted on this host and exit")
     parser.add_argument("--root", default="/",
                         help="path prefix to inspect instead of / (for testing)")
     parser.add_argument("--home", default=None,
@@ -951,6 +1129,10 @@ def main(argv=None) -> int:
         home=home,
         repo=args.repo or os.path.join(home, "myodoo-docker"),
     )
+
+    if args.muted:
+        print_muted(ctx)
+        return 0
 
     findings = run_checks(ctx)
     mode = "quiet" if args.quiet else "brief" if args.brief else "full"

@@ -169,6 +169,14 @@ explicit route has to exist at all.
 
 ## `ownerp_mute.py` — the write path
 
+> **One correction the plan forced.** The spec did not say where the *parser*
+> lives, and the obvious answer — with the writer — is wrong.
+> `server-readiness.py` runs on hosts where `ownerp_mute.py` has not been
+> delivered yet; a reader that could be absent would silently stop every mute
+> from applying, which is the failure the stale-entry WARN exists to prevent,
+> reintroduced one level up. The reader is therefore in `server-readiness.py`
+> (`parse_mutes()`, `read_mutes()`) and this module imports it.
+
 `server-readiness.py` states in its header that it **never writes**, and that
 promise is worth more than the convenience of a `--mute` flag on it. Ownership
 splits the way it already does elsewhere in this repo: `ownerp_state.py` reads

@@ -4,8 +4,8 @@
 # Title:            ownerp_console.py
 # Description:      The ownERP console: server state, and the configuration
 #                   editing that used to mean hand-writing YAML.
-# Version:          1.1.2
-# Date:             14.08.2026
+# Version:          1.2.0
+# Date:             21.08.2026
 # Author:           Equitania Software GmbH
 # ==============================================================================
 # Stage 3 of docs/superpowers/specs/2026-08-13-ownerp-console-design.md.
@@ -53,8 +53,8 @@
 import os
 import sys
 
-SCRIPT_VERSION = "1.1.2"
-SCRIPT_DATE = "14.08.2026"
+SCRIPT_VERSION = "1.2.0"
+SCRIPT_DATE = "21.08.2026"
 
 # The dependencies, in one place. Textual is pinned to a major version: it
 # moves fast and a widget API is not a stable interface across majors.
@@ -203,6 +203,7 @@ def _sibling(name, module_name):
 state = _sibling("ownerp_state.py", "ownerp_state")
 wizard = _sibling("ownerp_wizard.py", "ownerp_wizard")
 cron = _sibling("ownerp_cron.py", "ownerp_cron")
+mute = _sibling("ownerp_mute.py", "ownerp_mute")
 
 
 # ==============================================================================
@@ -469,6 +470,55 @@ class Reschedule(ModalScreen):
         self.dismiss(text)
 
 
+class MuteReason(ModalScreen):
+    """Why a finding does not apply on this host. Required, not optional.
+
+    An entry nobody can justify a year later gets removed rather than
+    understood, which brings the message back on a host that decided against it.
+    """
+
+    BINDINGS = [Binding("escape", "cancel", "Cancel")]
+
+    def __init__(self, finding):
+        super().__init__()
+        self.finding = finding
+
+    def compose(self) -> ComposeResult:
+        with Vertical(classes="dialog"):
+            yield Label(f"Mute {self.finding.title}", classes="dialog-title")
+            yield Label("It keeps running and keeps its line in the full "
+                        "report — it stops counting.", classes="dialog-detail")
+            yield Input(placeholder="why it does not apply here", id="value")
+            with Horizontal(classes="dialog-buttons"):
+                yield Button("Mute", variant="primary", id="save")
+                yield Button("Cancel", id="cancel")
+
+    def on_mount(self) -> None:
+        self.query_one("#value", Input).focus()
+
+    def action_cancel(self) -> None:
+        self.dismiss(None)
+
+    @on(Input.Submitted)
+    def _submitted(self) -> None:
+        self._save()
+
+    @on(Button.Pressed, "#save")
+    def _save_pressed(self) -> None:
+        self._save()
+
+    @on(Button.Pressed, "#cancel")
+    def _cancel_pressed(self) -> None:
+        self.dismiss(None)
+
+    def _save(self) -> None:
+        text = self.query_one("#value", Input).value.strip()
+        if not text:
+            self.notify("A reason is required.", severity="error")
+            return
+        self.dismiss(text)
+
+
 # ==============================================================================
 # The application
 # ==============================================================================
@@ -640,14 +690,18 @@ class Console(App):
     def _fill_system(self) -> None:
         table = self.query_one("#system", DataTable)
         table.clear()
+        self._rows["system"] = {}
         section = self.server.health
         if not section.known:
             table.add_row("?", section.error, "")
             return
-        for finding in section.findings:
+        for index, finding in enumerate(section.findings):
             severity = getattr(finding.severity, "value", finding.severity)
-            table.add_row({"OK": "ok", "WARN": "!", "FAIL": "XX"}.get(severity, "-"),
-                          finding.title, finding.detail)
+            key = table.add_row(
+                {"OK": "ok", "WARN": "!", "FAIL": "XX", "MUTED": "off"}.get(severity, "-"),
+                finding.title,
+                f"{finding.detail} ({finding.note})" if finding.note else finding.detail)
+            self._rows["system"][key] = index
 
     # -- editing ---------------------------------------------------------
     #
@@ -670,6 +724,9 @@ class Console(App):
         "maintenance": (("e", "change schedule", "schedule"),
                         ("t", "switch job on/off", "toggle"),
                         ("c", "cancel", "cancel")),
+        "system": (("m", "mute on this host", "mute"),
+                   ("u", "unmute", "unmute"),
+                   ("c", "cancel", "cancel")),
     }
 
     KINDS_BY_TABLE = {"instances": "update", "backup": "backup"}
@@ -696,6 +753,8 @@ class Console(App):
             return self.server.instances.entries[index].name
         if table_id == "backup":
             return self.server.backups.entries[index].database
+        if table_id == "system":
+            return self.server.health.findings[index].title
         return self.server.maintenance.jobs[index].job_id
 
     def _act(self, table_id, index, action) -> None:
@@ -703,6 +762,9 @@ class Console(App):
             return
         if table_id == "maintenance":
             self._act_on_job(self.server.maintenance.jobs[index], action)
+            return
+        if table_id == "system":
+            self._act_on_finding(self.server.health.findings[index], action)
             return
         if not self._have_wizard():
             return
@@ -843,6 +905,29 @@ class Console(App):
             self.notify(str(exc), severity="error")
             return
         self.notify(f"Schedule written. Backup: {os.path.basename(backup)}")
+        self.action_reload()
+
+    def _act_on_finding(self, finding, action) -> None:
+        if mute is None:
+            self.notify("ownerp_mute.py is not installed - run ups.",
+                        severity="error")
+            return
+        if action == "mute":
+            self.push_screen(
+                MuteReason(finding),
+                lambda reason: reason and self._write_mute(
+                    lambda: mute.mute(self.home, finding.check_id, reason)))
+        elif action == "unmute":
+            self._write_mute(lambda: mute.unmute(self.home, finding.check_id))
+
+    def _write_mute(self, change) -> None:
+        """Through ownerp_mute, which owns the file. The console writes nothing."""
+        try:
+            change()
+        except Exception as exc:                  # MuteError, OSError
+            self.notify(str(exc), severity="error")
+            return
+        self.notify("Mute list updated.")
         self.action_reload()
 
     def _path_for(self, kind):
