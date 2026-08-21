@@ -224,3 +224,79 @@ def unmute(home: str, check_id: str) -> str:
     if len(remaining) == len(entries):
         raise MuteError(f"{check_id} is not muted on this host")
     return write(home, remaining)
+
+
+# ==============================================================================
+# Command line
+# ==============================================================================
+
+def format_list(entries: List) -> str:
+    if not entries:
+        return "No checks are muted on this host."
+    width = max(len(entry.check_id) for entry in entries)
+    lines = [f"{len(entries)} muted on this host:", ""]
+    for entry in sorted(entries, key=lambda item: item.check_id):
+        lines.append(f"  {entry.check_id.ljust(width)}  since {entry.since}  {entry.reason}")
+    lines += ["", "  Unmute: ownerp_mute.py --unmute <check_id>"]
+    return "\n".join(lines)
+
+
+def build_parser() -> argparse.ArgumentParser:
+    parser = argparse.ArgumentParser(
+        description="Mark a readiness finding as not applicable on this host.",
+        epilog="A muted check still runs and still shows its line in the full "
+               "report; it just carries no weight.",
+    )
+    parser.add_argument("check_id", nargs="?", help="the check to mute")
+    parser.add_argument("--reason", help="why it does not apply here (required)")
+    parser.add_argument("--unmute", metavar="CHECK_ID", help="remove a mute")
+    parser.add_argument("--list", action="store_true", dest="list_entries",
+                        help="show what is muted on this host")
+    parser.add_argument("--home", default=None,
+                        help="where the configuration lives (default: ~)")
+    parser.add_argument("--no-verify-id", action="store_true",
+                        help="skip checking the id against the readiness report")
+    parser.add_argument("--version", action="version",
+                        version=f"ownerp_mute.py {SCRIPT_VERSION} ({SCRIPT_DATE})")
+    return parser
+
+
+def main(argv=None) -> int:
+    args = build_parser().parse_args(argv)
+    home = args.home or os.path.expanduser("~")
+
+    try:
+        if args.list_entries:
+            print(format_list(load(home)))
+            return 0
+
+        if args.unmute:
+            backup = unmute(home, args.unmute)
+            print(f"{args.unmute} is no longer muted. "
+                  f"Backup: {os.path.basename(backup)}")
+            return 0
+
+        if not args.check_id:
+            build_parser().print_help()
+            return 0
+
+        # Running the checks to learn the valid ids costs a second or two, so it
+        # is skippable - but it is the default, because a typo that lands in the
+        # file is silent until somebody wonders why the message came back.
+        valid = None if args.no_verify_id else check_ids(home)
+        backup = mute(home, args.check_id, args.reason or "", valid)
+        where = f"Backup: {os.path.basename(backup)}" if backup else "New file."
+        print(f"{args.check_id} is muted on this host. {where}")
+        print("It still runs and still shows in `chk`; it no longer counts.")
+        return 0
+
+    except MuteError as exc:
+        print(str(exc), file=sys.stderr)
+        return 2 if "run ups" in str(exc) else 1
+    except OSError as exc:
+        print(f"cannot write the mute file: {exc}", file=sys.stderr)
+        return 1
+
+
+if __name__ == "__main__":
+    sys.exit(main())

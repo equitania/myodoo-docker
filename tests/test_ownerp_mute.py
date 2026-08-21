@@ -11,6 +11,8 @@ Run from the repository root:
     python3 -m unittest tests.test_ownerp_mute -v
 """
 
+import contextlib
+import io
 import os
 import sys
 import tempfile
@@ -148,3 +150,42 @@ class AtomicityTest(MuteWriteFixture):
         leftovers = [n for n in os.listdir(os.path.dirname(self.path()))
                      if ".tmp_" in n]
         self.assertEqual(leftovers, [])
+
+
+class CliTest(MuteWriteFixture):
+    def run_cli(self, *args):
+        out, err = io.StringIO(), io.StringIO()
+        with contextlib.redirect_stdout(out), contextlib.redirect_stderr(err):
+            code = om.main(["--home", self.home, *args])
+        return code, out.getvalue() + err.getvalue()
+
+    def test_list_on_an_empty_host_says_so_and_succeeds(self):
+        code, text = self.run_cli("--list")
+        self.assertEqual(code, 0)
+        self.assertIn("no checks are muted", text.lower())
+
+    def test_mute_then_list_shows_the_entry(self):
+        self.assertEqual(self.run_cli("backup_recency", "--reason",
+                                      "test server", "--no-verify-id")[0], 0)
+        code, text = self.run_cli("--list")
+        self.assertEqual(code, 0)
+        self.assertIn("backup_recency", text)
+        self.assertIn("test server", text)
+
+    def test_mute_without_a_reason_exits_1_and_writes_nothing(self):
+        code, text = self.run_cli("backup_recency", "--no-verify-id")
+        self.assertEqual(code, 1)
+        self.assertIn("reason", text.lower())
+        self.assertFalse(os.path.exists(self.path()))
+
+    def test_unmute_reports_when_nothing_was_muted(self):
+        code, text = self.run_cli("--unmute", "backup_recency")
+        self.assertEqual(code, 1)
+        self.assertIn("not muted", text.lower())
+
+    def test_a_successful_write_names_the_backup_or_says_it_was_new(self):
+        self.run_cli("backup_recency", "--reason", "test", "--no-verify-id")
+        code, text = self.run_cli("certbot_timer_window", "--reason", "own certs",
+                                  "--no-verify-id")
+        self.assertEqual(code, 0)
+        self.assertIn("backup", text.lower())
