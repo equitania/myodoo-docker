@@ -4,8 +4,8 @@
 # Title:            docker_table.py
 # Description:      `docker ps` as a readable table — the renderer behind
 #                   dps and dpsall.
-# Version:          1.1.0
-# Date:             14.08.2026
+# Version:          1.2.0
+# Date:             21.08.2026
 # Author:           Equitania Software GmbH
 # ==============================================================================
 # Why this exists:
@@ -57,8 +57,8 @@ import shutil
 import subprocess
 import sys
 
-SCRIPT_VERSION = "1.1.0"
-SCRIPT_DATE = "14.08.2026"
+SCRIPT_VERSION = "1.2.0"
+SCRIPT_DATE = "21.08.2026"
 
 
 # ==============================================================================
@@ -70,11 +70,18 @@ SCRIPT_DATE = "14.08.2026"
 # NAME and STATUS are never shrunk: a truncated container name cannot be typed
 # into `docker exec`, and a truncated status is the one thing the table exists
 # to show.
+#
+# NETWORK sits directly before PORTS: the two answer the same question — who
+# can reach this container — from opposite directions. It is never
+# abbreviated. Docker Compose names a network "<project>_default", and
+# shortening that to "<project>" would print a name `docker network inspect`
+# does not recognise — the same rule PORTS is built around, applied here.
 BASIC = [
-    ("NAME",    "{{.Names}}",  False),
-    ("IMAGE",   "{{.Image}}",  True),
-    ("STATUS",  "{{.Status}}", False),
-    ("PORTS",   "{{.Ports}}",  True),
+    ("NAME",    "{{.Names}}",    False),
+    ("IMAGE",   "{{.Image}}",    True),
+    ("STATUS",  "{{.Status}}",   False),
+    ("NETWORK", "{{.Networks}}", True),
+    ("PORTS",   "{{.Ports}}",    True),
 ]
 
 DETAILED = [
@@ -84,6 +91,7 @@ DETAILED = [
     ("COMMAND", "{{.Command}}",   True),
     ("CREATED", "{{.CreatedAt}}", True),
     ("STATUS",  "{{.Status}}",    False),
+    ("NETWORK", "{{.Networks}}",  True),
     ("PORTS",   "{{.Ports}}",     True),
 ]
 

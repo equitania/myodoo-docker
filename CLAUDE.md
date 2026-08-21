@@ -772,7 +772,7 @@ myodoo-docker/
 - **No `odoodev` line** (14.08.2026): that CLI is workstation tooling and this
   panel is what an operator needs on a server
 
-#### 13. docker_table.py (v1.1.0)
+#### 13. docker_table.py (v1.2.0)
 - **Purpose**: `docker ps` and `docker images` as readable tables — the renderer
   behind `dps`, `dpsall` and `dpi`
 - **Why it exists**: the aliases piped `docker ps --format table` into `sort`,
@@ -807,6 +807,13 @@ myodoo-docker/
 - **An alias would shadow the function.** `dps`, `dpsall`, `dpi` and
   `cleandlog` are functions now; nothing may reintroduce an alias under those
   names
+- **`NETWORK` sits directly before `PORTS`** (v1.2.0, 21.08.2026), sourced from
+  the `{{.Networks}}` field `docker ps` already returns — no second invocation,
+  no `docker inspect`. The two columns answer the same question from opposite
+  directions: who can reach this container. Names are never shortened —
+  Docker Compose calls a network `<project>_default`, and trimming that to
+  `<project>` would print a name `docker network inspect` does not recognise,
+  the same failure the port column was built to avoid
 
 #### 14. check_dockerimage_odoo.py (v3.4.0)
 - **Purpose**: Sets the build folder's `FROM` line from the release file (owns

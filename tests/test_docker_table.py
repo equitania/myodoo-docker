@@ -66,19 +66,22 @@ class Terminal:
 
 
 FIELD = {"{{.Names}}": 0, "{{.ID}}": 1, "{{.Image}}": 2, "{{.Command}}": 3,
-         "{{.CreatedAt}}": 4, "{{.Status}}": 5, "{{.Ports}}": 6}
+         "{{.CreatedAt}}": 4, "{{.Status}}": 5, "{{.Networks}}": 6,
+         "{{.Ports}}": 7}
 
-# name, id, image, command, created, status, ports
+# name, id, image, command, created, status, networks, ports
 SAMPLE = [
     ("ivy-odoo", "8dcf28d5f3d2", "odoo/ivy", "/app/bin/boot start",
-     "2026-08-12 18:11:46 +0200 CEST", "Up 39 hours (healthy)",
+     "2026-08-12 18:11:46 +0200 CEST", "Up 39 hours (healthy)", "bridge",
      "127.0.0.1:11400->8069/tcp, 127.0.0.1:12400->8072/tcp"),
     ("beta1-db", "4580b5bafd94", "postgres:17.4", "docker-entrypoint.s…",
-     "2026-03-27 10:17:48 +0100 CET", "Up 3 days", "5432/tcp"),
+     "2026-03-27 10:17:48 +0100 CET", "Up 3 days",
+     "myproj_web,myproj_backend", "5432/tcp"),
     ("Alpha-test", "aaa111bbb222", "alpine:3.20", "sh", "2026-01-01 00:00:00",
-     "Exited (0) 5 weeks ago", ""),
+     "Exited (0) 5 weeks ago", "", ""),
     ("nginx-proxy", "def987654321", "nginx:1.27", "nginx -g daemon of…",
      "2026-05-01 09:00:00 +0200 CEST", "Up 2 days (unhealthy)",
+     "nginx-proxy_default",
      "0.0.0.0:80->80/tcp, :::80->80/tcp"),
 ]
 
@@ -126,7 +129,7 @@ class HeaderAndOrder(unittest.TestCase):
         # The old alias could not tell the two apart at all; here "NAMES" is
         # just another container and sorts between ivy-odoo and nginx-proxy.
         rows = list(SAMPLE) + [("NAMES", "0", "img", "cmd", "when", "Up 1 day",
-                                "")]
+                                "", "")]
         lines = visible(render_sample(rows=rows, width=200)).splitlines()
         self.assertTrue(lines[1].startswith("│ NAME "))
         data = [line for line in lines[3:] if line.startswith("│")]
@@ -190,6 +193,63 @@ class Ports(unittest.TestCase):
 
 
 # ==============================================================================
+# Network
+# ==============================================================================
+
+class Network(unittest.TestCase):
+    """NETWORK answers the same question as PORTS — who can reach this
+    container — so it sits directly before it, and is never abbreviated:
+    a shortened "myproj_default" would not be a name `docker network
+    inspect` accepts."""
+
+    def test_dps_output_contains_the_network_column(self):
+        header = visible(render_sample(width=200)).splitlines()[1]
+        self.assertIn("NETWORK", header)
+
+    def test_network_sits_immediately_before_ports_in_basic_and_detailed(self):
+        for columns in (dt.BASIC, dt.DETAILED):
+            titles = [title for title, _, _ in columns]
+            self.assertEqual(titles.index("NETWORK") + 1,
+                             titles.index("PORTS"))
+
+    def test_a_container_in_two_networks_renders_both(self):
+        lines = visible(render_sample(width=200)).splitlines()
+        body = " ".join(lines[3:])
+        self.assertIn("myproj_web", body)
+        self.assertIn("myproj_backend", body)
+
+    def test_a_container_with_no_network_renders_an_empty_cell(self):
+        # Alpha-test has no network; the row must still have as many cells as
+        # every other row, or a blank field would shift everything after it.
+        rows = dt.docker_ps(dt.BASIC, runner=runner_for(SAMPLE))
+        alpha = next(r for r in rows if r[0] == "Alpha-test")
+        titles = [title for title, _, _ in dt.BASIC]
+        self.assertEqual(alpha[titles.index("NETWORK")], "")
+        self.assertEqual(len(alpha), len(dt.BASIC))
+
+    def test_a_long_network_name_is_shrunk_while_name_and_status_stay_full(self):
+        long_network = "extremely-long-compose-project-name_default-network"
+        rows = list(SAMPLE)
+        rows[0] = rows[0][:6] + (long_network,) + rows[0][7:]
+        text = visible(render_sample(rows=rows, width=80))
+        # The full name never appears — it was cut down to fit 80 columns.
+        self.assertNotIn(long_network, text)
+
+        widest_name = max(len(row[0]) for row in SAMPLE)
+        # +2: status_cell prepends a coloured dot and a space ("● Up 3 days").
+        widest_status = max(len(row[5]) for row in SAMPLE) + 2
+        wide = dt.column_widths(
+            dt.build_cells(dt.docker_ps(dt.BASIC, runner=runner_for(rows)),
+                           dt.BASIC, dt.BOX_UNICODE), dt.BASIC, 80)
+        titles = [title for title, _, _ in dt.BASIC]
+        # NAME and STATUS keep their natural width even though the frame had
+        # to give something up to fit 80 columns — NETWORK is what gave.
+        self.assertEqual(wide[titles.index("NAME")], widest_name)
+        self.assertEqual(wide[titles.index("STATUS")], widest_status)
+        self.assertLess(wide[titles.index("NETWORK")], len(long_network))
+
+
+# ==============================================================================
 # Status
 # ==============================================================================
 
@@ -237,7 +297,10 @@ class Frame(unittest.TestCase):
         self.assertEqual([len(x) for x in plain], [len(x) for x in coloured])
 
     def test_nothing_exceeds_the_terminal_width(self):
-        for width in (40, 60, 80, 100, 140):
+        # 46 is the floor for BASIC's five columns at MIN_WIDTH each (frame
+        # overhead 16 + 5*6); a narrower request cannot be honoured and is not
+        # attempted below that.
+        for width in (46, 60, 80, 100, 140):
             text = visible(render_sample(width=width))
             widest = max(len(line) for line in text.splitlines())
             self.assertLessEqual(widest, width, f"at width {width}")
@@ -299,7 +362,7 @@ class Collecting(unittest.TestCase):
         def run(_command):
             return 0, "lonely\tsome:image\n", ""
         rows = dt.docker_ps(dt.BASIC, runner=run)
-        self.assertEqual(rows, [["lonely", "some:image", "", ""]])
+        self.assertEqual(rows, [["lonely", "some:image", "", "", ""]])
 
     def test_an_extra_field_does_not_widen_the_row(self):
         def run(_command):
@@ -457,6 +520,11 @@ class Images(unittest.TestCase):
         lines = self.render()
         self.assertIn("IMAGE", lines[1])
         self.assertIn("AGE", lines[1])
+
+    def test_the_image_view_has_no_network_column(self):
+        # Networks belong to containers, not images — `dpi` never queries
+        # `docker images` for a field that does not exist there.
+        self.assertNotIn("NETWORK", self.render()[1])
 
     def test_rows_are_sorted_by_name(self):
         rows = dt.docker_images(dt.IMAGES, runner=lambda _c: (0, IMAGE_SAMPLE, ""))
