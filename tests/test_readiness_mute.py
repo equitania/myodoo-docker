@@ -203,3 +203,55 @@ class ApplyMutesTest(MuteFixture):
                          "mute_registry | 2026-08-21 | stop nagging\n")
         finding = self.find(sr.run_checks(self.ctx), "mute_registry")
         self.assertIs(finding.severity, sr.Severity.WARN)
+
+
+class DerivedMuteTest(MuteFixture):
+    """A backup check on a host where the backup job is switched off on purpose.
+
+    ownerp_cron.py parks a disabled job behind a marker instead of deleting it,
+    so the cron file already records the decision. Reading it beats asking the
+    operator to state the same fact a second time in a second file.
+    """
+
+    def install_cron(self, body):
+        path = self.ctx.p(sr.CRON_DEST)
+        os.makedirs(os.path.dirname(path), exist_ok=True)
+        with open(path, "w", encoding="utf-8") as handle:
+            handle.write(body)
+
+    def backup_finding(self):
+        for finding in sr.run_checks(self.ctx):
+            if finding.check_id == "backup_recency":
+                return finding
+        self.fail("no backup_recency finding")
+
+    def test_a_disabled_backup_job_mutes_the_backup_check(self):
+        self.install_cron(
+            "#OWNERP-DISABLED# 0 2 * * * root /root/container2backup.py\n"
+            "0 0 * * * root /root/ssl-renew.sh\n")
+        finding = self.backup_finding()
+        self.assertIs(finding.severity, sr.Severity.MUTED)
+        self.assertIn("cron job disabled", finding.note)
+
+    def test_an_active_backup_job_does_not_mute_it(self):
+        self.install_cron("0 2 * * * root /root/container2backup.py\n")
+        self.assertIsNot(self.backup_finding().severity, sr.Severity.MUTED)
+
+    def test_another_disabled_job_does_not_mute_the_backup_check(self):
+        """No blanket muting: only the pair whose absence explains the finding."""
+        self.install_cron(
+            "#OWNERP-DISABLED# 0 0 * * * root /root/ssl-renew.sh\n"
+            "0 2 * * * root /root/container2backup.py\n")
+        self.assertIsNot(self.backup_finding().severity, sr.Severity.MUTED)
+
+    def test_no_cron_file_at_all_does_not_mute_it(self):
+        self.assertIsNot(self.backup_finding().severity, sr.Severity.MUTED)
+
+    def test_an_explicit_mute_wins_over_the_derived_one(self):
+        """Both true at once: the operator's own words are the better message."""
+        self.install_cron(
+            "#OWNERP-DISABLED# 0 2 * * * root /root/container2backup.py\n")
+        self.write_mutes("backup_recency | 2026-08-21 | staging, never backed up\n")
+        finding = self.backup_finding()
+        self.assertIs(finding.severity, sr.Severity.MUTED)
+        self.assertIn("staging, never backed up", finding.note)

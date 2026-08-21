@@ -108,6 +108,16 @@ MANAGED_JOBS = (
     "nginx-cert-guard",
 )
 
+# A check whose finding is fully explained by an ownERP job being switched off
+# on purpose. The cron file already records that decision (ownerp_cron.py parks
+# a disabled job behind a marker rather than deleting it), so it is read rather
+# than asking the operator to state the same fact again in the mute file.
+#
+# Data, not an `if`: a second pair is a line here.
+DERIVED_MUTES = {
+    "container2backup": "backup_recency",
+}
+
 BACKUP_LOG = "var/log/container2backup.log"
 # Must mirror container2backup.py: it reads defaults.backup_path and falls back
 # to /opt/backups. Any other key/default here checks a config nothing ever reads.
@@ -342,6 +352,26 @@ def read_mutes(ctx: HealthContext) -> List[MuteEntry]:
             continue
         entries.append(MuteEntry(check_id, since, reason))
     return entries
+
+
+def _disabled_jobs(ctx: HealthContext) -> List[str]:
+    """Basenames of the maintenance jobs switched off through ownerp_cron.py."""
+    text = _read(ctx.p(CRON_DEST))
+    if text is None:
+        return []
+    names = []
+    for line in _disabled_cron_lines(text):
+        normalised = _normalise_cron_line(line)
+        for job in DERIVED_MUTES:
+            if job in normalised:
+                names.append(job)
+    return names
+
+
+def derived_mutes(ctx: HealthContext) -> dict:
+    """check_id -> reason, for checks explained by a deliberately disabled job."""
+    return {DERIVED_MUTES[job]: "cron job disabled on this host"
+            for job in _disabled_jobs(ctx)}
 
 
 # ==============================================================================
@@ -906,19 +936,23 @@ def run_checks(ctx: HealthContext) -> List[Finding]:
                 f"check failed to run: {type(exc).__name__}: {exc}",
             ))
 
-    mutes = {entry.check_id: entry for entry in read_mutes(ctx)
-             if entry.check_id not in UNMUTABLE}
+    mutes = {entry.check_id: f"off since {entry.since} — {entry.reason}"
+             for entry in read_mutes(ctx) if entry.check_id not in UNMUTABLE}
     produced = {finding.check_id for finding in findings}
+    stale = sorted(check_id for check_id in mutes if check_id not in produced)
+
+    # Explicit last: an operator's own words beat a derived sentence.
+    reasons = derived_mutes(ctx)
+    reasons.update(mutes)
 
     applied = []
     for finding in findings:
-        entry = mutes.get(finding.check_id)
-        if entry is None or finding.severity is Severity.OK:
+        reason = reasons.get(finding.check_id)
+        if reason is None or finding.severity is Severity.OK:
             applied.append(finding)
             continue
-        applied.append(mute_finding(finding, f"off since {entry.since} — {entry.reason}"))
+        applied.append(mute_finding(finding, reason))
 
-    stale = sorted(check_id for check_id in mutes if check_id not in produced)
     if stale:
         applied.append(Finding(
             "mute_registry", Severity.WARN, "Mute registry",
