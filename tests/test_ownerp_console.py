@@ -236,6 +236,45 @@ class RefusalTest(unittest.TestCase):
         self.assertIn("OWNERP_CONSOLE_REEXEC", source)
 
 
+class SystemTabActionsTest(unittest.TestCase):
+    """The System tab gained actions. It deliberately had none: readiness
+    findings are facts, not settings. With muting they are both — the finding
+    stays a fact, its relevance on this host becomes a setting."""
+
+    def setUp(self):
+        self.console = load_console() if HAVE_TEXTUAL else None
+
+    def test_the_system_tab_offers_mute_and_unmute(self):
+        if not HAVE_TEXTUAL:
+            self.skipTest("needs the module importable")
+        actions = self.console.Console.ACTIONS["system"]
+        names = [name for _key, _label, name in actions]
+        self.assertIn("mute", names)
+        self.assertIn("unmute", names)
+        self.assertIn("cancel", names)
+
+    def test_every_system_label_fits_the_menu_box(self):
+        """The menu clips rather than wrapping, and a clipped label reads as a
+        different setting than the one it toggles."""
+        if not HAVE_TEXTUAL:
+            self.skipTest("needs the module importable")
+        for _key, label, _name in self.console.Console.ACTIONS["system"]:
+            self.assertLessEqual(len(label), self.console.MENU_LABEL_WIDTH)
+
+    def test_every_system_action_has_a_distinct_key(self):
+        if not HAVE_TEXTUAL:
+            self.skipTest("needs the module importable")
+        keys = [key for key, _label, _name in
+                self.console.Console.ACTIONS["system"]]
+        self.assertEqual(len(keys), len(set(keys)))
+
+    def test_the_console_still_writes_nothing_itself(self):
+        """Every change goes through the module that owns the file."""
+        source = console_source()
+        for forbidden in ("os.replace(", "os.chmod(", "shutil.copy2("):
+            self.assertNotIn(forbidden, source)
+
+
 # ==============================================================================
 # Interface: needs Textual
 # ==============================================================================
@@ -489,10 +528,6 @@ class MenuTest(ConsoleFixture):
             await pilot.pause()
             return type(app.screen).__name__
         self.assertNotIn(self.run_app(body), ("ActionMenu", "EntryForm"))
-
-    def test_the_system_tab_has_no_actions(self):
-        """Readiness findings are facts, not settings."""
-        self.assertNotIn("system", load_console().Console.ACTIONS)
 
     def test_no_label_is_wider_than_the_box(self):
         """The menu clips rather than wraps, and a clipped label misleads.
