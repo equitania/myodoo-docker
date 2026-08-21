@@ -130,6 +130,10 @@ class Severity(Enum):
     WARN = "WARN"
     FAIL = "FAIL"
     SKIP = "SKIP"
+    # A finding that is true and does not apply on this host. It still runs and
+    # still shows its line; it just carries no weight. See
+    # docs/superpowers/specs/2026-08-21-readiness-mute-design.md.
+    MUTED = "MUTED"
 
 
 @dataclass
@@ -139,6 +143,9 @@ class Finding:
     title: str
     detail: str
     fix: Optional[str] = None
+    # Rendered under `detail` like `fix`, but without the "Fix:" label: it
+    # explains why a finding does not count here, which is not something to act on.
+    note: Optional[str] = None
 
 
 @dataclass
@@ -276,6 +283,17 @@ def _ok(check_id: str, title: str, detail: str) -> Finding:
 
 def _skip(check_id: str, title: str, detail: str) -> Finding:
     return Finding(check_id, Severity.SKIP, title, detail)
+
+
+def mute_finding(finding: Finding, note: str) -> Finding:
+    """Same finding, no weight. The text is kept verbatim so the report still
+    says what was actually measured; only the severity and the advice change.
+
+    `fix` is dropped rather than kept: it is an instruction to act, and on a
+    muted finding acting is precisely what nobody should do.
+    """
+    return Finding(finding.check_id, Severity.MUTED, finding.title,
+                   finding.detail, None, note)
 
 
 # ==============================================================================
@@ -848,6 +866,7 @@ def _palette(stream) -> dict:
         Severity.WARN: "\033[1;33m",
         Severity.FAIL: "\033[0;31m",
         Severity.SKIP: "",
+        Severity.MUTED: "\033[2m",
         "reset": "\033[0m",
         "dim": "\033[2m",
     }
@@ -867,7 +886,8 @@ def print_report(findings: List[Finding], mode: str = "full", stream=None) -> No
     """
     stream = stream or sys.stdout
     counts = {level: sum(1 for f in findings if f.severity is level) for level in Severity}
-    noteworthy = [f for f in findings if f.severity is not Severity.OK]
+    quiet_levels = (Severity.OK, Severity.MUTED)
+    noteworthy = [f for f in findings if f.severity not in quiet_levels]
     actionable = [f for f in findings if f.severity in (Severity.WARN, Severity.FAIL)]
 
     if mode == "quiet" and not actionable:
@@ -889,11 +909,13 @@ def print_report(findings: List[Finding], mode: str = "full", stream=None) -> No
         emit(f"  {colors[Severity.OK]}All {counts[Severity.OK]} checks passed.{colors['reset']}")
     for finding in shown:
         color = colors[finding.severity]
-        label = f"[{finding.severity.value}]".ljust(6)
+        label = f"[{finding.severity.value}]".ljust(7)
         emit(f"  {color}{label}{colors['reset']} {finding.title.ljust(width)}  {finding.detail}")
+        # Align under the detail column: 2 indent + 7 label + 1 gap + title + 2 gap.
+        indent = " " * (12 + width)
+        if finding.note:
+            emit(f"{indent}{colors['dim']}{finding.note}{colors['reset']}")
         if finding.fix:
-            # Align under the detail column: 2 indent + 6 label + 1 gap + title + 2 gap.
-            indent = " " * (11 + width)
             fix_lines = finding.fix.split("\n")
             emit(f"{indent}{colors['dim']}Fix:{colors['reset']} {fix_lines[0]}")
             # Continuation lines line up under the first one (past the "Fix: " label).
@@ -910,6 +932,10 @@ def print_report(findings: List[Finding], mode: str = "full", stream=None) -> No
     emit("-" * 60)
     summary = (f"  {counts[Severity.OK]} OK · {counts[Severity.WARN]} WARN · "
                f"{counts[Severity.FAIL]} FAIL · {counts[Severity.SKIP]} skipped")
+    if counts[Severity.MUTED]:
+        # Never suppressed, not even in --brief: a report that quietly omits
+        # part of itself is lying about its own coverage.
+        summary += f" · {counts[Severity.MUTED]} muted"
     emit(summary)
     if mode != "full" and counts[Severity.OK]:
         emit(f"  {colors['dim']}Run server-readiness.py for the full list.{colors['reset']}")
