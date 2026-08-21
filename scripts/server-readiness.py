@@ -326,18 +326,8 @@ def mutes_path(ctx: HealthContext) -> str:
     return os.path.join(ctx.home, MUTES_RELATIVE)
 
 
-def read_mutes(ctx: HealthContext) -> List[MuteEntry]:
-    """Parse the mute file. Missing, unreadable or partly malformed all yield
-    what could be read rather than an exception.
-
-    A single bad hand-edit must not cost the operator every other mute — and it
-    must not cost them the report either, which is what raising from here would
-    do. Lines that do not parse are simply not mutes; the entries that do parse
-    still apply.
-    """
-    text = _read(mutes_path(ctx))
-    if text is None:
-        return []
+def parse_mutes(text: str) -> List[MuteEntry]:
+    """Parse mute-file text. Lines that do not parse are simply not mutes."""
     entries = []
     for line in text.splitlines():
         line = line.strip()
@@ -352,6 +342,14 @@ def read_mutes(ctx: HealthContext) -> List[MuteEntry]:
             continue
         entries.append(MuteEntry(check_id, since, reason))
     return entries
+
+
+def read_mutes(ctx: HealthContext) -> List[MuteEntry]:
+    """This host's mutes. Missing or unreadable yields nothing rather than
+    raising: one bad hand-edit must cost neither the other mutes nor the report.
+    """
+    text = _read(mutes_path(ctx))
+    return parse_mutes(text) if text is not None else []
 
 
 def _disabled_jobs(ctx: HealthContext) -> List[str]:
