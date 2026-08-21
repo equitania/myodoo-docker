@@ -4,8 +4,8 @@
 # Title:            ownerp_console.py
 # Description:      The ownERP console: server state, and the configuration
 #                   editing that used to mean hand-writing YAML.
-# Version:          1.1.2
-# Date:             14.08.2026
+# Version:          1.2.0
+# Date:             21.08.2026
 # Author:           Equitania Software GmbH
 # ==============================================================================
 # Stage 3 of docs/superpowers/specs/2026-08-13-ownerp-console-design.md.
@@ -53,8 +53,8 @@
 import os
 import sys
 
-SCRIPT_VERSION = "1.1.2"
-SCRIPT_DATE = "14.08.2026"
+SCRIPT_VERSION = "1.2.0"
+SCRIPT_DATE = "21.08.2026"
 
 # The dependencies, in one place. Textual is pinned to a major version: it
 # moves fast and a widget API is not a stable interface across majors.

@@ -4,8 +4,8 @@
 # Title:            server-readiness.py
 # Description:      Report whether this server matches the state myodoo-docker
 #                   expects, and name the exact command that closes each gap.
-# Version:          1.4.1
-# Date:             13.08.2026
+# Version:          1.5.0
+# Date:             21.08.2026
 # Author:           Equitania Software GmbH
 # ==============================================================================
 # Why this exists:
@@ -28,6 +28,11 @@
 #   --quiet     Like --brief, but prints nothing at all when everything is OK.
 #               For cron: cron only mails when there is output, so a weekly job
 #               speaks up only on actual drift.
+#   --muted     List the checks this host deliberately does not count, and exit.
+#
+# A muted check still runs and still shows its line in the full report; it
+# carries no weight in --brief, --quiet or the exit code. Muting is written by
+# ownerp_mute.py; this script only reads the list, like everything else here.
 #
 # Exit codes: 0 when no FAIL is present, 1 otherwise. WARN and SKIP do not
 # affect the exit code.
@@ -63,8 +68,8 @@ from dataclasses import dataclass
 from enum import Enum
 from typing import Callable, List, Optional, Tuple
 
-SCRIPT_VERSION = "1.4.1"
-SCRIPT_DATE = "13.08.2026"
+SCRIPT_VERSION = "1.5.0"
+SCRIPT_DATE = "21.08.2026"
 
 # Where nginx keeps its customer vhosts (mirrors nginx-cert-guard.py).
 NGINX_CONF_D = "etc/nginx/conf.d"
@@ -96,6 +101,7 @@ DELIVERED_SCRIPTS = (
     "server-readiness.py",
     "odoo_build_cache.py",
     "ownerp_cron.py",
+    "ownerp_mute.py",
     "ownerp_migrate.py",
 )
 

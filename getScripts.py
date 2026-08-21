@@ -136,8 +136,8 @@ if os.environ.get('GETSCRIPTS_DEBUG', '').lower() in ('1', 'true', 'yes'):
     logger.debug("Debug logging enabled")
 
 # Script version and date
-SCRIPT_VERSION = "9.20.1"
-SCRIPT_DATE = "14.08.2026"
+SCRIPT_VERSION = "9.21.0"
+SCRIPT_DATE = "21.08.2026"
 
 # ─────────────────────────────────────────────────────────────────────────────
 # Install report
@@ -3896,6 +3896,7 @@ def copy_scripts(_myhome: str, myodoo_docker: str) -> None:
         "myodoo-maintenance.cron",
         "myodoo-maintenance.logrotate",
         "server-readiness.py",
+        "ownerp_mute.py",
         "odoo_build_cache.py",
         "getScripts.py"
     ]

@@ -670,7 +670,7 @@ myodoo-docker/
 - **Exit code** `0` clean / `1` needs attention / `2` broken, plus `--json`, so
   cron and monitoring never parse the text
 
-#### 11. ownerp_console.py (v1.1.0)
+#### 11. ownerp_console.py (v1.2.0)
 - **Purpose**: The ownERP console — server state and configuration editing in
   a full-screen interface. Started with `konsole`; stage 3 (last) of
   `docs/superpowers/specs/2026-08-13-ownerp-console-design.md`
@@ -722,8 +722,10 @@ myodoo-docker/
 - **Select a row → an action menu, ctop-style** (v1.1.0): a small box at the
   top left over the table it acts on, one letter per action. It is placed
   there rather than centred so the row it belongs to stays visible. `ACTIONS`
-  says what each tab offers; the System tab has none, because readiness
-  findings are facts, not settings
+  says what each tab offers. The System tab had none until v1.2.0, on the
+  grounds that readiness findings are facts and not settings — with muting
+  they are both: the finding stays a fact, its **relevance on this host**
+  becomes a setting
 - **`[e]` in a `Label` is Rich markup for a style tag** and renders as
   nothing. Every menu line silently lost its key, which is the whole menu —
   `markup=False`, and a test that reads what is on screen rather than what is
@@ -852,6 +854,55 @@ myodoo-docker/
 - **A missing `Dockerfile` is now a sentence, not a traceback**:
   `update_dockerfile()` ran `sed -i` unconditionally and died in
   `CalledProcessError`
+
+#### 15. ownerp_mute.py (v1.0.0)
+- **Purpose**: Mark a readiness finding as true but not applicable on this
+  host — permanently, with a reason. `chk --muted` lists them, `konsole` →
+  System → `[m]` sets them
+- **Why**: a host whose certificates come from an internal CA collects a
+  permanent `certbot timer` WARN; a test server with no backups by design
+  collects a permanent `Backup recency` FAIL that mails every Monday. Both
+  findings are correct. The cost is not the noise: an operator who learns that
+  two lines are always there stops reading the block, and the third line — the
+  one that matters — goes with them. Same reasoning as `BENIGN_CHILD_NOISE` in
+  `update_docker_odoo.py` and `OPTIONAL_INSTRUCTIONS` in
+  `odoo_build_cache.py`, extended from two hard-coded lists to a per-host
+  decision
+- **Muted is not off**: the check still runs, still measures, still prints its
+  line in the full report — with the date and the reason it does not count. It
+  drops out of `--brief`, `--quiet` and the exit code, and nothing else. A
+  check that was *removed* leaves a report that looks complete while a class
+  of faults goes unwatched; a muted one leaves a line saying so
+- **The count is never suppressed**, not even in `--brief`. A report that
+  quietly omits part of itself is lying about its own coverage, and that is
+  the one way muting could turn into hiding
+- **The reader lives in `server-readiness.py`, the writer here.** The obvious
+  arrangement is the opposite, and it is wrong: `server-readiness.py` runs on
+  hosts where this script has not been delivered yet, so a reader that could be
+  absent would silently stop every mute from applying and hand the operator
+  back exactly the messages they had switched off
+- **Not YAML**, against the repository's own default. `server-readiness.py`
+  runs today without PyYAML — it imports `yaml` inside one check and SKIPs when
+  it fails. A YAML mute file would inherit that failure mode; a three-field
+  line cannot. Robustness beats format consistency for a file whose whole job
+  is to stay quiet
+- **A mute without a reason is refused.** It is the only field that makes the
+  entry survivable: an entry nobody can justify a year later gets deleted
+  rather than understood, which brings the message back on a host that decided
+  against it
+- **A disabled backup cron job mutes its own check, with no entry at all**
+  (`DERIVED_MUTES`). `ownerp_cron.py` parks a switched-off job behind
+  `#OWNERP-DISABLED#` rather than deleting it, so the cron file already records
+  the decision — reading it beats asking for the same fact twice, and
+  re-enabling the job brings the check back with nothing left behind
+- **`mute_registry` is on `UNMUTABLE`**: it is the WARN that reports mute
+  entries naming a check that no longer exists. Muting it would switch off the
+  guard against silent mutes, and the failure it guards is the nastiest one
+  here — the message simply returns one day while the file still looks like it
+  should be preventing it
+- **No expiry date**, deliberately. Both driving cases are permanent, and the
+  risk an expiry would guard against — a mute nobody remembers — is already
+  covered by the visible `[MUTED]` line and the count in every summary
 
 ### Development Patterns
 
