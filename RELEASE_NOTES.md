@@ -1,5 +1,50 @@
 # Release Notes
 
+## Half of a Lost Configuration Was Invisible (25.08.2026)
+
+*scripts/server-readiness.py v1.6.0 · scripts/ownerp_migrate.py v1.5.0 ·
+tests/test_server_readiness.py · tests/test_ownerp_migrate.py ·
+tests/test_readiness_mute.py · CLAUDE.md*
+
+### Added
+
+- **`check_update_config` — `docker2update.yaml` gets a readiness check.** A server
+  was updated on 25.08.2026 and the report read 13 OK, one FAIL: the backup config
+  was missing. It was not the only thing missing. `ownerp_migrate.py --from-docker`
+  wrote **both** files "from the running Docker state" a minute later, which it only
+  does for a file that is not there — so `docker2update.yaml` was gone as well and
+  that host could not have updated a single container. Nothing had ever said so.
+- **Both files were lost the same way.** `cleanup_legacy.txt` listed the four CSVs
+  until `9d3eb75` (13.08.2026), and `cleanup_legacy_files()` deletes what it names
+  on a fresh Fish install — the very run that lifts an old server onto the new
+  stack. On every server updated before that date the CSVs were already gone when
+  `ownerp_migrate.py` arrived; `--from-docker` is the whole answer there, and both
+  checks now point at it. One half of that loss had a check, the other half had
+  none.
+- **What the check says.** SKIP where docker is not installed (this file drives
+  container updates and nothing else), FAIL when it is missing or unparseable —
+  with `--from-docker` as the fix, because what `docker inspect` still knows should
+  not be retyped into an empty editor — and WARN when every entry is parked behind
+  `active: false`. That last one is the quiet case: `doup` then runs, updates
+  nothing, and reports success.
+- **A test pins that the check is in `CHECKS`**, which is the whole story of this
+  finding: a check nobody registered runs nowhere. `test_readiness_mute.py`'s
+  exit-code fixture needed the new config file too — it builds a tree with exactly
+  one FAIL left standing, and this was the second.
+
+### Fixed
+
+- **`--quiet` swallowed the one run that had something to say.**
+  `migrate_legacy_csv()` passes it on every `ups`, and rightly so: a server whose
+  CSVs were converted years ago must not be told the same two lines forever, or the
+  block stops being read on the one server where it matters. But two states looked
+  identical to `main()` and are not. "No CSV left to convert" deserves that silence;
+  "no CSV **and** no YAML" is a server with no configuration to run on — and the
+  line suppressed there was the one naming `--from-docker`. The missing files are
+  now named whenever both sources are absent, `--quiet` or not.
+- **The two existing quiet tests were written against an empty home**, which is now
+  the loud case. They set up the state they actually mean: CSVs gone, YAMLs present.
+
 ## The Build Context Is Checked Before the Build, Not by It (21.08.2026)
 
 *Dockerfiles/v16-odoo/, v18-odoo/, v19-odoo/check_dockerimage_odoo.py v3.4.0 ·
