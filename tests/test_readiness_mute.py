@@ -303,8 +303,9 @@ class ExitCodeMuteTest(MuteFixture):
     maintenance_cron_present is the check muted here. Verified by hand
     (see the setUp comment) to be the only FAIL on a bare throwaway tree once
     logrotate and the backup config are satisfied — otherwise muting it alone
-    would not bring the exit code down to 0, since two other checks
-    (logrotate_present, backup_config) FAIL on an untouched tree as well.
+    would not bring the exit code down to 0, since the other checks
+    (logrotate_present, backup_config, update_config) FAIL on an untouched
+    tree as well.
     """
 
     def setUp(self):
@@ -323,6 +324,14 @@ class ExitCodeMuteTest(MuteFixture):
                          "  - name: test_db\n"
                          "    sql_container: test-db\n"
                          "    data_container: test-odoo\n")
+        # update_config FAILs the same way on a host that has docker, which
+        # every developer machine running this suite may or may not — writing
+        # the file keeps the outcome independent of that.
+        with open(os.path.join(self.ctx.home, "docker2update.yaml"),
+                  "w", encoding="utf-8") as handle:
+            handle.write("containers:\n"
+                         "  - container_name: test-odoo\n"
+                         "    database_name: test_db\n")
 
     def run_cli(self, *args):
         out = io.StringIO()

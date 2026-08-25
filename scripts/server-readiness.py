@@ -4,8 +4,8 @@
 # Title:            server-readiness.py
 # Description:      Report whether this server matches the state myodoo-docker
 #                   expects, and name the exact command that closes each gap.
-# Version:          1.5.0
-# Date:             21.08.2026
+# Version:          1.6.0
+# Date:             25.08.2026
 # Author:           Equitania Software GmbH
 # ==============================================================================
 # Why this exists:
@@ -68,8 +68,8 @@ from dataclasses import dataclass
 from enum import Enum
 from typing import Callable, List, Optional, Tuple
 
-SCRIPT_VERSION = "1.5.0"
-SCRIPT_DATE = "21.08.2026"
+SCRIPT_VERSION = "1.6.0"
+SCRIPT_DATE = "25.08.2026"
 
 # Where nginx keeps its customer vhosts (mirrors nginx-cert-guard.py).
 NGINX_CONF_D = "etc/nginx/conf.d"
@@ -123,6 +123,10 @@ MANAGED_JOBS = (
 DERIVED_MUTES = {
     "container2backup": "backup_recency",
 }
+
+# The two configurations in $HOME that the maintenance tooling runs on.
+BACKUP_CONFIG = "container2backup.yaml"
+UPDATE_CONFIG = "docker2update.yaml"
 
 BACKUP_LOG = "var/log/container2backup.log"
 # Must mirror container2backup.py: it reads defaults.backup_path and falls back
@@ -589,10 +593,10 @@ def check_backup_recency(ctx: HealthContext) -> Finding:
     return _ok("backup_recency", "Backup recency", f"last activity {_age(age)} ago")
 
 
-def _load_backup_config(ctx: HealthContext) -> Tuple[Optional[dict], Optional[str]]:
+def _load_config(ctx: HealthContext, name: str) -> Tuple[Optional[dict], Optional[str]]:
     """Return (config, error). Missing PyYAML is reported as an error string so
     the caller can SKIP rather than fail."""
-    path = os.path.join(ctx.home, "container2backup.yaml")
+    path = os.path.join(ctx.home, name)
     if not os.path.isfile(path):
         return None, f"{path} not found"
     try:
@@ -606,6 +610,10 @@ def _load_backup_config(ctx: HealthContext) -> Tuple[Optional[dict], Optional[st
         return yaml.safe_load(text) or {}, None
     except Exception as exc:                      # yaml.YAMLError and friends
         return None, f"invalid YAML: {exc}"
+
+
+def _load_backup_config(ctx: HealthContext) -> Tuple[Optional[dict], Optional[str]]:
+    return _load_config(ctx, BACKUP_CONFIG)
 
 
 def check_backup_config(ctx: HealthContext) -> Finding:
@@ -636,6 +644,60 @@ def check_backup_config(ctx: HealthContext) -> Finding:
         )
     return _ok("backup_config", "Backup config",
                f"{len(databases)} database(s) configured")
+
+
+def check_update_config(ctx: HealthContext) -> Finding:
+    """The counterpart to check_backup_config — `doup` has a config too.
+
+    It exists because on 25.08.2026 a server was found with no
+    docker2update.yaml at all and nothing had ever said so: the backup side
+    had this check, the update side had none, so a clean-looking report
+    (13 OK, one FAIL) described a host that could not update a single
+    container. Both files were lost the same way — the legacy cleanup took
+    the CSVs before ownerp_migrate.py existed to convert them — and only one
+    of the two losses was visible.
+
+    A host without Docker is not a host with a broken update configuration,
+    so that is a SKIP: this whole file drives container updates and nothing
+    else.
+    """
+    if not shutil.which("docker"):
+        return _skip("update_config", "Update config", "docker not installed")
+
+    config, error = _load_config(ctx, UPDATE_CONFIG)
+    if error == "PyYAML not installed":
+        return _skip("update_config", "Update config", error)
+    if error:
+        # Same reasoning as check_backup_config: what `docker inspect` can
+        # still read should not be retyped into an empty editor.
+        return Finding(
+            "update_config", Severity.FAIL, "Update config", error,
+            f"{ctx.home}/ownerp_migrate.py --from-docker   "
+            f"# rebuild from the running containers, then: edup",
+        )
+
+    # The key is `containers` — that is what update_docker_odoo.py iterates
+    # over, and what ownerp_validate.py requires.
+    containers = config.get("containers") or []
+    if not containers:
+        return Finding(
+            "update_config", Severity.WARN, "Update config",
+            "no containers defined — doup would do nothing",
+            "wizup   # add an instance, guided",
+        )
+
+    # `active: false` is a parked entry, not a fault. All of them parked is:
+    # doup then runs and updates nothing, which looks exactly like success.
+    active = [entry for entry in containers
+              if isinstance(entry, dict) and entry.get("active", True)]
+    if not active:
+        return Finding(
+            "update_config", Severity.WARN, "Update config",
+            f"{len(containers)} container(s), none active — doup would do nothing",
+            "edup",
+        )
+    return _ok("update_config", "Update config",
+               f"{len(active)} of {len(containers)} container(s) active")
 
 
 def check_backup_disk_space(ctx: HealthContext) -> Finding:
@@ -910,6 +972,7 @@ CHECKS: Tuple[Callable[[HealthContext], Finding], ...] = (
     check_log_sizes,
     check_backup_recency,
     check_backup_config,
+    check_update_config,
     check_docker_storage_driver,
     check_nginx_unit_dropin,
     check_nginx_listen_targets,
