@@ -3,8 +3,8 @@
 # ==============================================================================
 # Title:            ownerp_migrate.py
 # Description:      Convert the legacy CSV configurations to YAML, once, safely.
-# Version:          1.4.0
-# Date:             14.08.2026
+# Version:          1.5.0
+# Date:             25.08.2026
 # Author:           Equitania Software GmbH
 # ==============================================================================
 # Why this exists:
@@ -83,8 +83,8 @@ import time
 from dataclasses import dataclass, field
 from typing import List, NamedTuple, Optional, Tuple
 
-SCRIPT_VERSION = "1.4.0"
-SCRIPT_DATE = "14.08.2026"
+SCRIPT_VERSION = "1.5.0"
+SCRIPT_DATE = "25.08.2026"
 
 BACKUP_CSV = "container2backup.csv"
 BACKUP_PATH_CSV = "container2backup_path.csv"
@@ -1105,7 +1105,22 @@ def main(argv=None) -> int:
         # two lines forever. print_results() already understood that; main()
         # printed underneath it anyway. Typed by hand the answer is still
         # worth having, which is why it is a flag and not a deletion.
-        if not args.quiet:
+        #
+        # With one exception, and it is the case this script exists for: no
+        # CSV *and* no YAML is not "nothing to do", it is a server with no
+        # configuration at all. Staying quiet there suppressed the one line
+        # that says how to get it back — on 25.08.2026 an operator was left
+        # to find --from-docker in a readiness message that only covered the
+        # backup half. --quiet silences the empty run, never this.
+        unconfigured = [name for name in (BACKUP_YAML, UPDATE_YAML)
+                        if not os.path.isfile(os.path.join(args.home, name))]
+        if unconfigured:
+            print(f"No legacy CSV found, and {' and '.join(unconfigured)} "
+                  f"{'is' if len(unconfigured) == 1 else 'are'} missing too — "
+                  f"this server has no configuration to run on.")
+            print("Rebuild it from the running containers with: "
+                  "ownerp_migrate.py --from-docker")
+        elif not args.quiet:
             print("Nothing to migrate — no legacy CSV configuration found.")
             print("If the CSVs are already gone, rebuild from the running "
                   "containers with: ownerp_migrate.py --from-docker")

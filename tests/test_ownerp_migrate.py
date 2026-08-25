@@ -21,6 +21,7 @@ import sys
 import tempfile
 import textwrap
 import unittest
+import unittest.mock
 
 REPO = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..")
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "scripts"))
@@ -92,12 +93,24 @@ class QuietTest(MigrateFixture):
             code = om.main(argv)
         return code, out.getvalue()
 
+    def converted_long_ago(self):
+        """The state --quiet is for: the CSVs are gone AND the YAMLs are there.
+
+        An empty home is a different case entirely (see
+        UnconfiguredServerTest) — that server has nothing to run on, and
+        saying so is worth one line on every ups.
+        """
+        for name in (om.BACKUP_YAML, om.UPDATE_YAML):
+            self.write(name, "defaults: {}\n")
+
     def test_quiet_says_nothing_when_there_is_nothing_to_do(self):
+        self.converted_long_ago()
         code, output = self.run_main(["--home", self.home, "--quiet"])
         self.assertEqual(code, 0)
         self.assertEqual(output.strip(), "")
 
     def test_without_quiet_it_still_answers(self):
+        self.converted_long_ago()
         code, output = self.run_main(["--home", self.home])
         self.assertEqual(code, 0)
         self.assertIn("Nothing to migrate", output)
@@ -675,6 +688,40 @@ class CleanupListTest(unittest.TestCase):
         for name in (om.BACKUP_CSV, om.BACKUP_PATH_CSV, om.UPDATE_CSV,
                      om.RSYNC_CSV):
             self.assertNotIn(name, active)
+
+
+class UnconfiguredServerTest(MigrateFixture):
+    """No CSV and no YAML is not "nothing to do" — it is a server with no
+    configuration at all, and --quiet used to swallow the one line that says
+    how to get it back. That is how an operator ended up hunting for
+    --from-docker in a readiness message that covered only the backup half.
+    """
+
+    def run_main(self, argv):
+        out = io.StringIO()
+        with contextlib.redirect_stdout(out):
+            code = om.main(argv)
+        return code, out.getvalue()
+
+    def test_quiet_still_speaks_up_when_both_configs_are_missing(self):
+        code, output = self.run_main(["--home", self.home, "--quiet"])
+        self.assertEqual(code, 0)
+        self.assertIn("--from-docker", output)
+        self.assertIn(om.BACKUP_YAML, output)
+        self.assertIn(om.UPDATE_YAML, output)
+
+    def test_the_missing_one_is_named_on_its_own(self):
+        self.write(om.UPDATE_YAML, "containers: []\n")
+        code, output = self.run_main(["--home", self.home, "--quiet"])
+        self.assertEqual(code, 0)
+        self.assertIn(om.BACKUP_YAML, output)
+        self.assertNotIn(om.UPDATE_YAML, output)
+
+    def test_it_stays_out_of_the_way_of_an_actual_conversion(self):
+        """A CSV is present: the conversion reports itself, this does not."""
+        self.write(om.UPDATE_CSV, UPDATE_CSV)
+        _code, output = self.run_main(["--home", self.home, "--quiet"])
+        self.assertNotIn("no configuration to run on", output)
 
 
 if __name__ == "__main__":

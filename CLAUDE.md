@@ -598,7 +598,7 @@ myodoo-docker/
   `setup-maintenance-cron.sh` restores the repository schedule and discards the
   customisation — that is its job, and the tool says so before it writes
 
-#### 9. ownerp_migrate.py (v1.4.0)
+#### 9. ownerp_migrate.py (v1.5.0)
 - **Purpose**: One-way conversion of the legacy CSV configurations to YAML —
   `container2backup.csv` + `container2backup_path.csv` + `rsync_targets.csv` →
   `container2backup.yaml`, `docker2update.csv` → `docker2update.yaml`
@@ -644,6 +644,20 @@ myodoo-docker/
   Saying so is the point — the file otherwise looks complete while one
   production database is not backed up, which surfaces only when a restore is
   needed
+- **`--quiet` silences the empty run, never an unconfigured server** (v1.5.0,
+  25.08.2026). The two cases looked identical to `main()` and are not: "the
+  CSVs were converted years ago" deserves silence on every `ups`, "there is
+  no CSV **and** no YAML" is a server with nothing to run on. On 25.08.2026 a
+  host was updated, said nothing about it, and left the operator to find
+  `--from-docker` in a readiness message that covered only the backup half.
+  Now the missing files are named, `--quiet` or not — the flag exists to stop
+  a block being ignored, and suppressing the one run where it says something
+  is exactly what it was meant to prevent
+- **The CSVs it converts were already gone on servers updated before
+  13.08.2026.** Until `9d3eb75` they were listed in `cleanup_legacy.txt`, and
+  `cleanup_legacy_files()` deletes that list on a fresh Fish install. This
+  script can convert nothing there; `--from-docker` is the whole answer for
+  those hosts, and both readiness checks now point at it
 
 #### 10. ownerp_state.py (v1.0.0)
 - **Purpose**: The whole server on one page — instances, backup ages,
