@@ -1,7 +1,7 @@
 #!/usr/bin/python3
 # -*- coding: utf-8 -*-
 # This script performs an update of an Odoo database in a Docker container
-# Version 5.17.0
+# Version 5.18.0
 # Date 26.08.2026
 ##############################################################################
 #
@@ -77,7 +77,7 @@ logger = logging.getLogger(__name__)
 # Kept in sync with the header comment above. Printed at the start of every run
 # so a pasted log says which version produced it — the single most common
 # question when a report comes back from a server.
-SCRIPT_VERSION = "5.17.0"
+SCRIPT_VERSION = "5.18.0"
 SCRIPT_DATE = "26.08.2026"
 
 # Set by --no-cache. A module-level flag rather than another parameter through
@@ -1191,6 +1191,38 @@ def build_proxy_env(proxy_settings):
         env[key.upper()] = value
     return env
 
+def drop_builder_cache_before_retry():
+    """Empty the builder cache before a retry forced by hollow layers.
+
+    --no-cache tells Docker not to USE the cache; it does not remove it. The
+    hollow layers stay on disk and the snapshotter keeps working alongside
+    them, which is why building --no-cache alone was not enough on a customer
+    server on 26.08.2026 - clearing the cache first and then building without
+    it was.
+
+    Deliberately scoped to this one branch: it runs only after hollow layers
+    were actually detected, never on an ordinary build. Note that
+    `docker builder prune -af` empties the build cache of the WHOLE host, not
+    just this image - there is no per-image filter. On a machine that builds
+    nothing but Odoo images that costs build time and no data, which is the
+    trade being made here.
+
+    Never fatal. A prune that fails must not swallow the retry - the retry is
+    the point, the prune only improves its odds.
+
+    Returns:
+        tuple: (info, warnings, errors) counted for the run's log statistics
+    """
+    logger.info("Dropping the builder cache before the retry")
+    success, _output, info, warn, err = run_command(
+        "docker builder prune -af", show_output=False, filter_output=True,
+        timeout=600)
+    if not success:
+        logger.warning(
+            "Could not drop the builder cache - retrying the build anyway")
+    return info, warn, err
+
+
 def build_command_for_attempt(image, attempt, cache_arg="", proxy_build_args=""):
     """Return the `docker build` command line for this attempt.
 
@@ -1247,14 +1279,13 @@ HOLLOW_IMAGE_ADVICE = (
     "SPORADIC. A retry was already made, and since v5.17.0 that retry builds from\n"
     "scratch (--no-cache --pull) - so this run's build cache is already ruled out.\n"
     "\n"
-    "Two cures are known and NEITHER works every time. On a customer server on\n"
-    "17.08.2026 a daemon restart fixed it while 'docker builder prune -af' and\n"
-    "--no-cache did not; on 26.08.2026 it was exactly the other way round. Take\n"
-    "the cheaper one first - a daemon restart interrupts EVERY container on this\n"
-    "host, production included:\n"
+    "The builder cache is already ruled out: since v5.18.0 the retry empties it\n"
+    "('docker builder prune -af') and then builds --no-cache --pull. That cure\n"
+    "worked on a customer server on 26.08.2026; it has just been tried here.\n"
     "\n"
-    "  docker builder prune -af       drop the builder cache, then:\n"
-    "  <this script> -s <container>   build again\n"
+    "What is left are the overlay mounts held by the RUNNING DAEMON. A restart\n"
+    "released them on 17.08.2026. It interrupts EVERY container on this host,\n"
+    "production included, so it is a scheduled step, not a quick one:\n"
     "\n"
     "  systemctl restart docker       release the daemon's overlay mounts, then:\n"
     "  <this script> -s <container>   build again\n"
@@ -1892,9 +1923,15 @@ def _process_container(container, proxy_settings=None, dockerfiles_source=None,
         if attempt == 1:
             total_warnings += 1
             logger.warning(
-                f"{image}: hollow layers from Docker's exporter. Rebuilding once "
-                "from scratch (--no-cache --pull) - reusing the cache would only "
-                "reproduce them. This takes as long as a full build.")
+                f"{image}: hollow layers from Docker's exporter. Dropping the "
+                "builder cache and rebuilding once from scratch (--no-cache "
+                "--pull) - leaving the hollow layers in place and merely not "
+                "using them was not enough on 26.08.2026. This takes as long as "
+                "a full build.")
+            info, warn, err = drop_builder_cache_before_retry()
+            total_info += info
+            total_warnings += warn
+            total_errors += err
             continue
 
         total_errors += 1

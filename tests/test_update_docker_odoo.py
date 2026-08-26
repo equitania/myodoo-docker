@@ -792,5 +792,45 @@ class BuildRetryCommandTest(unittest.TestCase):
                 self.assertTrue(command.rstrip().endswith(" ."))
 
 
+class BuilderCachePruneTest(unittest.TestCase):
+    """--no-cache tells Docker not to USE the cache; it does not remove it.
+    On 26.08.2026 clearing it first was what made the difference."""
+
+    def setUp(self):
+        self.commands = []
+        self.result = (True, "Total reclaimed space: 4.2GB\n", 0, 0, 0)
+        self.original = udo.run_command
+        udo.run_command = self.record
+
+    def tearDown(self):
+        udo.run_command = self.original
+
+    def record(self, command, *_args, **_kwargs):
+        self.commands.append(command)
+        return self.result
+
+    def test_it_prunes_the_whole_builder_cache(self):
+        udo.drop_builder_cache_before_retry()
+        self.assertEqual(self.commands, ["docker builder prune -af"])
+
+    def test_no_container_or_image_is_touched(self):
+        """A build leaves cache behind; a stopped container is someone's work."""
+        udo.drop_builder_cache_before_retry()
+        for command in self.commands:
+            self.assertNotIn("system prune", command)
+            self.assertNotIn("container prune", command)
+            self.assertNotIn("image prune", command)
+
+    def test_a_failing_prune_does_not_stop_the_retry(self):
+        """The retry is the point; the prune only improves its odds."""
+        self.result = (False, "permission denied", 0, 0, 1)
+        info, warn, err = udo.drop_builder_cache_before_retry()
+        self.assertEqual((info, warn, err), (0, 0, 1))
+
+    def test_it_reports_the_counts_for_the_run_statistics(self):
+        self.result = (True, "", 3, 2, 1)
+        self.assertEqual(udo.drop_builder_cache_before_retry(), (3, 2, 1))
+
+
 if __name__ == "__main__":
     unittest.main()
