@@ -1,8 +1,8 @@
 #!/bin/bash
 ##############################################################################
 # This script is designed to be run inside the container
-# Version 2.5.0
-# Date 12.08.2026
+# Version 2.6.0
+# Date 26.08.2026
 ##############################################################################
 #
 #    Shell Script for Odoo Docker Container
@@ -37,6 +37,22 @@ file="/opt/odoo/etc/odoo.conf"
 # container uses anyway silences it without changing what the run does. It goes
 # before "$@" so an explicit argument from the caller still wins.
 interface_argument="--http-interface=0.0.0.0"
+
+# 'update' and 'neutralize' run without -c on purpose (see above), and that also
+# drops data_dir - Odoo then falls back to its default under $HOME. Every
+# migration script that reads an attachment during the update (images,
+# templates, packages) sees an empty filestore and fails, usually with a
+# misleading error, while the running server reads the same records without
+# trouble because it does load the configuration. Pass the one value those runs
+# cannot do without; addons_path, db_host and worker count stay out by design.
+# It goes before "$@" so an explicit argument from the caller still wins.
+data_dir_argument=""
+if [ -r "$file" ]; then
+    configured_data_dir=$(sed -n 's/^[[:space:]]*data_dir[[:space:]]*=[[:space:]]*\(.*[^[:space:]]\)[[:space:]]*$/\1/p' "$file" | tail -n 1)
+    if [ -n "$configured_data_dir" ]; then
+        data_dir_argument="--data-dir=$configured_data_dir"
+    fi
+fi
 
 # Fail hard and fast even on pipelines
 set -eo pipefail
@@ -96,10 +112,10 @@ function update {
 
     # Check if current user is already odoo
     if [ "$(whoami)" = "odoo" ]; then
-        python3 /opt/odoo/odoo-server/odoo-bin --update=all --workers=0 --stop-after-init $interface_argument $*
+        python3 /opt/odoo/odoo-server/odoo-bin --update=all --workers=0 --stop-after-init $interface_argument $data_dir_argument $*
     else
         # Use su instead of sudo for user switching
-        su - odoo --whitelist-environment=PGPASSWORD -c "python3 /opt/odoo/odoo-server/odoo-bin --update=all --workers=0 --stop-after-init $interface_argument $*"
+        su - odoo --whitelist-environment=PGPASSWORD -c "python3 /opt/odoo/odoo-server/odoo-bin --update=all --workers=0 --stop-after-init $interface_argument $data_dir_argument $*"
     fi
 
     SERVICE_PID=$!
@@ -119,10 +135,10 @@ function neutralize {
 
     # Check if current user is already odoo
     if [ "$(whoami)" = "odoo" ]; then
-        python3 /opt/odoo/odoo-server/odoo-bin neutralize --workers=0 --stop-after-init $interface_argument $*
+        python3 /opt/odoo/odoo-server/odoo-bin neutralize --workers=0 --stop-after-init $interface_argument $data_dir_argument $*
     else
         # Use su instead of sudo for user switching
-        su - odoo --whitelist-environment=PGPASSWORD -c "python3 /opt/odoo/odoo-server/odoo-bin neutralize --workers=0 --stop-after-init $interface_argument $*"
+        su - odoo --whitelist-environment=PGPASSWORD -c "python3 /opt/odoo/odoo-server/odoo-bin neutralize --workers=0 --stop-after-init $interface_argument $data_dir_argument $*"
     fi
 
     SERVICE_PID=$!

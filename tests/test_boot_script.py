@@ -71,6 +71,59 @@ def run_boot(version, *arguments):
             return [line for line in handle.read().splitlines() if line]
 
 
+def run_boot_with_configuration(version, configuration, *arguments):
+    """Run a boot script against a configuration file of our own.
+
+    The path to odoo.conf is fixed inside the script, so the script is copied
+    and the path rewritten in the copy. Nothing in the shipped file changes for
+    the sake of the test - what runs here is otherwise the same code the
+    container runs, including the sed that reads the value.
+
+    ``configuration`` is the file content, or None for "no file at all".
+    """
+    with tempfile.TemporaryDirectory() as tmp:
+        fake_bin = os.path.join(tmp, "bin")
+        os.makedirs(fake_bin)
+        recorded = os.path.join(tmp, "arguments")
+        conf = os.path.join(tmp, "odoo.conf")
+        if configuration is not None:
+            with open(conf, "w", encoding="utf8") as handle:
+                handle.write(configuration)
+
+        with open(boot_path(version), encoding="utf8") as handle:
+            script = handle.read()
+        original = 'file="/opt/odoo/etc/odoo.conf"'
+        if original not in script:
+            raise AssertionError(f"{version}: the configuration path moved")
+        copied = os.path.join(tmp, "boot")
+        write_executable(copied, script.replace(original, f'file="{conf}"'))
+
+        write_executable(os.path.join(fake_bin, "whoami"), "#!/bin/sh\necho odoo\n")
+        write_executable(
+            os.path.join(fake_bin, "python3"),
+            '#!/bin/sh\nprintf "%s\\n" "$@" > "$RECORDED_ARGUMENTS"\n',
+        )
+
+        environment = dict(os.environ)
+        environment["PATH"] = fake_bin + os.pathsep + environment.get("PATH", "")
+        environment["RECORDED_ARGUMENTS"] = recorded
+
+        result = subprocess.run(
+            ["bash", copied] + list(arguments),
+            env=environment,
+            capture_output=True,
+            text=True,
+            timeout=60,
+        )
+        if not os.path.isfile(recorded):
+            raise AssertionError(
+                "odoo-bin was never called.\n"
+                f"stdout: {result.stdout}\nstderr: {result.stderr}"
+            )
+        with open(recorded, encoding="utf8") as handle:
+            return [line for line in handle.read().splitlines() if line]
+
+
 class BootUpdateTest(unittest.TestCase):
     """The update run is the one that produced the warning in the doup report."""
 
@@ -139,6 +192,64 @@ class BootOtherVersionsTest(unittest.TestCase):
             with self.subTest(version=version):
                 with open(boot_path(version), encoding="utf8") as handle:
                     self.assertNotIn("--http-interface", handle.read())
+
+
+class BootDataDirTest(unittest.TestCase):
+    """'update' and 'neutralize' run without -c, which used to drop data_dir too.
+
+    Odoo then wrote to its default under $HOME while the filestore sat under the
+    configured directory, so every migration reading an attachment during the
+    update saw an empty filestore. Only that one value is carried over -
+    addons_path, db_host and worker count stay out, which is the whole point of
+    the bare run.
+    """
+
+    CONFIGURATION = "[options]\naddons_path = /somewhere/else\ndata_dir = /opt/odoo/data\n"
+
+    def test_update_carries_the_configured_data_dir(self):
+        for version in ("v16-odoo", "v18-odoo", "v19-odoo"):
+            with self.subTest(version=version):
+                arguments = run_boot_with_configuration(
+                    version, self.CONFIGURATION, "update", "--database=demo")
+                self.assertIn("--data-dir=/opt/odoo/data", arguments)
+
+    def test_neutralize_carries_the_configured_data_dir(self):
+        for version in ("v16-odoo", "v18-odoo", "v19-odoo"):
+            with self.subTest(version=version):
+                arguments = run_boot_with_configuration(
+                    version, self.CONFIGURATION, "neutralize", "--database=demo")
+                self.assertIn("--data-dir=/opt/odoo/data", arguments)
+
+    def test_nothing_else_leaks_out_of_the_configuration(self):
+        arguments = run_boot_with_configuration(
+            "v19-odoo", self.CONFIGURATION, "update", "--database=demo")
+        self.assertNotIn("-c", arguments)
+        self.assertFalse([a for a in arguments if "addons" in a])
+
+    def test_the_callers_argument_still_wins(self):
+        arguments = run_boot_with_configuration(
+            "v19-odoo", self.CONFIGURATION,
+            "update", "--database=demo", "--data-dir=/explicit")
+        self.assertLess(arguments.index("--data-dir=/opt/odoo/data"),
+                        arguments.index("--data-dir=/explicit"))
+
+    def test_a_commented_out_or_empty_value_is_ignored(self):
+        for configuration in ("[options]\n; data_dir = /commented\n", "[options]\ndata_dir =\n"):
+            with self.subTest(configuration=configuration):
+                arguments = run_boot_with_configuration(
+                    "v19-odoo", configuration, "update", "--database=demo")
+                self.assertFalse([a for a in arguments if a.startswith("--data-dir")])
+
+    def test_a_missing_configuration_file_does_not_stop_the_run(self):
+        arguments = run_boot_with_configuration(
+            "v19-odoo", None, "update", "--database=demo")
+        self.assertIn("--update=all", arguments)
+        self.assertFalse([a for a in arguments if a.startswith("--data-dir")])
+
+    def test_start_does_not_get_the_flag(self):
+        """It reads the configuration itself; passing it again says nothing."""
+        arguments = run_boot_with_configuration("v19-odoo", self.CONFIGURATION, "start")
+        self.assertFalse([a for a in arguments if a.startswith("--data-dir")])
 
 
 if __name__ == "__main__":
