@@ -1,5 +1,56 @@
 # Release Notes
 
+## The Update Ran Without Its Own Configuration (26.08.2026)
+
+*Dockerfiles/v19-odoo/bin/boot v2.6.0 · Dockerfiles/v16-odoo/bin/boot v2.3.0 ·
+Dockerfiles/v18-odoo/bin/boot v2.3.0 · scripts/update_docker_odoo.py v5.18.0 ·
+tests/test_boot_script.py · tests/test_update_docker_odoo.py ·
+docs/usage/08-troubleshooting.md*
+
+### Fixed
+
+- **`update` and `neutralize` lost `data_dir` along with the configuration file.**
+  They start `odoo-bin` without `-c` on purpose, so they cannot inherit the
+  customer's `addons_path`, `db_host` or worker count. Nobody had noticed that this
+  also drops `data_dir`: Odoo then falls back to `$HOME/.local/share/Odoo` while the
+  filestore sits under `/opt/odoo/data`. The running server never saw it — it does
+  read the configuration. Migration scripts running during the update did: every one
+  that touches an attachment saw an empty filestore. Odoo returns empty content for a
+  file it cannot read rather than raising, so the failure surfaced as whatever the
+  script made of empty input. At biwe on 26.08.2026 that was 168 SCORM packages
+  reporting "File is not a zip file", with the real cause — `FileNotFoundError` under
+  `/opt/odoo/.local/share/Odoo/filestore/<db>` — buried above it in the log. The one
+  value those runs cannot do without is now read out of `odoo.conf` and passed as
+  `--data-dir`, before `"$@"` so an explicit argument still wins. A commented-out or
+  empty setting, or a missing configuration file, leaves the run exactly as it was.
+  All three versions were affected and all three are fixed.
+- **The build retry reused the cache that had just produced the hollow layers.**
+  `--no-cache` tells Docker not to USE the cache; it does not remove it. On RZ-OD02
+  the retry reported `rebuild image odoo/test ... ok (0s)` and handed back the same
+  unusable image, twice in a row — a rebuild that finishes in no time has rebuilt
+  nothing. The retry now empties the builder cache (`docker builder prune -af`) and
+  builds `--no-cache --pull`, which is the combination that finally produced a usable
+  image there. It runs only in the branch that already handles detected hollow layers,
+  never on an ordinary build, and is never fatal: a prune that fails must not swallow
+  the retry. No container, image or network is touched — the repository's Docker rule
+  requires that and a test asserts it. The cost is real and the warning says so: the
+  second attempt now takes as long as a full build.
+
+### Changed
+
+- **The advice printed after two failed builds was one-sided.** It named the daemon
+  restart as the cure and declared the build cache ruled out, on the strength of a
+  single observation from 17.08.2026. On 26.08.2026 the opposite held: `docker builder
+  prune -af` plus a scratch build fixed it while a daemon restart did nothing. Both
+  cures are now named, cheapest first, and the text says plainly what it had never
+  mentioned — that a daemon restart interrupts every container on the host, production
+  included. Whether the defect is host-specific is still open: every recorded
+  occurrence may be the same server, which carries six containers where a normal host
+  has two.
+- **Troubleshooting gained the missing-filestore signature** (DE/EN): hundreds of
+  `FileNotFoundError` under `~/.local/share/Odoo/filestore/<db>` during a module
+  update, while the running server reads the same files without trouble.
+
 ## Half of a Lost Configuration Was Invisible (25.08.2026)
 
 *scripts/server-readiness.py v1.6.0 · scripts/ownerp_migrate.py v1.5.0 ·
