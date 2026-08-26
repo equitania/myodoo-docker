@@ -754,5 +754,43 @@ class ExternalValidationTest(unittest.TestCase):
                          "ownerp_validate.py"))
 
 
+class BuildRetryCommandTest(unittest.TestCase):
+    """The retry exists for hollow layers, which live in the cache the first
+    attempt just wrote. On a customer server on 26.08.2026 the retry finished
+    in 0 s and produced the same unusable image - twice."""
+
+    def test_the_first_attempt_uses_the_cache(self):
+        command = udo.build_command_for_attempt("odoo/test", 1)
+        self.assertNotIn("--no-cache", command)
+        self.assertNotIn("--pull", command)
+
+    def test_the_retry_builds_from_scratch(self):
+        command = udo.build_command_for_attempt("odoo/test", 2)
+        self.assertIn("--no-cache", command)
+        self.assertIn("--pull", command)
+
+    def test_the_first_attempt_honours_the_configured_cache_flag(self):
+        command = udo.build_command_for_attempt("odoo/test", 1, cache_arg="--no-cache ")
+        self.assertIn("--no-cache", command)
+
+    def test_the_retry_does_not_duplicate_the_cache_flag(self):
+        command = udo.build_command_for_attempt("odoo/test", 2, cache_arg="--no-cache ")
+        self.assertEqual(command.count("--no-cache"), 1)
+
+    def test_proxy_build_args_survive_both_attempts(self):
+        for attempt in (1, 2):
+            with self.subTest(attempt=attempt):
+                command = udo.build_command_for_attempt(
+                    "odoo/test", attempt, proxy_build_args="--build-arg HTTP_PROXY=x ")
+                self.assertIn("--build-arg HTTP_PROXY=x", command)
+
+    def test_the_image_is_tagged_and_the_context_is_the_current_directory(self):
+        for attempt in (1, 2):
+            with self.subTest(attempt=attempt):
+                command = udo.build_command_for_attempt("odoo/test", attempt)
+                self.assertIn("-t odoo/test", command)
+                self.assertTrue(command.rstrip().endswith(" ."))
+
+
 if __name__ == "__main__":
     unittest.main()

@@ -1,8 +1,8 @@
 #!/usr/bin/python3
 # -*- coding: utf-8 -*-
 # This script performs an update of an Odoo database in a Docker container
-# Version 5.16.0
-# Date 17.08.2026
+# Version 5.17.0
+# Date 26.08.2026
 ##############################################################################
 #
 #    Shell Script for Odoo, Open Source Management Solution
@@ -77,8 +77,8 @@ logger = logging.getLogger(__name__)
 # Kept in sync with the header comment above. Printed at the start of every run
 # so a pasted log says which version produced it — the single most common
 # question when a report comes back from a server.
-SCRIPT_VERSION = "5.16.0"
-SCRIPT_DATE = "17.08.2026"
+SCRIPT_VERSION = "5.17.0"
+SCRIPT_DATE = "26.08.2026"
 
 # Set by --no-cache. A module-level flag rather than another parameter through
 # process_container(): the build is six call levels below the argument parser,
@@ -1191,6 +1191,34 @@ def build_proxy_env(proxy_settings):
         env[key.upper()] = value
     return env
 
+def build_command_for_attempt(image, attempt, cache_arg="", proxy_build_args=""):
+    """Return the `docker build` command line for this attempt.
+
+    The retry exists for the hollow-layer defect of Docker >=29 (moby#52431),
+    and hollow layers live in the very cache the first attempt just wrote.
+    Reusing it reproduces them: on a customer server on 26.08.2026 the retry
+    reported "ok (0s)" and handed back the same unusable image, twice in a row.
+    A rebuild that finishes in no time has rebuilt nothing.
+
+    The second attempt therefore starts from nothing and re-pulls the base
+    image. That costs a full build - ten to twenty minutes where the first
+    attempt took seconds off the cache - which is why the caller says so in the
+    warning it prints: an operator who is not told will read the pause as a
+    hang.
+
+    Args:
+        image: Image name the build tags
+        attempt: 1 for the first build, higher for a retry
+        cache_arg: Cache flag the first attempt uses (from BUILD_NO_CACHE)
+        proxy_build_args: Proxy build-args, already formatted with a trailing space
+
+    Returns:
+        str: The complete docker build command
+    """
+    flags = "--no-cache --pull " if attempt > 1 else cache_arg
+    return f"docker build {flags}{proxy_build_args}-t {image} ."
+
+
 def build_proxy_build_args(proxy_settings):
     """Build 'docker build' --build-arg options (trailing space included) so RUN
     steps inside the image build reach the internet through the proxy.
@@ -1216,18 +1244,23 @@ HOLLOW_BUILD_SIGNATURES = (
 # retry has also failed. Shared by both shapes of the fault.
 HOLLOW_IMAGE_ADVICE = (
     "This is the hollow-layer defect of Docker >=29 (moby/moby#52431), and it is\n"
-    "SPORADIC - a plain rebuild often succeeds, which is why one was already\n"
-    "attempted. That it failed twice makes the daemon's state the next suspect.\n"
+    "SPORADIC. A retry was already made, and since v5.17.0 that retry builds from\n"
+    "scratch (--no-cache --pull) - so this run's build cache is already ruled out.\n"
     "\n"
-    "The overlay mounts held by the RUNNING DAEMON are the usual cause, not the\n"
-    "build cache: on a customer server on 17.08.2026 'docker builder prune -af'\n"
-    "and --no-cache both failed to help while a daemon restart did.\n"
+    "Two cures are known and NEITHER works every time. On a customer server on\n"
+    "17.08.2026 a daemon restart fixed it while 'docker builder prune -af' and\n"
+    "--no-cache did not; on 26.08.2026 it was exactly the other way round. Take\n"
+    "the cheaper one first - a daemon restart interrupts EVERY container on this\n"
+    "host, production included:\n"
     "\n"
-    "  systemctl restart docker     release the daemon's overlay mounts\n"
+    "  docker builder prune -af       drop the builder cache, then:\n"
+    "  <this script> -s <container>   build again\n"
+    "\n"
+    "  systemctl restart docker       release the daemon's overlay mounts, then:\n"
     "  <this script> -s <container>   build again\n"
     "\n"
     "Containers with restart=always come back on their own. If it is still\n"
-    "hollow after that, only a reboot clears the mounts.\n"
+    "hollow after both, only a reboot clears the mounts.\n"
     "\n"
     "A pinned overlay2 storage driver does NOT prevent this: the fault is in the\n"
     "mounts, not in the image store - that server had the pin set. The kernel\n"
@@ -1807,7 +1840,6 @@ def _process_container(container, proxy_settings=None, dockerfiles_source=None,
     build_env["DOCKER_BUILDKIT"] = "1"
     cache_arg = "--no-cache " if BUILD_NO_CACHE else ""
 
-    build_command = f"docker build {cache_arg}{proxy_build_args}-t {image} ."
 
     # Docker >=29 sporadically produces layers that carry nothing (moby#52431),
     # in two shapes: the build failing because the first RUN finds no /bin/sh, or
@@ -1822,7 +1854,7 @@ def _process_container(container, proxy_settings=None, dockerfiles_source=None,
     for attempt in (1, 2):
         success, output, info, warn, err = run_stream(
             f"build image {image}" if attempt == 1 else f"rebuild image {image}",
-            build_command,
+            build_command_for_attempt(image, attempt, cache_arg, proxy_build_args),
             timeout=3600, env=build_env,
             filter_output=should_filter,
             show_progress=should_filter,
@@ -1860,8 +1892,9 @@ def _process_container(container, proxy_settings=None, dockerfiles_source=None,
         if attempt == 1:
             total_warnings += 1
             logger.warning(
-                f"{image}: hollow layers from Docker's exporter. Rebuilding "
-                "once - this is sporadic and a second attempt usually works.")
+                f"{image}: hollow layers from Docker's exporter. Rebuilding once "
+                "from scratch (--no-cache --pull) - reusing the cache would only "
+                "reproduce them. This takes as long as a full build.")
             continue
 
         total_errors += 1
