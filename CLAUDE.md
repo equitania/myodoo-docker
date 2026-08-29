@@ -6,7 +6,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ### Core Development Principles
 
-**IMPORTANT: Always respond in German and start with "Aye, Aye Captain". All code documentation and commands must be written in English only. Always use context7.**
+**IMPORTANT: Always respond in German and start with "Aye, Aye Captain". All code documentation and commands must be written in English only.**
 
 ### Git Push Strategy
 
@@ -60,11 +60,8 @@ docker rmi myodoo:16 myodoo:18
 
 **Version Management**: If the header of the respective program contains a version number and a date, the version number should be incremented, and the date should be updated to today's date.
 
-**CRITICAL DATE HANDLING**: 
-1. **NEVER use hardcoded dates from previous years** - Today is June 24, 2025, not 2024!
-2. **Always query current date**: Check environment information for today's date
-3. **Use DD.MM.YYYY format**: (e.g., 24.06.2025)
-4. **Double-check month and year**: Verify against environment date information
+**CRITICAL DATE HANDLING**: Never hardcode a date. Take today's date from the
+environment information and write it as DD.MM.YYYY.
 
 **UTF-8 ENCODING REQUIREMENT**:
 1. **Always use UTF-8 encoding** for all strings, file operations, and text processing
