@@ -11,9 +11,13 @@ in this repository, stay in `CLAUDE.md`.
 
 ### Key Components
 
-#### 1. getScripts.py (v9.12.0)
+#### 1. getScripts.py (v9.22.0)
 - **Purpose**: Main installation and update script
 - **Features**:
+  - `--proxy-check` (v9.22.0) seeds `no_proxy` with the same intranet defaults
+    `update_docker_odoo.py` applies at run time — loopback, `.local`, the
+    private ranges, the host's own IPv4s and its DNS search domains — and asks
+    only for exceptions beyond that
   - Lean console output: without `-v` only server-optimization status,
     warnings and errors reach the screen; every INFO line and all child
     process output (apt, git, curl) go to `~/getscripts.log`. A failed command
@@ -237,7 +241,7 @@ in this repository, stay in `CLAUDE.md`.
   carry both instructions **and** the `ca-certificates/` directory beside them —
   a `COPY` without its directory would break every fresh build
 
-#### 6. ownerp_validate.py (v1.0.0)
+#### 6. ownerp_validate.py (v1.1.0)
 - **Purpose**: Read-only validation of `docker2update.yaml` and
   `container2backup.yaml` against their declared schemas — no other script
   writes as much unattended config as these two, so a typo surfaces at `doval`
@@ -246,7 +250,8 @@ in this repository, stay in `CLAUDE.md`.
   `"11000"`, `"127.0.0.1:11000"`, `"[::1]:11000"`), duplicate container/database
   names and duplicate host ports **among active entries only**, whether
   configured paths exist (a warning, not an error), and unknown keys with a
-  suggestion from the closest known name (also a warning)
+  suggestion from the closest known name (also a warning). The proxy block
+  accepts `bypass_intranet` (bool) since v1.1.0
 - **`active: false` blocks are checked in full**, but their findings are
   downgraded to warnings prefixed `(inactive)` — a parked block never turns
   the exit code red
