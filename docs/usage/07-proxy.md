@@ -69,7 +69,8 @@ defaults:
   proxy:                                    # wget, docker build UND der Container
     http_proxy: "http://proxy.example.com:8080"
     https_proxy: "http://proxy.example.com:8080"
-    no_proxy: "localhost,127.0.0.1,.intra.example.com"
+    no_proxy: "fr-server"                   # optional: nur, was das Intranet-Default nicht abdeckt
+    bypass_intranet: true                   # optional, Standard true
 ```
 
 Der YAML-Proxy wirkt auf `wget`, auf `docker build` (Env + `--build-arg`)
@@ -83,11 +84,38 @@ Voraussetzung ist ein Image mit `bin/boot` ≥ 2.4.0 (v16/v18) bzw. 2.7.0
 ältere Boot-Skripte verwerfen sie beim Benutzerwechsel. Ein `doup` nach
 `ups` baut das Image mit dem aktuellen Boot.
 
-`no_proxy` ist Pflicht, nicht Kür: `localhost,127.0.0.1` muss drinstehen
-(der Container-`HEALTHCHECK` ruft `wget` gegen `localhost` mit der
-Container-Umgebung auf — ohne Ausnahme läuft die Probe über den Proxy und
-der Container wird nach drei Fehlversuchen `unhealthy`), dazu jede interne
-Zone, die Odoo direkt anspricht: FastReport-API, LDAP, interne Hosts.
+**Das Intranet geht von selbst am Proxy vorbei** (seit 5.20.0,
+`bypass_intranet`, Standard `true`). Beim Lauf erweitert das Skript
+`no_proxy` um `localhost`, `127.0.0.1`, `::1`, `.local`, die privaten Bereiche
+`10.0.0.0/8`, `172.16.0.0/12` und `192.168.0.0/16` (darin liegen alle
+Docker-Netze), die eigenen IPv4-Adressen des Hosts sowie die DNS-Suchdomänen
+aus der `resolv.conf` des Hosts und aus `--dns-search` im `volume`-String —
+als Endungen, also `.intra.example.com`. Was in `no_proxy` steht, bleibt
+vorne, Doppelte fallen weg; das Log nennt, was ergänzt wurde. `localhost`
+ist dabei nicht verhandelbar: der Container-`HEALTHCHECK` ruft `wget` gegen
+`localhost` mit der Container-Umgebung auf, ohne Ausnahme liefe die Probe
+über den Proxy und der Container wäre nach drei Fehlversuchen `unhealthy`.
+
+Warum die eigenen IPs explizit dabei sind: **Eine Domain-Endung passt nie
+auf eine IP-Adresse.** Bei einem Kunden war die FastReport-API in Odoo als
+`http://10.1.12.16:8899` eingetragen, `.intra…` stand in `no_proxy`, die IP
+nicht — jeder Druck endete mit „Status Code: 503“ vom Proxy. CIDR-Einträge
+versteht nur Python-`requests`; `wget`, `apt` und Pythons `urllib` vergleichen
+reine Namens-Endungen und übergehen sie. Die Adressen der Maschine selbst
+stehen deshalb wörtlich drin, damit „FastReport neben Odoo“ in jeder
+Bibliothek direkt geht.
+
+Was `no_proxy` weiterhin von Hand braucht: **kurze Hostnamen ohne Punkt**
+(`fr-server`) und **interne Zonen außerhalb der Suchdomänen** — eine
+Proxy-Bibliothek vergleicht Namen, sie löst sie nicht auf. Für das seltene
+Netz, in dem auch interner Verkehr über den Proxy muss, schaltet
+`bypass_intranet: false` die Ergänzung ab.
+
+Prüfen, ob ein Ziel am Proxy vorbeigeht (im Container, `True` = direkt):
+
+```fish
+docker exec <container> python3 -c "import requests; print(requests.utils.should_bypass_proxies('http://10.1.12.16:8899', None))"
+```
 
 Das **Base-Image-Pull macht der Docker-Daemon** — dafür ist ausschließlich
 das systemd-Drop-in aus 18.2 zuständig. Dateien, die der Build nicht selbst
@@ -232,7 +260,8 @@ defaults:
   proxy:                                    # wget, docker build AND the container
     http_proxy: "http://proxy.example.com:8080"
     https_proxy: "http://proxy.example.com:8080"
-    no_proxy: "localhost,127.0.0.1,.intra.example.com"
+    no_proxy: "fr-server"                   # optional: only what the intranet default misses
+    bypass_intranet: true                   # optional, default true
 ```
 
 The YAML proxy applies to `wget`, to `docker build` (env + `--build-arg`)
@@ -245,11 +274,40 @@ an image with `bin/boot` ≥ 2.4.0 (v16/v18) or 2.7.0 (v19): only that version
 carries the proxy names across `su - odoo`, older boot scripts drop them at
 the user switch. A `doup` after `ups` builds the image with the current boot.
 
-`no_proxy` is mandatory, not optional: `localhost,127.0.0.1` must be in it
-(the container `HEALTHCHECK` runs `wget` against `localhost` with the
-container's environment — without the exception the probe goes through the
-proxy and the container turns `unhealthy` after three misses), plus every
-internal zone Odoo talks to directly: FastReport API, LDAP, internal hosts.
+**The intranet bypasses the proxy by itself** (since 5.20.0,
+`bypass_intranet`, default `true`). At run time the script extends
+`no_proxy` with `localhost`, `127.0.0.1`, `::1`, `.local`, the private
+ranges `10.0.0.0/8`, `172.16.0.0/12` and `192.168.0.0/16` (every Docker
+network lives in there), the host's own IPv4 addresses, and the DNS search
+domains from the host's `resolv.conf` and from `--dns-search` in the
+`volume` string — as suffixes, i.e. `.intra.example.com`. What `no_proxy`
+already lists stays first, duplicates collapse, and the log names what was
+added. `localhost` is non-negotiable: the container `HEALTHCHECK` runs
+`wget` against `localhost` with the container's environment; without the
+exception the probe would go through the proxy and the container would be
+`unhealthy` after three misses.
+
+Why the host's own IPs are listed verbatim: **a domain suffix never matches
+an IP address.** At one customer the FastReport API was configured in Odoo
+as `http://10.1.12.16:8899`, `.intra…` was in `no_proxy`, the IP was not —
+every report ended with "Status Code: 503" from the proxy. CIDR entries are
+understood by Python's `requests` only; `wget`, `apt` and Python's `urllib`
+compare plain name suffixes and skip them. The machine's own addresses are
+therefore listed literally so that "FastReport next to Odoo" goes direct in
+every library.
+
+What `no_proxy` still needs from you: **short hostnames without a dot**
+(`fr-server`) and **internal zones outside the search domains** — a proxy
+library compares names, it does not resolve them. For the rare network
+where internal traffic must go through the proxy too, `bypass_intranet:
+false` turns the extension off.
+
+Check whether a target bypasses the proxy (inside the container, `True` =
+direct):
+
+```fish
+docker exec <container> python3 -c "import requests; print(requests.utils.should_bypass_proxies('http://10.1.12.16:8899', None))"
+```
 
 The **base image pull is done by the Docker daemon** — only the systemd
 drop-in from 18.2 covers that. Files the build cannot fetch itself can be

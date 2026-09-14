@@ -4,8 +4,8 @@
 # Title:            ownerp_validate.py
 # Description:      Read-only validation of docker2update.yaml and
 #                   container2backup.yaml against declared schemas
-# Version:          1.0.0
-# Date:             11.08.2026
+# Version:          1.1.0
+# Date:             14.09.2026
 # Author:           Equitania Software GmbH
 # ==============================================================================
 #
@@ -35,8 +35,8 @@ try:
 except ImportError:  # pragma: no cover - depends on the machine
     yaml = None
 
-SCRIPT_VERSION = "1.0.0"
-SCRIPT_DATE = "11.08.2026"
+SCRIPT_VERSION = "1.1.0"
+SCRIPT_DATE = "14.09.2026"
 
 ERROR = "error"
 WARNING = "warning"
@@ -344,9 +344,10 @@ def validate_mapping(data, fields, path_prefix, file_path, findings,
 
 
 PROXY_FIELDS = {
-    "http_proxy":  {"type": str},
-    "https_proxy": {"type": str},
-    "no_proxy":    {"type": str},
+    "http_proxy":      {"type": str},
+    "https_proxy":     {"type": str},
+    "no_proxy":        {"type": str},
+    "bypass_intranet": {"type": bool},
 }
 
 # The item schemas are module constants rather than nested "item" rules,

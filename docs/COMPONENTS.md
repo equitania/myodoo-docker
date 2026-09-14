@@ -47,7 +47,7 @@ in this repository, stay in `CLAUDE.md`.
   - Automated restart management
   - Module updates for Odoo
 
-#### 4. update_docker_odoo.py (v5.19.0)
+#### 4. update_docker_odoo.py (v5.20.0)
 - **Purpose**: Automated Docker container updates for v16+ Odoo instances
   (image rebuild, container re-creation, module update), driven by
   `docker2update.yaml`
@@ -62,8 +62,11 @@ in this repository, stay in `CLAUDE.md`.
   - Proxy support (`defaults.proxy`, `pre_build_files`): wget, `docker build`
     (`--build-arg`) and, since v5.19.0, the container itself (`docker run -e`
     on update/neutralize/start — needs bin/boot ≥ 2.4.0/2.7.0, which whitelists
-    the proxy names across `su - odoo`); calls `odoo_build_cache.py sync`
-    before the build
+    the proxy names across `su - odoo`). Since v5.20.0 the intranet bypasses
+    the proxy by itself: `augment_no_proxy()` adds loopback, `.local`, the
+    private ranges, the host's own IPv4s and the DNS search domains (host +
+    `--dns-search`) to `no_proxy`; `bypass_intranet: false` turns that off.
+    Calls `odoo_build_cache.py sync` before the build
 - **A successful build is not a usable image** (v5.13.0, 14.08.2026).
   `verify_built_image()` runs the built image's own entrypoint through
   `test -x` before the update step. Docker ≥29 can export a **hollow** image

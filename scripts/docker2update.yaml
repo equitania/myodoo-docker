@@ -23,7 +23,8 @@
 #     'docker run -e PGPASSWORD' instead of argv (default: true). Set to
 #     false only for legacy images without a PGPASSWORD whitelist in bin/boot -
 #     argv passwords are visible to every local user via 'ps aux'.
-#   proxy: (optional, per container) override of defaults.proxy, see below
+#   proxy: (optional, per container) override of defaults.proxy, see below;
+#     bypass_intranet: false switches the automatic intranet exceptions off
 #   pre_build_files: (optional, per container) files/directories copied into
 #     dockerfile_path BEFORE docker build - e.g. customer-specific modules that
 #     cannot be fetched during the Docker build itself
@@ -59,17 +60,23 @@
 # older boot scripts drop the variables at the 'su - odoo' user switch.
 # Resolution order: container proxy > defaults.proxy > environment variables
 # > ~/.getscripts_proxy (written by getScripts.py first-run setup).
-# no_proxy MUST list localhost and 127.0.0.1 (the container HEALTHCHECK runs
-# wget against localhost) and every internal zone Odoo talks to directly:
-# FastReport API, LDAP, other internal hosts. Whatever is missing here goes
-# through the proxy.
+# The intranet bypasses the proxy by itself (bypass_intranet, default true):
+# at run time no_proxy is extended with localhost, 127.0.0.1, ::1, .local, the
+# private ranges 10/8, 172.16/12 and 192.168/16, the host's own IPv4
+# addresses and the DNS search domains (host resolv.conf and --dns-search in
+# 'volume'). Only what that misses belongs in no_proxy: short hostnames
+# without a dot and internal zones outside the search list - a proxy library
+# compares names, it never resolves them. A domain suffix does not match an
+# IP address, which is why the host's own IPs are added verbatim (wget, apt
+# and urllib do not understand CIDR either).
 # NOTE: Base image pulls are done by the Docker daemon itself - configure the
 # daemon proxy via getScripts.py --proxy-check (systemd drop-in).
 #defaults:
 #  proxy:
 #    http_proxy: "http://proxy.customer.local:3128"
 #    https_proxy: "http://proxy.customer.local:3128"
-#    no_proxy: "localhost,127.0.0.1,.intra.customer.local"
+#    no_proxy: "fr-server,.other-internal.zone"   # optional: beyond the intranet defaults
+#    bypass_intranet: true                        # optional, default true
 #  # Local source for build_odoo.py / check_dockerimage_odoo.py / bin files.
 #  # Files are synced into each build folder when the repo copy is newer
 #  # (compared via the '# Version X.Y.Z' header). Default shown below; the

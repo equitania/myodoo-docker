@@ -1,7 +1,7 @@
 #!/usr/bin/python3
 # -*- coding: utf-8 -*-
 # This script performs an update of an Odoo database in a Docker container
-# Version 5.19.0
+# Version 5.20.0
 # Date 14.09.2026
 ##############################################################################
 #
@@ -77,7 +77,7 @@ logger = logging.getLogger(__name__)
 # Kept in sync with the header comment above. Printed at the start of every run
 # so a pasted log says which version produced it — the single most common
 # question when a report comes back from a server.
-SCRIPT_VERSION = "5.19.0"
+SCRIPT_VERSION = "5.20.0"
 SCRIPT_DATE = "26.08.2026"
 
 # Set by --no-cache. A module-level flag rather than another parameter through
@@ -684,7 +684,20 @@ check_script = "-muster/check_dockerimage_odoo.py"
 # Proxy support: recognised keys for the optional YAML proxy blocks and the
 # marker file written by getScripts.py first-run setup (KEY=VALUE lines).
 PROXY_KEYS = ('http_proxy', 'https_proxy', 'no_proxy')
+# Options that steer the script and never become environment variables.
+PROXY_OPTION_KEYS = ('bypass_intranet',)
 PROXY_MARKER_FILE = join(home_path, '.getscripts_proxy')
+
+# What bypasses the proxy on every host, unless bypass_intranet is false:
+# loopback, mDNS and the three private address ranges - every Docker network
+# lives in the last two. The host's own addresses and its DNS search domains
+# are added at run time (see augment_no_proxy). A domain suffix in no_proxy
+# never matches an IP address, and listing IPs by hand is what went wrong at
+# a customer on 14.09.2026: FastReport configured as http://10.1.12.16:8899,
+# '.intra…' listed, the IP not, every report 503 from the proxy.
+INTRANET_NO_PROXY = ('localhost', '127.0.0.1', '::1', '.local',
+                     '10.0.0.0/8', '172.16.0.0/12', '192.168.0.0/16')
+RESOLV_CONF_FILES = ('/run/systemd/resolve/resolv.conf', '/etc/resolv.conf')
 
 # Local source for build_odoo.py / check_dockerimage_odoo.py / bin files:
 # the myodoo-docker repository clone that getScripts.py keeps up to date.
@@ -774,12 +787,15 @@ Configuration File Format (YAML):
     proxy:                                        # wget downloads, docker build (env + --build-arg)
       http_proxy: "http://proxy.local:3128"       #   AND the container (docker run -e), so Odoo
       https_proxy: "http://proxy.local:3128"      #   reaches services.odoo.com. Fallback order without
-      no_proxy: "localhost,127.0.0.1,.intra.example"  # this block: container proxy > defaults.proxy >
-                                                  #   environment vars > ~/.getscripts_proxy.
-                                                  #   no_proxy MUST keep localhost (the HEALTHCHECK
-                                                  #   wget would otherwise go through the proxy) and
-                                                  #   every internal zone Odoo talks to (FastReport
-                                                  #   API, LDAP, internal hosts)
+      no_proxy: "fr-server"                       #   this block: container proxy > defaults.proxy >
+      bypass_intranet: true                       #   environment vars > ~/.getscripts_proxy.
+                                                  #   The intranet bypasses the proxy by itself:
+                                                  #   localhost, ::1, .local, 10/8, 172.16/12,
+                                                  #   192.168/16, the host's own IPs and the DNS
+                                                  #   search domains (host + --dns-search) are added
+                                                  #   to no_proxy at run time. List only what that
+                                                  #   misses: short hostnames and zones outside the
+                                                  #   search list. bypass_intranet: false turns it off
     dockerfiles_source: "~/myodoo-docker/Dockerfiles"  # Local source for build_odoo.py /
                                                   #   check_dockerimage_odoo.py / bin files
                                                   #   (default shown; kept current via 'ups')
@@ -1152,11 +1168,14 @@ def resolve_proxy_settings(config, container):
         ('defaults config', (config.get('defaults') or {}).get('proxy')),
     ):
         if isinstance(block, dict):
-            unknown_keys = [key for key in block if key not in PROXY_KEYS]
+            unknown_keys = [key for key in block
+                            if key not in PROXY_KEYS and key not in PROXY_OPTION_KEYS]
             if unknown_keys:
                 logger.warning(f"Ignoring unknown proxy keys {unknown_keys} in {source_name}")
             proxy = {key: str(block[key]) for key in PROXY_KEYS if block.get(key)}
             if proxy:
+                if 'bypass_intranet' in block:
+                    proxy['bypass_intranet'] = _is_enabled(block['bypass_intranet'])
                 logger.info(f"Using proxy settings from {source_name}")
                 return proxy
 
@@ -1185,6 +1204,82 @@ def resolve_proxy_settings(config, container):
             logger.info(f"Using proxy settings from {PROXY_MARKER_FILE}")
     return proxy
 
+def _is_enabled(value):
+    """YAML booleans arrive as bool, hand-typed ones as text - both count."""
+    if isinstance(value, str):
+        return value.strip().lower() not in ('false', 'no', 'off', '0', '')
+    return bool(value)
+
+def host_ipv4_addresses():
+    """The host's own non-loopback IPv4 addresses, or [] when unknown.
+
+    They go into no_proxy verbatim: CIDR entries are understood by requests
+    but not by wget, apt or Python's urllib, and "FastReport next to Odoo on
+    the same machine" must work in every one of them."""
+    try:
+        result = subprocess.run(['hostname', '-I'], capture_output=True, text=True, timeout=5)
+        candidates = result.stdout.split() if result.returncode == 0 else []
+    except (OSError, subprocess.SubprocessError):
+        candidates = []
+    return [ip for ip in candidates
+            if re.fullmatch(r'\d{1,3}(?:\.\d{1,3}){3}', ip) and not ip.startswith('127.')]
+
+def host_search_domains():
+    """DNS search domains of the host, from systemd-resolved's real file first
+    and the stub in /etc second; [] when neither says anything."""
+    domains = []
+    for path in RESOLV_CONF_FILES:
+        try:
+            with open(path, encoding='utf-8') as handle:
+                for line in handle:
+                    parts = line.split()
+                    if len(parts) > 1 and parts[0] in ('search', 'domain'):
+                        for name in parts[1:]:
+                            if name not in domains:
+                                domains.append(name)
+        except OSError:
+            continue
+    return domains
+
+def dns_search_from_volume(volume):
+    """Zones handed to the container via --dns-search in the raw run flags.
+    A customer with an internal DNS zone sets them there, not on the host."""
+    if not volume:
+        return []
+    return re.findall(r'--dns-search[=\s]+([^\s"\']+)', volume)
+
+def augment_no_proxy(proxy_settings, container=None):
+    """Return proxy settings whose no_proxy covers the whole intranet.
+
+    Kept in this order: what the YAML says, then INTRANET_NO_PROXY, then the
+    host's own addresses, then the DNS search domains of host and container as
+    suffixes. Duplicates collapse. bypass_intranet: false in the YAML block
+    returns the settings untouched - for the rare network where internal
+    traffic must go through the proxy too. Without a proxy there is nothing
+    to extend and the input comes back as it is."""
+    if not proxy_settings:
+        return proxy_settings
+    if 'bypass_intranet' in proxy_settings and not _is_enabled(proxy_settings['bypass_intranet']):
+        return proxy_settings
+    entries = []
+
+    def add(entry):
+        entry = entry.strip()
+        if entry and entry not in entries:
+            entries.append(entry)
+
+    for entry in (proxy_settings.get('no_proxy') or '').split(','):
+        add(entry)
+    for entry in INTRANET_NO_PROXY:
+        add(entry)
+    for address in host_ipv4_addresses():
+        add(address)
+    for domain in host_search_domains() + dns_search_from_volume((container or {}).get('volume')):
+        add('.' + domain.lstrip('.'))
+    result = dict(proxy_settings)
+    result['no_proxy'] = ','.join(entries)
+    return result
+
 def build_proxy_env(proxy_settings):
     """Build extra environment variables (lower- and uppercase) for subprocesses
     like wget, or None when no proxy is configured."""
@@ -1192,6 +1287,8 @@ def build_proxy_env(proxy_settings):
         return None
     env = {}
     for key, value in proxy_settings.items():
+        if key not in PROXY_KEYS:
+            continue
         env[key] = value
         env[key.upper()] = value
     return env
@@ -1212,6 +1309,8 @@ def build_proxy_run_args(proxy_settings):
         return ""
     args = []
     for key, value in proxy_settings.items():
+        if key not in PROXY_KEYS:
+            continue
         args.append(f'-e {key}="{value}"')
         args.append(f'-e {key.upper()}="{value}"')
     return " ".join(args) + " "
@@ -1741,6 +1840,13 @@ def _process_container(container, proxy_settings=None, dockerfiles_source=None,
     # Proxy environment for commands that need internet access (wget, docker build)
     # and for the container itself: the update, neutralize and start runs get the
     # same variables via -e, so Odoo reaches services.odoo.com through the proxy.
+    # The intranet bypasses it - see augment_no_proxy for what that covers.
+    if proxy_settings:
+        before = (proxy_settings.get('no_proxy') or '').split(',')
+        proxy_settings = augment_no_proxy(proxy_settings, container)
+        added = [e for e in proxy_settings['no_proxy'].split(',') if e not in before]
+        if added:
+            logger.info(f"no_proxy extended for the intranet: {', '.join(added)}")
     proxy_env = build_proxy_env(proxy_settings)
     proxy_run_args = build_proxy_run_args(proxy_settings)
     if proxy_env:

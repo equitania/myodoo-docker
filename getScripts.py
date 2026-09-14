@@ -136,8 +136,8 @@ if os.environ.get('GETSCRIPTS_DEBUG', '').lower() in ('1', 'true', 'yes'):
     logger.debug("Debug logging enabled")
 
 # Script version and date
-SCRIPT_VERSION = "9.21.0"
-SCRIPT_DATE = "21.08.2026"
+SCRIPT_VERSION = "9.22.0"
+SCRIPT_DATE = "14.09.2026"
 
 # ─────────────────────────────────────────────────────────────────────────────
 # Install report
@@ -4462,6 +4462,66 @@ def validate_proxy_url(url: str) -> bool:
     return bool(re.match(pattern, url))
 
 
+# What bypasses the proxy on every host: loopback, mDNS and the three private
+# address ranges. Mirrors INTRANET_NO_PROXY in update_docker_odoo.py so a shell,
+# a cron job and doup agree on what goes direct. A domain suffix never matches
+# an IP address - listing IPs by hand is what failed at a customer on
+# 14.09.2026 (FastReport at http://10.1.12.16:8899, '.intra…' listed, 503).
+INTRANET_NO_PROXY = ('localhost', '127.0.0.1', '::1', '.local',
+                     '10.0.0.0/8', '172.16.0.0/12', '192.168.0.0/16')
+RESOLV_CONF_FILES = ('/run/systemd/resolve/resolv.conf', '/etc/resolv.conf')
+
+
+def host_ipv4_addresses() -> List[str]:
+    """The host's own non-loopback IPv4 addresses, or [] when unknown. They go
+    into no_proxy verbatim because wget, apt and urllib do not understand CIDR."""
+    try:
+        result = subprocess.run(['hostname', '-I'], capture_output=True, text=True, timeout=5)
+        candidates = result.stdout.split() if result.returncode == 0 else []
+    except (OSError, subprocess.SubprocessError):
+        candidates = []
+    return [ip for ip in candidates
+            if re.fullmatch(r'\d{1,3}(?:\.\d{1,3}){3}', ip) and not ip.startswith('127.')]
+
+
+def host_search_domains() -> List[str]:
+    """DNS search domains of the host; systemd-resolved's real file first."""
+    domains: List[str] = []
+    for path in RESOLV_CONF_FILES:
+        try:
+            with open(path, encoding='utf-8') as handle:
+                for line in handle:
+                    parts = line.split()
+                    if len(parts) > 1 and parts[0] in ('search', 'domain'):
+                        for name in parts[1:]:
+                            if name not in domains:
+                                domains.append(name)
+        except OSError:
+            continue
+    return domains
+
+
+def intranet_no_proxy(entered: str) -> str:
+    """The operator's own exceptions first, then the intranet: the fixed
+    list, the host's addresses and its search domains as suffixes."""
+    entries: List[str] = []
+
+    def add(entry: str) -> None:
+        entry = entry.strip()
+        if entry and entry not in entries:
+            entries.append(entry)
+
+    for entry in (entered or '').split(','):
+        add(entry)
+    for entry in INTRANET_NO_PROXY:
+        add(entry)
+    for address in host_ipv4_addresses():
+        add(address)
+    for domain in host_search_domains():
+        add('.' + domain.lstrip('.'))
+    return ','.join(entries)
+
+
 def validate_no_proxy(no_proxy: str) -> bool:
     """Validate a no_proxy value before embedding it in the generated Fish
     config. Unlike validate_proxy_url() this is a comma-separated list of
@@ -4498,10 +4558,12 @@ def configure_proxy_settings() -> bool:
             return False
 
         https_proxy = input("HTTPS Proxy (Enter = wie HTTP): ").strip() or http_proxy
-        no_proxy = input("Ausnahmen (kommagetrennt, z.B. localhost,127.0.0.1,.local): ").strip()
+        print("Das Intranet (localhost, private Netze, eigene IPs, DNS-Suchdomänen)")
+        print("geht automatisch am Proxy vorbei. Hier nur, was darüber hinausgeht:")
+        no_proxy = input("Weitere Ausnahmen (kommagetrennt, Enter = keine): ").strip()
 
-        if not no_proxy:
-            no_proxy = "localhost,127.0.0.1,::1,.local"
+        no_proxy = intranet_no_proxy(no_proxy)
+        print(f"no_proxy = {no_proxy}")
 
         proxy_config = {
             'http_proxy': http_proxy,

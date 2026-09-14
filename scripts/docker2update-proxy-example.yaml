@@ -1,6 +1,6 @@
 # ============================================================================
 # Docker Container Update Configuration - PROXY CUSTOMER EXAMPLE
-# Date: 14.07.2026
+# Date: 14.09.2026
 # ============================================================================
 #
 # Complete example configuration for customers whose servers can only reach
@@ -26,8 +26,21 @@
 #     - the release-manager check script (downloads the release CSV)
 #     - docker build (as environment AND --build-arg, so apt/pip/urllib3
 #       INSIDE the image build reach the internet through the proxy)
+#     - the container itself (docker run -e on update/neutralize/start), so
+#       the running Odoo reaches services.odoo.com - needs an image with
+#       bin/boot >= 2.4.0 (v16/v18) or 2.7.0 (v19)
 #   Resolution order: container proxy > defaults.proxy > environment
 #   variables > ~/.getscripts_proxy (written by getScripts.py first-run).
+#
+# INTRANET:
+#   Everything inside the intranet bypasses the proxy by itself. At run time
+#   the script extends no_proxy with localhost, 127.0.0.1, ::1, .local, the
+#   private ranges 10/8, 172.16/12 and 192.168/16, the host's own IPv4
+#   addresses and the DNS search domains (host resolv.conf + --dns-search
+#   in 'volume'). What no_proxy still needs from you: short hostnames without
+#   a dot and internal zones outside the search list - a proxy library
+#   compares names, it does not resolve them. bypass_intranet: false turns
+#   the automatic extension off.
 #
 #   NOT covered here: the pull of the base image is done by the Docker
 #   daemon itself. Configure the daemon proxy once via:
@@ -52,7 +65,10 @@ defaults:
   proxy:
     http_proxy: "http://proxy.customer.local:3128"
     https_proxy: "http://proxy.customer.local:3128"
-    no_proxy: "localhost,127.0.0.1"
+    # Optional: only what the intranet defaults miss (see INTRANET above).
+    no_proxy: "fr-server"
+    # Optional, default true: the intranet bypasses the proxy automatically.
+    bypass_intranet: true
   # Optional - default shown, only set when the repo lives elsewhere:
   #dockerfiles_source: "~/myodoo-docker/Dockerfiles"
 

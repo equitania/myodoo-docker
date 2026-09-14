@@ -818,6 +818,113 @@ class ProxyRunArgsTest(unittest.TestCase):
         self.assertTrue(args.endswith(" "))
         self.assertFalse(args.startswith(" "))
 
+    def test_options_never_become_environment_variables(self):
+        args = udo.build_proxy_run_args(dict(self.PROXY, bypass_intranet=False))
+        self.assertNotIn("bypass_intranet", args)
+        env = udo.build_proxy_env(dict(self.PROXY, bypass_intranet=False))
+        self.assertNotIn("bypass_intranet", env)
+        self.assertNotIn("BYPASS_INTRANET", env)
+
+
+class IntranetNoProxyTest(unittest.TestCase):
+    """Everything in the intranet bypasses the proxy, by default.
+
+    A domain suffix in no_proxy does not cover an IP address: at bb-wertmetall
+    the FastReport API is configured as http://10.1.12.16:8899, `.intra…` was
+    listed, the IP was not, and every report failed with 503 from the proxy
+    (14.09.2026). Listing IPs by hand is the wrong tool - the private ranges,
+    the host's own addresses and its DNS search domains are known.
+    """
+
+    PROXY = {
+        "http_proxy": "http://proxy.example:8080",
+        "https_proxy": "http://proxy.example:8080",
+        "no_proxy": "localhost,127.0.0.1,.local",
+    }
+
+    def setUp(self):
+        self._addresses = udo.host_ipv4_addresses
+        self._domains = udo.host_search_domains
+        udo.host_ipv4_addresses = lambda: ["10.1.12.16", "10.1.12.17"]
+        udo.host_search_domains = lambda: ["intra.example"]
+
+    def tearDown(self):
+        udo.host_ipv4_addresses = self._addresses
+        udo.host_search_domains = self._domains
+
+    def entries(self, settings, container=None):
+        return udo.augment_no_proxy(settings, container)["no_proxy"].split(",")
+
+    def test_no_proxy_means_nothing_to_extend(self):
+        self.assertIsNone(udo.augment_no_proxy(None, {}))
+        self.assertEqual(udo.augment_no_proxy({}, {}), {})
+
+    def test_loopback_and_the_private_ranges_are_added(self):
+        kept = self.entries(self.PROXY)
+        for entry in ("localhost", "127.0.0.1", "::1", ".local",
+                      "10.0.0.0/8", "172.16.0.0/12", "192.168.0.0/16"):
+            self.assertIn(entry, kept)
+
+    def test_the_hosts_own_addresses_are_added_explicitly(self):
+        # CIDR is understood by requests but not by wget or urllib - the
+        # addresses of the machine itself go in verbatim so that the usual
+        # "FastReport next to Odoo" case works in every library.
+        kept = self.entries(self.PROXY)
+        self.assertIn("10.1.12.16", kept)
+        self.assertIn("10.1.12.17", kept)
+
+    def test_the_hosts_search_domains_are_added_as_suffixes(self):
+        self.assertIn(".intra.example", self.entries(self.PROXY))
+
+    def test_dns_search_from_the_container_volume_string_counts_too(self):
+        container = {"volume": "--network net --dns 10.1.12.1 --dns-search intra.customer.ch -v /a:/b"}
+        self.assertIn(".intra.customer.ch", self.entries(self.PROXY, container))
+        container = {"volume": "--dns-search=other.zone"}
+        self.assertIn(".other.zone", self.entries(self.PROXY, container))
+
+    def test_yaml_entries_survive_first_and_duplicates_collapse(self):
+        settings = dict(self.PROXY, no_proxy="localhost,.intra.example,10.0.0.0/8,fr-server")
+        kept = self.entries(settings)
+        self.assertEqual(kept[0], "localhost")
+        self.assertIn("fr-server", kept)
+        self.assertEqual(kept.count("localhost"), 1)
+        self.assertEqual(kept.count(".intra.example"), 1)
+        self.assertEqual(kept.count("10.0.0.0/8"), 1)
+
+    def test_a_missing_no_proxy_still_gets_the_intranet(self):
+        settings = {"http_proxy": "http://proxy.example:8080"}
+        self.assertIn("10.0.0.0/8", self.entries(settings))
+
+    def test_bypass_intranet_false_leaves_the_list_alone(self):
+        for off in (False, "false", "no", 0):
+            with self.subTest(value=off):
+                settings = dict(self.PROXY, bypass_intranet=off)
+                self.assertEqual(udo.augment_no_proxy(settings, {})["no_proxy"], self.PROXY["no_proxy"])
+
+    def test_the_other_settings_are_untouched(self):
+        result = udo.augment_no_proxy(self.PROXY, {})
+        self.assertEqual(result["http_proxy"], self.PROXY["http_proxy"])
+        self.assertEqual(result["https_proxy"], self.PROXY["https_proxy"])
+        self.assertEqual(self.PROXY["no_proxy"], "localhost,127.0.0.1,.local")  # input not mutated
+
+    def test_the_option_is_carried_out_of_the_yaml_block(self):
+        config = {"defaults": {"proxy": dict(self.PROXY, bypass_intranet=False)}}
+        resolved = udo.resolve_proxy_settings(config, {})
+        self.assertIs(resolved.get("bypass_intranet"), False)
+        self.assertEqual(resolved["no_proxy"], self.PROXY["no_proxy"])
+
+
+class DnsSearchFromVolumeTest(unittest.TestCase):
+    def test_both_spellings_and_several_zones(self):
+        self.assertEqual(
+            udo.dns_search_from_volume("--dns-search a.zone --dns-search=b.zone -v /x:/y"),
+            ["a.zone", "b.zone"])
+
+    def test_nothing_without_the_flag(self):
+        self.assertEqual(udo.dns_search_from_volume("--network net -v /x:/y"), [])
+        self.assertEqual(udo.dns_search_from_volume(""), [])
+        self.assertEqual(udo.dns_search_from_volume(None), [])
+
 
 class BuilderCachePruneTest(unittest.TestCase):
     """--no-cache tells Docker not to USE the cache; it does not remove it.

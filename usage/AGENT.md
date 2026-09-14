@@ -157,14 +157,18 @@ Installs: backups 02:00+14:00 · ssl-renew 00:00 · cert-guard 23:50 · weblog p
 
 ### Configure a server behind an HTTP proxy
 ```bash
-python3 ~/getScripts.py --proxy-check   # writes fish conf.d, /etc/environment, marker, docker daemon drop-in
+python3 ~/getScripts.py --proxy-check   # writes fish conf.d, /etc/environment, marker, docker daemon drop-in;
+                                        # no_proxy gets the same intranet defaults as doup (≥ 9.22.0)
 systemctl restart docker                # maintenance window — restarts ALL containers
 ```
 Pin the proxy in `docker2update.yaml` (`defaults.proxy`): it drives `wget`, `docker build` AND
 the container itself (`docker run -e`, update_docker_odoo ≥ 5.19.0 with bin/boot ≥ 2.4.0/2.7.0) —
-without it the running Odoo has no proxy and cannot register the database. `no_proxy` must
-keep `localhost,127.0.0.1` (HEALTHCHECK) plus every internal zone Odoo talks to. Full
-walkthrough: `docs/usage/07-proxy.md`.
+without it the running Odoo has no proxy and cannot register the database. The intranet bypasses
+the proxy by itself (≥ 5.20.0, `bypass_intranet` default true): `no_proxy` is extended at run time
+with loopback, `.local`, 10/8, 172.16/12, 192.168/16, the host's own IPv4s and the DNS search
+domains (host resolv.conf + `--dns-search` in `volume`). Hand-list only short hostnames and zones
+outside the search list — a domain suffix never matches an IP, and only `requests` understands
+CIDR (wget/apt/urllib do not). Full walkthrough: `docs/usage/07-proxy.md`.
 
 ## Guardrails & gotchas
 - **Destructive:** `doup` (type `F`) **stops, removes and re-creates** the target container and

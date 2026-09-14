@@ -1,5 +1,43 @@
 # Release Notes
 
+## The Intranet Bypasses the Proxy by Itself (14.09.2026)
+
+*scripts/update_docker_odoo.py v5.20.0 · getScripts.py v9.22.0 ·
+scripts/ownerp_validate.py v1.1.0 · scripts/docker2update.yaml ·
+scripts/docker2update-proxy-example.yaml · tests/test_update_docker_odoo.py ·
+tests/test_getscripts_proxy.py · docs/usage/07-proxy.md · usage/AGENT.md*
+
+### Fixed
+
+- **A domain suffix in `no_proxy` did not cover an IP address.** Hours after the
+  proxy reached the running container (release below), the FastReport API at
+  bb-wertmetall — configured in Odoo as `http://10.1.12.16:8899` — failed with
+  "Status Code: 503": `.intra.bb-wertmetall.ch` was in `no_proxy`, the IP was not,
+  so `requests` sent the call to the proxy, which could not reach the internal
+  host. Direct from the container the API answered. Listing IPs by hand is the
+  wrong tool for this — the next customer trips over the next address.
+
+### Changed
+
+- **Everything in the intranet bypasses the proxy, by default.** When a proxy is
+  active, `update_docker_odoo.py` extends `no_proxy` at run time with `localhost`,
+  `127.0.0.1`, `::1`, `.local`, the private ranges `10.0.0.0/8`, `172.16.0.0/12`
+  and `192.168.0.0/16` (every Docker network lives there), the host's own IPv4
+  addresses, and the DNS search domains from the host's `resolv.conf` and from
+  `--dns-search` in the container's `volume` string — as suffixes. YAML entries
+  stay first, duplicates collapse, the log names what was added. The host's own
+  addresses go in verbatim because CIDR is understood by `requests` only: `wget`
+  (the HEALTHCHECK), `apt` and Python's `urllib` compare plain suffixes. A new
+  option `bypass_intranet: false` in the proxy block turns the extension off;
+  `ownerp_validate.py` knows the key. Hosts without a proxy see no change.
+- **`getScripts.py --proxy-check` seeds the same intranet defaults** into the
+  fish config, `/etc/environment` and the marker file, so a shell, a cron job and
+  `doup` agree on what goes direct. The prompt now asks only for what lies beyond
+  the intranet.
+- **What still has to be listed by hand** — and the documentation says so: short
+  hostnames without a dot and internal zones outside the search list. A proxy
+  library compares names; it never resolves them.
+
 ## The Proxy Never Reached the Running Odoo (14.09.2026)
 
 *scripts/update_docker_odoo.py v5.19.0 · Dockerfiles/v16-odoo/bin/boot v2.4.0 ·
