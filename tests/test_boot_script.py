@@ -252,5 +252,84 @@ class BootDataDirTest(unittest.TestCase):
         self.assertFalse([a for a in arguments if a.startswith("--data-dir")])
 
 
+def run_boot_as_root(version, *arguments):
+    """Run a boot script as 'root' and return the argument list 'su' was given.
+
+    The container starts the entrypoint as root, so the real code path is the
+    'su - odoo' branch, which the other helpers never reach (their whoami says
+    odoo). A recorded 'su' shows exactly what the user switch is told to keep.
+    """
+    with tempfile.TemporaryDirectory() as tmp:
+        fake_bin = os.path.join(tmp, "bin")
+        os.makedirs(fake_bin)
+        recorded = os.path.join(tmp, "arguments")
+
+        write_executable(os.path.join(fake_bin, "whoami"), "#!/bin/sh\necho root\n")
+        write_executable(os.path.join(fake_bin, "chown"), "#!/bin/sh\nexit 0\n")
+        write_executable(
+            os.path.join(fake_bin, "su"),
+            '#!/bin/sh\nprintf "%s\\n" "$@" > "$RECORDED_ARGUMENTS"\n',
+        )
+
+        environment = dict(os.environ)
+        environment["PATH"] = fake_bin + os.pathsep + environment.get("PATH", "")
+        environment["RECORDED_ARGUMENTS"] = recorded
+
+        result = subprocess.run(
+            ["bash", boot_path(version)] + list(arguments),
+            env=environment,
+            capture_output=True,
+            text=True,
+            timeout=60,
+        )
+        if not os.path.isfile(recorded):
+            raise AssertionError(
+                "su was never called.\n"
+                f"stdout: {result.stdout}\nstderr: {result.stderr}"
+            )
+        with open(recorded, encoding="utf8") as handle:
+            return [line for line in handle.read().splitlines() if line]
+
+
+class BootProxyEnvironmentTest(unittest.TestCase):
+    """'su -' opens a login shell and drops the environment except for what is
+    whitelisted. A proxy that docker run hands to the container therefore never
+    reached odoo-bin: publisher_warranty went out directly and the database
+    could not be registered (bb-wertmetall, 14.09.2026). The sudoers env_keep
+    that used to fix this is dead since the switch from sudo to su in 2.1.0.
+    """
+
+    PROXY_VARIABLES = (
+        "http_proxy", "https_proxy", "no_proxy",
+        "HTTP_PROXY", "HTTPS_PROXY", "NO_PROXY",
+    )
+
+    def whitelist(self, version, *arguments):
+        su_arguments = run_boot_as_root(version, *arguments)
+        options = [a for a in su_arguments if a.startswith("--whitelist-environment=")]
+        self.assertEqual(len(options), 1, su_arguments)
+        return options[0].split("=", 1)[1].split(",")
+
+    def test_start_keeps_the_proxy_variables_across_su(self):
+        for version in ("v16-odoo", "v18-odoo", "v19-odoo"):
+            with self.subTest(version=version):
+                kept = self.whitelist(version, "start")
+                for name in self.PROXY_VARIABLES:
+                    self.assertIn(name, kept)
+
+    def test_update_and_neutralize_keep_them_too(self):
+        for version in ("v16-odoo", "v18-odoo", "v19-odoo"):
+            for command in ("update", "neutralize"):
+                with self.subTest(version=version, command=command):
+                    kept = self.whitelist(version, command, "--database=demo")
+                    for name in self.PROXY_VARIABLES:
+                        self.assertIn(name, kept)
+
+    def test_the_password_whitelist_survives(self):
+        for version in ("v16-odoo", "v18-odoo", "v19-odoo"):
+            with self.subTest(version=version):
+                self.assertIn("PGPASSWORD", self.whitelist(version, "start"))
+
+
 if __name__ == "__main__":
     unittest.main()

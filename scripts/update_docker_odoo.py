@@ -1,8 +1,8 @@
 #!/usr/bin/python3
 # -*- coding: utf-8 -*-
 # This script performs an update of an Odoo database in a Docker container
-# Version 5.18.0
-# Date 26.08.2026
+# Version 5.19.0
+# Date 14.09.2026
 ##############################################################################
 #
 #    Shell Script for Odoo, Open Source Management Solution
@@ -77,7 +77,7 @@ logger = logging.getLogger(__name__)
 # Kept in sync with the header comment above. Printed at the start of every run
 # so a pasted log says which version produced it — the single most common
 # question when a report comes back from a server.
-SCRIPT_VERSION = "5.18.0"
+SCRIPT_VERSION = "5.19.0"
 SCRIPT_DATE = "26.08.2026"
 
 # Set by --no-cache. A module-level flag rather than another parameter through
@@ -771,10 +771,15 @@ Configuration File Format (YAML):
           target: "custom-addons/"                #   relative to dockerfile_path (default ".")
 
   defaults:                                       # Optional global section
-    proxy:                                        # Used for wget downloads and docker build
-      http_proxy: "http://proxy.local:3128"       #   (env + --build-arg). Fallback order without
-      https_proxy: "http://proxy.local:3128"      #   this block: container proxy > defaults.proxy >
-      no_proxy: "localhost,127.0.0.1"             #   environment vars > ~/.getscripts_proxy
+    proxy:                                        # wget downloads, docker build (env + --build-arg)
+      http_proxy: "http://proxy.local:3128"       #   AND the container (docker run -e), so Odoo
+      https_proxy: "http://proxy.local:3128"      #   reaches services.odoo.com. Fallback order without
+      no_proxy: "localhost,127.0.0.1,.intra.example"  # this block: container proxy > defaults.proxy >
+                                                  #   environment vars > ~/.getscripts_proxy.
+                                                  #   no_proxy MUST keep localhost (the HEALTHCHECK
+                                                  #   wget would otherwise go through the proxy) and
+                                                  #   every internal zone Odoo talks to (FastReport
+                                                  #   API, LDAP, internal hosts)
     dockerfiles_source: "~/myodoo-docker/Dockerfiles"  # Local source for build_odoo.py /
                                                   #   check_dockerimage_odoo.py / bin files
                                                   #   (default shown; kept current via 'ups')
@@ -1190,6 +1195,26 @@ def build_proxy_env(proxy_settings):
         env[key] = value
         env[key.upper()] = value
     return env
+
+def build_proxy_run_args(proxy_settings):
+    """Build 'docker run' -e options (trailing space included) so the Odoo
+    process inside the container reaches the internet through the proxy.
+
+    The build-args cover only the RUN steps of the build; Docker deliberately
+    keeps them out of the image's ENV. Until 5.19.0 nothing carried the proxy
+    into the running container, so on a proxy-only host publisher_warranty
+    went out directly and the database could not be registered. Both spellings
+    go in: Python's requests reads the lower-case names first, other tools the
+    upper-case ones. The image's boot script must whitelist them across
+    'su -' (bin/boot >= 2.4.0 / 2.7.0). Returns an empty string when no proxy
+    is configured."""
+    if not proxy_settings:
+        return ""
+    args = []
+    for key, value in proxy_settings.items():
+        args.append(f'-e {key}="{value}"')
+        args.append(f'-e {key.upper()}="{value}"')
+    return " ".join(args) + " "
 
 def drop_builder_cache_before_retry():
     """Empty the builder cache before a retry forced by hollow layers.
@@ -1714,9 +1739,12 @@ def _process_container(container, proxy_settings=None, dockerfiles_source=None,
         return False, total_info, total_warnings, total_errors
 
     # Proxy environment for commands that need internet access (wget, docker build)
+    # and for the container itself: the update, neutralize and start runs get the
+    # same variables via -e, so Odoo reaches services.odoo.com through the proxy.
     proxy_env = build_proxy_env(proxy_settings)
+    proxy_run_args = build_proxy_run_args(proxy_settings)
     if proxy_env:
-        logger.info("Proxy settings active for downloads and docker build")
+        logger.info("Proxy settings active for downloads, docker build and the container")
 
     # Backup filestore if no volume is specified
     if not volume:
@@ -1949,7 +1977,7 @@ def _process_container(container, proxy_settings=None, dockerfiles_source=None,
     # Perform update based on type
     if update_type == "F":
         # Full update
-        update_command = f"docker run --rm {env_forward}-p {port}:8069 -p {poll_port}:8072 --name={container_name} {volume} {image} update --database={db_name} {db_auth_args}{load_translation}"
+        update_command = f"docker run --rm {env_forward}{proxy_run_args}-p {port}:8069 -p {poll_port}:8072 --name={container_name} {volume} {image} update --database={db_name} {db_auth_args}{load_translation}"
 
         # Debug only - the command line can contain database credentials
         if logger.getEffectiveLevel() <= logging.DEBUG:
@@ -1978,7 +2006,7 @@ def _process_container(container, proxy_settings=None, dockerfiles_source=None,
             
     elif update_type == "N":
         # Neutralize and update
-        neutralize_command = f"docker run --rm {env_forward}-p {port}:8069 -p {poll_port}:8072 --name={container_name} {volume} {image} neutralize --database={db_name} {db_auth_args}"
+        neutralize_command = f"docker run --rm {env_forward}{proxy_run_args}-p {port}:8069 -p {poll_port}:8072 --name={container_name} {volume} {image} neutralize --database={db_name} {db_auth_args}"
 
         # Debug only - the command line can contain database credentials
         if logger.getEffectiveLevel() <= logging.DEBUG:
@@ -2005,7 +2033,7 @@ def _process_container(container, proxy_settings=None, dockerfiles_source=None,
                 pass
             return False, total_info, total_warnings, total_errors
             
-        update_command = f"docker run --rm {env_forward}-p {port}:8069 -p {poll_port}:8072 --name={container_name} {volume} {image} update --database={db_name} {db_auth_args}{load_translation}"
+        update_command = f"docker run --rm {env_forward}{proxy_run_args}-p {port}:8069 -p {poll_port}:8072 --name={container_name} {volume} {image} update --database={db_name} {db_auth_args}{load_translation}"
 
         # Debug only - the command line can contain database credentials
         if logger.getEffectiveLevel() <= logging.DEBUG:
@@ -2033,7 +2061,7 @@ def _process_container(container, proxy_settings=None, dockerfiles_source=None,
             return False, total_info, total_warnings, total_errors
     
     # Restart container
-    restart_command = f"docker run -d --restart=always -p {port}:8069 -p {poll_port}:8072 --name={container_name} {volume} {image} start"
+    restart_command = f"docker run -d --restart=always {proxy_run_args}-p {port}:8069 -p {poll_port}:8072 --name={container_name} {volume} {image} start"
     logger.info(f"Restart command: {restart_command}")
     success, _, info, warn, err = run_step(f"restart {container_name}", restart_command)
     total_info += info

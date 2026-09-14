@@ -792,6 +792,33 @@ class BuildRetryCommandTest(unittest.TestCase):
                 self.assertTrue(command.rstrip().endswith(" ."))
 
 
+class ProxyRunArgsTest(unittest.TestCase):
+    """The proxy reached wget and docker build, but never the running Odoo:
+    docker run only forwarded PGPASSWORD, so publisher_warranty could not reach
+    the maintenance server on a proxy-only host (bb-wertmetall, 14.09.2026)."""
+
+    PROXY = {
+        "http_proxy": "http://proxy.example:8080",
+        "https_proxy": "http://proxy.example:8080",
+        "no_proxy": "localhost,127.0.0.1,.example",
+    }
+
+    def test_no_proxy_means_no_run_args(self):
+        self.assertEqual(udo.build_proxy_run_args(None), "")
+        self.assertEqual(udo.build_proxy_run_args({}), "")
+
+    def test_every_variable_goes_in_lower_and_upper_case(self):
+        args = udo.build_proxy_run_args(self.PROXY)
+        for key, value in self.PROXY.items():
+            self.assertIn(f'-e {key}="{value}"', args)
+            self.assertIn(f'-e {key.upper()}="{value}"', args)
+
+    def test_the_result_can_be_pasted_before_the_next_flag(self):
+        args = udo.build_proxy_run_args(self.PROXY)
+        self.assertTrue(args.endswith(" "))
+        self.assertFalse(args.startswith(" "))
+
+
 class BuilderCachePruneTest(unittest.TestCase):
     """--no-cache tells Docker not to USE the cache; it does not remove it.
     On 26.08.2026 clearing it first was what made the difference."""

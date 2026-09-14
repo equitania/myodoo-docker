@@ -66,13 +66,29 @@ eintragen, dann sind auch cron-Läufe unabhängig von der Shell-Umgebung:
 
 ```yaml
 defaults:
-  proxy:                                    # wget downloads + docker build
+  proxy:                                    # wget, docker build UND der Container
     http_proxy: "http://proxy.example.com:8080"
     https_proxy: "http://proxy.example.com:8080"
-    no_proxy: "localhost,127.0.0.1,.local"
+    no_proxy: "localhost,127.0.0.1,.intra.example.com"
 ```
 
-Der YAML-Proxy wirkt auf `wget` und `docker build` (Env + `--build-arg`).
+Der YAML-Proxy wirkt auf `wget`, auf `docker build` (Env + `--build-arg`)
+und seit `update_docker_odoo.py` 5.19.0 auch auf den **laufenden Container**:
+`update`, `neutralize` und `start` bekommen dieselben Variablen per
+`docker run -e`. Ohne diesen Schritt hat der Odoo-Prozess keinen Proxy —
+Build-Args landen absichtlich nicht im Image — und die Datenbank lässt sich
+nicht registrieren („Fehler bei der Kommunikation mit dem Wartungsserver“).
+Voraussetzung ist ein Image mit `bin/boot` ≥ 2.4.0 (v16/v18) bzw. 2.7.0
+(v19): erst diese Fassung reicht die Proxy-Namen über `su - odoo` durch,
+ältere Boot-Skripte verwerfen sie beim Benutzerwechsel. Ein `doup` nach
+`ups` baut das Image mit dem aktuellen Boot.
+
+`no_proxy` ist Pflicht, nicht Kür: `localhost,127.0.0.1` muss drinstehen
+(der Container-`HEALTHCHECK` ruft `wget` gegen `localhost` mit der
+Container-Umgebung auf — ohne Ausnahme läuft die Probe über den Proxy und
+der Container wird nach drei Fehlversuchen `unhealthy`), dazu jede interne
+Zone, die Odoo direkt anspricht: FastReport-API, LDAP, interne Hosts.
+
 Das **Base-Image-Pull macht der Docker-Daemon** — dafür ist ausschließlich
 das systemd-Drop-in aus 18.2 zuständig. Dateien, die der Build nicht selbst
 laden kann, lassen sich pro Container über `pre_build_files`
@@ -213,13 +229,28 @@ the files individually.
 
 ```yaml
 defaults:
-  proxy:                                    # wget downloads + docker build
+  proxy:                                    # wget, docker build AND the container
     http_proxy: "http://proxy.example.com:8080"
     https_proxy: "http://proxy.example.com:8080"
-    no_proxy: "localhost,127.0.0.1,.local"
+    no_proxy: "localhost,127.0.0.1,.intra.example.com"
 ```
 
-The YAML proxy applies to `wget` and `docker build` (env + `--build-arg`).
+The YAML proxy applies to `wget`, to `docker build` (env + `--build-arg`)
+and, since `update_docker_odoo.py` 5.19.0, to the **running container**:
+`update`, `neutralize` and `start` receive the same variables via
+`docker run -e`. Without that step the Odoo process has no proxy at all —
+build-args deliberately stay out of the image — and the database cannot be
+registered ("error communicating with the maintenance server"). This needs
+an image with `bin/boot` ≥ 2.4.0 (v16/v18) or 2.7.0 (v19): only that version
+carries the proxy names across `su - odoo`, older boot scripts drop them at
+the user switch. A `doup` after `ups` builds the image with the current boot.
+
+`no_proxy` is mandatory, not optional: `localhost,127.0.0.1` must be in it
+(the container `HEALTHCHECK` runs `wget` against `localhost` with the
+container's environment — without the exception the probe goes through the
+proxy and the container turns `unhealthy` after three misses), plus every
+internal zone Odoo talks to directly: FastReport API, LDAP, internal hosts.
+
 The **base image pull is done by the Docker daemon** — only the systemd
 drop-in from 18.2 covers that. Files the build cannot fetch itself can be
 copied into the build folder beforehand via per-container `pre_build_files`

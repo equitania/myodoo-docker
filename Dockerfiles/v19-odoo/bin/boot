@@ -1,8 +1,8 @@
 #!/bin/bash
 ##############################################################################
 # This script is designed to be run inside the container
-# Version 2.6.0
-# Date 26.08.2026
+# Version 2.7.0
+# Date 14.09.2026
 ##############################################################################
 #
 #    Shell Script for Odoo Docker Container
@@ -28,6 +28,15 @@ echo "Odoo Container starting now: $currentdate"
 
 # Configuration file path
 file="/opt/odoo/etc/odoo.conf"
+
+# What 'su - odoo' may carry into the login shell - it drops everything else.
+# PGPASSWORD is the database password when docker run passes it with -e. The
+# proxy variables are what docker run hands a container on a host behind an
+# HTTP proxy (update_docker_odoo.py >= 5.19.0); without them Odoo talks to
+# services.odoo.com directly and the database cannot be registered. The
+# sudoers env_keep that once covered this died with the switch from sudo to
+# su in 2.1.0. A variable that is not set is simply not there - no effect.
+kept_environment="PGPASSWORD,http_proxy,https_proxy,no_proxy,HTTP_PROXY,HTTPS_PROXY,NO_PROXY"
 
 # Only 'start' reads the configuration file. 'update' and 'neutralize' run
 # odoo-bin bare, on purpose: they must not inherit the customer's addons_path,
@@ -92,7 +101,7 @@ function start {
         python3 /opt/odoo/odoo-server/odoo-bin -c $file $*
     else
         # Use su instead of sudo for user switching
-        su - odoo --whitelist-environment=PGPASSWORD -c "python3 /opt/odoo/odoo-server/odoo-bin -c $file $*"
+        su - odoo --whitelist-environment=$kept_environment -c "python3 /opt/odoo/odoo-server/odoo-bin -c $file $*"
     fi
 
     SERVICE_PID=$!
@@ -115,7 +124,7 @@ function update {
         python3 /opt/odoo/odoo-server/odoo-bin --update=all --workers=0 --stop-after-init $interface_argument $data_dir_argument $*
     else
         # Use su instead of sudo for user switching
-        su - odoo --whitelist-environment=PGPASSWORD -c "python3 /opt/odoo/odoo-server/odoo-bin --update=all --workers=0 --stop-after-init $interface_argument $data_dir_argument $*"
+        su - odoo --whitelist-environment=$kept_environment -c "python3 /opt/odoo/odoo-server/odoo-bin --update=all --workers=0 --stop-after-init $interface_argument $data_dir_argument $*"
     fi
 
     SERVICE_PID=$!
@@ -138,7 +147,7 @@ function neutralize {
         python3 /opt/odoo/odoo-server/odoo-bin neutralize --workers=0 --stop-after-init $interface_argument $data_dir_argument $*
     else
         # Use su instead of sudo for user switching
-        su - odoo --whitelist-environment=PGPASSWORD -c "python3 /opt/odoo/odoo-server/odoo-bin neutralize --workers=0 --stop-after-init $interface_argument $data_dir_argument $*"
+        su - odoo --whitelist-environment=$kept_environment -c "python3 /opt/odoo/odoo-server/odoo-bin neutralize --workers=0 --stop-after-init $interface_argument $data_dir_argument $*"
     fi
 
     SERVICE_PID=$!

@@ -1,5 +1,41 @@
 # Release Notes
 
+## The Proxy Never Reached the Running Odoo (14.09.2026)
+
+*scripts/update_docker_odoo.py v5.19.0 · Dockerfiles/v16-odoo/bin/boot v2.4.0 ·
+Dockerfiles/v18-odoo/bin/boot v2.4.0 · Dockerfiles/v19-odoo/bin/boot v2.7.0 ·
+scripts/docker2update.yaml · tests/test_boot_script.py ·
+tests/test_update_docker_odoo.py · docs/usage/07-proxy.md*
+
+### Fixed
+
+- **`defaults.proxy` covered the build, not the container.** The proxy went to
+  `wget` and to `docker build` as `--build-arg`, and Docker deliberately keeps
+  build-args out of the image's `ENV`. Nothing carried it into `docker run`, so on
+  a proxy-only host the running Odoo had no `http_proxy` at all: `publisher_warranty`
+  went out directly, the firewall dropped it, and the database could not be
+  registered — "Es ist ein Fehler bei der Kommunikation mit dem Wartungsserver
+  aufgetreten" (bb-wertmetall, 14.09.2026). The `update`, `neutralize` and `start`
+  runs now receive the resolved proxy via `-e`, lower- and upper-case, from the
+  same YAML block that already drives the build. Hosts without a proxy see no
+  change in their `docker run` lines.
+- **`su - odoo` dropped the variables anyway.** A login shell keeps only what is
+  whitelisted, and the whitelist was `PGPASSWORD`. The `sudoers` `env_keep` that
+  once solved this for a customer stopped working with the switch from `sudo` to
+  `su` in boot 2.1.0 — a patched Dockerfile would have kept the variables in the
+  image and still lost them at the user switch. All three boot scripts now
+  whitelist the six proxy names next to `PGPASSWORD`; an unset variable is simply
+  not there.
+
+### Changed
+
+- **`no_proxy` is documented as mandatory, not optional.** The container
+  `HEALTHCHECK` runs `wget` against `localhost` with the container's environment:
+  a proxy without a `localhost` exception sends the health probe through the
+  proxy and the container turns `unhealthy` after three misses. Internal zones
+  (FastReport API, LDAP, internal hosts) belong in the same list — whatever is
+  missing goes through the proxy. Template, inline help and `07-proxy.md` say so.
+
 ## The Update Ran Without Its Own Configuration (26.08.2026)
 
 *Dockerfiles/v19-odoo/bin/boot v2.6.0 · Dockerfiles/v16-odoo/bin/boot v2.3.0 ·

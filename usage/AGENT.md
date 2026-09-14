@@ -160,8 +160,11 @@ Installs: backups 02:00+14:00 · ssl-renew 00:00 · cert-guard 23:50 · weblog p
 python3 ~/getScripts.py --proxy-check   # writes fish conf.d, /etc/environment, marker, docker daemon drop-in
 systemctl restart docker                # maintenance window — restarts ALL containers
 ```
-Optionally pin the proxy in `docker2update.yaml` (`defaults.proxy`) so cron `doup` runs are
-independent of the shell environment. Full walkthrough: `docs/usage/07-proxy.md`.
+Pin the proxy in `docker2update.yaml` (`defaults.proxy`): it drives `wget`, `docker build` AND
+the container itself (`docker run -e`, update_docker_odoo ≥ 5.19.0 with bin/boot ≥ 2.4.0/2.7.0) —
+without it the running Odoo has no proxy and cannot register the database. `no_proxy` must
+keep `localhost,127.0.0.1` (HEALTHCHECK) plus every internal zone Odoo talks to. Full
+walkthrough: `docs/usage/07-proxy.md`.
 
 ## Guardrails & gotchas
 - **Destructive:** `doup` (type `F`) **stops, removes and re-creates** the target container and
@@ -218,6 +221,9 @@ independent of the shell environment. Full walkthrough: `docs/usage/07-proxy.md`
   fastfetch's `publicip` module ignores `http_proxy` and is stripped automatically on proxy hosts;
   ~1 s fastfetch runtime is normal (NetIO/DiskIO sampling). Corporate firewalls often drop
   outbound traffic silently — "hangs" usually means missing proxy env, not a slow server.
+  "Fehler bei der Kommunikation mit dem Wartungsserver" on database registration = the Odoo
+  process has no proxy: check `docker inspect <c> --format '{{.Config.Env}}'` for `http_proxy`;
+  an image built before boot 2.4.0/2.7.0 drops it at `su - odoo` even when docker run sets it.
 - **`doval`/`ownerp_validate.py` warnings never flip the exit code.** Exit `0`
   means zero *errors* — warnings (missing path, unknown key, an `(inactive)`
   finding inside a parked `active: false` block) can still be printed on a
