@@ -17,7 +17,7 @@ Alle Skripte des Repos (`scripts/`, Stand 15.09.2026):
 | Skript | Zweck | Aufruf |
 |---|---|---|
 | `bootstrap.sh` (1.15.0) | Grundausstattung frischer Server (Docker, nginx, certbot, UFW, fail2ban) | `curl … bootstrap.sh -o /opt/… && /opt/myodoo-bootstrap.sh` |
-| `getScripts.py` (9.23.1) | fish-Shell, Aliase, Verwaltungsskripte nach `/root`; bietet auf einem Server ohne Konfiguration Wiederherstellen oder Abschalten der Jobs an | `./getScripts.py [--dns-check\|--proxy-check\|--reconfigure]` |
+| `getScripts.py` (9.24.0) | fish-Shell, Aliase, Verwaltungsskripte nach `/root`; bietet auf einem Server ohne Konfiguration Wiederherstellen oder Abschalten der Jobs an, und fragt bei einem bewusst abweichenden Docker-Storage-Driver einmal je Lauf nach | `./getScripts.py [--dns-check\|--proxy-check\|--reconfigure]` |
 | `server_hardening.py` (1.8.0) | Audit + Härtung (UFW, fail2ban, SSH, sysctl, auditd, AIDE) | `sudo python3 server_hardening.py [--apply] [-m MODUL …]` |
 | `deploy-nginx-base.sh` (1.3.0) | nginx-Basis: Includes, Wartungsseite, nginx.conf (mit Rollback) | `./deploy-nginx-base.sh [--dry-run] [--no-main-conf]` |
 | `ngx-conf-wizard.sh` (1.1.0) | Interaktiver YAML-Assistent für nginx-set-conf | `./ngx-conf-wizard.sh` |
@@ -37,7 +37,7 @@ Alle Skripte des Repos (`scripts/`, Stand 15.09.2026):
 | `ssl-renew.sh` (1.3.0) | certbot-Renewal, nginx nur bei Bedarf angehalten | `./ssl-renew.sh` (Cron) |
 | `nginx-cert-guard.py` (1.2.0) | Defekte Vhosts quarantänisieren statt nginx zu blockieren | `--reconcile [--start]`, `--check [--apply]`, `--list`, `--restore DOMAIN` |
 | `setup-maintenance-cron.sh` (1.3.0) | Wartungs-Cron + logrotate installieren | `./setup-maintenance-cron.sh [--remove]` |
-| `server-readiness.py` (1.9.0) | Konfigurations-Drift prüfen (rein lesend), inkl. Virenscanner-Ausnahme für `/var/lib/docker/` | `chk` bzw. `~/server-readiness.py [--brief\|--quiet\|--muted]` |
+| `server-readiness.py` (1.9.1) | Konfigurations-Drift prüfen (rein lesend), inkl. Virenscanner-Ausnahme für `/var/lib/docker/` | `chk` bzw. `~/server-readiness.py [--brief\|--quiet\|--muted]` |
 | `ownerp_mute.py` (1.0.0) | Readiness-Befund als geprüft, aber auf diesem Host nicht zutreffend markieren (dauerhaft, mit Begründung) | `konsole` → System → `[m]` bzw. `~/ownerp_mute.py CHECK_ID --reason TEXT` / `--list` / `--unmute CHECK_ID` |
 | `nightly-cleanup.sh` (1.1.0) | Container-Neustart bei Speicherdruck | Cron; `MEMORY_THRESHOLD=90 DRY_RUN=1 ./nightly-cleanup.sh` |
 | `cleanup-weblogs.py` (2.0.0) | nginx-Log-Rotation, DSGVO-Löschung nach 7 Tagen | Cron; `python3 cleanup-weblogs.py` |
@@ -125,7 +125,7 @@ All scripts in this repository (`scripts/`, as of 15.09.2026):
 | Script | Purpose | Invocation |
 |---|---|---|
 | `bootstrap.sh` (1.15.0) | Baseline for fresh servers (Docker, nginx, certbot, UFW, fail2ban) | `curl … bootstrap.sh -o /opt/… && /opt/myodoo-bootstrap.sh` |
-| `getScripts.py` (9.23.1) | fish shell, aliases, management scripts into `/root`; offers restore or switching the jobs off on a server without configuration | `./getScripts.py [--dns-check\|--proxy-check\|--reconfigure]` |
+| `getScripts.py` (9.24.0) | fish shell, aliases, management scripts into `/root`; offers restore or switching the jobs off on a server without configuration, and asks once per run about a deliberately non-overlay2 Docker storage driver | `./getScripts.py [--dns-check\|--proxy-check\|--reconfigure]` |
 | `server_hardening.py` (1.8.0) | Audit + hardening (UFW, fail2ban, SSH, sysctl, auditd, AIDE) | `sudo python3 server_hardening.py [--apply] [-m MODULE …]` |
 | `deploy-nginx-base.sh` (1.3.0) | nginx base: includes, maintenance page, nginx.conf (with rollback) | `./deploy-nginx-base.sh [--dry-run] [--no-main-conf]` |
 | `ngx-conf-wizard.sh` (1.1.0) | Interactive YAML wizard for nginx-set-conf | `./ngx-conf-wizard.sh` |
@@ -145,7 +145,7 @@ All scripts in this repository (`scripts/`, as of 15.09.2026):
 | `ssl-renew.sh` (1.3.0) | certbot renewal, nginx stopped only when needed | `./ssl-renew.sh` (cron) |
 | `nginx-cert-guard.py` (1.2.0) | Quarantine broken vhosts instead of blocking nginx | `--reconcile [--start]`, `--check [--apply]`, `--list`, `--restore DOMAIN` |
 | `setup-maintenance-cron.sh` (1.3.0) | Install maintenance cron + logrotate | `./setup-maintenance-cron.sh [--remove]` |
-| `server-readiness.py` (1.9.0) | Check configuration drift (read-only), incl. the virus-scanner exclusion for `/var/lib/docker/` | `chk` or `~/server-readiness.py [--brief\|--quiet\|--muted]` |
+| `server-readiness.py` (1.9.1) | Check configuration drift (read-only), incl. the virus-scanner exclusion for `/var/lib/docker/` | `chk` or `~/server-readiness.py [--brief\|--quiet\|--muted]` |
 | `ownerp_mute.py` (1.0.0) | Mark a readiness finding as true but not applicable on this host (permanent, with a reason) | `konsole` → System → `[m]` or `~/ownerp_mute.py CHECK_ID --reason TEXT` / `--list` / `--unmute CHECK_ID` |
 | `nightly-cleanup.sh` (1.1.0) | Container restart under memory pressure | cron; `MEMORY_THRESHOLD=90 DRY_RUN=1 ./nightly-cleanup.sh` |
 | `cleanup-weblogs.py` (2.0.0) | nginx log rotation, GDPR purge after 7 days | cron; `python3 cleanup-weblogs.py` |

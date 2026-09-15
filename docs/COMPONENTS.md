@@ -11,9 +11,22 @@ in this repository, stay in `CLAUDE.md`.
 
 ### Key Components
 
-#### 1. getScripts.py (v9.23.1)
+#### 1. getScripts.py (v9.24.0)
 - **Purpose**: Main installation and update script
 - **Features**:
+  - `offer_storage_driver_mute()` (v9.24.0, 15.09.2026): the same
+    once-per-run pattern as `offer_noconfig_recovery()` below, for a host
+    that deliberately keeps a non-overlay2 Docker storage driver. Silent
+    unless Docker is installed, `docker info` names a live driver that is
+    neither overlay2 nor empty, `~/ownerp_mute.py` exists, the check is not
+    already muted, and both stdin and stdout are a terminal. Offers: show
+    the manual switch-over steps (daemon.json merge, `systemctl restart
+    docker`, reboot, `doup` to rebuild images — nothing runs
+    automatically) / mute `docker_storage_driver` permanently via
+    `ownerp_mute.py --reason "..."` (`run_command(..., interactive=True)`)
+    / decide later. Any failure anywhere in the gate (missing Docker,
+    `docker info` erroring or timing out, an unreadable mutes file) is
+    "skip", never a broken `ups`
   - `ensure_proxy_environment()` (v9.23.1), the very first call in `main()`:
     recovers http_proxy/https_proxy/no_proxy in `os.environ` when sudo's
     `env_reset` stripped them before the script could even start — Debian
@@ -750,7 +763,7 @@ in this repository, stay in `CLAUDE.md`.
   risk an expiry would guard against — a mute nobody remembers — is already
   covered by the visible `[MUTED]` line and the count in every summary
 
-#### 16. server-readiness.py (v1.9.0)
+#### 16. server-readiness.py (v1.9.1)
 - **Purpose**: Reports whether this server matches the state myodoo-docker
   expects — 17 read-only checks (cron, logrotate, backup and update
   configuration, Docker storage driver, virus-scanner exclusion for
@@ -771,7 +784,11 @@ in this repository, stay in `CLAUDE.md`.
   unreadable or empty; names the log's abort line in the detail when present
 - **`check_docker_storage_driver` is a WARN, not a FAIL** (v1.9.0,
   15.09.2026): a non-overlay2 driver costs build speed and the build cache
-  after `doup`'s prune; it was never shown to break a build
+  after `doup`'s prune; it was never shown to break a build. Its fix hint
+  (v1.9.1) also names the alternative for a host that keeps the driver on
+  purpose: `ownerp_mute.py docker_storage_driver --reason "..."` —
+  `getScripts.py`'s `offer_storage_driver_mute()` (v9.24.0) asks for exactly
+  this on an interactive `ups`
 - **`av_docker_exclusion` ("Virus scanner")** (v1.9.0, 15.09.2026): reads
   Sophos's on-access policy for an exclusion covering `/var/lib/docker/`;
   SKIP without Sophos or Docker, WARN on an unreadable policy, OK when off

@@ -1,5 +1,43 @@
 # Release Notes
 
+## `ups` Asks Once About a Deliberately Non-overlay2 Docker Driver (15.09.2026)
+
+*getScripts.py v9.24.0 · server-readiness.py v1.9.1 ·
+tests/test_getscripts_driver_offer.py · tests/test_server_readiness.py ·
+docs/COMPONENTS.md · docs/usage/09-reference.md · docs/usage/01-provisioning.md*
+
+### Added
+
+- **`offer_storage_driver_mute()` in `getScripts.py`.** `chk` has reported a
+  permanent WARN since v1.9.0 whenever Docker's storage driver is not
+  `overlay2` — correct, and pure noise on a host that keeps a different
+  driver on purpose (a developers' terminal server that never builds, or a
+  server nobody wants to restart for the switch). Mirrors the no-config offer
+  added in 9.23.0: silent unless Docker is installed, `docker info` names a
+  live driver that is neither `overlay2` nor empty, `~/ownerp_mute.py`
+  exists, the check is not already muted, and both stdin and stdout are a
+  terminal — and asks at most once per interactive `ups` run:
+  1. show the manual switch-over steps (merge `"storage-driver": "overlay2"`
+     into `/etc/docker/daemon.json`, `systemctl restart docker`, reboot,
+     then `doup` to rebuild images) — nothing runs automatically;
+  2. mute `docker_storage_driver` permanently, via `ownerp_mute.py
+     docker_storage_driver --reason "Storage-Driver <driver> bewusst
+     beibehalten (ups, <date>)"`, run with `interactive=True` so the
+     confirmation prints;
+  3. decide later.
+
+  Any failure anywhere along the gate — Docker missing, `docker info`
+  erroring or timing out, the mutes file being unreadable — is treated as
+  "skip", never as a reason to break `ups`. A non-interactive run (cron,
+  piped) gets no extra line; the `chk` report already carries the warning.
+
+### Changed
+
+- **`check_docker_storage_driver`'s fix hint** in `server-readiness.py` now
+  also names the alternative for a host that keeps the driver on purpose:
+  `ownerp_mute.py docker_storage_driver --reason "..."`, alongside the
+  existing pin-and-restart instructions.
+
 ## `ups` No Longer Loses the Proxy That sudo Resets (15.09.2026)
 
 *getScripts.py v9.23.1 · fish/functions/linux/ups.fish v1.2.0 ·

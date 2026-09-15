@@ -136,7 +136,7 @@ if os.environ.get('GETSCRIPTS_DEBUG', '').lower() in ('1', 'true', 'yes'):
     logger.debug("Debug logging enabled")
 
 # Script version and date
-SCRIPT_VERSION = "9.23.1"
+SCRIPT_VERSION = "9.24.0"
 SCRIPT_DATE = "15.09.2026"
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -4311,6 +4311,173 @@ def offer_noconfig_recovery(_myhome: str) -> None:
         status(later_hint)
 
 
+# check_id docker_storage_driver reports on: server-readiness.py's
+# check_docker_storage_driver() and ownerp_mute.py's mute of the same id.
+STORAGE_DRIVER_CHECK_ID = "docker_storage_driver"
+STORAGE_DRIVER_MUTES_RELATIVE = os.path.join(".config", "myodoo-docker", "readiness-mutes.conf")
+
+
+def _docker_storage_driver_muted(_myhome: str) -> bool:
+    """Whether docker_storage_driver is already muted on this host.
+
+    Reads the mutes file directly rather than importing server-readiness.py
+    (hyphenated filename, not on the import path, and ownerp_mute.py already
+    carries the importlib dance for the scripts that need it). Same format
+    server-readiness.py's parse_mutes() reads: '<check_id> | <date> | <reason>',
+    '#' comments and blank lines ignored, first three pipe-separated fields.
+    Anything unreadable propagates to the caller, which treats it as "skip",
+    never as "not muted" - a mute this cannot see must not turn into a repeat
+    prompt, but it also must never suppress the offer by guessing.
+    """
+    path = os.path.join(_myhome, STORAGE_DRIVER_MUTES_RELATIVE)
+    if not os.path.isfile(path):
+        return False
+    with open(path, "r", encoding="utf-8", errors="replace") as handle:
+        for line in handle:
+            line = line.strip()
+            if not line or line.startswith("#"):
+                continue
+            parts = line.split("|", 2)
+            if len(parts) != 3:
+                continue
+            if parts[0].strip() == STORAGE_DRIVER_CHECK_ID:
+                return True
+    return False
+
+
+def _print_storage_driver_maintenance_steps(driver: str) -> None:
+    """The manual switch-over an operator runs by hand. Nothing here is
+    executed automatically - see ensure_storage_driver_pin() and
+    report_storage_driver() in scripts/bootstrap.sh for where these steps
+    come from, and docs/usage/01-provisioning.md for the numbers behind them.
+    """
+    print(f"\nAktueller Storage-Driver: '{driver}'. Wartungsfenster für den Wechsel auf overlay2:")
+    # Never suggest writing the file from scratch: on proxy-only hosts
+    # daemon.json carries the proxy and the DNS servers, and a copied
+    # one-liner that overwrites it takes both away at the next restart.
+    print("  1) Den Schlüssel \"storage-driver\" in /etc/docker/daemon.json ergänzen.")
+    print("     Vorhandene Einstellungen (Proxy, DNS, Logs) bleiben erhalten:")
+    print("       test -f /etc/docker/daemon.json; and cp -a /etc/docker/daemon.json /etc/docker/daemon.json.bak")
+    print("""       python3 -c 'import json, os; p = "/etc/docker/daemon.json"; d = json.load(open(p)) if os.path.exists(p) else {}; d["storage-driver"] = "overlay2"; open(p, "w").write(json.dumps(d, indent=2) + "\\n")'""")
+    print("       cat /etc/docker/daemon.json")
+    print("  2) sudo systemctl restart docker")
+    print("  3) sudo reboot")
+    print("     (sonst bleiben verwaiste Mounts des alten Stores bis zum nächsten Neustart aktiv)")
+    print("  4) Nach dem Reboot: doup")
+    print("     Bestehende Images sind nach der Umstellung nicht mehr sichtbar, bis")
+    print("     sie neu gebaut wurden - doup erledigt das. Volumes bleiben erhalten,")
+    print("     alle Container starten während des Fensters neu.\n")
+
+
+def offer_storage_driver_mute(_myhome: str) -> None:
+    """Ask once whether a non-overlay2 Docker storage driver is deliberate.
+
+    check_docker_storage_driver() in server-readiness.py reports this as a
+    permanent WARN - correct on a host that builds Odoo images, pure noise on
+    one that never does (a developers' terminal server, a box nobody wants to
+    restart just to switch drivers). Mirrors offer_noconfig_recovery() above:
+    silent unless every gate holds, one question per interactive run, and
+    every branch that changes something on the host prints what happened.
+
+    Silent - no prompt, no output at all - unless ALL of these hold:
+    - docker is installed
+    - `docker info` returns a driver, within a bounded timeout, that is
+      neither overlay2 nor empty
+    - ~/ownerp_mute.py exists
+    - docker_storage_driver is not already muted on this host
+    - stdin AND stdout are both a TTY (a cron or piped `ups` gets nothing
+      extra here - the readiness report already carries the warning)
+
+    Any failure along the way - docker missing, `docker info` erroring or
+    timing out, the mutes file being unreadable, anything else - is treated
+    as "skip", never as a reason to break `ups`.
+    """
+    try:
+        import shutil
+        if not shutil.which("docker"):
+            return
+
+        try:
+            result = subprocess.run(
+                ["docker", "info", "--format", "{{.Driver}}"],
+                capture_output=True, text=True, timeout=20,
+            )
+        except Exception as e:
+            logger.debug(f"docker info failed for storage-driver offer: {e}")
+            return
+        if result.returncode != 0:
+            return
+        output = result.stdout.strip()
+        driver = output.splitlines()[-1].strip() if output else ""
+        if not driver or driver == "overlay2":
+            return
+
+        mute_script = os.path.join(_myhome, "ownerp_mute.py")
+        if not os.path.isfile(mute_script):
+            return
+
+        if _docker_storage_driver_muted(_myhome):
+            return
+
+        if not (sys.stdin.isatty() and sys.stdout.isatty()):
+            return
+
+        later_hint = (
+            f'Später: ownerp_mute.py {STORAGE_DRIVER_CHECK_ID} --reason "..." zum '
+            f"dauerhaften Stummschalten, oder die Wartungsschritte für die "
+            f"Umstellung auf overlay2 anzeigen lassen (ups fragt beim nächsten Mal erneut)"
+        )
+
+        print(f"\nDocker läuft mit dem Storage-Driver '{driver}' statt overlay2.")
+        print("Folge: langsamere Builds, und der Build-Cache übersteht das Aufräumen nach doup nicht.")
+        print("Umstellen bedeutet ein Wartungsfenster: Docker-Neustart (alle Container starten neu) und Neubau der Images.")
+        print("  1) Umstellen – Schritte für das Wartungsfenster anzeigen (Warnung bleibt, bis umgestellt ist)")
+        print("  2) So lassen – Warnung dauerhaft stummschalten")
+        print("  3) Später entscheiden")
+
+        choice = "3"
+        for _attempt in range(3):
+            try:
+                answer = input("Auswahl [3]: ").strip()
+            except (EOFError, KeyboardInterrupt):
+                print()
+                break
+            if answer in ("", "3"):
+                break
+            if answer in ("1", "2"):
+                choice = answer
+                break
+            print("Bitte 1, 2 oder 3 eingeben.")
+        else:
+            choice = "3"
+
+        if choice == "1":
+            _print_storage_driver_maintenance_steps(driver)
+        elif choice == "2":
+            try:
+                confirm = input(
+                    "Warnung für den Storage-Driver auf diesem Server dauerhaft "
+                    "stummschalten? Rückgängig mit: ownerp_mute.py --unmute "
+                    "docker_storage_driver [j/N]: ").strip().lower()
+            except (EOFError, KeyboardInterrupt):
+                confirm = ""
+                print()
+            if confirm in ("j", "ja", "y", "yes"):
+                import shlex
+                today = datetime.now().strftime("%d.%m.%Y")
+                reason = f"Storage-Driver {driver} bewusst beibehalten (ups, {today})"
+                command = (f"{shlex.quote(sys.executable)} {shlex.quote(mute_script)} "
+                          f"{STORAGE_DRIVER_CHECK_ID} --reason {shlex.quote(reason)}")
+                run_command(command, shell=True, interactive=True)
+            else:
+                status(later_hint)
+        else:
+            status(later_hint)
+    except Exception as e:
+        logger.debug(f"Storage-driver mute offer skipped: {e}")
+        return
+
+
 def print_cron_overview(_myhome: str) -> None:
     """Show the maintenance cron schedule and when each job last ran.
 
@@ -4530,6 +4697,11 @@ def main() -> None:
         # all. Must run AFTER migrate_legacy_csv (which delivers the verdict)
         # and does not depend on cleanup_legacy_files below.
         offer_noconfig_recovery(_myhome)
+
+        # Same one-question-per-run pattern, for a host that deliberately
+        # keeps a non-overlay2 Docker storage driver. Independent of the
+        # no-config offer above - both can fire in the same run.
+        offer_storage_driver_mute(_myhome)
 
         # Clean up legacy files ONLY on fresh Fish installation
         # This prevents running cleanup on every script execution

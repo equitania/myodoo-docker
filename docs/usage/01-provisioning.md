@@ -109,6 +109,14 @@ unattended-upgrades, Python-Abhängigkeiten; klont das Repo und ruft am Ende
 > würde vorhandene Images bis zu Neustart und Reboot unsichtbar machen;
 > `bootstrap.sh` sagt nur, was es kostet.
 >
+> **Auf einem laufenden Server** fragt `ups` (`getScripts.py` ≥ 9.24.0)
+> einmal je interaktivem Lauf nach, wenn `docker info` einen anderen Treiber
+> als `overlay2` meldet: Wartungsschritte anzeigen, dauerhaft stummschalten
+> (`ownerp_mute.py docker_storage_driver --reason "..."`) oder später
+> entscheiden. Ein Server ohne Terminal (Cron, CI) bekommt keine Frage — der
+> `server-readiness.py`-Bericht (`chk`) trägt die Warnung ohnehin. Rückgängig:
+> `ownerp_mute.py --unmute docker_storage_driver`.
+>
 > **Unabhängig davon** baut das Skript nach der Installation ein zweizeiliges
 > Image und startet es: Ein Daemon, der Images ohne Dateisystem exportiert,
 > besteht jede andere Prüfung. `DOCKER_SMOKE_TEST=0` schaltet das ab (Host ohne
@@ -268,6 +276,14 @@ unattended-upgrades, Python dependencies; clones the repo and finally runs
 > reported). Nothing is switched on a **running** server — that would hide
 > existing images until a restart and a reboot; `bootstrap.sh` only says what it
 > costs.
+>
+> **On a running server**, `ups` (`getScripts.py` >= 9.24.0) asks once per
+> interactive run when `docker info` reports a driver other than `overlay2`:
+> show the maintenance steps, mute it permanently
+> (`ownerp_mute.py docker_storage_driver --reason "..."`), or decide later. A
+> server with no terminal (cron, CI) gets no question — the
+> `server-readiness.py` report (`chk`) already carries the warning. Undo with
+> `ownerp_mute.py --unmute docker_storage_driver`.
 >
 > **Independently of all that**, the script builds and runs a two-line image
 > after the install: a daemon that exports images with no filesystem passes

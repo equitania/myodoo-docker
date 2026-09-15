@@ -356,6 +356,8 @@ class DockerStorageDriverTest(unittest.TestCase):
         self.assertEqual(finding.severity, sr.Severity.WARN)
         self.assertNotIn("moby", finding.detail)
         self.assertNotIn("moby", finding.fix)
+        # The alternative for a host that keeps the driver on purpose.
+        self.assertIn("ownerp_mute.py docker_storage_driver", finding.fix)
 
     def test_a_host_without_docker_is_skipped(self):
         with unittest.mock.patch.object(sr.shutil, "which", return_value=None):

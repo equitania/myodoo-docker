@@ -4,7 +4,7 @@
 # Title:            server-readiness.py
 # Description:      Report whether this server matches the state myodoo-docker
 #                   expects, and name the exact command that closes each gap.
-# Version:          1.9.0
+# Version:          1.9.1
 # Date:             15.09.2026
 # Author:           Equitania Software GmbH
 # ==============================================================================
@@ -70,7 +70,7 @@ from dataclasses import dataclass
 from enum import Enum
 from typing import Callable, List, Optional, Tuple
 
-SCRIPT_VERSION = "1.9.0"
+SCRIPT_VERSION = "1.9.1"
 SCRIPT_DATE = "15.09.2026"
 
 # Where nginx keeps its customer vhosts (mirrors nginx-cert-guard.py).
@@ -966,7 +966,8 @@ def check_docker_storage_driver(ctx: HealthContext) -> Finding:
         f"storage driver is '{driver}', not overlay2 — builds are slower and "
         f"the build cache does not survive doup's prune",
         'Pin overlay2 in /etc/docker/daemon.json during a maintenance window '
-        '(restarts all containers): see bootstrap.sh DOCKER_STORAGE_DRIVER',
+        '(restarts all containers): see bootstrap.sh DOCKER_STORAGE_DRIVER'
+        '  # or keep it: ownerp_mute.py docker_storage_driver --reason "..."',
     )
 
 
