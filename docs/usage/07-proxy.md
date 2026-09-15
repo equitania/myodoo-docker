@@ -140,6 +140,18 @@ laden kann, lassen sich pro Container über `pre_build_files`
   ergänzen muss man nur interne Zonen außerhalb der Suchdomänen (z.B.
   `.internal.example.com`) und kurze Hostnamen ohne Punkt — sonst läuft
   dieser Traffic durch den Proxy.
+- **`sudo env | grep -i proxy` kommt leer zurück — das ist auf Debian
+  normal.** `Defaults env_reset` in den sudoers streicht http_proxy/
+  https_proxy/no_proxy aus jedem sudo-Kindprozess, und `/etc/pam.d/sudo` hat
+  keine `pam_env`-Zeile, liest `/etc/environment` unter sudo also auch nicht
+  nach. `ups` (das `getScripts.py` per `sudo` aufruft) ist davon direkt
+  betroffen: `getScripts.py` ≥ 9.23.1 erkennt die fehlende Umgebung selbst
+  und holt sie sich aus `~/.getscripts_proxy` oder `/etc/environment` zurück;
+  `ups` (ab Fish-Funktion v1.2.0) übergibt die Variablen zusätzlich direkt
+  per `sudo --preserve-env=http_proxy,https_proxy,no_proxy,...`. Für eigene
+  Cron-Jobs oder Skripte, die selbst `sudo` aufrufen, gilt dieselbe Falle —
+  dort hilft nur `--preserve-env` oder ein `env_keep`-Eintrag in den
+  sudoers.
 
 ### 18.5 Verifikation
 
@@ -294,6 +306,17 @@ copied into the build folder beforehand via per-container `pre_build_files`
   `--proxy-check` only internal zones outside the search domains (e.g.
   `.internal.example.com`) and short hostnames without a dot — otherwise
   that traffic goes through the proxy.
+- **`sudo env | grep -i proxy` coming back empty is normal on Debian.**
+  `Defaults env_reset` in sudoers strips http_proxy/https_proxy/no_proxy
+  from every sudo child, and `/etc/pam.d/sudo` has no `pam_env` line, so
+  `/etc/environment` is not re-read under sudo either. `ups` (which calls
+  `getScripts.py` via `sudo`) is directly affected by this: `getScripts.py`
+  >= 9.23.1 detects the missing environment itself and recovers it from
+  `~/.getscripts_proxy` or `/etc/environment`; `ups` (fish function >= v1.2.0)
+  also passes the variables through directly via
+  `sudo --preserve-env=http_proxy,https_proxy,no_proxy,...`. The same trap
+  applies to any cron job or script that calls `sudo` itself — the fix there
+  is either `--preserve-env` or an `env_keep` entry in sudoers.
 
 ### 18.5 Verification
 

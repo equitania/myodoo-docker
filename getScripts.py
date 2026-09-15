@@ -136,7 +136,7 @@ if os.environ.get('GETSCRIPTS_DEBUG', '').lower() in ('1', 'true', 'yes'):
     logger.debug("Debug logging enabled")
 
 # Script version and date
-SCRIPT_VERSION = "9.23.0"
+SCRIPT_VERSION = "9.23.1"
 SCRIPT_DATE = "15.09.2026"
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -4456,6 +4456,11 @@ def main() -> None:
     original_dir = os.getcwd()
 
     try:
+        # Must run before any network call this script makes (pip/uv/apt/
+        # curl/git/requests): sudo's env_reset can have stripped the proxy
+        # variables before we even got here (see docstring).
+        ensure_proxy_environment()
+
         # Setup environment
         _myhome, local_bin = setup_environment()
 
@@ -4632,6 +4637,10 @@ def main() -> None:
 FIRST_RUN_MARKER = os.path.expanduser("~/.getscripts_configured")
 PROXY_CONFIG_FILE = os.path.expanduser("~/.getscripts_proxy")
 
+# Module constant so tests can patch the path instead of touching the real
+# system file.
+ETC_ENVIRONMENT = "/etc/environment"
+
 
 def is_first_run() -> bool:
     """Check if this is the first run of getScripts.py on this system."""
@@ -4734,6 +4743,99 @@ def validate_no_proxy(no_proxy: str) -> bool:
     """
     pattern = r'^[A-Za-z0-9.,:*_/-]*$'
     return bool(re.match(pattern, no_proxy))
+
+
+_PROXY_ENV_KEYS = ("http_proxy", "https_proxy", "no_proxy")
+
+
+def _parse_proxy_kv_lines(path: str, strip_quotes: bool) -> dict:
+    """Parse KEY=value lines from a file into a lowercase-keyed dict,
+    keeping only http_proxy/https_proxy/no_proxy. Comments and unrelated
+    keys are ignored; a missing or unreadable file yields {}."""
+    values: dict = {}
+    try:
+        with open(path, encoding='utf-8') as handle:
+            for line in handle:
+                line = line.strip()
+                if not line or line.startswith('#') or '=' not in line:
+                    continue
+                key, _, value = line.partition('=')
+                key = key.strip().lower()
+                if key not in _PROXY_ENV_KEYS:
+                    continue
+                value = value.strip()
+                if strip_quotes and len(value) >= 2 and value[0] == value[-1] and value[0] in ('"', "'"):
+                    value = value[1:-1]
+                values[key] = value
+    except OSError:
+        return {}
+    return values
+
+
+def ensure_proxy_environment() -> None:
+    """Restore http(s)_proxy/no_proxy in os.environ when sudo already reset
+    them before getScripts could even start.
+
+    On Debian, `Defaults env_reset` strips the proxy variables and
+    /etc/pam.d/sudo has no pam_env line, so /etc/environment is not re-read
+    under sudo either - a proxy-only server's `git pull` (and every other
+    network call this script makes) then goes direct and is silently
+    dropped by the firewall. Must run before any of them (pip/uv/apt/curl/
+    git/requests).
+
+    Sources, in this order:
+      1. The marker file apply_proxy_settings() writes (PROXY_CONFIG_FILE,
+         ~/.getscripts_proxy) - already resolved through the sudo-aware
+         home at module load time (see setup_environment()'s SUDO_USER
+         handling; sudo itself resets HOME to the target user's home by
+         default, which is what PROXY_CONFIG_FILE relies on).
+      2. /etc/environment (ETC_ENVIRONMENT), KEY=value or KEY="value".
+
+    Values already present in os.environ are never overwritten, and each
+    value is validated (validate_proxy_url / validate_no_proxy) before
+    being applied - an invalid one is dropped with a warning instead of
+    being exported to every child process.
+    """
+    already_set = any(os.environ.get(name) for name in
+                       ('http_proxy', 'HTTP_PROXY', 'https_proxy', 'HTTPS_PROXY'))
+    if already_set:
+        return
+
+    values = _parse_proxy_kv_lines(PROXY_CONFIG_FILE, strip_quotes=False)
+    source = "~/.getscripts_proxy"
+    if not values.get('http_proxy') and not values.get('https_proxy'):
+        values = _parse_proxy_kv_lines(ETC_ENVIRONMENT, strip_quotes=True)
+        source = ETC_ENVIRONMENT
+
+    if not values:
+        return
+
+    applied = []
+
+    for key in ('http_proxy', 'https_proxy'):
+        value = values.get(key)
+        if not value:
+            continue
+        if not validate_proxy_url(value):
+            logger.warning(f"Proxy-Wert aus {source} ignoriert (ungültige URL): {key}={value!r}")
+            continue
+        for name in (key, key.upper()):
+            if not os.environ.get(name):
+                os.environ[name] = value
+        applied.append(key)
+
+    no_proxy = values.get('no_proxy')
+    if no_proxy:
+        if validate_no_proxy(no_proxy):
+            for name in ('no_proxy', 'NO_PROXY'):
+                if not os.environ.get(name):
+                    os.environ[name] = no_proxy
+            applied.append('no_proxy')
+        else:
+            logger.warning(f"no_proxy-Wert aus {source} ignoriert (unsichere Zeichen): {no_proxy!r}")
+
+    if applied:
+        status(f"Proxy aus {source} übernommen (sudo hatte die Umgebung zurückgesetzt)")
 
 
 def configure_proxy_settings() -> bool:

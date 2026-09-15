@@ -11,9 +11,23 @@ in this repository, stay in `CLAUDE.md`.
 
 ### Key Components
 
-#### 1. getScripts.py (v9.23.0)
+#### 1. getScripts.py (v9.23.1)
 - **Purpose**: Main installation and update script
 - **Features**:
+  - `ensure_proxy_environment()` (v9.23.1), the very first call in `main()`:
+    recovers http_proxy/https_proxy/no_proxy in `os.environ` when sudo's
+    `env_reset` stripped them before the script could even start — Debian
+    ships `env_keep += "http_proxy https_proxy ..."` commented out, and
+    `/etc/pam.d/sudo` has no `pam_env` line, so `/etc/environment` is not
+    re-read under sudo either. Sources: the marker file
+    `apply_proxy_settings()` writes (`~/.getscripts_proxy`), then
+    `/etc/environment` (`ETC_ENVIRONMENT`, quoted or not). Each value is
+    re-validated (`validate_proxy_url`/`validate_no_proxy`); an already-set
+    variable is never overwritten. `ups` (`fish/functions/linux/ups.fish`
+    v1.2.0) fixes this directly with
+    `sudo --preserve-env=http_proxy,https_proxy,no_proxy,...`; this is the
+    fallback for a caller that does not preserve the environment, or for a
+    server still one `ups` behind
   - `--proxy-check` (v9.22.0) seeds `no_proxy` with the same intranet defaults
     `update_docker_odoo.py` applies at run time — loopback, `.local`, the
     private ranges, the host's own IPv4s and its DNS search domains — and asks

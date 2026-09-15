@@ -1,5 +1,44 @@
 # Release Notes
 
+## `ups` No Longer Loses the Proxy That sudo Resets (15.09.2026)
+
+*getScripts.py v9.23.1 · fish/functions/linux/ups.fish v1.2.0 ·
+tests/test_getscripts_proxy_env.py · docs/usage/07-proxy.md ·
+docs/usage/08-troubleshooting.md · docs/usage/09-reference.md ·
+docs/COMPONENTS.md*
+
+### Fixed
+
+- **`ups` hung (and, since 9.22.1, silently kept the old checkout) on a
+  proxy-only server.** The operator is root, the fish session carries
+  http_proxy/https_proxy/no_proxy (`99-proxy.fish`), and `/etc/environment`
+  carries them too (written by `getScripts.py --proxy-check`) — but `ups`
+  runs `sudo getScripts.py`, and Debian's sudoers ships `Defaults env_reset`
+  with the `env_keep += "http_proxy https_proxy ..."` line commented out.
+  `sudo env | grep -i proxy` comes back empty. Worse, `/etc/pam.d/sudo` has
+  no `pam_env` line, so `/etc/environment` is not re-read under sudo either —
+  there was no second chance to pick the proxy back up. `getScripts.py`'s own
+  `git pull` then went direct, and the firewall dropped it without a visible
+  error.
+  - `fish/functions/linux/ups.fish` now calls
+    `sudo --preserve-env=http_proxy,https_proxy,no_proxy,HTTP_PROXY,HTTPS_PROXY,NO_PROXY`
+    (sudo >= 1.8.21 — Debian 12/13, Ubuntu 22.04/24.04) — the direct fix, so
+    the sudo child simply keeps the variables the fish session already has.
+  - `getScripts.py`'s new `ensure_proxy_environment()` runs as the very first
+    thing in `main()`, before any network call. If the proxy is still
+    missing, it recovers it from the marker file `apply_proxy_settings()`
+    writes (`~/.getscripts_proxy`), or failing that from `/etc/environment`
+    directly — a second line of defence for a server still on an `ups` that
+    predates the fish-side fix, or for any other caller that does not
+    preserve the environment. Each value is re-validated
+    (`validate_proxy_url`/`validate_no_proxy`) before being applied, and an
+    already-set variable is never overwritten.
+  - **A server stuck on a pre-9.23.1 `getScripts.py` cannot fetch its own
+    fix** — its `git pull` is exactly what is failing. It needs one manual
+    update in the root shell: `git -C ~/myodoo-docker pull --ff-only` (the
+    proxy already works there), then `cp ~/myodoo-docker/getScripts.py ~/`.
+    After that, `ups` updates normally again.
+
 ## Hollow Docker Images Were an On-Access Virus Scanner, Not Docker (15.09.2026)
 
 *scripts/server-readiness.py v1.9.0 · scripts/update_docker_odoo.py v5.21.0 ·
