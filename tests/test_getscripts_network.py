@@ -153,11 +153,20 @@ class UpdateRepositoryDegradationTest(unittest.TestCase):
 
         statuses = []
 
+        # _REPO_PULL_STATE is process-wide (self_update_and_reexec() and a
+        # second update_repository() call in the same run must see each
+        # other's pull) - reset it so each test call here pulls independently,
+        # regardless of what an earlier test or self-update test left behind.
         with mock.patch.object(gs, "run_command", side_effect=fake_run_command), \
              mock.patch.object(gs, "status", side_effect=lambda msg: statuses.append(msg)), \
              mock.patch("os.path.exists", return_value=True), \
              mock.patch("os.chdir"), \
+             mock.patch.dict(gs._REPO_PULL_STATE,
+                              {"pulled": False, "prev_head": None, "reported": False}), \
+             mock.patch.dict(os.environ, {}, clear=False), \
              mock.patch.object(gs.subprocess, "check_output", return_value="2026\n"):
+            os.environ.pop("GETSCRIPTS_REEXECED", None)
+            os.environ.pop("GETSCRIPTS_PREV_HEAD", None)
             gs.update_repository("/fake/myodoo-docker", "2026")
 
         return calls, statuses

@@ -1,5 +1,5 @@
 # Update ownERP Scripts Function
-# Version 1.2.0 | 15.09.2026
+# Version 1.3.0 | 15.09.2026
 
 function ups --description "Update ownERP scripts from repository (-v for full output)"
     echo "🔄 Updating ownERP scripts..."
@@ -19,7 +19,12 @@ function ups --description "Update ownERP scripts from repository (-v for full o
     # fix. Supported since sudo 1.8.21 (Debian 12/13, Ubuntu 22.04/24.04).
     sudo --preserve-env=http_proxy,https_proxy,no_proxy,HTTP_PROXY,HTTPS_PROXY,NO_PROXY $HOME/getScripts.py $argv
 
-    # Copy the updated getScripts.py
+    # getScripts.py >= 9.25.0 already replaces $HOME/getScripts.py itself and
+    # restarts mid-run (self_update_and_reexec()) as soon as the repository
+    # pull above brings in a newer version, so this run already executed the
+    # new code - one `ups` is enough. This copy stays as a harmless,
+    # idempotent safety net for servers where that self-update was skipped
+    # (e.g. no repository yet) or an older getScripts.py is still running.
     sudo cp $HOME/myodoo-docker/getScripts.py $HOME/
 
     # Reload Fish configuration

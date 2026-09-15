@@ -144,7 +144,10 @@ nach `/root`. Wird vom Bootstrap automatisch ausgeführt; manuell:
 
 Danach neue Shell öffnen (oder `source ~/.config/fish/config.fish`) — die
 Aliase aus [Kapitel 15](09-reference.md#de-15-shell-referenz-fish) stehen bereit. Später
-aktualisieren mit `ups`.
+aktualisieren mit `ups`. Ab `getScripts.py` 9.25.0 genügt dafür ein einziges
+`ups`: Bringt der Repository-Pull eine neuere Version mit, ersetzt sich das
+Skript mittendrin selbst und startet sofort neu — eine neue Funktion oder ein
+Fix ist damit noch im selben Lauf aktiv, nicht erst beim nächsten `ups`.
 
 > ⚠️ **Erfahrungswert (sudo su):** Wer sich mit einem persönlichen
 > Admin-Account anmeldet und per `sudo su` zu root wird, braucht
@@ -311,7 +314,10 @@ into `/root`. Executed automatically by bootstrap; manually:
 
 Then open a new shell (or `source ~/.config/fish/config.fish`) — the aliases
 from [chapter 15](09-reference.md#en-15-shell-reference-fish) are available. Update later
-with `ups`.
+with `ups`. As of `getScripts.py` 9.25.0, one `ups` is enough: if the
+repository pull brings in a newer version, the script replaces itself
+mid-run and restarts immediately, so a new feature or fix is already active
+in that same run instead of only the next `ups`.
 
 > ⚠️ **Lesson learned (sudo su):** Operators who log in with a personal admin
 > account and become root via `sudo su` need getScripts.py ≥ 9.7.3 — older

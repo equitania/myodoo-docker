@@ -136,8 +136,13 @@ if os.environ.get('GETSCRIPTS_DEBUG', '').lower() in ('1', 'true', 'yes'):
     logger.debug("Debug logging enabled")
 
 # Script version and date
-SCRIPT_VERSION = "9.24.0"
+SCRIPT_VERSION = "9.25.0"
 SCRIPT_DATE = "15.09.2026"
+
+# Branch of myodoo-docker this server tracks - the single source of truth for
+# main() (update_repository() call) and self_update_and_reexec() (which must
+# resolve the same repository before main() gets there).
+SERVER_BRANCH = "2026"
 
 # ─────────────────────────────────────────────────────────────────────────────
 # Install report
@@ -3800,6 +3805,17 @@ def _run_git_network(command: str, **kwargs) -> subprocess.CompletedProcess:
     return run_command(full_command, timeout=GIT_NETWORK_TIMEOUT, env=_GIT_NETWORK_ENV, **kwargs)
 
 
+# Set by update_repository() the first time it actually pulls in a process,
+# and consulted on every later call in that same process. self_update_and_
+# reexec() (see main()) calls update_repository() before main()'s own call
+# site does - without this, the same "ups" run would hit the network twice
+# (once for the self-update check, once for the ordinary update) and, once a
+# newer script re-execs into a fresh process, print the "Repository updated"
+# commit list twice as well. "reported" survives the process, "prev_head"
+# does not (a fresh process gets it from GETSCRIPTS_PREV_HEAD instead).
+_REPO_PULL_STATE: Dict[str, Any] = {"pulled": False, "prev_head": None, "reported": False}
+
+
 def update_repository(myodoo_docker: str, server_version: str) -> None:
     """Update or clone the myodoo-docker repository."""
     parent_dir = os.path.dirname(myodoo_docker)
@@ -3836,22 +3852,39 @@ def update_repository(myodoo_docker: str, server_version: str) -> None:
     # Check for updates. A stalled proxy or an invisible credential prompt
     # must not hang the whole run: on failure or timeout, keep the existing
     # checkout, warn loudly, and continue with the rest of the update.
-    before_pull = subprocess.check_output(["git", "rev-parse", "HEAD"], text=True).strip()
-    pull_result = _run_git_network("git pull", capture_output=True)
-    if pull_result.returncode != 0:
-        reason = (f"Zeitüberschreitung nach {GIT_NETWORK_TIMEOUT} s"
-                  if pull_result.returncode == 124 else
-                  f"Exit-Code {pull_result.returncode}")
-        status(f"⚠️  git pull fehlgeschlagen ({reason}) — vorhandener Stand wird "
-               f"weiterverwendet. Proxy prüfen: env | grep -i proxy")
-        stderr_tail = _decode_stream(pull_result.stderr).strip().splitlines()
-        for line in stderr_tail[-5:]:
-            status(f"  {line}")
-        after_pull = before_pull
-    else:
-        after_pull = subprocess.check_output(["git", "rev-parse", "HEAD"], text=True).strip()
+    #
+    # self_update_and_reexec() may already have pulled this repository seconds
+    # ago - either in this same process (_REPO_PULL_STATE["pulled"]) or in the
+    # process this one replaced via os.execv (GETSCRIPTS_REEXECED=1; the old
+    # HEAD then travels via GETSCRIPTS_PREV_HEAD, since _REPO_PULL_STATE does
+    # not survive the exec). Either way, skip the network pull.
+    already_pulled = _REPO_PULL_STATE["pulled"] or os.environ.get("GETSCRIPTS_REEXECED") == "1"
 
-    if before_pull != after_pull:
+    if already_pulled:
+        before_pull = (_REPO_PULL_STATE["prev_head"]
+                       or os.environ.get("GETSCRIPTS_PREV_HEAD")
+                       or subprocess.check_output(["git", "rev-parse", "HEAD"], text=True).strip())
+        after_pull = subprocess.check_output(["git", "rev-parse", "HEAD"], text=True).strip()
+    else:
+        before_pull = subprocess.check_output(["git", "rev-parse", "HEAD"], text=True).strip()
+        pull_result = _run_git_network("git pull", capture_output=True)
+        if pull_result.returncode != 0:
+            reason = (f"Zeitüberschreitung nach {GIT_NETWORK_TIMEOUT} s"
+                      if pull_result.returncode == 124 else
+                      f"Exit-Code {pull_result.returncode}")
+            status(f"⚠️  git pull fehlgeschlagen ({reason}) — vorhandener Stand wird "
+                   f"weiterverwendet. Proxy prüfen: env | grep -i proxy")
+            stderr_tail = _decode_stream(pull_result.stderr).strip().splitlines()
+            for line in stderr_tail[-5:]:
+                status(f"  {line}")
+            after_pull = before_pull
+        else:
+            after_pull = subprocess.check_output(["git", "rev-parse", "HEAD"], text=True).strip()
+
+    _REPO_PULL_STATE["pulled"] = True
+    _REPO_PULL_STATE["prev_head"] = before_pull
+
+    if before_pull != after_pull and not _REPO_PULL_STATE["reported"]:
         status("Repository updated, new changes downloaded")
         # Kept on screen in lean mode: the commit subjects are what an operator
         # reads to know what this run actually brought in, and there are only
@@ -3860,9 +3893,141 @@ def update_repository(myodoo_docker: str, server_version: str) -> None:
                                  capture_output=True)
         for line in _decode_stream(log_result.stdout).strip().splitlines():
             status(f"  {line}")
+        _REPO_PULL_STATE["reported"] = True
 
     # Clean pyc files
     run_command("find . -name '*.pyc' -type f -delete")
+
+
+# Matches SCRIPT_VERSION = "9.25.0" (single or double quotes) at the start of
+# a line - parsed out of raw file text, never imported, since the repository
+# copy may be a version this process is not ready to execute yet.
+_SCRIPT_VERSION_RE = re.compile(r'^SCRIPT_VERSION\s*=\s*["\']([0-9]+(?:\.[0-9]+){1,3})["\']', re.MULTILINE)
+
+
+def _version_tuple(version_str: str) -> Optional[Tuple[int, ...]]:
+    """Parse a dotted version string into a tuple of ints, or None if it
+    cannot be parsed - callers treat None as "do not compare, assume no
+    update", never as "older"."""
+    try:
+        return tuple(int(part) for part in version_str.split('.'))
+    except (AttributeError, ValueError):
+        return None
+
+
+def _resolve_target_home_for_self_update() -> str:
+    """Resolve the home directory to look for myodoo-docker in, before any of
+    setup_environment() has run.
+
+    Mirrors setup_environment()'s SUDO_USER / root-shell detection (see there
+    for why), but without its logging, sudo prompt or timezone side effects -
+    self_update_and_reexec() must be able to find the repository using only
+    what os.environ already carries at process start.
+    """
+    sudo_shell_names = ('su', 'sh', 'bash', 'zsh', 'fish', 'dash')
+    sudo_command = os.environ.get('SUDO_COMMAND', '')
+    sudo_cmd_base = os.path.basename(sudo_command.split()[0]) if sudo_command.strip() else ''
+    if os.environ.get('SUDO_USER') and sudo_cmd_base in sudo_shell_names:
+        return os.path.expanduser('~')
+    if os.environ.get('SUDO_USER'):
+        import pwd
+        try:
+            return pwd.getpwnam(os.environ['SUDO_USER']).pw_dir
+        except KeyError:
+            return os.path.expanduser('~')
+    return os.path.expanduser('~')
+
+
+def self_update_and_reexec() -> None:
+    """Pull myodoo-docker, and if the repository's getScripts.py is newer
+    than the one currently running, replace this script with it and restart
+    the process immediately.
+
+    Without this, a newer getScripts.py only takes effect on the NEXT `ups` -
+    this run's own update_repository() call keeps executing the OLD code that
+    is already loaded into the interpreter. Must run before any work that
+    would otherwise happen twice (pip/uv/apt/tool installation, Fish/Starship
+    setup, ...) - see main() for the call site and ordering.
+
+    Skips entirely, without side effects, when:
+      - GETSCRIPTS_REEXECED=1 (loop guard - this process IS the restart)
+      - ~/myodoo-docker does not exist yet (fresh install: today's clone
+        behaviour in update_repository() is untouched)
+      - the running file already IS the repository's own copy (e.g. a
+        developer or test running getScripts.py straight out of the clone)
+
+    Any failure (repository update, unreadable/unparsable version, file
+    replace) is a warning, never fatal - the current process simply continues
+    with the code it already has, exactly as before this function existed.
+    """
+    if os.environ.get("GETSCRIPTS_REEXECED") == "1":
+        return
+
+    running_path = os.path.realpath(__file__)
+    home = _resolve_target_home_for_self_update()
+    myodoo_docker = os.path.join(home, "myodoo-docker")
+
+    if not os.path.exists(myodoo_docker):
+        return
+
+    repo_script = os.path.join(myodoo_docker, "getScripts.py")
+    if os.path.realpath(repo_script) == running_path:
+        return
+
+    try:
+        update_repository(myodoo_docker, SERVER_BRANCH)
+    except Exception as e:
+        logger.warning(f"Selbst-Update übersprungen (Repository-Update fehlgeschlagen: {e})")
+        return
+
+    try:
+        with open(repo_script, 'r', encoding='utf-8') as f:
+            repo_text = f.read()
+    except OSError as e:
+        logger.warning(f"Selbst-Update übersprungen (getScripts.py im Repository nicht lesbar: {e})")
+        return
+
+    version_match = _SCRIPT_VERSION_RE.search(repo_text)
+    repo_version = _version_tuple(version_match.group(1)) if version_match else None
+    running_version = _version_tuple(SCRIPT_VERSION)
+    if repo_version is None or running_version is None or repo_version <= running_version:
+        return
+
+    try:
+        target_dir = os.path.dirname(running_path)
+        fd, tmp_path = tempfile.mkstemp(dir=target_dir, prefix=".getScripts.", suffix=".tmp")
+        try:
+            with os.fdopen(fd, 'w', encoding='utf-8') as f:
+                f.write(repo_text)
+            os.chmod(tmp_path, os.stat(running_path).st_mode)
+            os.replace(tmp_path, running_path)
+        except Exception:
+            try:
+                os.unlink(tmp_path)
+            except OSError:
+                pass
+            raise
+    except Exception as e:
+        logger.warning(f"Selbst-Update übersprungen (Datei konnte nicht ersetzt werden: {e})")
+        return
+
+    new_version_str = ".".join(str(part) for part in repo_version)
+    status(f"getScripts {SCRIPT_VERSION} → {new_version_str}: neue Version geladen, starte neu …")
+
+    sys.stdout.flush()
+    sys.stderr.flush()
+    for handler in logging.getLogger().handlers:
+        try:
+            handler.flush()
+        except Exception:
+            pass
+
+    os.environ["GETSCRIPTS_REEXECED"] = "1"
+    if _REPO_PULL_STATE.get("prev_head"):
+        os.environ["GETSCRIPTS_PREV_HEAD"] = _REPO_PULL_STATE["prev_head"]
+
+    os.execv(sys.executable, [sys.executable, running_path, *sys.argv[1:]])
+
 
 def read_proxy_marker() -> Dict[str, str]:
     """Read the proxy marker file written by apply_proxy_settings().
@@ -4628,6 +4793,17 @@ def main() -> None:
         # variables before we even got here (see docstring).
         ensure_proxy_environment()
 
+        # If the myodoo-docker repository already carries a newer getScripts.py
+        # than the one running right now, pull it in, replace this script with
+        # it and restart immediately - otherwise the rest of THIS run keeps
+        # executing the old code already loaded into the interpreter, and the
+        # new one only takes effect on the NEXT `ups`. Must come before the
+        # environment setup below and everything after it (pip/uv/apt/tool
+        # installation, Fish/Starship setup, ...), none of which should run
+        # twice for one `ups`. Does nothing on a fresh install (no repository
+        # yet) or when GETSCRIPTS_REEXECED=1 (this process IS the restart).
+        self_update_and_reexec()
+
         # Setup environment
         _myhome, local_bin = setup_environment()
 
@@ -4637,7 +4813,7 @@ def main() -> None:
         # Note: DNS configuration is handled in first-run setup
         # For explicit DNS optimization, use: ./getScripts.py --dns-check
 
-        global_server_version = '2026'
+        global_server_version = SERVER_BRANCH
         myodoo_docker = os.path.join(_myhome, "myodoo-docker")
 
         # Update or clone repository

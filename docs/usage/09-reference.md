@@ -17,7 +17,7 @@ Alle Skripte des Repos (`scripts/`, Stand 15.09.2026):
 | Skript | Zweck | Aufruf |
 |---|---|---|
 | `bootstrap.sh` (1.15.0) | Grundausstattung frischer Server (Docker, nginx, certbot, UFW, fail2ban) | `curl … bootstrap.sh -o /opt/… && /opt/myodoo-bootstrap.sh` |
-| `getScripts.py` (9.24.0) | fish-Shell, Aliase, Verwaltungsskripte nach `/root`; bietet auf einem Server ohne Konfiguration Wiederherstellen oder Abschalten der Jobs an, und fragt bei einem bewusst abweichenden Docker-Storage-Driver einmal je Lauf nach | `./getScripts.py [--dns-check\|--proxy-check\|--reconfigure]` |
+| `getScripts.py` (9.25.0) | fish-Shell, Aliase, Verwaltungsskripte nach `/root`; aktualisiert sich bei einem `ups` selbst und startet sofort neu, sobald das gerade geholte Repository eine neuere Version mitbringt; bietet auf einem Server ohne Konfiguration Wiederherstellen oder Abschalten der Jobs an, und fragt bei einem bewusst abweichenden Docker-Storage-Driver einmal je Lauf nach | `./getScripts.py [--dns-check\|--proxy-check\|--reconfigure]` |
 | `server_hardening.py` (1.8.0) | Audit + Härtung (UFW, fail2ban, SSH, sysctl, auditd, AIDE) | `sudo python3 server_hardening.py [--apply] [-m MODUL …]` |
 | `deploy-nginx-base.sh` (1.3.0) | nginx-Basis: Includes, Wartungsseite, nginx.conf (mit Rollback) | `./deploy-nginx-base.sh [--dry-run] [--no-main-conf]` |
 | `ngx-conf-wizard.sh` (1.1.0) | Interaktiver YAML-Assistent für nginx-set-conf | `./ngx-conf-wizard.sh` |
@@ -125,7 +125,7 @@ All scripts in this repository (`scripts/`, as of 15.09.2026):
 | Script | Purpose | Invocation |
 |---|---|---|
 | `bootstrap.sh` (1.15.0) | Baseline for fresh servers (Docker, nginx, certbot, UFW, fail2ban) | `curl … bootstrap.sh -o /opt/… && /opt/myodoo-bootstrap.sh` |
-| `getScripts.py` (9.24.0) | fish shell, aliases, management scripts into `/root`; offers restore or switching the jobs off on a server without configuration, and asks once per run about a deliberately non-overlay2 Docker storage driver | `./getScripts.py [--dns-check\|--proxy-check\|--reconfigure]` |
+| `getScripts.py` (9.25.0) | fish shell, aliases, management scripts into `/root`; self-updates and restarts mid-`ups` as soon as the repository it just pulled carries a newer version; offers restore or switching the jobs off on a server without configuration, and asks once per run about a deliberately non-overlay2 Docker storage driver | `./getScripts.py [--dns-check\|--proxy-check\|--reconfigure]` |
 | `server_hardening.py` (1.8.0) | Audit + hardening (UFW, fail2ban, SSH, sysctl, auditd, AIDE) | `sudo python3 server_hardening.py [--apply] [-m MODULE …]` |
 | `deploy-nginx-base.sh` (1.3.0) | nginx base: includes, maintenance page, nginx.conf (with rollback) | `./deploy-nginx-base.sh [--dry-run] [--no-main-conf]` |
 | `ngx-conf-wizard.sh` (1.1.0) | Interactive YAML wizard for nginx-set-conf | `./ngx-conf-wizard.sh` |

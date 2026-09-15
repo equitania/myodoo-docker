@@ -11,9 +11,31 @@ in this repository, stay in `CLAUDE.md`.
 
 ### Key Components
 
-#### 1. getScripts.py (v9.24.0)
+#### 1. getScripts.py (v9.25.0)
 - **Purpose**: Main installation and update script
 - **Features**:
+  - `self_update_and_reexec()` (v9.25.0, 15.09.2026): a newer getScripts.py
+    used to keep executing the OLD code for the rest of that same `ups` run —
+    `update_repository()` pulled it, but the interpreter had already loaded
+    the old file, so a new feature or fix only took effect on the *next*
+    `ups`. Now runs right after `ensure_proxy_environment()`, before anything
+    that would otherwise happen twice (pip/uv/apt/tool installation,
+    Fish/Starship setup, ...): pulls `~/myodoo-docker`, and if its
+    `getScripts.py` carries a strictly newer `SCRIPT_VERSION` (parsed from
+    the file text, never imported), replaces the running script atomically
+    (temp file, mode preserved, `os.replace()`) and restarts via
+    `os.execv()` with `GETSCRIPTS_REEXECED=1` set. Skips entirely on a fresh
+    install (no repository yet), on the loop guard
+    (`GETSCRIPTS_REEXECED=1`), or when the running file already IS the
+    repository's own copy. `update_repository()` tracks its own pull in a
+    module-level `_REPO_PULL_STATE` so a second call in the same process (or
+    the same run's ordinary call site, in the process this one just
+    restarted into) never hits the network twice for one `ups` — the restart
+    carries the pre-pull commit hash via `GETSCRIPTS_PREV_HEAD` so the
+    "Repository updated" commit list still appears exactly once. Any
+    failure (repository update, unreadable/unparsable version, file replace)
+    is a warning; the current process simply continues with the code it
+    already had
   - `offer_storage_driver_mute()` (v9.24.0, 15.09.2026): the same
     once-per-run pattern as `offer_noconfig_recovery()` below, for a host
     that deliberately keeps a non-overlay2 Docker storage driver. Silent

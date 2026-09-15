@@ -1,5 +1,53 @@
 # Release Notes
 
+## `ups` Now Takes Effect the Same Run It Pulls (15.09.2026)
+
+*getScripts.py v9.25.0 · fish/functions/linux/ups.fish v1.3.0 ·
+tests/test_getscripts_selfupdate.py · tests/test_getscripts_network.py ·
+docs/COMPONENTS.md · docs/usage/09-reference.md · docs/usage/01-provisioning.md ·
+usage/AGENT.md*
+
+### Added
+
+- **`self_update_and_reexec()` in `getScripts.py`.** `update_repository()`
+  already pulled a newer `getScripts.py` into `~/myodoo-docker` on every
+  `ups`, but the interpreter had already loaded the OLD file at process
+  start, so the rest of that run — and any new offer or fix it shipped —
+  kept executing the old code. An operator had to run `ups` a second time
+  before it took effect. Now, right after `ensure_proxy_environment()` and
+  before anything that would otherwise run twice (pip/uv/apt/tool
+  installation, Fish/Starship setup, ...), `self_update_and_reexec()` pulls
+  the repository, compares its `getScripts.py`'s `SCRIPT_VERSION` (parsed
+  from the file text, never imported) against the version currently running,
+  and — only if the repository is strictly newer — replaces the running
+  script atomically (temp file in the same directory, executable bit kept,
+  `os.replace()`) and restarts the process via `os.execv()` with
+  `GETSCRIPTS_REEXECED=1` set. That env var is the loop guard: the restarted
+  process skips the check entirely. `update_repository()` itself now tracks
+  its own pull in a module-level `_REPO_PULL_STATE`, so neither a second call
+  in the same process nor the ordinary call site in the freshly restarted one
+  hits the network again for the same `ups` — the restart carries the
+  pre-pull commit hash via `GETSCRIPTS_PREV_HEAD` so the familiar "Repository
+  updated, new changes downloaded" commit list still appears exactly once.
+  Skips without side effects on a fresh install (no repository yet) and when
+  the running file already IS the repository's own copy (e.g. a developer
+  running it straight out of the clone). Any failure along the way —
+  repository update, unreadable or unparsable version, file replace — is a
+  warning; the current process simply keeps running the code it already had,
+  exactly as before this existed.
+
+### Changed
+
+- **`ups.fish` (v1.3.0)** keeps its `sudo cp $HOME/myodoo-docker/getScripts.py
+  $HOME/` as a harmless, idempotent safety net, but the comment now says why
+  it is usually a no-op: getScripts.py already replaced that file itself
+  mid-run.
+- **The 9.23.0/9.24.0 release notes above, which say a new offer "appears
+  from the second `ups`"**, describe behaviour this release replaces — from
+  9.25.0 on, one `ups` is enough. A server still on 9.24.0 or older needs one
+  last double `ups` to reach this fix (or, on a proxy host still below
+  9.23.1, the manual `git pull`/`cp` from that section first).
+
 ## `ups` Asks Once About a Deliberately Non-overlay2 Docker Driver (15.09.2026)
 
 *getScripts.py v9.24.0 · server-readiness.py v1.9.1 ·
