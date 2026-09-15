@@ -1,5 +1,33 @@
 # Release Notes
 
+## `ups` Could Hang Forever Behind a Stalled Proxy (15.09.2026)
+
+*getScripts.py v9.22.1 · tests/test_getscripts_network.py ·
+docs/COMPONENTS.md · docs/usage/09-reference.md · docs/usage/08-troubleshooting.md*
+
+### Fixed
+
+- **`ups` hung indefinitely and silently on a proxy-only server, stuck inside
+  `git pull` with no error and no visible credential prompt.** `run_command()`
+  had no `timeout` parameter at all, so a stalled proxy connection - or an
+  invisible `GIT_TERMINAL_PROMPT` credential prompt, since output is captured
+  in lean mode - simply blocked forever; the operator saw nothing, not even a
+  hint to check `Ctrl+C`. `run_command()` now accepts an optional `timeout`
+  (subprocess.TimeoutExpired becomes a returncode-124 result, logged as a
+  warning, or a `CommandError` when `check=True`) and an optional `env`,
+  merged over the current environment rather than replacing it. Every git
+  operation that talks to a remote (`git clone`, `git pull`) now runs with
+  `GIT_TERMINAL_PROMPT=0` and `-c http.lowSpeedLimit=1000 -c
+  http.lowSpeedTime=30`, bounded by a 180s `GIT_NETWORK_TIMEOUT`. A failed or
+  timed-out `git pull` no longer aborts the update: `update_repository()` logs
+  "git pull fehlgeschlagen … vorhandener Stand wird weiterverwendet" with a
+  proxy hint and the tail of git's error, keeps the existing checkout, and
+  `ups` continues with the rest of the run - only the initial clone (no
+  checkout to fall back on) stays fatal, now with a clear message instead of
+  an incidental crash. The one-shot binary downloads that share the same risk
+  (Starship, uv, zoxide, the Fish repository signing key, Fisher) now carry
+  curl's own `--max-time 120` guard.
+
 ## A Cron Backup Reported Itself as a Duplicate Job (15.09.2026)
 
 *scripts/ownerp_cron.py v1.1.1 · scripts/server-readiness.py v1.7.1 ·

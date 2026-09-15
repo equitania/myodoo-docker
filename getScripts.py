@@ -136,8 +136,8 @@ if os.environ.get('GETSCRIPTS_DEBUG', '').lower() in ('1', 'true', 'yes'):
     logger.debug("Debug logging enabled")
 
 # Script version and date
-SCRIPT_VERSION = "9.22.0"
-SCRIPT_DATE = "14.09.2026"
+SCRIPT_VERSION = "9.22.1"
+SCRIPT_DATE = "15.09.2026"
 
 # ─────────────────────────────────────────────────────────────────────────────
 # Install report
@@ -684,7 +684,7 @@ def install_fish_if_needed() -> Tuple[bool, bool]:
                 os.close(key_tmp_fd)
                 try:
                     run_command(
-                        f"curl -fsSL {key_url} -o {key_tmp_path} && "
+                        f"curl -fsSL --max-time {DOWNLOAD_TIMEOUT} {key_url} -o {key_tmp_path} && "
                         f"sudo mv {key_tmp_path} /etc/apt/trusted.gpg.d/shells_fish_release_4.asc",
                         shell=True, check=True
                     )
@@ -811,7 +811,7 @@ def install_starship_if_needed() -> bool:
         os.close(tmp_fd)
         try:
             logger.info(f"Downloading Starship release binary ({target})...")
-            run_command(f"curl -fsSL {tarball_url} -o {tmp_tarball}", shell=True, check=True)
+            run_command(f"curl -fsSL --max-time {DOWNLOAD_TIMEOUT} {tarball_url} -o {tmp_tarball}", shell=True, check=True)
             run_command(f"sudo tar -xzf {tmp_tarball} -C /usr/local/bin starship", shell=True, check=True)
             run_command("sudo chmod 755 /usr/local/bin/starship", shell=True, check=True)
         finally:
@@ -868,7 +868,7 @@ def install_fisher_if_needed() -> bool:
         except Exception:
             logger.warning(f"Could not resolve latest Fisher release, using {fisher_ref}")
         install_cmd = (
-            f'fish -c "curl -sL https://raw.githubusercontent.com/jorgebucaran/fisher/{fisher_ref}/functions/fisher.fish'
+            f'fish -c "curl -sL --max-time {DOWNLOAD_TIMEOUT} https://raw.githubusercontent.com/jorgebucaran/fisher/{fisher_ref}/functions/fisher.fish'
             f' | source && fisher install jorgebucaran/fisher@{fisher_ref}"'
         )
         run_command(install_cmd, shell=True, check=True)
@@ -1458,7 +1458,7 @@ def install_zoxide_if_needed(target_version: Optional[str] = None) -> None:
         os.close(deb_fd)
         try:
             logger.info(f"Downloading zoxide {latest_version} .deb package...")
-            run_command(f"curl -fsSL {deb_url} -o {deb_file}", shell=True, check=True)
+            run_command(f"curl -fsSL --max-time {DOWNLOAD_TIMEOUT} {deb_url} -o {deb_file}", shell=True, check=True)
             run_command(f"sudo dpkg -i {deb_file}", shell=True, check=True, capture_output=True)
         finally:
             if os.path.exists(deb_file):
@@ -1487,6 +1487,12 @@ class InstallationError(Exception):
 # lines, and a warning that scrolls is no better than no warning. The full
 # output is in the log file either way.
 CHILD_OUTPUT_EXCERPT_LINES = 20
+
+# curl's own stall guard for one-shot binary/tarball downloads (Starship, uv,
+# zoxide, the Fish repo signing key): abort a transfer that never completes
+# instead of hanging the whole run - the same failure mode fixed for git
+# network operations (see GIT_NETWORK_TIMEOUT).
+DOWNLOAD_TIMEOUT = 120
 
 # Memoized: _may_capture() is consulted for every command and each miss would
 # otherwise cost a `sudo -n true` subprocess.
@@ -1544,7 +1550,9 @@ def _child_output_excerpt(result: subprocess.CompletedProcess) -> str:
     return "\n".join(lines)
 
 
-def run_command(command: str, check: bool = False, shell: bool = False, capture_output: bool = False, retries: int = 0, interactive: bool = False) -> subprocess.CompletedProcess:
+def run_command(command: str, check: bool = False, shell: bool = False, capture_output: bool = False,
+                 retries: int = 0, interactive: bool = False,
+                 timeout: Optional[float] = None, env: Optional[dict] = None) -> subprocess.CompletedProcess:
     """Run a shell command with optional error checking and retry logic.
 
     Args:
@@ -1555,6 +1563,14 @@ def run_command(command: str, check: bool = False, shell: bool = False, capture_
         retries: Number of retry attempts for transient failures
         interactive: Never swallow this command's output, even in lean mode -
             for commands that talk to the operator (chsh)
+        timeout: Kill the command after this many seconds and treat it as a
+            failure (returncode 124) instead of hanging forever - a stalled
+            proxy or an invisible credential prompt with output captured
+            would otherwise block the whole run. None (default) keeps the
+            previous, unbounded behaviour.
+        env: Extra environment variables, merged over a copy of the current
+            os.environ (never a replacement), so PATH and friends survive.
+            None (default) leaves the environment untouched.
 
     Returns:
         subprocess.CompletedProcess: Result of the command
@@ -1574,6 +1590,11 @@ def run_command(command: str, check: bool = False, shell: bool = False, capture_
              and _may_capture(command))
     do_capture = capture_output or quiet
 
+    run_env = None
+    if env:
+        run_env = os.environ.copy()
+        run_env.update(env)
+
     # Check if we're in a valid directory before running command
     try:
         os.getcwd()
@@ -1584,12 +1605,22 @@ def run_command(command: str, check: bool = False, shell: bool = False, capture_
 
     for attempt in range(retries + 1):
         try:
-            if shell:
-                logger.debug(f"Running shell command (attempt {attempt + 1}): {command}")
-                result = subprocess.run(command, shell=True, check=False, capture_output=do_capture)
-            else:
-                logger.debug(f"Running command (attempt {attempt + 1}): {command}")
-                result = subprocess.run(command.split(), check=False, capture_output=do_capture)
+            try:
+                if shell:
+                    logger.debug(f"Running shell command (attempt {attempt + 1}): {command}")
+                    result = subprocess.run(command, shell=True, check=False, capture_output=do_capture,
+                                             timeout=timeout, env=run_env)
+                else:
+                    logger.debug(f"Running command (attempt {attempt + 1}): {command}")
+                    result = subprocess.run(command.split(), check=False, capture_output=do_capture,
+                                             timeout=timeout, env=run_env)
+            except subprocess.TimeoutExpired as timeout_exc:
+                logger.warning(f"Command timed out after {timeout}s and was killed: {command}")
+                result = subprocess.CompletedProcess(
+                    command, 124,
+                    stdout=timeout_exc.stdout if timeout_exc.stdout is not None else (b'' if do_capture else None),
+                    stderr=timeout_exc.stderr if timeout_exc.stderr is not None else (b'' if do_capture else None),
+                )
 
             if quiet:
                 _log_child_output(command, result)
@@ -1904,7 +1935,7 @@ def install_uv() -> bool:
         os.makedirs(local_bin, exist_ok=True)
         try:
             logger.info(f"Downloading uv release tarball ({target})...")
-            run_command(f"curl -fsSL {tarball_url} -o {tmp_tarball}", shell=True, check=True)
+            run_command(f"curl -fsSL --max-time {DOWNLOAD_TIMEOUT} {tarball_url} -o {tmp_tarball}", shell=True, check=True)
             run_command(
                 f"tar -xzf {tmp_tarball} -C {local_bin} --strip-components=1 uv-{target}/uv uv-{target}/uvx",
                 shell=True, check=True
@@ -3743,6 +3774,32 @@ def setup_environment() -> Tuple[str, str]:
     
     return _myhome, local_bin
 
+# A proxy-only server can swallow a git network operation completely: no
+# error, no credential prompt visible (output is captured), just silence.
+# 180s is generous for a clone/pull/fetch of this repository over a working
+# connection, and short enough that an operator sees a clear failure instead
+# of an "ups" run that never returns.
+GIT_NETWORK_TIMEOUT = 180
+
+# GIT_TERMINAL_PROMPT=0: never block on an invisible credential prompt (the
+# operator can't see it with output captured, so it looks like a hang).
+# http.lowSpeedLimit/http.lowSpeedTime: let git itself abort a connection
+# that has stalled below 1000 bytes/s for 30s, on top of the hard timeout.
+_GIT_NETWORK_ENV = {"GIT_TERMINAL_PROMPT": "0"}
+_GIT_NETWORK_OPTS = "-c http.lowSpeedLimit=1000 -c http.lowSpeedTime=30"
+
+
+def _run_git_network(command: str, **kwargs) -> subprocess.CompletedProcess:
+    """Run a git command that talks to a remote, bounded so it cannot hang.
+
+    Args:
+        command: The git command, starting with "git " (e.g. "git pull").
+        **kwargs: Passed through to run_command().
+    """
+    full_command = command.replace("git ", f"git {_GIT_NETWORK_OPTS} ", 1)
+    return run_command(full_command, timeout=GIT_NETWORK_TIMEOUT, env=_GIT_NETWORK_ENV, **kwargs)
+
+
 def update_repository(myodoo_docker: str, server_version: str) -> None:
     """Update or clone the myodoo-docker repository."""
     parent_dir = os.path.dirname(myodoo_docker)
@@ -3753,7 +3810,10 @@ def update_repository(myodoo_docker: str, server_version: str) -> None:
         os.chdir(parent_dir)
         clone_url = "https://github.com/equitania/myodoo-docker.git"
         logger.info(f"Cloning {clone_url} into {myodoo_docker}")
-        run_command(f"git clone -b {server_version} {clone_url}")
+        # No existing checkout to fall back on - a failed/timed-out clone
+        # stays fatal, but check=True now raises a CommandError instead of
+        # hanging silently, which the caller reports clearly.
+        _run_git_network(f"git clone -b {server_version} {clone_url}", check=True)
         logger.info("Repository cloned successfully")
 
         # Clean pyc files after initial clone
@@ -3773,10 +3833,23 @@ def update_repository(myodoo_docker: str, server_version: str) -> None:
     # Configure git pull
     run_command("git config pull.ff only", capture_output=True)
 
-    # Check for updates
+    # Check for updates. A stalled proxy or an invisible credential prompt
+    # must not hang the whole run: on failure or timeout, keep the existing
+    # checkout, warn loudly, and continue with the rest of the update.
     before_pull = subprocess.check_output(["git", "rev-parse", "HEAD"], text=True).strip()
-    run_command("git pull", capture_output=True)
-    after_pull = subprocess.check_output(["git", "rev-parse", "HEAD"], text=True).strip()
+    pull_result = _run_git_network("git pull", capture_output=True)
+    if pull_result.returncode != 0:
+        reason = (f"Zeitüberschreitung nach {GIT_NETWORK_TIMEOUT} s"
+                  if pull_result.returncode == 124 else
+                  f"Exit-Code {pull_result.returncode}")
+        status(f"⚠️  git pull fehlgeschlagen ({reason}) — vorhandener Stand wird "
+               f"weiterverwendet. Proxy prüfen: env | grep -i proxy")
+        stderr_tail = _decode_stream(pull_result.stderr).strip().splitlines()
+        for line in stderr_tail[-5:]:
+            status(f"  {line}")
+        after_pull = before_pull
+    else:
+        after_pull = subprocess.check_output(["git", "rev-parse", "HEAD"], text=True).strip()
 
     if before_pull != after_pull:
         status("Repository updated, new changes downloaded")

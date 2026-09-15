@@ -30,6 +30,7 @@ Teil der [Server-Installationsanleitung](../INSTALLATION_GUIDE.md) · Part of th
 | Zertifikat läuft ab, Renewal schlägt fehl | Port-80-Forwarding wurde entfernt | TCP 80 → Server dauerhaft forwarden (HTTP-01) |
 | `fish: $? is not the exit status …` | Bash-Syntax in der fish-Shell | `$status` statt `$?`; Bash-Blöcke via `bash -c '…'` |
 | Odoo-Weboberfläche direkt über `IP:11000` aus dem LAN erreichbar | Port-Mapping ohne `127.0.0.1:`-Prefix | Container mit `-p 127.0.0.1:11000:8069 …` neu erzeugen |
+| `ups` hängt scheinbar für immer, meist kurz nach „Checking pip version“ bzw. bei `git pull` — kein Fehler, kein sichtbarer Login-Prompt | Ein Proxy-only-Server lässt die Git-Verbindung stillstehen, oder `git pull` wartet unsichtbar auf Zugangsdaten (Ausgabe ist im lean mode abgefangen). Bis `getScripts.py` 9.22.1 hatte `run_command()` keinen Timeout | Ab 9.22.1 bricht `git pull`/`git clone` nach 180 s selbst ab (`GIT_NETWORK_TIMEOUT`, `GIT_TERMINAL_PROMPT=0`, git-eigener Low-Speed-Abbruch); ein fehlgeschlagener Pull wird mit „git pull fehlgeschlagen … vorhandener Stand wird weiterverwendet“ gemeldet, `ups` läuft weiter. Bei älterer Version: `Ctrl+C`, dann `env \| grep -i proxy` prüfen und `getScripts.py` aktualisieren |
 
 ---
 
@@ -57,3 +58,4 @@ Teil der [Server-Installationsanleitung](../INSTALLATION_GUIDE.md) · Part of th
 | Certificate expires, renewal fails | Port 80 forwarding was removed | Forward TCP 80 → server permanently (HTTP-01) |
 | `fish: $? is not the exit status …` | Bash syntax in the fish shell | `$status` instead of `$?`; bash blocks via `bash -c '…'` |
 | Odoo web UI directly reachable via `IP:11000` from the LAN | Port mapping without the `127.0.0.1:` prefix | Recreate the container with `-p 127.0.0.1:11000:8069 …` |
+| `ups` appears to hang forever, usually right after "Checking pip version" or during `git pull` — no error, no visible login prompt | A proxy-only server lets the git connection stall, or `git pull` waits invisibly for credentials (output is swallowed in lean mode). Up to `getScripts.py` 9.22.0, `run_command()` had no timeout at all | As of 9.22.1, `git pull`/`git clone` abort themselves after 180s (`GIT_NETWORK_TIMEOUT`, `GIT_TERMINAL_PROMPT=0`, git's own low-speed abort); a failed pull is reported as "git pull fehlgeschlagen … vorhandener Stand wird weiterverwendet" (existing checkout kept) and `ups` continues. On an older version: `Ctrl+C`, check `env \| grep -i proxy`, then update `getScripts.py` |

@@ -11,13 +11,22 @@ in this repository, stay in `CLAUDE.md`.
 
 ### Key Components
 
-#### 1. getScripts.py (v9.22.0)
+#### 1. getScripts.py (v9.22.1)
 - **Purpose**: Main installation and update script
 - **Features**:
   - `--proxy-check` (v9.22.0) seeds `no_proxy` with the same intranet defaults
     `update_docker_odoo.py` applies at run time — loopback, `.local`, the
     private ranges, the host's own IPv4s and its DNS search domains — and asks
     only for exceptions beyond that
+  - `run_command()` (v9.22.1) takes an optional `timeout` and `env`; every git
+    operation that talks to a remote (`clone`, `pull`) runs with
+    `GIT_TERMINAL_PROMPT=0`, git's own low-speed abort, and a 180s
+    `GIT_NETWORK_TIMEOUT`, so a stalled proxy or an invisible credential
+    prompt can no longer hang `ups` forever. A failed or timed-out `git pull`
+    keeps the existing checkout and warns instead of aborting the run; only
+    the initial clone (no checkout to fall back on) stays fatal. The one-shot
+    curl downloads (Starship, uv, zoxide, the Fish signing key, Fisher) carry
+    a matching `--max-time 120`
   - Lean console output: without `-v` only server-optimization status,
     warnings and errors reach the screen; every INFO line and all child
     process output (apt, git, curl) go to `~/getscripts.log`. A failed command
