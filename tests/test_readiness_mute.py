@@ -406,10 +406,10 @@ class ExitCodeMuteTest(MuteFixture):
 
     maintenance_cron_present is the check muted here. Verified by hand
     (see the setUp comment) to be the only FAIL on a bare throwaway tree once
-    logrotate and the backup config are satisfied — otherwise muting it alone
-    would not bring the exit code down to 0, since the other checks
-    (logrotate_present, backup_config, update_config) FAIL on an untouched
-    tree as well.
+    logrotate, the backup config and an archive for it, and the update config
+    are satisfied — otherwise muting it alone would not bring the exit code
+    down to 0, since the other checks (logrotate_present, backup_config,
+    backup_recency, update_config) FAIL on an untouched tree as well.
     """
 
     def setUp(self):
@@ -428,6 +428,16 @@ class ExitCodeMuteTest(MuteFixture):
                          "  - name: test_db\n"
                          "    sql_container: test-db\n"
                          "    data_container: test-odoo\n")
+        # backup_recency FAILs unless test_db has a matching archive on disk
+        # (since 4.9.0/1.8.0 it reads the newest archive per database, not
+        # just the log's mtime — see server-readiness.py check_backup_recency).
+        archive_dir = self.ctx.p(os.path.join(sr.DEFAULT_BACKUP_PATH,
+                                              sr.DOCKER_BACKUP_SUBDIR))
+        os.makedirs(archive_dir, exist_ok=True)
+        with open(os.path.join(archive_dir,
+                               "test_db_test-odoo_dockerbackup_2026-09-15_00-00-00.7z"),
+                  "w", encoding="utf-8") as handle:
+            handle.write("x")
         # update_config FAILs the same way on a host that has docker, which
         # every developer machine running this suite may or may not — writing
         # the file keeps the outcome independent of that.

@@ -14,6 +14,7 @@ Run from the repository root:
 import importlib.util
 import os
 import tempfile
+import time
 import unittest
 import unittest.mock
 
@@ -163,6 +164,140 @@ class DuplicateCronEntriesTest(unittest.TestCase):
         finding = sr.check_duplicate_cron_entries(self.ctx)
         self.assertEqual(finding.severity, sr.Severity.FAIL)
         self.assertIn("legacy-backup-cron", finding.detail)
+
+
+BACKUP_ENTRY = """\
+databases:
+  - name: live_db
+    sql_container: live-db
+    data_container: live-odoo
+  - name: test_db
+    sql_container: test-db
+    data_container: test-odoo
+"""
+
+
+class BackupRecencyTest(unittest.TestCase):
+    """check_backup_recency() reads the newest archive per configured
+    database, the same way ownerp_state.find_archives does, instead of the
+    backup log's mtime - an aborting run still touches the log (found
+    15.09.2026 on a test server whose FastReport path had gone missing), so
+    the log alone cannot tell a real backup from an aborted one."""
+
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(self.tmp.cleanup)
+        self.ctx = sr.HealthContext(root=self.tmp.name, home=self.tmp.name,
+                                    repo=self.tmp.name)
+
+    def write_config(self, text):
+        path = os.path.join(self.tmp.name, sr.BACKUP_CONFIG)
+        with open(path, "w", encoding="utf-8") as handle:
+            handle.write(text)
+        return path
+
+    def write_log(self, text):
+        path = self.ctx.p(sr.BACKUP_LOG)
+        os.makedirs(os.path.dirname(path), exist_ok=True)
+        with open(path, "w", encoding="utf-8") as handle:
+            handle.write(text)
+        return path
+
+    def touch_archive(self, database, data_container, age_seconds,
+                      suffix=".7z"):
+        folder = self.ctx.p(os.path.join(sr.DEFAULT_BACKUP_PATH,
+                                         sr.DOCKER_BACKUP_SUBDIR))
+        os.makedirs(folder, exist_ok=True)
+        name = f"{database}_{data_container}_dockerbackup_2026-09-15_00-00-00{suffix}"
+        path = os.path.join(folder, name)
+        with open(path, "w", encoding="utf-8") as handle:
+            handle.write("x")
+        mtime = time.time() - age_seconds
+        os.utime(path, (mtime, mtime))
+        return path
+
+    @unittest.skipUnless(HAVE_YAML, "PyYAML not installed")
+    def test_fresh_archives_for_every_database_are_ok(self):
+        self.write_config(BACKUP_ENTRY)
+        self.touch_archive("live_db", "live-odoo", 3600)
+        self.touch_archive("test_db", "test-odoo", 3600)
+        finding = sr.check_backup_recency(self.ctx)
+        self.assertEqual(finding.severity, sr.Severity.OK)
+
+    @unittest.skipUnless(HAVE_YAML, "PyYAML not installed")
+    def test_a_stale_archive_warns_and_names_the_database(self):
+        self.write_config(BACKUP_ENTRY)
+        self.touch_archive("live_db", "live-odoo", 30 * 3600)
+        self.touch_archive("test_db", "test-odoo", 3600)
+        finding = sr.check_backup_recency(self.ctx)
+        self.assertEqual(finding.severity, sr.Severity.WARN)
+        self.assertIn("live_db", finding.detail)
+
+    @unittest.skipUnless(HAVE_YAML, "PyYAML not installed")
+    def test_a_very_stale_archive_fails_and_names_the_database(self):
+        self.write_config(BACKUP_ENTRY)
+        self.touch_archive("live_db", "live-odoo", 60 * 3600)
+        self.touch_archive("test_db", "test-odoo", 3600)
+        finding = sr.check_backup_recency(self.ctx)
+        self.assertEqual(finding.severity, sr.Severity.FAIL)
+        self.assertIn("live_db", finding.detail)
+
+    @unittest.skipUnless(HAVE_YAML, "PyYAML not installed")
+    def test_no_archive_for_one_database_fails_and_names_it(self):
+        self.write_config(BACKUP_ENTRY)
+        self.touch_archive("live_db", "live-odoo", 3600)
+        # test_db has no archive at all.
+        finding = sr.check_backup_recency(self.ctx)
+        self.assertEqual(finding.severity, sr.Severity.FAIL)
+        self.assertIn("test_db", finding.detail)
+        self.assertIn("no archive found", finding.detail)
+
+    def test_a_missing_yaml_falls_back_to_the_log(self):
+        """backup_config() already FAILs on the missing YAML under its own
+        title; this must not report the identical fact a second time."""
+        self.write_log("some backup output\n")
+        finding = sr.check_backup_recency(self.ctx)
+        self.assertEqual(finding.severity, sr.Severity.OK)
+        self.assertIn("last activity", finding.detail)
+
+    @unittest.skipUnless(HAVE_YAML, "PyYAML not installed")
+    def test_the_log_shows_the_abort_line_is_mentioned(self):
+        self.write_config(BACKUP_ENTRY)
+        self.touch_archive("live_db", "live-odoo", 3600)
+        self.touch_archive("test_db", "test-odoo", 3600)
+        self.write_log(
+            "Backup path: /opt/backups\n"
+            "WARNING: The following issues were found:\n"
+            "- Fast-report path /opt/fast-report/fr-live for database "
+            "live_db does not exist\n"
+            "Non-interactive run with path issues — aborting backup "
+            "(run interactively to override).\n"
+        )
+        finding = sr.check_backup_recency(self.ctx)
+        self.assertIn("aborted", finding.detail)
+
+    def test_the_abort_line_is_mentioned_on_the_log_fallback_too(self):
+        self.write_log(
+            "Non-interactive run with path issues — aborting backup "
+            "(run interactively to override).\n"
+        )
+        finding = sr.check_backup_recency(self.ctx)
+        self.assertIn("aborted", finding.detail)
+
+    def test_it_is_registered(self):
+        self.assertIn(sr.check_backup_recency, sr.CHECKS)
+
+    def test_it_can_still_be_derived_muted_when_the_cron_job_is_disabled(self):
+        """The mute mechanism operates on check_id, independent of how the
+        finding's own detail is computed - this must keep working."""
+        cron_path = self.ctx.p(sr.CRON_DEST)
+        os.makedirs(os.path.dirname(cron_path), exist_ok=True)
+        with open(cron_path, "w", encoding="utf-8") as handle:
+            handle.write("#OWNERP-DISABLED# 0 2 * * * root /root/container2backup.py\n")
+        findings = sr.run_checks(self.ctx)
+        finding = next(f for f in findings if f.check_id == "backup_recency")
+        self.assertIs(finding.severity, sr.Severity.MUTED)
+        self.assertIn("cron job disabled", finding.note)
 
 
 class ConfigLoaderTest(unittest.TestCase):

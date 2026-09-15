@@ -40,7 +40,7 @@ in this repository, stay in `CLAUDE.md`.
   - Detects Hetzner DNS issues with DigitalOcean
   - Supports systemd-resolved, resolvconf, and direct DNS config
 
-#### 2. container2backup.py (v4.8.0)
+#### 2. container2backup.py (v4.9.0)
 - **Purpose**: Automated backup system for Odoo deployments
 - **Features**:
   - SQL + Filestore backup
@@ -51,6 +51,11 @@ in this repository, stay in `CLAUDE.md`.
   - FastReport integration
   - `--validate` delegates to `ownerp_validate.py` (exit 2 when it is not
     installed — a backup tool must never report "cannot check" as success)
+  - `check_paths()` (v4.9.0) separates a database's FastReport path problem
+    from a hard path problem: the former is a per-database WARNING that
+    skips only that FastReport backup (the DB dump and filestore still run);
+    the latter (a service with no usable `source_path`, or an unusable
+    `backup_path`/`temp_path`) still aborts a non-interactive run
 
 #### 3. update_docker_myodoo.py (v4.0.6)
 - **Purpose**: Automated Docker container updates
@@ -710,7 +715,7 @@ in this repository, stay in `CLAUDE.md`.
   risk an expiry would guard against — a mute nobody remembers — is already
   covered by the visible `[MUTED]` line and the count in every summary
 
-#### 16. server-readiness.py (v1.7.1)
+#### 16. server-readiness.py (v1.8.0)
 - **Purpose**: Reports whether this server matches the state myodoo-docker
   expects — 16 read-only checks (cron, logrotate, backup and update
   configuration, Docker storage driver, nginx, certbot timing, script
@@ -723,6 +728,12 @@ in this repository, stay in `CLAUDE.md`.
   (see `ownerp_mute.py` above for the write path and the derived-mute
   mechanics). Still shown in the full report with its reason; carries no
   weight in `--brief`, `--quiet` or the exit code
+- **`check_backup_recency()` (v1.8.0) reads the newest archive per configured
+  database** — matched the same way `ownerp_state.find_archives()` does —
+  instead of the backup log's mtime, which an aborting run still touches.
+  `BACKUP_FAIL_AGE` is now 50 hours, agreeing with `ownerp_state.py`. Falls
+  back to the log-mtime reading when `container2backup.yaml` is missing,
+  unreadable or empty; names the log's abort line in the detail when present
 - **`DERIVED_MUTES` maps a job to a tuple of checks** (v1.7.0, 15.09.2026):
   `container2backup` → `backup_recency`, `backup_config`; `odoo_build_cache` →
   `update_config`. Only `update_config` for the build-cache job, deliberately

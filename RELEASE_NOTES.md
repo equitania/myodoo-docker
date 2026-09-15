@@ -1,5 +1,53 @@
 # Release Notes
 
+## Backup Recency Lied, and One Missing Report Path Blocked Every Database (15.09.2026)
+
+*scripts/server-readiness.py v1.8.0 · scripts/container2backup.py v4.9.0 ·
+scripts/container2backup.yaml · scripts/README_BackUp.md ·
+tests/test_server_readiness.py · tests/test_container2backup.py ·
+tests/test_readiness_mute.py*
+
+### Fixed
+
+- **`server-readiness.py`'s backup check watched the wrong file.**
+  `check_backup_recency()` only read `/var/log/container2backup.log`'s
+  modification time, and an aborting run still touches that log on its way
+  out. On a test server, a FastReport path had gone missing, every
+  non-interactive backup aborted before writing a single archive, and the
+  newest archives on disk were two months old — yet `chk`/`server-readiness.py`
+  reported "all 16 checks pass" on every run, while `ownerp_state.py`
+  (`dostat`) correctly showed `XX live_db no archive found`. The check now
+  reads the newest archive per configured database, matched the same way
+  `ownerp_state.find_archives()` already does, and names the stalest database
+  (or `no archive found for <db>`) in its detail. `BACKUP_FAIL_AGE` moves from
+  7 days to 50 hours to actually agree with `ownerp_state.py`'s threshold, as
+  the comments on both files already claimed it did but the constants did
+  not. When `container2backup.yaml` is missing, unreadable or configures no
+  databases — a case `backup_config` already reports under its own title —
+  the check falls back to the previous log-mtime reading rather than failing
+  the same condition twice under two titles. When the log's last line is the
+  script's own abort message, that is named in the detail too.
+- **One missing FastReport path aborted every database's backup.**
+  `container2backup.py`'s pre-flight `check_paths()` lumped a database's
+  optional `fast_report.path` in with hard problems like a service's missing
+  `source_path`, so one stale FastReport directory made a non-interactive run
+  abort before touching a single database — SQL dumps and filestores
+  included. A FastReport path problem is now a separate, per-database
+  WARNING (`Fast-report path … does not exist — FastReport part of <db>
+  skipped`); that database's SQL dump and filestore still run as usual, and
+  the run completes rather than aborting. A genuinely unusable
+  `backup_path`/`temp_path`, or a service with no `source_path`, still aborts
+  a non-interactive run exactly as before.
+
+### Changed
+
+- **A skipped FastReport part does not fail the run.** `container2backup.py`
+  prints `Backup completed with warnings (N FastReport path issue(s)
+  skipped).` instead of `Backup completed!` when this happens, but keeps exit
+  code 0 — consistent with every other WARNING message already in the script
+  (the gpg-fallback and missing-password warnings, for instance), none of
+  which change the exit code either.
+
 ## `ups` Could Hang Forever Behind a Stalled Proxy (15.09.2026)
 
 *getScripts.py v9.22.1 · tests/test_getscripts_network.py ·

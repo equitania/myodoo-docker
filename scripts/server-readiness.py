@@ -4,7 +4,7 @@
 # Title:            server-readiness.py
 # Description:      Report whether this server matches the state myodoo-docker
 #                   expects, and name the exact command that closes each gap.
-# Version:          1.7.1
+# Version:          1.8.0
 # Date:             15.09.2026
 # Author:           Equitania Software GmbH
 # ==============================================================================
@@ -57,6 +57,7 @@
 ###############################################################################
 
 import argparse
+import glob
 import importlib.util
 import os
 import re
@@ -68,7 +69,7 @@ from dataclasses import dataclass
 from enum import Enum
 from typing import Callable, List, Optional, Tuple
 
-SCRIPT_VERSION = "1.7.1"
+SCRIPT_VERSION = "1.8.0"
 SCRIPT_DATE = "15.09.2026"
 
 # Where nginx keeps its customer vhosts (mirrors nginx-cert-guard.py).
@@ -154,6 +155,13 @@ BACKUP_LOG = "var/log/container2backup.log"
 # to /opt/backups. Any other key/default here checks a config nothing ever reads.
 DEFAULT_BACKUP_PATH = "/opt/backups"
 
+# Where container2backup.py writes database archives, and what it names them:
+# <backup_path>/docker/<database>_<data_container>_dockerbackup_<timestamp>.<ext>.
+# Must mirror ownerp_state.DOCKER_SUBDIR / ownerp_state.BACKUP_SUFFIXES — chk
+# and dostat read the same files and must never disagree about what exists.
+DOCKER_BACKUP_SUBDIR = "docker"
+BACKUP_ARCHIVE_SUFFIXES = (".7z", ".7z.gpg", ".zip", ".tar.gz", ".tar.zst")
+
 # Must mirror odoo_build_cache.py CACHE_ROOT_DEFAULT.
 BUILD_CACHE_ROOT = "opt/odoo-build-cache"
 
@@ -161,7 +169,9 @@ BUILD_CACHE_ROOT = "opt/odoo-build-cache"
 LOG_WARN_BYTES = 100 * 1024 ** 2
 LOG_FAIL_BYTES = 1024 ** 3
 BACKUP_WARN_AGE = 26 * 3600          # tolerates a late-running 02:00 job
-BACKUP_FAIL_AGE = 7 * 86400
+# Must mirror ownerp_state.BACKUP_FAIL_AGE — chk and dostat grade the same
+# archives and must never disagree about what counts as stale.
+BACKUP_FAIL_AGE = 50 * 3600
 DISK_WARN_PCT = 85
 DISK_FAIL_PCT = 95
 
@@ -607,7 +617,72 @@ def check_log_sizes(ctx: HealthContext) -> Finding:
     )
 
 
-def check_backup_recency(ctx: HealthContext) -> Finding:
+def _newest_backup_archive_mtime(ctx: HealthContext, backup_path: str, database: str,
+                                 data_container: str) -> Optional[float]:
+    """Newest archive's mtime for one database, or None when none exist.
+
+    Must mirror ownerp_state.find_archives: same stem
+    (`<database>_<data_container>_dockerbackup_`), same
+    BACKUP_ARCHIVE_SUFFIXES, same `<backup_path>/docker` subdirectory.
+    Duplicated rather than imported: server-readiness.py never imports an
+    ownerp_* sibling (the one exception, nginx-cert-guard.py, is imported
+    precisely because re-implementing *that* rule would be the risk — see
+    _load_cert_guard's docstring); ownerp_state.py already imports this
+    script the other way round (collect_health()), and a matcher this small
+    is cheaper to keep in sync via a comment than via a second module import
+    that would need this script installed on every host that has none of the
+    ownerp_* tooling yet.
+    """
+    folder = ctx.p(os.path.join(backup_path, DOCKER_BACKUP_SUBDIR))
+    stem = f"{database}_{data_container}_dockerbackup_" if data_container else f"{database}_"
+    newest = None
+    try:
+        candidates = glob.glob(os.path.join(folder, stem + "*"))
+    except OSError:
+        candidates = []
+    for candidate in candidates:
+        if not candidate.endswith(BACKUP_ARCHIVE_SUFFIXES):
+            continue
+        try:
+            mtime = os.path.getmtime(candidate)
+        except OSError:
+            continue                              # deleted mid-scan
+        if newest is None or mtime > newest:
+            newest = mtime
+    return newest
+
+
+def _log_ended_with_abort(ctx: HealthContext) -> bool:
+    """True when the backup log's last non-blank line is the message
+    container2backup.py prints when path issues stop a non-interactive run,
+    or the interactive "Backup aborted." from answering the prompt with 'N'.
+
+    Bounded tail read: the log can grow well past LOG_WARN_BYTES before
+    rotation catches up, and only the last line is needed here.
+    """
+    path = ctx.p(BACKUP_LOG)
+    try:
+        size = os.path.getsize(path)
+        with open(path, "rb") as handle:
+            handle.seek(max(0, size - 4096))
+            tail = handle.read().decode("utf-8", errors="replace")
+    except OSError:
+        return False
+    for line in reversed(tail.splitlines()):
+        line = line.strip()
+        if not line:
+            continue
+        return "aborting backup" in line or line == "Backup aborted."
+    return False
+
+
+def _check_backup_recency_from_log(ctx: HealthContext) -> Finding:
+    """Fallback for when container2backup.yaml cannot be read or configures
+    no databases. check_backup_config() already reports that failure under
+    its own title, so this keeps the previous log-mtime behaviour rather than
+    reporting the same problem twice under two different titles.
+    """
+    note = " — last run aborted on path issues" if _log_ended_with_abort(ctx) else ""
     try:
         age = time.time() - os.path.getmtime(ctx.p(BACKUP_LOG))
     except OSError:
@@ -620,16 +695,85 @@ def check_backup_recency(ctx: HealthContext) -> Finding:
     if age >= BACKUP_FAIL_AGE:
         return Finding(
             "backup_recency", Severity.FAIL, "Backup recency",
-            f"last backup activity {_age(age)} ago",
+            f"last backup activity {_age(age)} ago{note}",
             "dobk   # run a backup now, then check the cron schedule",
         )
     if age >= BACKUP_WARN_AGE:
         return Finding(
             "backup_recency", Severity.WARN, "Backup recency",
-            f"last backup activity {_age(age)} ago (expected within 26 h)",
+            f"last backup activity {_age(age)} ago (expected within 26 h){note}",
             "dobk",
         )
-    return _ok("backup_recency", "Backup recency", f"last activity {_age(age)} ago")
+    return _ok("backup_recency", "Backup recency", f"last activity {_age(age)} ago{note}")
+
+
+def check_backup_recency(ctx: HealthContext) -> Finding:
+    """The newest archive per configured database — not the log's mtime.
+
+    A run that aborts on path issues still appends to container2backup.log
+    (it prints its warning banner, then exits), so the old mtime-only check
+    stayed "recent" for weeks while nothing was actually archived (found
+    15.09.2026, a test server whose FastReport path had gone missing — see
+    container2backup.py 4.9.0, which now aborts on that alone only for a
+    genuinely unusable path, not a missing optional FastReport one). Matched
+    the same way ownerp_state.find_archives does, so `chk` and `dostat` never
+    disagree about what counts as stale.
+    """
+    config, error = _load_backup_config(ctx)
+    if error:
+        return _check_backup_recency_from_log(ctx)
+
+    databases = config.get("databases") or []
+    if not isinstance(databases, list) or not databases:
+        return _check_backup_recency_from_log(ctx)
+
+    names = [str(entry.get("name") or "").strip()
+             for entry in databases if isinstance(entry, dict)]
+    if not any(names):
+        return _check_backup_recency_from_log(ctx)
+
+    defaults = config.get("defaults") or {}
+    raw_backup_path = str(defaults.get("backup_path") or DEFAULT_BACKUP_PATH)
+    backup_path = os.path.expandvars(os.path.expanduser(raw_backup_path))
+
+    note = " — last run aborted on path issues" if _log_ended_with_abort(ctx) else ""
+
+    worst = Severity.OK
+    missing = []
+    stalest_name, stalest_age = None, -1.0
+    for entry in databases:
+        if not isinstance(entry, dict):
+            continue
+        name = str(entry.get("name") or "").strip()
+        if not name:
+            continue
+        data_container = str(entry.get("data_container") or "")
+        mtime = _newest_backup_archive_mtime(ctx, backup_path, name, data_container)
+        if mtime is None:
+            worst = Severity.FAIL
+            missing.append(name)
+            continue
+        age = time.time() - mtime
+        if age > stalest_age:
+            stalest_age, stalest_name = age, name
+        if age >= BACKUP_FAIL_AGE:
+            worst = Severity.FAIL
+        elif age >= BACKUP_WARN_AGE and worst is not Severity.FAIL:
+            worst = Severity.WARN
+
+    if worst is Severity.OK:
+        return _ok("backup_recency", "Backup recency",
+                   f"newest archive {_age(stalest_age)} old ({stalest_name}){note}")
+
+    if missing:
+        detail = f"no archive found for {', '.join(sorted(missing))}{note}"
+    else:
+        detail = f"stalest: {stalest_name} ({_age(stalest_age)} old){note}"
+
+    return Finding(
+        "backup_recency", worst, "Backup recency", detail,
+        "dobk   # run a backup now, then check the cron schedule",
+    )
 
 
 def _load_config(ctx: HealthContext, name: str) -> Tuple[Optional[dict], Optional[str]]:

@@ -1,7 +1,10 @@
 """
 Tests for scripts/container2backup.py: the --validate delegation to
-ownerp_validate.py, and the backup_path fallback that prevents a mid-run
-KeyError when a service block omits it.
+ownerp_validate.py, the backup_path fallback that prevents a mid-run
+KeyError when a service block omits it, and check_paths()'s split between
+hard path issues (abort a non-interactive run, unchanged) and FastReport
+path issues (a per-database WARNING since 4.9.0 - that database's SQL dump
+and filestore still run, only its FastReport part is skipped).
 
 Standard library only, like the rest of the suite. container2backup.py
 imports both PyYAML and python-dotenv at module level, but none of the
@@ -13,8 +16,10 @@ Run from the repository root:
     python3 -m unittest tests.test_container2backup -v
 """
 
+import io
 import os
 import sys
+import tempfile
 import types
 import unittest
 from unittest import mock
@@ -131,6 +136,127 @@ class BackupAdditionalServiceTest(unittest.TestCase):
             service_config, "/opt/backups", "2026-08-11_00-00-00", "nginx")
 
         c2b.compress_directory.assert_not_called()
+
+
+class CheckPathsTest(unittest.TestCase):
+    """check_paths() must keep service path problems as hard `issues` (the
+    caller aborts a non-interactive run over these, unchanged) while a
+    database's fast_report problems go into the separate, non-aborting
+    `fastreport_warnings` list."""
+
+    def test_a_missing_service_source_path_is_a_hard_issue(self):
+        config = {
+            "services": {"nginx": {"enabled": True, "source_path": "/does/not/exist-xyz"}},
+            "databases": [],
+        }
+        issues, fastreport_warnings = c2b.check_paths(config)
+        self.assertEqual(len(issues), 1)
+        self.assertIn("nginx", issues[0])
+        self.assertEqual(fastreport_warnings, [])
+
+    def test_a_missing_fastreport_path_is_a_warning_not_an_issue(self):
+        config = {
+            "services": {},
+            "databases": [{
+                "name": "live_db",
+                "fast_report": {"enabled": True, "path": "/does/not/exist-xyz"},
+            }],
+        }
+        issues, fastreport_warnings = c2b.check_paths(config)
+        self.assertEqual(issues, [])
+        self.assertEqual(len(fastreport_warnings), 1)
+        self.assertIn("live_db", fastreport_warnings[0])
+
+    def test_fastreport_enabled_without_a_path_is_also_a_warning(self):
+        config = {
+            "services": {},
+            "databases": [{"name": "live_db", "fast_report": {"enabled": True}}],
+        }
+        issues, fastreport_warnings = c2b.check_paths(config)
+        self.assertEqual(issues, [])
+        self.assertEqual(len(fastreport_warnings), 1)
+        self.assertIn("No fast-report path configured", fastreport_warnings[0])
+
+    def test_a_disabled_fastreport_is_not_reported_at_all(self):
+        config = {
+            "services": {},
+            "databases": [{
+                "name": "live_db",
+                "fast_report": {"enabled": False, "path": "/does/not/exist-xyz"},
+            }],
+        }
+        issues, fastreport_warnings = c2b.check_paths(config)
+        self.assertEqual((issues, fastreport_warnings), ([], []))
+
+    def test_a_hard_issue_and_a_fastreport_warning_are_kept_apart(self):
+        config = {
+            "services": {"nginx": {"enabled": True, "source_path": "/does/not/exist-xyz"}},
+            "databases": [{
+                "name": "live_db",
+                "fast_report": {"enabled": True, "path": "/also/missing-xyz"},
+            }],
+        }
+        issues, fastreport_warnings = c2b.check_paths(config)
+        self.assertEqual(len(issues), 1)
+        self.assertEqual(len(fastreport_warnings), 1)
+
+    def test_two_databases_each_report_their_own_fastreport_problem(self):
+        config = {
+            "services": {},
+            "databases": [
+                {"name": "live_db", "fast_report": {"enabled": True, "path": "/missing-a"}},
+                {"name": "test_db", "fast_report": {"enabled": True, "path": "/missing-b"}},
+            ],
+        }
+        issues, fastreport_warnings = c2b.check_paths(config)
+        self.assertEqual(issues, [])
+        self.assertEqual(len(fastreport_warnings), 2)
+        joined = " ".join(fastreport_warnings)
+        self.assertIn("live_db", joined)
+        self.assertIn("test_db", joined)
+
+
+class BackupFastReportTest(unittest.TestCase):
+    """backup_fast_report() is what actually runs (or skips) a database's
+    FastReport part; check_paths() only reports the problem up front."""
+
+    def setUp(self):
+        self.compress_patch = mock.patch.object(
+            c2b, "compress_directory", return_value="/tmp/fake-fastreport.7z")
+        self.compress_patch.start()
+        self.addCleanup(self.compress_patch.stop)
+        self.config_patch = mock.patch.object(c2b, "config", {}, create=True)
+        self.config_patch.start()
+        self.addCleanup(self.config_patch.stop)
+
+    def test_a_missing_path_is_skipped_with_a_warning_naming_the_database(self):
+        buf = io.StringIO()
+        with mock.patch("sys.stdout", buf):
+            result = c2b.backup_fast_report(
+                "live_db", {"enabled": True, "path": "/does/not/exist-xyz"},
+                "/opt/backups", "2026-09-15_00-00-00")
+        self.assertFalse(result)
+        c2b.compress_directory.assert_not_called()
+        output = buf.getvalue()
+        self.assertIn("live_db", output)
+        self.assertIn("skipped", output)
+
+    def test_no_path_at_all_is_skipped_with_a_warning_naming_the_database(self):
+        buf = io.StringIO()
+        with mock.patch("sys.stdout", buf):
+            result = c2b.backup_fast_report(
+                "live_db", {"enabled": True}, "/opt/backups", "2026-09-15_00-00-00")
+        self.assertFalse(result)
+        c2b.compress_directory.assert_not_called()
+        self.assertIn("skipped", buf.getvalue())
+
+    def test_an_existing_path_still_runs_the_fastreport_backup(self):
+        with tempfile.TemporaryDirectory() as report_dir:
+            result = c2b.backup_fast_report(
+                "live_db", {"enabled": True, "path": report_dir},
+                "/opt/backups", "2026-09-15_00-00-00")
+        self.assertTrue(result)
+        c2b.compress_directory.assert_called_once()
 
 
 if __name__ == "__main__":

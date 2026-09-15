@@ -3,14 +3,16 @@
 # ==============================================================================
 # Title:            container2backup.py
 # Description:      Script to backup Odoo database including FileStore under Docker
-# Version:          4.8.0
-# Date:             11.08.2026
+# Version:          4.9.0
+# Date:             15.09.2026
 # Author:           Equitania Software GmbH
 # ==============================================================================
 # Feature Overview:
 #   - Database backup (SQL + Filestore) for multiple Odoo instances
 #   - Support for SQL-only backups (--sql-only parameter)
-#   - FastReport backup integration
+#   - FastReport backup integration (a missing/misconfigured FastReport path
+#     warns and skips only that database's FastReport part; the DB dump and
+#     filestore still run — see check_paths())
 #   - Service backups (nginx, letsencrypt, docker builds)
 #   - Multiple compression formats (7z, zip, gzip, zstd)
 #   - Streaming full backup (opt-in via 'stream: true'): pipes pg_dump + the
@@ -61,8 +63,8 @@ import signal  # Decode negative subprocess returncodes (signal kills) for diagn
 # Single source of truth for the version banner printed at runtime. Keep these
 # in sync with the header comment above. The __main__ banner is derived from
 # these constants so it cannot silently drift out of date again.
-SCRIPT_VERSION = "4.8.0"
-SCRIPT_DATE = "11.08.2026"
+SCRIPT_VERSION = "4.9.0"
+SCRIPT_DATE = "15.09.2026"
 
 # Whitelist for database names and Docker container names. Both propagate
 # into filesystem paths and subprocess argv, so restrict to shell-inert chars.
@@ -808,21 +810,34 @@ def backup_additional_service(service_config, base_backup_path, timestamp, servi
 
 def check_paths(config):
     """
-    Validates all configured paths and returns list of issues
+    Validates all configured paths.
+
+    Returns (issues, fastreport_warnings):
+      * issues              - hard problems that make the run untrustworthy
+                              (a service has no usable source_path). The
+                              caller aborts a non-interactive run over these,
+                              exactly as before.
+      * fastreport_warnings - a database's optional FastReport path is
+                              missing or misconfigured. That database's SQL
+                              dump and filestore are still backed up as
+                              usual; only its FastReport part is skipped (see
+                              backup_fast_report()), so these never abort
+                              the run.
     """
     issues = []
-    
+    fastreport_warnings = []
+
     # Expand environment variables in paths
     def expand_path(path):
         """Helper function to expand environment variables and user home in paths"""
         expanded = os.path.expandvars(os.path.expanduser(path))
         return expanded
-    
+
     # Check service paths (nginx, letsencrypt, docker-builds)
     for service, service_config in config.get('services', {}).items():
         if not service_config.get('enabled', True):
             continue
-            
+
         source_path = service_config.get('source_path')
         if not source_path:
             issues.append(f"No source_path configured for service {service}")
@@ -831,23 +846,25 @@ def check_paths(config):
             expanded_path = expand_path(source_path)
             if not os.path.exists(expanded_path):
                 issues.append(f"Source path {expanded_path} for service {service} does not exist")
-    
-    # Check database fast-report paths
+
+    # Check database fast-report paths. A problem here costs that database
+    # only its FastReport backup - the DB dump and filestore are unaffected -
+    # so it is collected separately and must never abort the whole run.
     for db in config.get('databases', []):
         db_name = db.get('name', 'unknown')
         fast_report = db.get('fast_report', {})
-        
+
         if fast_report.get('enabled', False):
             report_path = fast_report.get('path')
             if not report_path:
-                issues.append(f"No fast-report path configured for database {db_name}")
+                fastreport_warnings.append(f"No fast-report path configured for database {db_name}")
             else:
                 # Expand the path before checking
                 expanded_path = expand_path(report_path)
                 if not os.path.exists(expanded_path):
-                    issues.append(f"Fast-report path {expanded_path} for database {db_name} does not exist")
-    
-    return issues
+                    fastreport_warnings.append(f"Fast-report path {expanded_path} for database {db_name} does not exist")
+
+    return issues, fastreport_warnings
 
 def backup_fast_report(db_name, fast_report_config, backup_path, timestamp):
     """
@@ -858,12 +875,14 @@ def backup_fast_report(db_name, fast_report_config, backup_path, timestamp):
         
     report_path = fast_report_config.get('path')
     if not report_path:
-        print(f"Warning: FastReport enabled for {db_name} but no path specified")
+        print(f"Warning: FastReport enabled for {db_name} but no path specified "
+              f"— FastReport part of {db_name} skipped")
         return False
-        
+
     report_path = os.path.expandvars(os.path.expanduser(report_path))
     if not os.path.exists(report_path):
-        print(f"Warning: FastReport path {report_path} does not exist")
+        print(f"Warning: FastReport path {report_path} does not exist "
+              f"— FastReport part of {db_name} skipped")
         return False
         
     docker_backup_path = os.path.join(backup_path, 'docker')
@@ -1296,7 +1315,14 @@ if __name__ == "__main__":
         print("Backup path: " + backup_path)
 
         # Validate paths before starting backup
-        path_issues = check_paths(config)
+        path_issues, fastreport_warnings = check_paths(config)
+        if fastreport_warnings:
+            print("WARNING: FastReport path issues found (that database's SQL "
+                  "dump and filestore are still backed up; only its FastReport "
+                  "part is skipped):")
+            for issue in fastreport_warnings:
+                print(f"- {issue}")
+
         if path_issues:
             print("WARNING: The following issues were found:")
             for issue in path_issues:
@@ -1447,4 +1473,12 @@ if __name__ == "__main__":
         print(f"Missing required configuration field: {str(e)}")
         exit(1)
 
-    print('Backup completed!')
+    if fastreport_warnings:
+        # No non-zero exit for this: a skipped optional FastReport part is a
+        # WARNING like the encryption/gpg-fallback messages elsewhere in this
+        # script, none of which change the exit code either. The DB dump and
+        # filestore for every database still ran.
+        print(f"Backup completed with warnings ({len(fastreport_warnings)} "
+              f"FastReport path issue(s) skipped).")
+    else:
+        print('Backup completed!')

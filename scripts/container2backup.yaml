@@ -51,7 +51,10 @@ databases:
     retention_days: 7
     only_sql_dump: false  # Optional: If true, only the SQL dump is backed up, filestore is skipped
     # stream: true        # Optional per-db override of defaults.stream (Design A, .tar.zst)
-    fast_report:  # Optional fast-report configuration per database
+    fast_report:  # Optional fast-report configuration per database.
+      # A missing/misconfigured path here only skips THIS database's
+      # FastReport backup (WARNING, logged) - the SQL dump and filestore
+      # above still run, and the run does not abort over it (since 4.9.0).
       enabled: true
       path: /opt/fast-report/fr-live
 
@@ -62,7 +65,7 @@ databases:
     only_sql_dump: true  # Example: For this database, only back up the SQL dump, skip filestore
     fast_report:
       enabled: true
-      path: /opt/fast-report/fr-test 
+      path: /opt/fast-report/fr-test
 
 # Rsync configuration
 rsync:

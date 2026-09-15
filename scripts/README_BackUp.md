@@ -233,6 +233,16 @@ FastReport-Backups werden separat erstellt und im gleichen `docker`-Verzeichnis 
 └── {Original FastReport Verzeichnisstruktur}
 ```
 
+**Fehlender FastReport-Pfad (seit v4.9.0):** Existiert `fast_report.path` einer
+Datenbank nicht oder ist `fast_report.enabled: true` ohne `path` gesetzt, wird
+nur das FastReport-Backup dieser einen Datenbank übersprungen (`WARNING:
+Fast-report path … does not exist — FastReport part of <db_name> skipped`).
+SQL-Dump und Filestore dieser Datenbank sowie alle anderen konfigurierten
+Datenbanken laufen unverändert weiter — der Lauf bricht dafür nicht mehr ab.
+Andere Pfadprobleme (z. B. ein nicht nutzbarer `backup_path`/`temp_path`, oder
+ein fehlender `source_path` bei einem Service wie `nginx`) brechen einen
+nicht-interaktiven Lauf weiterhin ab wie bisher.
+
 ### 4. Service-Backups
 
 Service-Backups werden in ihren eigenen Unterverzeichnissen gespeichert, mit dem jeweiligen Kompressionsformat als Dateierweiterung.
@@ -511,7 +521,9 @@ Wichtig zur Umleitung:
 - `>> datei 2>&1` hängt **stdout UND stderr** an die Logdatei an. So landen auch Fehler
   (Tracebacks) im Log — anders als bei `| tee datei`, das stderr verwirft.
 - `</dev/null` gibt dem Skript einen leeren stdin. container2backup.py erkennt einen
-  fehlenden TTY und bricht bei Pfadproblemen sauber ab, statt an einer Rückfrage zu hängen.
+  fehlenden TTY und bricht bei echten Pfadproblemen (z. B. `backup_path` nicht nutzbar,
+  Service-`source_path` fehlt) sauber ab, statt an einer Rückfrage zu hängen. Ein
+  fehlender FastReport-Pfad allein bricht seit v4.9.0 nicht mehr ab, siehe oben.
 - Die Logdateien werden über `/etc/logrotate.d/myodoo-maintenance` wöchentlich rotiert.
 
 Wer lieber eine benutzergebundene Crontab pflegt (`crontab -e`), sollte dieselbe Umleitung
@@ -726,6 +738,15 @@ FastReport backups are created separately and stored in the same `docker` direct
 /
 └── {Original FastReport directory structure}
 ```
+
+**Missing FastReport path (since v4.9.0):** if a database's `fast_report.path`
+does not exist, or `fast_report.enabled: true` is set with no `path` at all,
+only that one database's FastReport backup is skipped (`WARNING: Fast-report
+path … does not exist — FastReport part of <db_name> skipped`). Its SQL dump
+and filestore, and every other configured database, still run unchanged — the
+run no longer aborts over this. Other path issues (an unusable
+`backup_path`/`temp_path`, or a service like `nginx` with no `source_path`)
+still abort a non-interactive run exactly as before.
 
 ### 4. Service Backups
 
@@ -1005,7 +1026,9 @@ Notes on redirection:
 - `>> file 2>&1` appends **both stdout AND stderr** to the log, so failures (tracebacks)
   actually land in the log — unlike `| tee file`, which drops stderr.
 - `</dev/null` gives the script an empty stdin. container2backup.py detects the missing TTY
-  and aborts cleanly on path issues instead of hanging on a confirmation prompt.
+  and aborts cleanly on a genuine path issue (e.g. an unusable `backup_path`, or a service
+  with no `source_path`) instead of hanging on a confirmation prompt. A missing FastReport
+  path alone no longer aborts the run since v4.9.0, see above.
 - The log files are rotated weekly via `/etc/logrotate.d/myodoo-maintenance`.
 
 If you prefer a per-user crontab (`crontab -e`), use the same redirection
