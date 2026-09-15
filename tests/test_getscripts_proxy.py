@@ -37,7 +37,7 @@ class IntranetNoProxyTest(unittest.TestCase):
     def setUp(self):
         self._addresses = gs.host_ipv4_addresses
         self._domains = gs.host_search_domains
-        gs.host_ipv4_addresses = lambda: ["10.1.12.16"]
+        gs.host_ipv4_addresses = lambda: ["192.168.1.50"]
         gs.host_search_domains = lambda: ["intra.example"]
 
     def tearDown(self):
@@ -48,7 +48,7 @@ class IntranetNoProxyTest(unittest.TestCase):
         entries = gs.intranet_no_proxy("").split(",")
         for entry in ("localhost", "127.0.0.1", "::1", ".local",
                       "10.0.0.0/8", "172.16.0.0/12", "192.168.0.0/16",
-                      "10.1.12.16", ".intra.example"):
+                      "192.168.1.50", ".intra.example"):
             self.assertIn(entry, entries)
 
     def test_the_operators_entries_come_first_and_are_not_duplicated(self):

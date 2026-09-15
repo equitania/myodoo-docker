@@ -11,8 +11,8 @@ tests/test_getscripts_proxy.py · docs/usage/07-proxy.md · usage/AGENT.md*
 
 - **A domain suffix in `no_proxy` did not cover an IP address.** Hours after the
   proxy reached the running container (release below), the FastReport API at
-  bb-wertmetall — configured in Odoo as `http://10.1.12.16:8899` — failed with
-  "Status Code: 503": `.intra.bb-wertmetall.ch` was in `no_proxy`, the IP was not,
+  a customer — configured in Odoo as `http://192.168.1.50:8899` — failed with
+  "Status Code: 503": `.intra.example.com` was in `no_proxy`, the IP was not,
   so `requests` sent the call to the proxy, which could not reach the internal
   host. Direct from the container the API answered. Listing IPs by hand is the
   wrong tool for this — the next customer trips over the next address.
@@ -53,7 +53,7 @@ tests/test_update_docker_odoo.py · docs/usage/07-proxy.md*
   a proxy-only host the running Odoo had no `http_proxy` at all: `publisher_warranty`
   went out directly, the firewall dropped it, and the database could not be
   registered — "Es ist ein Fehler bei der Kommunikation mit dem Wartungsserver
-  aufgetreten" (bb-wertmetall, 14.09.2026). The `update`, `neutralize` and `start`
+  aufgetreten" (14.09.2026). The `update`, `neutralize` and `start`
   runs now receive the resolved proxy via `-e`, lower- and upper-case, from the
   same YAML block that already drives the build. Hosts without a proxy see no
   change in their `docker run` lines.
@@ -99,7 +99,7 @@ docs/usage/08-troubleshooting.md*
   empty setting, or a missing configuration file, leaves the run exactly as it was.
   All three versions were affected and all three are fixed.
 - **The build retry reused the cache that had just produced the hollow layers.**
-  `--no-cache` tells Docker not to USE the cache; it does not remove it. On RZ-OD02
+  `--no-cache` tells Docker not to USE the cache; it does not remove it. On one customer server
   the retry reported `rebuild image odoo/test ... ok (0s)` and handed back the same
   unusable image, twice in a row — a rebuild that finishes in no time has rebuilt
   nothing. The retry now empties the builder cache (`docker builder prune -af`) and
@@ -184,7 +184,7 @@ tests/test_check_dockerimage.py · CLAUDE.md*
   Dockerfile defect and is not one. `update_docker_odoo.py` creates `zips/` as a
   fallback, but only on the `doup` path; the **first** build of a new instance is
   regularly done by hand, which is exactly when the folder is newest and most
-  likely incomplete. Seen on the hyserve V16→V18 migration.
+  likely incomplete. Seen on a V16→V18 migration.
 - **`ca-certificates/` is the same trap one `COPY` further down.** It ships empty
   (a README keeps it in git), so anyone assembling a build folder from an existing
   one drops it just as easily — and `COPY ca-certificates/` fails without it.
@@ -1234,10 +1234,10 @@ getScripts.py v9.14.0 · fish/conf.d/33-aliases-backup.fish v1.4.0*
 ### Fixed
 
 - **A guard built for exactly this scenario watched it happen and said nothing.**
-  A customer moved the A record of `assistedhome.de` to another provider. Ten vhosts
+  A customer moved the A record of `other-customer.example` to another provider. Ten vhosts
   on the host still carried the pre-1.11.0 form `listen <hostname>:443`; nginx resolves
   a listen hostname at config-parse time, got the new owner's IP, and refused to start
-  with `bind() to 94.130.186.22:443 failed (99: Cannot assign requested address)`. Every
+  with `bind() to 198.51.100.20:443 failed (99: Cannot assign requested address)`. Every
   site on the machine went down over one DNS edit somebody else made.
 
   `nginx-cert-guard.py` was supposed to catch this. It checked whether a listen hostname

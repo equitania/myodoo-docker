@@ -795,7 +795,7 @@ class BuildRetryCommandTest(unittest.TestCase):
 class ProxyRunArgsTest(unittest.TestCase):
     """The proxy reached wget and docker build, but never the running Odoo:
     docker run only forwarded PGPASSWORD, so publisher_warranty could not reach
-    the maintenance server on a proxy-only host (bb-wertmetall, 14.09.2026)."""
+    the maintenance server on a proxy-only host (14.09.2026)."""
 
     PROXY = {
         "http_proxy": "http://proxy.example:8080",
@@ -829,8 +829,8 @@ class ProxyRunArgsTest(unittest.TestCase):
 class IntranetNoProxyTest(unittest.TestCase):
     """Everything in the intranet bypasses the proxy, by default.
 
-    A domain suffix in no_proxy does not cover an IP address: at bb-wertmetall
-    the FastReport API is configured as http://10.1.12.16:8899, `.intra…` was
+    A domain suffix in no_proxy does not cover an IP address: at a customer
+    the FastReport API is configured as http://192.168.1.50:8899, `.intra…` was
     listed, the IP was not, and every report failed with 503 from the proxy
     (14.09.2026). Listing IPs by hand is the wrong tool - the private ranges,
     the host's own addresses and its DNS search domains are known.
@@ -845,7 +845,7 @@ class IntranetNoProxyTest(unittest.TestCase):
     def setUp(self):
         self._addresses = udo.host_ipv4_addresses
         self._domains = udo.host_search_domains
-        udo.host_ipv4_addresses = lambda: ["10.1.12.16", "10.1.12.17"]
+        udo.host_ipv4_addresses = lambda: ["192.168.1.50", "192.168.1.51"]
         udo.host_search_domains = lambda: ["intra.example"]
 
     def tearDown(self):
@@ -870,15 +870,15 @@ class IntranetNoProxyTest(unittest.TestCase):
         # addresses of the machine itself go in verbatim so that the usual
         # "FastReport next to Odoo" case works in every library.
         kept = self.entries(self.PROXY)
-        self.assertIn("10.1.12.16", kept)
-        self.assertIn("10.1.12.17", kept)
+        self.assertIn("192.168.1.50", kept)
+        self.assertIn("192.168.1.51", kept)
 
     def test_the_hosts_search_domains_are_added_as_suffixes(self):
         self.assertIn(".intra.example", self.entries(self.PROXY))
 
     def test_dns_search_from_the_container_volume_string_counts_too(self):
-        container = {"volume": "--network net --dns 10.1.12.1 --dns-search intra.customer.ch -v /a:/b"}
-        self.assertIn(".intra.customer.ch", self.entries(self.PROXY, container))
+        container = {"volume": "--network net --dns 192.168.1.1 --dns-search intra.example.com -v /a:/b"}
+        self.assertIn(".intra.example.com", self.entries(self.PROXY, container))
         container = {"volume": "--dns-search=other.zone"}
         self.assertIn(".other.zone", self.entries(self.PROXY, container))
 

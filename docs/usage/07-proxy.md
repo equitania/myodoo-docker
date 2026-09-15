@@ -42,7 +42,12 @@ machen (18.2).
 python3 ~/getScripts.py --proxy-check
 ```
 
-Fragt Proxy-URL und Ausnahmen interaktiv ab und schreibt vier Stellen:
+Fragt Proxy-URL und zusätzliche Ausnahmen interaktiv ab. Das Intranet muss
+dabei nicht eingetragen werden: seit getScripts.py 9.22.0 ergänzt
+`--proxy-check` `no_proxy` selbst um `localhost`, die privaten Netze, die
+eigenen IPv4-Adressen und die DNS-Suchdomänen des Hosts — dieselbe Liste,
+die `doup` verwendet (18.3). Das Ergebnis wird angezeigt und an vier Stellen
+geschrieben:
 
 | Datei | Wirkung | Greift ab |
 |---|---|---|
@@ -98,7 +103,7 @@ ist dabei nicht verhandelbar: der Container-`HEALTHCHECK` ruft `wget` gegen
 
 Warum die eigenen IPs explizit dabei sind: **Eine Domain-Endung passt nie
 auf eine IP-Adresse.** Bei einem Kunden war die FastReport-API in Odoo als
-`http://10.1.12.16:8899` eingetragen, `.intra…` stand in `no_proxy`, die IP
+`http://192.168.1.50:8899` eingetragen, `.intra…` stand in `no_proxy`, die IP
 nicht — jeder Druck endete mit „Status Code: 503“ vom Proxy. CIDR-Einträge
 versteht nur Python-`requests`; `wget`, `apt` und Pythons `urllib` vergleichen
 reine Namens-Endungen und übergehen sie. Die Adressen der Maschine selbst
@@ -114,7 +119,7 @@ Netz, in dem auch interner Verkehr über den Proxy muss, schaltet
 Prüfen, ob ein Ziel am Proxy vorbeigeht (im Container, `True` = direkt):
 
 ```fish
-docker exec <container> python3 -c "import requests; print(requests.utils.should_bypass_proxies('http://10.1.12.16:8899', None))"
+docker exec <container> python3 -c "import requests; print(requests.utils.should_bypass_proxies('http://192.168.1.50:8899', None))"
 ```
 
 Das **Base-Image-Pull macht der Docker-Daemon** — dafür ist ausschließlich
@@ -130,10 +135,11 @@ laden kann, lassen sich pro Container über `pre_build_files`
   ~1 s Laufzeit ist normal (NetIO/DiskIO messen über ein 1-s-Fenster).
 - **uv:** Bei per Paketmanager installiertem uv ist `uv self update` nicht
   möglich — getScripts erkennt das und loggt einen INFO-Skip, kein Fehler.
-- **Interne Dienste:** Sprechen Skripte oder Container interne Hosts per
-  HTTP an (z.B. `*.internal.example.com`), die Ausnahmen bei
-  `--proxy-check` um `.internal.example.com` erweitern — sonst läuft der
-  Traffic durch den Proxy.
+- **Interne Dienste:** Private Adressen und Hosts unter den DNS-Suchdomänen
+  gehen automatisch direkt (18.2, 18.3). Von Hand bei `--proxy-check`
+  ergänzen muss man nur interne Zonen außerhalb der Suchdomänen (z.B.
+  `.internal.example.com`) und kurze Hostnamen ohne Punkt — sonst läuft
+  dieser Traffic durch den Proxy.
 
 ### 18.5 Verifikation
 
@@ -151,49 +157,6 @@ time fastfetch > /dev/null                         # ~1 s, kein Haenger
 | `docker pull` hängt/scheitert | Drop-in fehlt oder Docker nicht neu gestartet | 18.2 |
 | `git pull` / `curl` hängt | Session ohne Proxy-Umgebung | `exec fish` bzw. neu einloggen |
 | cron-Jobs ohne Internet | `/etc/environment` fehlt/veraltet | `--proxy-check` erneut ausführen |
-
----
-
-<a id="english-version"></a>
-# English Version
-
-Step-by-step guide for system administrators: from a freshly installed
-Debian/Ubuntu server to two production Odoo systems (live/test) behind nginx
-with Let's Encrypt SSL, automated updates (`doup`) and backups (`dobk`).
-All examples are vendor/customer-neutral — replace domains, IPs and passwords
-with your values.
-
-**Placeholders used:**
-
-| Placeholder | Meaning |
-|---|---|
-| `erp-live.example.com` / `erp-test.example.com` | Public domains of the two systems |
-| `203.0.113.10` | Public IP (DNS A record) |
-| `192.168.1.50` | Internal server IP (only relevant behind NAT) |
-| `live-odoo` / `test-odoo`, `live-db` / `test-db` | Container names |
-| `odoo/live`, `odoo/test` | Docker image names |
-| `proxy.example.com:8080` | Customer HTTP proxy (only [chapter 18](#en-18-operation-behind-an-http-proxy)) |
-
-## Contents
-
-1. [Overview & Architecture](01-provisioning.md#en-1-overview--architecture)
-2. [Prerequisites](01-provisioning.md#en-2-prerequisites)
-3. [Step 1: Bootstrap](01-provisioning.md#en-3-step-1-bootstrap)
-4. [Step 2: getScripts.py](01-provisioning.md#en-4-step-2-getscriptspy)
-5. [Step 3: Server Hardening](01-provisioning.md#en-5-step-3-server-hardening)
-6. [Step 4: nginx Base + Vhosts](02-nginx-certs.md#en-6-step-4-nginx-base--vhosts)
-7. [Step 5: PostgreSQL](03-postgres-odoo.md#en-7-step-5-postgresql-live-dbtest-db)
-8. [Step 6: First Start of the Odoo Containers](03-postgres-odoo.md#en-8-step-6-first-start-of-the-odoo-containers)
-9. [Step 7: Let's Encrypt & Reachability](02-nginx-certs.md#en-9-step-7-lets-encrypt--reachability)
-10. [Step 8: Set Up Updates (edup/doup)](04-updates.md#en-10-step-8-set-up-updates-edupdoup)
-11. [Step 9: Set Up Backups (edbk/dobk)](05-backup-restore.md#en-11-step-9-set-up-backups-edbkdobk)
-12. [Step 10: Automate Maintenance](06-maintenance.md#en-12-step-10-automate-maintenance)
-13. [Restore & Emergency](05-backup-restore.md#en-13-restore--emergency)
-14. [Script Reference](09-reference.md#en-14-script-reference)
-15. [Shell Reference (fish)](09-reference.md#en-15-shell-reference-fish)
-16. [Troubleshooting](08-troubleshooting.md#en-16-troubleshooting)
-17. [Optional Components](06-maintenance.md#en-17-optional-components)
-18. [Operation Behind an HTTP Proxy](#en-18-operation-behind-an-http-proxy)
 
 ---
 
@@ -233,7 +196,11 @@ permanent (18.2).
 python3 ~/getScripts.py --proxy-check
 ```
 
-Prompts for proxy URL and exceptions interactively and writes four places:
+Prompts for proxy URL and additional exceptions interactively. The intranet
+does not need to be entered: since getScripts.py 9.22.0 `--proxy-check`
+extends `no_proxy` itself with `localhost`, the private ranges, the host's
+own IPv4 addresses and its DNS search domains — the same list `doup` uses
+(18.3). The result is shown and written to four places:
 
 | File | Effect | Takes effect |
 |---|---|---|
@@ -289,7 +256,7 @@ exception the probe would go through the proxy and the container would be
 
 Why the host's own IPs are listed verbatim: **a domain suffix never matches
 an IP address.** At one customer the FastReport API was configured in Odoo
-as `http://10.1.12.16:8899`, `.intra…` was in `no_proxy`, the IP was not —
+as `http://192.168.1.50:8899`, `.intra…` was in `no_proxy`, the IP was not —
 every report ended with "Status Code: 503" from the proxy. CIDR entries are
 understood by Python's `requests` only; `wget`, `apt` and Python's `urllib`
 compare plain name suffixes and skip them. The machine's own addresses are
@@ -306,7 +273,7 @@ Check whether a target bypasses the proxy (inside the container, `True` =
 direct):
 
 ```fish
-docker exec <container> python3 -c "import requests; print(requests.utils.should_bypass_proxies('http://10.1.12.16:8899', None))"
+docker exec <container> python3 -c "import requests; print(requests.utils.should_bypass_proxies('http://192.168.1.50:8899', None))"
 ```
 
 The **base image pull is done by the Docker daemon** — only the systemd
@@ -322,10 +289,11 @@ copied into the build folder beforehand via per-container `pre_build_files`
   ~1 s runtime is normal (NetIO/DiskIO sample over a 1 s window).
 - **uv:** With uv installed via a package manager, `uv self update` is not
   possible — getScripts detects this and logs an INFO skip, not an error.
-- **Internal services:** If scripts or containers talk to internal hosts
-  over HTTP (e.g. `*.internal.example.com`), extend the exceptions in
-  `--proxy-check` with `.internal.example.com` — otherwise that traffic
-  goes through the proxy.
+- **Internal services:** Private addresses and hosts under the DNS search
+  domains go direct automatically (18.2, 18.3). Add by hand in
+  `--proxy-check` only internal zones outside the search domains (e.g.
+  `.internal.example.com`) and short hostnames without a dot — otherwise
+  that traffic goes through the proxy.
 
 ### 18.5 Verification
 

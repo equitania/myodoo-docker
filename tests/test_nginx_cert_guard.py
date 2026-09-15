@@ -29,8 +29,8 @@ _spec = importlib.util.spec_from_file_location(
 guard = importlib.util.module_from_spec(_spec)
 _spec.loader.exec_module(guard)
 
-HOST_IP = "91.107.223.250"
-FOREIGN_IP = "94.130.186.22"
+HOST_IP = "203.0.113.10"
+FOREIGN_IP = "198.51.100.20"
 
 VHOST = """\
 server {{
@@ -123,11 +123,11 @@ class UnbindableListenTargetTest(VhostFixture):
 
     def test_hostname_resolving_elsewhere_is_flagged(self):
         """The ucore outage in one assertion: resolves perfectly, just not to us."""
-        self.fake_dns({"assistedhome.de": FOREIGN_IP})
-        path = self.vhost("assistedhome.de")
+        self.fake_dns({"other-customer.example": FOREIGN_IP})
+        path = self.vhost("other-customer.example")
         found = guard.unbindable_listen_target(path, {HOST_IP})
         self.assertIsNotNone(found)
-        self.assertEqual(found[0], "assistedhome.de")
+        self.assertEqual(found[0], "other-customer.example")
         self.assertIn(FOREIGN_IP, found[1])
         self.assertIn("not an address of this host", found[1])
 
@@ -140,8 +140,8 @@ class UnbindableListenTargetTest(VhostFixture):
 
     def test_unknown_local_ips_skip_the_bindability_half(self):
         """An unreadable `ip addr` must not condemn every vhost on the box."""
-        self.fake_dns({"assistedhome.de": FOREIGN_IP})
-        path = self.vhost("assistedhome.de")
+        self.fake_dns({"other-customer.example": FOREIGN_IP})
+        path = self.vhost("other-customer.example")
         self.assertIsNone(guard.unbindable_listen_target(path, set()))
 
     def test_unknown_local_ips_still_catch_a_dead_name(self):
@@ -156,8 +156,8 @@ class DetectBrokenTest(VhostFixture):
         """Reproduces ucore: ten vhosts, one customer moved, eight stay healthy."""
         ours = ["ahs.ownerp.app", "ahs-fr.ownerp.app", "ahs-test.ownerp.app",
                 "ahs-test-fr.ownerp.app", "ahs-vs.ownerp.app", "lisa.ownerp.app",
-                "lisa-assistenz.com", "www.lisa-assistenz.com"]
-        theirs = ["assistedhome.de", "www.assistedhome.de"]
+                "our-site.example", "www.our-site.example"]
+        theirs = ["other-customer.example", "www.other-customer.example"]
         dns = {d: HOST_IP for d in ours}
         dns.update({d: FOREIGN_IP for d in theirs})
         self.fake_dns(dns)
@@ -166,7 +166,7 @@ class DetectBrokenTest(VhostFixture):
 
         broken = guard.detect_broken(self.conf_dir, local_ips={HOST_IP})
         self.assertEqual(sorted(p.name for p, _ in broken),
-                         ["assistedhome.de.conf", "www.assistedhome.de.conf"])
+                         ["other-customer.example.conf", "www.other-customer.example.conf"])
 
     def test_missing_cert_takes_precedence_over_listen(self):
         self.fake_dns({"example.de": HOST_IP})
@@ -197,11 +197,11 @@ class ListenBoundClassificationTest(VhostFixture):
     """The hard/soft split mode_check uses to pick its threshold."""
 
     def test_domain_in_listen_is_hard(self):
-        path = self.vhost("assistedhome.de")
+        path = self.vhost("other-customer.example")
         self.assertIn(guard.domain_of(path), guard.listen_hosts(path))
 
     def test_domain_only_in_server_name_is_soft(self):
-        path = self.vhost("assistedhome.de", listen_host=HOST_IP)
+        path = self.vhost("other-customer.example", listen_host=HOST_IP)
         self.assertNotIn(guard.domain_of(path), guard.listen_hosts(path))
 
 

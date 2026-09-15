@@ -693,7 +693,7 @@ PROXY_MARKER_FILE = join(home_path, '.getscripts_proxy')
 # lives in the last two. The host's own addresses and its DNS search domains
 # are added at run time (see augment_no_proxy). A domain suffix in no_proxy
 # never matches an IP address, and listing IPs by hand is what went wrong at
-# a customer on 14.09.2026: FastReport configured as http://10.1.12.16:8899,
+# a customer on 14.09.2026: FastReport configured as http://192.168.1.50:8899,
 # '.intra…' listed, the IP not, every report 503 from the proxy.
 INTRANET_NO_PROXY = ('localhost', '127.0.0.1', '::1', '.local',
                      '10.0.0.0/8', '172.16.0.0/12', '192.168.0.0/16')

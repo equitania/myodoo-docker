@@ -4466,7 +4466,7 @@ def validate_proxy_url(url: str) -> bool:
 # address ranges. Mirrors INTRANET_NO_PROXY in update_docker_odoo.py so a shell,
 # a cron job and doup agree on what goes direct. A domain suffix never matches
 # an IP address - listing IPs by hand is what failed at a customer on
-# 14.09.2026 (FastReport at http://10.1.12.16:8899, '.intra…' listed, 503).
+# 14.09.2026 (FastReport at http://192.168.1.50:8899, '.intra…' listed, 503).
 INTRANET_NO_PROXY = ('localhost', '127.0.0.1', '::1', '.local',
                      '10.0.0.0/8', '172.16.0.0/12', '192.168.0.0/16')
 RESOLV_CONF_FILES = ('/run/systemd/resolve/resolv.conf', '/etc/resolv.conf')

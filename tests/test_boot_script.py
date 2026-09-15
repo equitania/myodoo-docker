@@ -295,7 +295,7 @@ class BootProxyEnvironmentTest(unittest.TestCase):
     """'su -' opens a login shell and drops the environment except for what is
     whitelisted. A proxy that docker run hands to the container therefore never
     reached odoo-bin: publisher_warranty went out directly and the database
-    could not be registered (bb-wertmetall, 14.09.2026). The sudoers env_keep
+    could not be registered (14.09.2026). The sudoers env_keep
     that used to fix this is dead since the switch from sudo to su in 2.1.0.
     """
 
