@@ -12,30 +12,33 @@ Teil der [Server-Installationsanleitung](../INSTALLATION_GUIDE.md) · Part of th
 <a id="de-14-skript-referenz"></a>
 ## Skript-Referenz
 
-Alle Skripte des Repos (`scripts/`, Stand 16.07.2026):
+Alle Skripte des Repos (`scripts/`, Stand 15.09.2026):
 
 | Skript | Zweck | Aufruf |
 |---|---|---|
 | `bootstrap.sh` (1.14.0) | Grundausstattung frischer Server (Docker, nginx, certbot, UFW, fail2ban) | `curl … bootstrap.sh -o /opt/… && /opt/myodoo-bootstrap.sh` |
-| `getScripts.py` (9.7.3) | fish-Shell, Aliase, Verwaltungsskripte nach `/root` | `./getScripts.py [--dns-check\|--proxy-check\|--reconfigure]` |
+| `getScripts.py` (9.22.0) | fish-Shell, Aliase, Verwaltungsskripte nach `/root` | `./getScripts.py [--dns-check\|--proxy-check\|--reconfigure]` |
 | `server_hardening.py` (1.8.0) | Audit + Härtung (UFW, fail2ban, SSH, sysctl, auditd, AIDE) | `sudo python3 server_hardening.py [--apply] [-m MODUL …]` |
 | `deploy-nginx-base.sh` (1.3.0) | nginx-Basis: Includes, Wartungsseite, nginx.conf (mit Rollback) | `./deploy-nginx-base.sh [--dry-run] [--no-main-conf]` |
 | `ngx-conf-wizard.sh` (1.1.0) | Interaktiver YAML-Assistent für nginx-set-conf | `./ngx-conf-wizard.sh` |
 | `pg-local-deploy.sh` (1.2.2) | PostgreSQL-Container interaktiv deployen (Profile, optional SSL) | `./pg-local-deploy.sh` |
 | `fr-local-deploy.sh` | FastReport-API-Container deployen (Default `/opt/fast-report`) | `./fr-local-deploy.sh` |
-| `update_docker_odoo.py` (5.12.0) | Odoo-Container-Updates per YAML | `doup` bzw. `python3 update_docker_odoo.py [-s NAME] [--validate]` |
-| `ownerp_console.py` (1.1.2) | Die Konsole: Serverzustand und Konfiguration bearbeiten, Vollbild. Startet nichts | `konsole` bzw. `python3 ownerp_console.py [--check]` |
+| `update_docker_odoo.py` (5.20.0) | Odoo-Container-Updates per YAML | `doup` bzw. `python3 update_docker_odoo.py [-s NAME] [--validate]` |
+| `ownerp_console.py` (1.2.0) | Die Konsole: Serverzustand und Konfiguration bearbeiten, Vollbild. Startet nichts | `konsole` bzw. `python3 ownerp_console.py [--check]` |
 | `ownerp_state.py` (1.0.0) | Derselbe Zustand als Text, rein lesend; Exit `0`/`1`/`2` | `dostat` bzw. `python3 ownerp_state.py [--json]` |
-| `docker_table.py` (1.0.0) | `docker ps` als Tabelle, sortiert, Ports gekürzt | `dps` / `dpsall` bzw. `python3 docker_table.py [--details]` |
-| `odoo_build_cache.py` (1.5.0) | Release-Archiv-Cache aller Instanzen; pflegt zusätzlich Dockerfile und `odoo.conf` des Build-Ordners | von `doup` aufgerufen; `~/odoo_build_cache.py stats\|gc [--days 30]` |
+| `docker_table.py` (1.2.0) | `docker ps`/`docker images` als Tabelle, sortiert, Ports gekürzt | `dps` / `dpsall` / `dpi` bzw. `python3 docker_table.py [--details\|--images]` |
+| `odoo_build_cache.py` (1.6.0) | Release-Archiv-Cache aller Instanzen; pflegt zusätzlich Dockerfile und `odoo.conf` des Build-Ordners | von `doup` aufgerufen; `~/odoo_build_cache.py stats\|gc [--days 30]` |
 | `container2backup.py` (4.8.0) | SQL+Filestore-Backups, Kompression/Verschlüsselung/Streaming | `dobk` bzw. `~/container2backup.py [--sql-only\|--validate]` |
-| `ownerp_validate.py` (1.0.0) | Rein lesende Schema-Prüfung von `docker2update.yaml`/`container2backup.yaml` | `doval` bzw. `~/ownerp_validate.py [--update PATH\|--backup PATH]` |
-| `ownerp_wizard.py` (1.0.0) | Geführtes Aufnehmen einer Instanz bzw. Ändern eines Feldes in `docker2update.yaml`; prüft, bevor er ersetzt, und entfernt nie einen Eintrag | `wiz` bzw. `~/ownerp_wizard.py [--update PATH]` |
+| `ownerp_validate.py` (1.1.0) | Rein lesende Schema-Prüfung von `docker2update.yaml`/`container2backup.yaml` | `doval` bzw. `~/ownerp_validate.py [--update PATH\|--backup PATH]` |
+| `ownerp_wizard.py` (1.2.0) | Geführtes Aufnehmen einer Instanz bzw. Ändern eines Feldes in `docker2update.yaml`/`container2backup.yaml`; prüft, bevor er ersetzt, und entfernt nie einen Eintrag | `wiz` bzw. `~/ownerp_wizard.py [--update PATH\|--backup PATH]` |
+| `ownerp_cron.py` (1.0.2) | Wartungs-Cron (`/etc/cron.d/myodoo-maintenance`) anzeigen und bearbeiten | `docron` bzw. `~/ownerp_cron.py [--brief\|--json] [--set JOB --schedule EXPR\|--enable JOB\|--disable JOB]` |
+| `ownerp_migrate.py` (1.5.0) | Legacy-CSV-Konfigurationen einmalig nach YAML migrieren; nie überschreibend, nie löschend | läuft automatisch bei `ups`; `~/ownerp_migrate.py --from-docker [--dry-run\|--quiet]` |
 | `restore-zip.sh` (2.1.0) | Backup-Restore (DB + Filestore) in Docker | siehe [Kapitel 13](05-backup-restore.md#de-13-restore--notfall) |
 | `ssl-renew.sh` (1.3.0) | certbot-Renewal, nginx nur bei Bedarf angehalten | `./ssl-renew.sh` (Cron) |
-| `nginx-cert-guard.py` (1.1.0) | Defekte Vhosts quarantänisieren statt nginx zu blockieren | `--reconcile [--start]`, `--check [--apply]`, `--list`, `--restore DOMAIN` |
+| `nginx-cert-guard.py` (1.2.0) | Defekte Vhosts quarantänisieren statt nginx zu blockieren | `--reconcile [--start]`, `--check [--apply]`, `--list`, `--restore DOMAIN` |
 | `setup-maintenance-cron.sh` (1.3.0) | Wartungs-Cron + logrotate installieren | `./setup-maintenance-cron.sh [--remove]` |
-| `server-readiness.py` (1.3.0) | Konfigurations-Drift prüfen (rein lesend) | `chk` bzw. `~/server-readiness.py [--brief\|--quiet]` |
+| `server-readiness.py` (1.6.0) | Konfigurations-Drift prüfen (rein lesend) | `chk` bzw. `~/server-readiness.py [--brief\|--quiet\|--muted]` |
+| `ownerp_mute.py` (1.0.0) | Readiness-Befund als geprüft, aber auf diesem Host nicht zutreffend markieren (dauerhaft, mit Begründung) | `konsole` → System → `[m]` bzw. `~/ownerp_mute.py CHECK_ID --reason TEXT` / `--list` / `--unmute CHECK_ID` |
 | `nightly-cleanup.sh` (1.1.0) | Container-Neustart bei Speicherdruck | Cron; `MEMORY_THRESHOLD=90 DRY_RUN=1 ./nightly-cleanup.sh` |
 | `cleanup-weblogs.py` (2.0.0) | nginx-Log-Rotation, DSGVO-Löschung nach 7 Tagen | Cron; `python3 cleanup-weblogs.py` |
 | `dist-upgrade-debian.sh` (1.0.0) | Geführtes Debian-Major-Upgrade (z.B. bookworm→trixie) | `./dist-upgrade-debian.sh [CODENAME] [--yes]` |
@@ -56,6 +59,11 @@ Die wichtigsten Aliase/Funktionen nach Kategorie:
 | `llbk` / `cdbk` | Backup-Verzeichnis listen / betreten (`/opt/backups/docker`) |
 | `doup` | `$HOME/update_docker_odoo.py` — Container-Update |
 | `edup` | `mcedit $HOME/docker2update.yaml` — Update-Config |
+| `doval` | `$HOME/ownerp_validate.py` — beide YAMLs rein lesend prüfen |
+| `wiz` / `wizup` / `wizbk` | `$HOME/ownerp_wizard.py` [`--update`\|`--backup`] — geführtes Bearbeiten, fragt ohne Flag nach der Datei |
+| `docron` | `$HOME/ownerp_cron.py` — Wartungs-Cron anzeigen (Bearbeiten via `konsole` oder `--set`/`--enable`/`--disable`) |
+| `dostat` | `$HOME/ownerp_state.py` — Serverzustand als Text, rein lesend |
+| `konsole` | `$HOME/ownerp_console.py` — dieselben Fakten plus Bearbeiten, Vollbild; startet nichts |
 
 **nginx** (`34-aliases-nginx.fish`)
 
@@ -79,6 +87,7 @@ Die wichtigsten Aliase/Funktionen nach Kategorie:
 | `dco` / `dcup` / `dcdown` / `dclogs` / `dcps` | docker-compose-Kurzformen |
 | `ct` | `ctop` — Container-Monitor |
 | ⚠️ `dkprs` / `dkprv` / `dkprf` / `dkprfa` | `docker system/volume prune`-Varianten — **`dkprfa` löscht auch Volumes!** |
+| `dkprfs` | `docker system prune -f` — wie `dkprs`, aber ohne Rückfrage; rührt keine Volumes an |
 
 **System** (`30-aliases-system*.fish`)
 
@@ -111,30 +120,33 @@ Die wichtigsten Aliase/Funktionen nach Kategorie:
 <a id="en-14-script-reference"></a>
 ## Script Reference
 
-All scripts in this repository (`scripts/`, as of 16.07.2026):
+All scripts in this repository (`scripts/`, as of 15.09.2026):
 
 | Script | Purpose | Invocation |
 |---|---|---|
 | `bootstrap.sh` (1.14.0) | Baseline for fresh servers (Docker, nginx, certbot, UFW, fail2ban) | `curl … bootstrap.sh -o /opt/… && /opt/myodoo-bootstrap.sh` |
-| `getScripts.py` (9.7.3) | fish shell, aliases, management scripts into `/root` | `./getScripts.py [--dns-check\|--proxy-check\|--reconfigure]` |
+| `getScripts.py` (9.22.0) | fish shell, aliases, management scripts into `/root` | `./getScripts.py [--dns-check\|--proxy-check\|--reconfigure]` |
 | `server_hardening.py` (1.8.0) | Audit + hardening (UFW, fail2ban, SSH, sysctl, auditd, AIDE) | `sudo python3 server_hardening.py [--apply] [-m MODULE …]` |
 | `deploy-nginx-base.sh` (1.3.0) | nginx base: includes, maintenance page, nginx.conf (with rollback) | `./deploy-nginx-base.sh [--dry-run] [--no-main-conf]` |
 | `ngx-conf-wizard.sh` (1.1.0) | Interactive YAML wizard for nginx-set-conf | `./ngx-conf-wizard.sh` |
 | `pg-local-deploy.sh` (1.2.2) | Deploy a PostgreSQL container interactively (profiles, optional SSL) | `./pg-local-deploy.sh` |
 | `fr-local-deploy.sh` | Deploy the FastReport API container (default `/opt/fast-report`) | `./fr-local-deploy.sh` |
-| `update_docker_odoo.py` (5.12.0) | Odoo container updates via YAML | `doup` or `python3 update_docker_odoo.py [-s NAME] [--validate]` |
-| `ownerp_console.py` (1.1.2) | The console: server state and configuration editing, full screen. Starts nothing | `konsole` or `python3 ownerp_console.py [--check]` |
+| `update_docker_odoo.py` (5.20.0) | Odoo container updates via YAML | `doup` or `python3 update_docker_odoo.py [-s NAME] [--validate]` |
+| `ownerp_console.py` (1.2.0) | The console: server state and configuration editing, full screen. Starts nothing | `konsole` or `python3 ownerp_console.py [--check]` |
 | `ownerp_state.py` (1.0.0) | The same state as text, read-only; exit `0`/`1`/`2` | `dostat` or `python3 ownerp_state.py [--json]` |
-| `docker_table.py` (1.0.0) | `docker ps` as a table, sorted, ports shortened | `dps` / `dpsall` or `python3 docker_table.py [--details]` |
-| `odoo_build_cache.py` (1.5.0) | Release archive cache shared by all instances; also maintains the build folder's Dockerfile and `odoo.conf` | called by `doup`; `~/odoo_build_cache.py stats\|gc [--days 30]` |
+| `docker_table.py` (1.2.0) | `docker ps`/`docker images` as a table, sorted, ports shortened | `dps` / `dpsall` / `dpi` or `python3 docker_table.py [--details\|--images]` |
+| `odoo_build_cache.py` (1.6.0) | Release archive cache shared by all instances; also maintains the build folder's Dockerfile and `odoo.conf` | called by `doup`; `~/odoo_build_cache.py stats\|gc [--days 30]` |
 | `container2backup.py` (4.8.0) | SQL+filestore backups, compression/encryption/streaming | `dobk` or `~/container2backup.py [--sql-only\|--validate]` |
-| `ownerp_validate.py` (1.0.0) | Read-only schema validation of `docker2update.yaml`/`container2backup.yaml` | `doval` or `~/ownerp_validate.py [--update PATH\|--backup PATH]` |
-| `ownerp_wizard.py` (1.0.0) | Guided adding of an instance / changing a field in `docker2update.yaml`; validates before it replaces, and never removes an entry | `wiz` or `~/ownerp_wizard.py [--update PATH]` |
+| `ownerp_validate.py` (1.1.0) | Read-only schema validation of `docker2update.yaml`/`container2backup.yaml` | `doval` or `~/ownerp_validate.py [--update PATH\|--backup PATH]` |
+| `ownerp_wizard.py` (1.2.0) | Guided adding of an instance / changing a field in `docker2update.yaml`/`container2backup.yaml`; validates before it replaces, and never removes an entry | `wiz` or `~/ownerp_wizard.py [--update PATH\|--backup PATH]` |
+| `ownerp_cron.py` (1.0.2) | View and edit the maintenance cron (`/etc/cron.d/myodoo-maintenance`) | `docron` or `~/ownerp_cron.py [--brief\|--json] [--set JOB --schedule EXPR\|--enable JOB\|--disable JOB]` |
+| `ownerp_migrate.py` (1.5.0) | One-way conversion of the legacy CSV configs to YAML; never overwrites, never deletes | runs automatically from `ups`; `~/ownerp_migrate.py --from-docker [--dry-run\|--quiet]` |
 | `restore-zip.sh` (2.1.0) | Backup restore (DB + filestore) into Docker | see [chapter 13](05-backup-restore.md#en-13-restore--emergency) |
 | `ssl-renew.sh` (1.3.0) | certbot renewal, nginx stopped only when needed | `./ssl-renew.sh` (cron) |
-| `nginx-cert-guard.py` (1.1.0) | Quarantine broken vhosts instead of blocking nginx | `--reconcile [--start]`, `--check [--apply]`, `--list`, `--restore DOMAIN` |
+| `nginx-cert-guard.py` (1.2.0) | Quarantine broken vhosts instead of blocking nginx | `--reconcile [--start]`, `--check [--apply]`, `--list`, `--restore DOMAIN` |
 | `setup-maintenance-cron.sh` (1.3.0) | Install maintenance cron + logrotate | `./setup-maintenance-cron.sh [--remove]` |
-| `server-readiness.py` (1.3.0) | Check configuration drift (read-only) | `chk` or `~/server-readiness.py [--brief\|--quiet]` |
+| `server-readiness.py` (1.6.0) | Check configuration drift (read-only) | `chk` or `~/server-readiness.py [--brief\|--quiet\|--muted]` |
+| `ownerp_mute.py` (1.0.0) | Mark a readiness finding as true but not applicable on this host (permanent, with a reason) | `konsole` → System → `[m]` or `~/ownerp_mute.py CHECK_ID --reason TEXT` / `--list` / `--unmute CHECK_ID` |
 | `nightly-cleanup.sh` (1.1.0) | Container restart under memory pressure | cron; `MEMORY_THRESHOLD=90 DRY_RUN=1 ./nightly-cleanup.sh` |
 | `cleanup-weblogs.py` (2.0.0) | nginx log rotation, GDPR purge after 7 days | cron; `python3 cleanup-weblogs.py` |
 | `dist-upgrade-debian.sh` (1.0.0) | Guided Debian major upgrade (e.g. bookworm→trixie) | `./dist-upgrade-debian.sh [CODENAME] [--yes]` |
@@ -155,6 +167,11 @@ The most important aliases/functions by category:
 | `llbk` / `cdbk` | List / enter the backup directory (`/opt/backups/docker`) |
 | `doup` | `$HOME/update_docker_odoo.py` — container update |
 | `edup` | `mcedit $HOME/docker2update.yaml` — update config |
+| `doval` | `$HOME/ownerp_validate.py` — read-only check of both YAMLs |
+| `wiz` / `wizup` / `wizbk` | `$HOME/ownerp_wizard.py` [`--update`\|`--backup`] — guided editing; with no flag it asks which file |
+| `docron` | `$HOME/ownerp_cron.py` — show the maintenance cron (edit via `konsole` or `--set`/`--enable`/`--disable`) |
+| `dostat` | `$HOME/ownerp_state.py` — server state as text, read-only |
+| `konsole` | `$HOME/ownerp_console.py` — the same facts plus editing, full screen; starts nothing |
 
 **nginx** (`34-aliases-nginx.fish`)
 
@@ -178,6 +195,7 @@ The most important aliases/functions by category:
 | `dco` / `dcup` / `dcdown` / `dclogs` / `dcps` | docker compose shortcuts |
 | `ct` | `ctop` — container monitor |
 | ⚠️ `dkprs` / `dkprv` / `dkprf` / `dkprfa` | `docker system/volume prune` variants — **`dkprfa` also wipes volumes!** |
+| `dkprfs` | `docker system prune -f` — like `dkprs`, but no confirmation prompt; never touches volumes |
 
 **System** (`30-aliases-system*.fish`)
 

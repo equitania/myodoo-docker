@@ -2,7 +2,7 @@
   Capability Card — generated/maintained via the `cli-capability-card` skill.
   Audience: an LLM/agent that wants to USE this toolkit. Keep it dense and current.
   Command tables extracted from `--help` output (argparse) and script headers (bash)
-  on 16.07.2026 — re-extract after CLI changes. No Click introspection available:
+  on 15.09.2026 — re-extract after CLI changes. No Click introspection available:
   this repo is a multi-script admin toolkit, flag coverage is taken verbatim from
   each script's --help/usage text.
 -->

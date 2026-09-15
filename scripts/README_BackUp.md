@@ -480,6 +480,10 @@ sudo /root/setup-maintenance-cron.sh
 sudo /root/setup-maintenance-cron.sh --remove
 ```
 
+Den installierten Zeitplan zeigt `docron` (`ownerp_cron.py`) an — wann die Jobs laufen und wann
+sie zuletzt liefen — und bearbeitet ihn gezielt über `--set <job> --schedule '…'` sowie
+`--enable`/`--disable`, ohne die Cron-Datei von Hand anzufassen.
+
 Der installierte Job (Version 4.6.x) sieht so aus:
 
 ```cron
@@ -955,6 +959,10 @@ sudo /root/setup-maintenance-cron.sh
 # Uninstall
 sudo /root/setup-maintenance-cron.sh --remove
 ```
+
+`docron` (`ownerp_cron.py`) shows the installed schedule — when the jobs run and when they
+last ran — and edits it selectively via `--set <job> --schedule '…'` plus `--enable`/`--disable`,
+without touching the cron file by hand.
 
 The installed job (version 4.6.x) looks like this:
 

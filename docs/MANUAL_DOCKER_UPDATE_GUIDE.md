@@ -1,5 +1,13 @@
 # Manuelle Docker Container Update Anleitung für Odoo
 
+> ⚠️ **Überholt:** Diese Anleitung beschreibt den Stand von `update_docker_odoo.py` 5.1.6
+> (Juli 2025) und wird nicht mehr gepflegt. Der aktuelle Weg ist `doup` — siehe
+> [Updates einrichten](usage/04-updates.md).
+
+> ⚠️ **Outdated:** This guide describes the state of `update_docker_odoo.py` 5.1.6
+> (July 2025) and is no longer maintained. The current way is `doup` — see
+> [Setting Up Updates](usage/04-updates.md).
+
 ## Übersicht
 
 Diese Anleitung beschreibt den manuellen Update-Prozess für Odoo Docker Container, basierend auf dem `update_docker_odoo.py` Script. Sie eignet sich für einzelne Container-Updates oder wenn das automatische Script nicht verfügbar ist.

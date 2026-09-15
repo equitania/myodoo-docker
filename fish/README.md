@@ -1,6 +1,6 @@
 # Fish Shell Configuration for ownERP Server Environment
 
-Version 1.0.0 | 28.01.2026
+Version 1.1.0 | 15.09.2026
 
 ## Overview / Übersicht
 
@@ -25,18 +25,26 @@ fish/
 │   ├── 30-aliases-system.linux.fish # System aliases (Linux)
 │   ├── 31-aliases-git.fish       # Git aliases
 │   ├── 32-aliases-docker.fish    # Docker aliases
-│   ├── 33-aliases-backup.fish    # Backup aliases (dobk, edbk, llbk)
+│   ├── 33-aliases-backup.fish    # Backup & update aliases (dobk, edbk, llbk, doval, wiz, wizup, wizbk, docron, dostat, konsole, edup)
 │   ├── 34-aliases-nginx.fish     # Nginx aliases (ngx+, ngx-, etc.)
 │   ├── 35-aliases-odoo.fish      # Odoo aliases
 │   ├── 40-completions.fish       # Dynamic completions
 │   └── 50-prompt.fish            # Prompt & startup
 └── functions/
     └── linux/
-        ├── syspatch.fish         # System update function
-        ├── dkrm.fish             # Docker remove containers (with confirmation)
-        ├── dkrmi.fish            # Docker remove images (with confirmation)
-        ├── dkrmv.fish            # Docker remove volumes (with confirmation)
-        └── ups.fish              # Update ownERP scripts
+        ├── __ownerp_docker_ps.fish # Shared body behind dps and dpsall
+        ├── chk.fish               # Server readiness report (read-only)
+        ├── cleandlog.fish         # Truncate Docker container logs (--dry-run reports without writing)
+        ├── dkrm.fish              # Docker remove containers (with confirmation)
+        ├── dkrmi.fish             # Docker remove images (with confirmation)
+        ├── dkrmv.fish             # Docker remove volumes (with confirmation)
+        ├── doup.fish              # Update Odoo containers
+        ├── dpi.fish               # Docker images as a table (repository:tag, ID, size, age)
+        ├── dps.fish               # Docker containers as a table
+        ├── dpsall.fish            # Docker containers as a table, with details
+        ├── ownerp-help.fish       # Command overview, printed on login and via `help`
+        ├── syspatch.fish          # System update function
+        └── ups.fish               # Update ownERP scripts
 ```
 
 ## Key Aliases / Wichtige Aliase
@@ -61,6 +69,13 @@ fish/
 | `llbk` | List backups |
 | `doup` | Run update script |
 | `edup` | Edit update configuration |
+| `doval` | Read-only validation of both YAML configs against their schema / rein lesende Prüfung beider YAML-Konfigurationen |
+| `wiz` | Guided editing of `docker2update.yaml` — the only tool here that writes to the configuration / geführtes Bearbeiten von `docker2update.yaml` |
+| `wizup` | `wiz` pre-selected for the update configuration / `wiz` mit vorausgewählter Update-Konfiguration |
+| `wizbk` | `wiz` pre-selected for the backup configuration / `wiz` mit vorausgewählter Backup-Konfiguration |
+| `docron` | Maintenance cron overview — when jobs run and when they last ran / Wartungs-Cron-Übersicht, wann Jobs laufen und zuletzt liefen |
+| `dostat` | The whole server on one page: instances, backup ages, maintenance jobs, readiness (read-only) / der ganze Server auf einer Seite (rein lesend) |
+| `konsole` | Full-screen console for the same facts plus editing; starts nothing itself / Vollbild-Konsole für dieselben Fakten plus Bearbeitung, startet selbst nichts |
 
 ### Nginx
 | Alias | Description / Beschreibung |
