@@ -69,7 +69,7 @@ in this repository, stay in `CLAUDE.md`.
   - Automated restart management
   - Module updates for Odoo
 
-#### 4. update_docker_odoo.py (v5.20.0)
+#### 4. update_docker_odoo.py (v5.21.0)
 - **Purpose**: Automated Docker container updates for v16+ Odoo instances
   (image rebuild, container re-creation, module update), driven by
   `docker2update.yaml`
@@ -89,11 +89,18 @@ in this repository, stay in `CLAUDE.md`.
     private ranges, the host's own IPv4s and the DNS search domains (host +
     `--dns-search`) to `no_proxy`; `bypass_intranet: false` turns that off.
     Calls `odoo_build_cache.py sync` before the build
+- **Hollow-image advice names the real cause** (v5.21.0, 15.09.2026): an
+  on-access virus scanner (e.g. Sophos's `soapd`) holding BuildKit mounts on
+  `/var/lib/docker`, fixed by excluding `/var/lib/docker/` in the scanner
+  policy — checked by `server-readiness.py` (`av_docker_exclusion`). Texts
+  only; the automatic retry is unchanged
 - **A successful build is not a usable image** (v5.13.0, 14.08.2026).
   `verify_built_image()` runs the built image's own entrypoint through
-  `test -x` before the update step. Docker ≥29 can export a **hollow** image
-  from the build cache (moby/moby#52431): every step `CACHED`, two seconds
-  total, plausible size, and not one file present at runtime. The container
+  `test -x` before the update step. A build can export a **hollow** image
+  (cause found 04.09.2026: an on-access virus scanner leaking BuildKit
+  mounts, see above — not moby/moby#52431 as first assumed): every step
+  `CACHED`, two seconds total, plausible size, and not one file present at
+  runtime. The container
   then restart-loops with `exec /app/bin/boot: no such file or directory`,
   which reads like a Dockerfile bug and is not one — seen on one customer
   server on 16.07.2026 and again on 14.08.2026
@@ -120,7 +127,9 @@ in this repository, stay in `CLAUDE.md`.
   fixed. What survives as evidence: `docker builder prune -af` and `--no-cache`
   both failed to help while `systemctl restart docker` did — so the daemon's
   overlay mounts are the better suspect than the cache, and the pin does not
-  cover them. But that is the second step, after the retry
+  cover them. But that is the second step, after the retry. Resolved on
+  04.09.2026: the mounts were leaked by an on-access virus scanner; the
+  restart only released them until the next build
 - **A warning for a correct state is silenced, not hidden** (v5.16.0).
   `update-ca-certificates` runs `openssl rehash` over `/etc/ssl/certs`, where
   Debian also keeps the bundle `ca-certificates.crt`; rehash needs one
@@ -727,11 +736,11 @@ in this repository, stay in `CLAUDE.md`.
   risk an expiry would guard against — a mute nobody remembers — is already
   covered by the visible `[MUTED]` line and the count in every summary
 
-#### 16. server-readiness.py (v1.8.0)
+#### 16. server-readiness.py (v1.9.0)
 - **Purpose**: Reports whether this server matches the state myodoo-docker
-  expects — 16 read-only checks (cron, logrotate, backup and update
-  configuration, Docker storage driver, nginx, certbot timing, script
-  versions), each non-OK finding carrying exactly one copy-paste fix. `chk`,
+  expects — 17 read-only checks (cron, logrotate, backup and update
+  configuration, Docker storage driver, virus-scanner exclusion for
+  `/var/lib/docker/`, nginx, certbot timing, script versions), each non-OK finding carrying exactly one copy-paste fix. `chk`,
   `dostat`/`konsole`, the block after `ups` and the Monday cron all go through
   the same `run_checks()`, so a mute can never disagree between them
 - **Never writes.** No `/etc` change, no service restart, no network call —
@@ -746,6 +755,17 @@ in this repository, stay in `CLAUDE.md`.
   `BACKUP_FAIL_AGE` is now 50 hours, agreeing with `ownerp_state.py`. Falls
   back to the log-mtime reading when `container2backup.yaml` is missing,
   unreadable or empty; names the log's abort line in the detail when present
+- **`check_docker_storage_driver` is a WARN, not a FAIL** (v1.9.0,
+  15.09.2026): a non-overlay2 driver costs build speed and the build cache
+  after `doup`'s prune; it was never shown to break a build
+- **`av_docker_exclusion` ("Virus scanner")** (v1.9.0, 15.09.2026): reads
+  Sophos's on-access policy for an exclusion covering `/var/lib/docker/`;
+  SKIP without Sophos or Docker, WARN on an unreadable policy, OK when off
+  or excluded, FAIL otherwise with the exact exclusion to add — the known
+  cause of hollow images
+- **Missing backup/update configuration** (v1.9.0): the fix hint also names
+  `docron --disable container2backup` / `docron --disable odoo_build_cache`
+  for a host that deliberately runs neither
 - **`DERIVED_MUTES` maps a job to a tuple of checks** (v1.7.0, 15.09.2026):
   `container2backup` → `backup_recency`, `backup_config`; `odoo_build_cache` →
   `update_config`. Only `update_config` for the build-cache job, deliberately

@@ -1,6 +1,6 @@
 #!/bin/bash
 # bootstrap.sh — Out-of-the-box initializer for fresh Debian/Ubuntu servers
-# Version 1.14.0 — 15.08.2026
+# Version 1.15.0 — 15.09.2026
 #
 # Supported: Debian 12 (bookworm) / 13 (trixie); Ubuntu 20.04/22.04/24.04/26.04
 # (focal/jammy/noble/resolute). OS + codename are auto-detected from os-release;
@@ -90,8 +90,8 @@ set -Eeuo pipefail
 # Configuration
 # ──────────────────────────────────────────
 
-SCRIPT_VERSION="1.14.0"
-SCRIPT_DATE="15.08.2026"
+SCRIPT_VERSION="1.15.0"
+SCRIPT_DATE="15.09.2026"
 
 REPO_URL="${REPO_URL:-https://github.com/equitania/myodoo-docker.git}"
 REPO_BRANCH="${REPO_BRANCH:-2026}"
@@ -391,8 +391,10 @@ report_storage_driver() {
     if [ -n "${DOCKER_STORAGE_DRIVER}" ] && [ "${driver}" != "${DOCKER_STORAGE_DRIVER}" ]; then
         warn "You asked for '${DOCKER_STORAGE_DRIVER}' but the LIVE driver is '${driver}'."
         warn "The pin has not taken effect. Restart docker, then REBOOT the server"
-        warn "(orphaned mounts of the previous store otherwise cause non-deterministic"
-        warn "image exports), then re-pull images and recreate containers."
+        warn "(orphaned mounts of the PREVIOUS STORE otherwise leave the two stores'"
+        warn "images and containers mixed up until it clears), then re-pull images"
+        warn "and recreate containers. This reboot is about completing the driver"
+        warn "switch itself — it is unrelated to the hollow-image scanner check below."
     fi
 }
 
@@ -403,10 +405,14 @@ report_storage_driver() {
 # script passes on such a host; the fault surfaces days later as an Odoo
 # container restart-looping on `exec /app/bin/boot: no such file or directory`,
 # which reads like a Dockerfile bug. Sixty seconds here against an afternoon
-# there. Observed on one customer server on 16.07.2026 and 14.08.2026; the
-# cause is NOT
-# established — the A/B test of 14.08.2026 cleared the containerd image store,
-# so this check makes no claim about why, only that it happened.
+# there. Observed on one customer server on 16.07.2026 and 14.08.2026. The
+# A/B test of 14.08.2026 cleared the containerd image store as the cause; the
+# known cause found afterwards on a customer server is an on-access virus
+# scanner (e.g. Sophos's soapd) watching /var/lib/docker, which holds a
+# BuildKit executor mount open past its unmount and leaks it into the root
+# namespace for the next build step to collide with. This check only proves
+# that the fault happened, not why — see verify_docker_can_build's warning
+# below for the scanner check.
 #
 # KNOWN LIMIT: a two-line image is a coarse probe. The July observation on
 # that server was that a 1-layer image built fine while the 22-layer Odoo did
@@ -432,9 +438,16 @@ verify_docker_can_build() {
     elif ! $SUDO docker run --rm --entrypoint /bin/sh "${tag}" -c 'test -f /ownerp-marker' >/dev/null 2>&1; then
         warn "Smoke test: the image built here has NO FILESYSTEM. Every build on this"
         warn "host will produce a container that dies with 'no such file or directory'."
-        warn "First step:"
+        warn "Known cause: an on-access virus scanner (e.g. Sophos's soapd) watching"
+        warn "/var/lib/docker holds a BuildKit mount open and leaks it. Check that FIRST,"
+        warn "before pruning or rebooting:"
+        warn "  ls /opt/sophos-spl 2>/dev/null && \\"
+        warn "    cat /opt/sophos-spl/plugins/av/var/on_access_policy.json"
+        warn "  -> exclude /var/lib/docker/ (trailing slash) in the scanner's own policy."
+        warn "server-readiness.py checks this automatically (av_docker_exclusion)."
+        warn "Only if no scanner is involved or it is already excluded:"
         warn "  docker builder prune -af   then rebuild; if it recurs, reboot the server"
-        warn "  (dmesg -T | grep -i overlayfs shows overlapping mounts)."
+        warn "  (grep buildkit/executor /proc/1/mountinfo shows leaked mounts)."
     else
         log "Smoke test: docker builds a usable image."
     fi

@@ -4,7 +4,7 @@
 # Title:            server-readiness.py
 # Description:      Report whether this server matches the state myodoo-docker
 #                   expects, and name the exact command that closes each gap.
-# Version:          1.8.0
+# Version:          1.9.0
 # Date:             15.09.2026
 # Author:           Equitania Software GmbH
 # ==============================================================================
@@ -59,6 +59,7 @@
 import argparse
 import glob
 import importlib.util
+import json
 import os
 import re
 import shutil
@@ -69,7 +70,7 @@ from dataclasses import dataclass
 from enum import Enum
 from typing import Callable, List, Optional, Tuple
 
-SCRIPT_VERSION = "1.8.0"
+SCRIPT_VERSION = "1.9.0"
 SCRIPT_DATE = "15.09.2026"
 
 # Where nginx keeps its customer vhosts (mirrors nginx-cert-guard.py).
@@ -164,6 +165,21 @@ BACKUP_ARCHIVE_SUFFIXES = (".7z", ".7z.gpg", ".zip", ".tar.gz", ".tar.zst")
 
 # Must mirror odoo_build_cache.py CACHE_ROOT_DEFAULT.
 BUILD_CACHE_ROOT = "opt/odoo-build-cache"
+
+# Sophos Protection for Linux. Presence alone identifies the scanner; its
+# on-access policy says whether /var/lib/docker is excluded from it.
+SOPHOS_ROOT = "opt/sophos-spl"
+SOPHOS_ON_ACCESS_POLICY = "opt/sophos-spl/plugins/av/var/on_access_policy.json"
+
+# Either the one broad exclusion, or all three of the narrow ones — either
+# shape leaves BuildKit's mounts unwatched. Trailing slash and no-trailing-slash
+# spellings both count; comparison strips it.
+SOPHOS_BROAD_EXCLUSION = "/var/lib/docker"
+SOPHOS_NARROW_EXCLUSIONS = (
+    "/var/lib/docker/buildkit",
+    "/var/lib/docker/tmp",
+    "/var/lib/docker/overlay2",
+)
 
 # Thresholds. Kept here so they are adjustable without hunting through checks.
 LOG_WARN_BYTES = 100 * 1024 ** 2
@@ -810,9 +826,11 @@ def check_backup_config(ctx: HealthContext) -> Finding:
         # `docker inspect` can still read; send them to the reconstruction.
         if shutil.which("docker"):
             fix = (f"{ctx.home}/ownerp_migrate.py --from-docker   "
-                   f"# rebuild from the running containers, then: edbk")
+                   f"# rebuild from the running containers, then: edbk"
+                   f"  # or, if this host needs no backups: docron --disable container2backup")
         else:
-            fix = "edbk   # create or repair the backup configuration"
+            fix = ("edbk   # create or repair the backup configuration"
+                   "  # or, if this host needs no backups: docron --disable container2backup")
         return Finding(
             "backup_config", Severity.FAIL, "Backup config", error, fix,
         )
@@ -856,7 +874,8 @@ def check_update_config(ctx: HealthContext) -> Finding:
         return Finding(
             "update_config", Severity.FAIL, "Update config", error,
             f"{ctx.home}/ownerp_migrate.py --from-docker   "
-            f"# rebuild from the running containers, then: edup",
+            f"# rebuild from the running containers, then: edup"
+            f"  # or, if this host runs no doup instances: docron --disable odoo_build_cache",
         )
 
     # The key is `containers` — that is what update_docker_odoo.py iterates
@@ -918,8 +937,19 @@ def check_backup_disk_space(ctx: HealthContext) -> Finding:
 # ==============================================================================
 
 def check_docker_storage_driver(ctx: HealthContext) -> Finding:
-    """Docker >= 29 defaults to the containerd image store, which produces
-    hollow/broken images on export (moby#52431). overlay2 is the safe driver."""
+    """Docker >= 29 defaults to the containerd image store. An A/B test on
+    14.08.2026 (five 2.2 GB Odoo builds on each store) cleared it of producing
+    broken images — that theory did not survive contact with measurement.
+
+    What the same test found instead is a real, measured speed cost: on the
+    containerd store a cold build took 2.6x as long, the export step 5.6x, and
+    critically the build cache does not survive the `docker system prune -f`
+    that update_docker_odoo.py runs after every update — so on that store
+    every `doup` is a full rebuild rather than a near-instant one. That is a
+    WARN, not a FAIL: the driver has never been shown to break a build, it
+    only makes every update slower than it has to be. See bootstrap.sh for the
+    full numbers this is based on.
+    """
     if not shutil.which("docker"):
         return _skip("docker_storage_driver", "Docker driver", "docker not installed")
 
@@ -932,11 +962,103 @@ def check_docker_storage_driver(ctx: HealthContext) -> Finding:
     if driver == "overlay2":
         return _ok("docker_storage_driver", "Docker driver", "overlay2")
     return Finding(
-        "docker_storage_driver", Severity.FAIL, "Docker driver",
-        f"storage driver is '{driver}', not overlay2 — builds can produce "
-        f"broken images (moby#52431)",
-        'Set {"storage-driver": "overlay2"} in /etc/docker/daemon.json, '
-        "then: systemctl restart docker && docker builder prune",
+        "docker_storage_driver", Severity.WARN, "Docker driver",
+        f"storage driver is '{driver}', not overlay2 — builds are slower and "
+        f"the build cache does not survive doup's prune",
+        'Pin overlay2 in /etc/docker/daemon.json during a maintenance window '
+        '(restarts all containers): see bootstrap.sh DOCKER_STORAGE_DRIVER',
+    )
+
+
+def _sophos_exclusion_covers_docker(exclusions: list) -> bool:
+    """Whether an exclusions list leaves BuildKit's mounts unwatched.
+
+    Accepts the one broad `/var/lib/docker/` exclusion, or all three narrow
+    ones together — a scanner that excludes only `overlay2/` but still watches
+    `buildkit/` would leak exactly the same mounts. Both a trailing slash and
+    its absence count; only string entries are considered, anything else in
+    the list is ignored rather than raising.
+    """
+    normalised = {str(entry).rstrip("/") for entry in exclusions
+                 if isinstance(entry, str)}
+    if SOPHOS_BROAD_EXCLUSION in normalised:
+        return True
+    return set(SOPHOS_NARROW_EXCLUSIONS).issubset(normalised)
+
+
+def check_av_on_access_scanner(ctx: HealthContext) -> Finding:
+    """An on-access scanner watching /var/lib/docker can hold a BuildKit
+    executor mount open past the point where runc tries to unmount it. The
+    unmount fails (EBUSY), the failure is ignored by the scanner's hook, and
+    the leaked overlay mount survives in the root namespace — so the NEXT
+    build step finds a snapshot still in use as another mount's upperdir and
+    exports a layer that carries nothing: "/bin/sh missing",
+    `exec .../boot: no such file or directory`, every step CACHED, a
+    two-second build.
+
+    Found on a customer server: Sophos's soapd held file descriptors under
+    /var/lib/docker/buildkit/ during a build, and its own on-access log named
+    the mount point it could not watch. The fix lives in the scanner's own
+    policy — a Docker-side restart only clears mounts already leaked, it does
+    not stop the next one — which is why this check reads that policy instead
+    of touching Docker at all.
+
+    ASSUMED JSON SHAPE (not documented upstream, inferred from a real policy
+    file and kept tolerant on purpose):
+        {"enabled": true, "onOpen": true, "onClose": true, "exclusions": []}
+    Any of a small set of boolean keys is accepted for "on-access is on", and
+    a shape this parser cannot recognise is a WARN, never a guess.
+
+    A host without Sophos is not a host with an exposed /var/lib/docker, so
+    that is a SKIP — this check has nothing to say about a scanner it cannot
+    observe. Likewise a host without Docker has nothing here worth protecting,
+    even when Sophos is present.
+    """
+    if not os.path.isdir(ctx.p(SOPHOS_ROOT)):
+        return _skip("av_docker_exclusion", "Virus scanner", "no Sophos installed")
+
+    if not shutil.which("docker"):
+        return _skip("av_docker_exclusion", "Virus scanner", "docker not installed")
+
+    text = _read(ctx.p(SOPHOS_ON_ACCESS_POLICY))
+    policy = None
+    if text is not None:
+        try:
+            policy = json.loads(text)
+        except (ValueError, TypeError):
+            policy = None
+    if not isinstance(policy, dict):
+        return Finding(
+            "av_docker_exclusion", Severity.WARN, "Virus scanner",
+            "Sophos present, on-access policy unreadable",
+            "check the /var/lib/docker/ exclusion by hand",
+        )
+
+    enabled = None
+    for key in ("enabled", "onAccessEnabled", "onOpen", "on_access_enabled"):
+        value = policy.get(key)
+        if isinstance(value, bool):
+            enabled = value
+            break
+    if enabled is None:
+        return Finding(
+            "av_docker_exclusion", Severity.WARN, "Virus scanner",
+            "Sophos present, on-access policy in an unrecognised shape",
+            "check the /var/lib/docker/ exclusion by hand",
+        )
+    if not enabled:
+        return _ok("av_docker_exclusion", "Virus scanner", "Sophos on-access off")
+
+    exclusions = policy.get("exclusions")
+    if _sophos_exclusion_covers_docker(exclusions if isinstance(exclusions, list) else []):
+        return _ok("av_docker_exclusion", "Virus scanner",
+                   f"{SOPHOS_BROAD_EXCLUSION}/ excluded")
+
+    return Finding(
+        "av_docker_exclusion", Severity.FAIL, "Virus scanner",
+        "Sophos on-access scanning /var/lib/docker — builds can produce hollow images",
+        "Sophos Central -> Server Threat Protection policy -> exclusion "
+        f"'File or folder (Linux)': {SOPHOS_BROAD_EXCLUSION}/  (trailing slash)",
     )
 
 
@@ -1157,6 +1279,7 @@ CHECKS: Tuple[Callable[[HealthContext], Finding], ...] = (
     check_backup_config,
     check_update_config,
     check_docker_storage_driver,
+    check_av_on_access_scanner,
     check_nginx_unit_dropin,
     check_nginx_listen_targets,
     check_certbot_timer_window,

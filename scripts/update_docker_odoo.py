@@ -1,8 +1,8 @@
 #!/usr/bin/python3
 # -*- coding: utf-8 -*-
 # This script performs an update of an Odoo database in a Docker container
-# Version 5.20.0
-# Date 14.09.2026
+# Version 5.21.0
+# Date 15.09.2026
 ##############################################################################
 #
 #    Shell Script for Odoo, Open Source Management Solution
@@ -77,8 +77,8 @@ logger = logging.getLogger(__name__)
 # Kept in sync with the header comment above. Printed at the start of every run
 # so a pasted log says which version produced it — the single most common
 # question when a report comes back from a server.
-SCRIPT_VERSION = "5.20.0"
-SCRIPT_DATE = "26.08.2026"
+SCRIPT_VERSION = "5.21.0"
+SCRIPT_DATE = "15.09.2026"
 
 # Set by --no-cache. A module-level flag rather than another parameter through
 # process_container(): the build is six call levels below the argument parser,
@@ -836,7 +836,8 @@ Note: Container DNS is inherited from the host - Docker copies /etc/resolv.conf
                         action='store_true',
                         help='Build without the BuildKit cache. Needed when a '
                              'cached build exports an image with no filesystem '
-                             '(Docker >=29, moby/moby#52431).')
+                             '- usually an on-access virus scanner (e.g. Sophos) '
+                             'holding BuildKit mounts open on /var/lib/docker.')
 
     parser.add_argument('--validate',
                         action='store_true',
@@ -1350,7 +1351,8 @@ def drop_builder_cache_before_retry():
 def build_command_for_attempt(image, attempt, cache_arg="", proxy_build_args=""):
     """Return the `docker build` command line for this attempt.
 
-    The retry exists for the hollow-layer defect of Docker >=29 (moby#52431),
+    The retry exists for hollow layers - usually an on-access virus scanner
+    (e.g. Sophos's soapd) holding a BuildKit mount open on /var/lib/docker -
     and hollow layers live in the very cache the first attempt just wrote.
     Reusing it reproduces them: on a customer server on 26.08.2026 the retry
     reported "ok (0s)" and handed back the same unusable image, twice in a row.
@@ -1399,28 +1401,38 @@ HOLLOW_BUILD_SIGNATURES = (
 # One retry is worth its seconds, so the advice below is what remains after the
 # retry has also failed. Shared by both shapes of the fault.
 HOLLOW_IMAGE_ADVICE = (
-    "This is the hollow-layer defect of Docker >=29 (moby/moby#52431), and it is\n"
-    "SPORADIC. A retry was already made, and since v5.17.0 that retry builds from\n"
-    "scratch (--no-cache --pull) - so this run's build cache is already ruled out.\n"
+    "The known cause is an on-access virus scanner (e.g. Sophos's soapd) watching\n"
+    "/var/lib/docker: it holds a BuildKit executor mount open, the unmount fails\n"
+    "silently, and the leaked mount survives - so the NEXT build step finds a\n"
+    "snapshot still in use as another mount's upperdir and exports a layer that\n"
+    "carries nothing. It is SPORADIC because it depends on the scanner's timing,\n"
+    "not on Docker.\n"
     "\n"
-    "The builder cache is already ruled out: since v5.18.0 the retry empties it\n"
-    "('docker builder prune -af') and then builds --no-cache --pull. That cure\n"
-    "worked on a customer server on 26.08.2026; it has just been tried here.\n"
+    "A retry was already made, and since v5.17.0 that retry builds from scratch\n"
+    "(--no-cache --pull); since v5.18.0 it also empties the builder cache first\n"
+    "('docker builder prune -af'). That cure worked on a customer server on\n"
+    "26.08.2026 - but neither step touches a scanner that is leaking TODAY's\n"
+    "mounts, only yesterday's cache, which is why it does not always help.\n"
     "\n"
-    "What is left are the overlay mounts held by the RUNNING DAEMON. A restart\n"
-    "released them on 17.08.2026. It interrupts EVERY container on this host,\n"
-    "production included, so it is a scheduled step, not a quick one:\n"
+    "Fix at the source: exclude /var/lib/docker/ (trailing slash) from on-access\n"
+    "scanning in the scanner's own policy - for Sophos: Sophos Central -> Server\n"
+    "Threat Protection policy -> Exclusions -> 'File or folder (Linux)'.\n"
+    "server-readiness.py checks this automatically (av_docker_exclusion).\n"
     "\n"
-    "  systemctl restart docker       release the daemon's overlay mounts, then:\n"
+    "Until that exclusion is set, a daemon restart only releases the mounts\n"
+    "already leaked - it interrupts EVERY container on this host, production\n"
+    "included, and the scanner leaks new mounts on the next build, so treat it\n"
+    "as a scheduled step, not a quick one:\n"
+    "\n"
+    "  systemctl restart docker       release the daemon's leaked mounts, then:\n"
     "  <this script> -s <container>   build again\n"
     "\n"
     "Containers with restart=always come back on their own. If it is still\n"
-    "hollow after both, only a reboot clears the mounts.\n"
+    "hollow after both, check for still-leaked mounts before a reboot:\n"
+    "  grep buildkit/executor /proc/1/mountinfo\n"
     "\n"
     "A pinned overlay2 storage driver does NOT prevent this: the fault is in the\n"
-    "mounts, not in the image store - that server had the pin set. The kernel\n"
-    "names it, but the message tracks mount activity, not faults:\n"
-    "  dmesg -T | grep -i 'lowerdir is in-use' | tail")
+    "leaked mounts, not in the image store.")
 
 
 def build_looks_hollow(output):
@@ -1437,10 +1449,13 @@ def build_looks_hollow(output):
 def verify_built_image(image):
     """Check that a freshly built image actually carries a filesystem.
 
-    Docker >=29 can export a HOLLOW image (moby#52431, open): the build reports
-    success in seconds because every step came from the BuildKit cache, the
-    image has a plausible size, and at runtime every single file is missing.
-    The container then restart-loops with
+    A HOLLOW image can be exported: the build reports success in seconds
+    because every step came from the BuildKit cache, the image has a
+    plausible size, and at runtime every single file is missing. The known
+    cause is an on-access virus scanner (e.g. Sophos's soapd) holding a
+    BuildKit executor mount open on /var/lib/docker past its unmount, which
+    leaks it into the root namespace for the next build step to collide with
+    (see HOLLOW_IMAGE_ADVICE). The container then restart-loops with
 
         exec /app/bin/boot: no such file or directory
 
@@ -2006,9 +2021,11 @@ def _process_container(container, proxy_settings=None, dockerfiles_source=None,
     cache_arg = "--no-cache " if BUILD_NO_CACHE else ""
 
 
-    # Docker >=29 sporadically produces layers that carry nothing (moby#52431),
-    # in two shapes: the build failing because the first RUN finds no /bin/sh, or
-    # a "successful" build whose image has no filesystem. Same defect. On
+    # An on-access virus scanner (e.g. Sophos's soapd) watching /var/lib/docker
+    # can sporadically produce layers that carry nothing, in two shapes: the
+    # build failing because the first RUN finds no /bin/sh, or a "successful"
+    # build whose image has no filesystem. Same defect - see HOLLOW_IMAGE_ADVICE
+    # for the mechanism and the exclusion that fixes it at the source. On
     # 17.08.2026 a plain rebuild succeeded right after each shape had occurred,
     # so ONE retry is worth its seconds - the previous image was deleted before
     # this build, which makes giving up here an outage rather than a failed step.
@@ -2057,7 +2074,8 @@ def _process_container(container, proxy_settings=None, dockerfiles_source=None,
         if attempt == 1:
             total_warnings += 1
             logger.warning(
-                f"{image}: hollow layers from Docker's exporter. Dropping the "
+                f"{image}: hollow layers, usually an on-access virus scanner "
+                "holding BuildKit mounts on /var/lib/docker. Dropping the "
                 "builder cache and rebuilding once from scratch (--no-cache "
                 "--pull) - leaving the hollow layers in place and merely not "
                 "using them was not enough on 26.08.2026. This takes as long as "

@@ -1,5 +1,53 @@
 # Release Notes
 
+## Hollow Docker Images Were an On-Access Virus Scanner, Not Docker (15.09.2026)
+
+*scripts/server-readiness.py v1.9.0 · scripts/update_docker_odoo.py v5.21.0 ·
+scripts/bootstrap.sh v1.15.0 · docs/usage/08-troubleshooting.md ·
+docs/INSTALLATION_GUIDE.md · docs/COMPONENTS.md · usage/AGENT.md · ReadMe.md ·
+docs/specs/2026-08-02-server-readiness-check-design.md ·
+tests/test_server_readiness.py · tests/test_update_docker_odoo.py*
+
+### Added
+
+- **`server-readiness.py` gains a 17th check, `av_docker_exclusion` ("Virus
+  scanner").** The hollow Docker images on a customer server were traced to
+  an on-access virus scanner (Sophos's `soapd`) watching `/var/lib/docker`: it
+  held a BuildKit executor mount open past its unmount, the unmount failed
+  silently (EBUSY), and the leaked overlay mount survived — so the next build
+  step found a snapshot still in use as another mount's upperdir and exported
+  a layer with nothing in it. The check reads Sophos's on-access policy
+  (tolerant of its undocumented JSON shape): SKIP without Sophos or without
+  Docker, WARN when the policy cannot be read, OK when on-access scanning is
+  off or `/var/lib/docker/` is excluded (the broad path or all three narrow
+  ones), FAIL with the exact exclusion to add otherwise.
+
+### Fixed
+
+- **`check_docker_storage_driver` no longer FAILs on a non-`overlay2`
+  driver.** The moby/moby#52431 causality it named was measured away on
+  14.08.2026 (clean builds on both stores); what remains is a measured speed
+  cost — slower builds, and a build cache that does not survive `doup`'s
+  prune. That is a WARN, not a broken server.
+- **The fix hints for a missing backup or update configuration name the
+  `docron --disable` alternative** for a host that deliberately runs no
+  backups or no `doup` instances.
+
+### Changed
+
+- **`update_docker_odoo.py`'s `HOLLOW_IMAGE_ADVICE`, its `--no-cache` help and
+  the surrounding comments and log lines** no longer blame "Docker >=29
+  (moby/moby#52431)". They name the on-access scanner as the known cause and
+  its `/var/lib/docker/` exclusion as the fix, and say plainly that
+  `systemctl restart docker` or a cache prune only clear mounts already
+  leaked. No behaviour change: the automatic retry is untouched.
+- **`bootstrap.sh`'s smoke-test and driver-switch warnings** point at the
+  scanner exclusion before a prune or reboot, and keep the reboot advice
+  where it belongs — after a storage-driver switch.
+- **Troubleshooting (DE+EN), installation guide, COMPONENTS, AGENT.md and
+  ReadMe** tell the scanner story; "downgrade to Docker 28" is gone. The
+  readiness design spec gets a dated addendum instead of a rewrite.
+
 ## Switching a Job Off No Longer Needs Its Name (15.09.2026)
 
 *getScripts.py v9.23.0 · scripts/ownerp_cron.py v1.2.0 ·

@@ -196,10 +196,17 @@ CIDR (wget/apt/urllib do not). Full walkthrough: `docs/usage/07-proxy.md`.
 - **Interactive prompts:** `ngx-conf-wizard.sh`, `pg-local-deploy.sh`, `fr-local-deploy.sh` are
   interactive-only (no non-interactive mode) — do not call them from cron/CI.
   `server_hardening.py --apply` prompts unless `-f/--force`; `dist-upgrade-debian.sh` unless `--yes`.
-- **Docker ≥ 29:** fresh installs must pin `{"storage-driver": "overlay2"}` (bootstrap ≥ 1.7.0 does).
-  After any storage-driver switch **reboot the server** — orphaned overlay mounts otherwise yield
-  non-deterministically hollow images (`exec /app/bin/boot: no such file or directory`,
-  moby/moby#52431). Cure: reboot → `docker builder prune -af` → `docker build --no-cache --pull`.
+- **Hollow Docker images are an on-access virus scanner, not a Docker defect.** A scanner (e.g.
+  Sophos's `soapd`) watching `/var/lib/docker` holds a BuildKit mount open past its unmount and
+  leaks it; the next build step reuses a snapshot still in use — `exec /app/bin/boot: no such file
+  or directory` at start, or `stat /bin/sh: no such file or directory` mid-build. Fix at the
+  source: exclude `/var/lib/docker/` (trailing slash) in the scanner policy; `server-readiness.py`
+  checks it (`av_docker_exclusion`). `systemctl restart docker` only releases mounts already
+  leaked; `doup` already retries once with an emptied builder cache.
+- **overlay2 is pinned by `bootstrap.sh` for SPEED, not safety:** the containerd store is slower
+  (2.6x cold build) and its build cache does not survive `doup`'s prune. A non-overlay2 driver is a
+  readiness **WARN**. After a storage-driver switch reboot the server — that is about the switch,
+  unrelated to the scanner.
 - **nginx pid trap:** `nginx -t` can truncate `/run/nginx.pid`; the stock nginx.org unit then fails
   `reload` (kill usage text) while the old config stays live. Use the `$MAINPID` ExecReload drop-in.
 - **`pg_isready` always needs `-d`:** without it libpq falls back to the database named after the

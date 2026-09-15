@@ -373,7 +373,8 @@ class RuntimeOverrideTest(unittest.TestCase):
 class VerifyBuiltImageTest(unittest.TestCase):
     """A build that reports success is not proof of a usable image.
 
-    Docker >=29 can export an image whose layers carry nothing (moby#52431):
+    A build can export an image whose layers carry nothing (known cause: an
+    on-access virus scanner leaking BuildKit mounts under /var/lib/docker):
     the build is a two-second cache hit, the image has a plausible size, and
     every file is missing at runtime. The old image is already gone by then -
     update_docker_odoo.py removes it before building - so this cannot roll
@@ -478,6 +479,14 @@ class BuildLooksHollowTest(unittest.TestCase):
         self.assertIn("systemctl restart docker", udo.HOLLOW_IMAGE_ADVICE)
         self.assertIn("SPORADIC", udo.HOLLOW_IMAGE_ADVICE)
         self.assertIn("does NOT prevent", udo.HOLLOW_IMAGE_ADVICE)
+
+    def test_the_advice_names_the_known_cause_and_its_fix(self):
+        """The known cause (found on a customer server) is an on-access
+        scanner holding BuildKit mounts open, not a Docker version defect -
+        the advice must point at the exclusion, not at moby/moby#52431."""
+        self.assertIn("/var/lib/docker/", udo.HOLLOW_IMAGE_ADVICE)
+        self.assertIn("av_docker_exclusion", udo.HOLLOW_IMAGE_ADVICE)
+        self.assertNotIn("moby", udo.HOLLOW_IMAGE_ADVICE)
 
 
 class BenignChildNoiseTest(unittest.TestCase):

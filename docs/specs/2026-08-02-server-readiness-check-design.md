@@ -198,6 +198,34 @@ Nachzuziehen: `ReadMe.md` (Skriptliste), `usage/AGENT.md` (Werkzeugtabelle),
 `docs/INSTALLATION_GUIDE.md` (beide Sprachfassungen, Skripttabelle und Wartungsabschnitt),
 `RELEASE_NOTES.md`.
 
+## Addendum 15.09.2026: Check 9 wird WARN, neuer Check für den Virenscanner
+
+Der A/B-Test vom 14.08.2026 (fünf 2,2-GB-Odoo-Builds je Store) hat die in Check 9
+unterstellte Kausalität (`moby#52431`, hohle Images durch den containerd-Store)
+widerlegt: alle zehn Builds kamen sauber heraus. Übrig bleibt ein real gemessener
+Geschwindigkeitsunterschied — kalter Build 2,6×, Export-Schritt 5,6×, und der
+Build-Cache überlebt auf dem containerd-Store `doup`s `docker system prune -f`
+nicht, sodass dort jedes Update ein Vollbau wäre (siehe `bootstrap.sh`-Kopf für
+die Messwerte). Check 9 stuft einen abweichenden Treiber deshalb nur noch als
+**WARN** ein, nicht mehr als FAIL, und der Fix-Text nennt die Geschwindigkeit
+statt "moby#52431, hohle Images".
+
+Die tatsächliche Ursache hohler Images wurde danach auf einem Kundenserver
+gefunden: ein On-Access-Virenscanner (Sophos `soapd`), der `/var/lib/docker`
+überwacht, einen BuildKit-Executor-Mount offenhält, dessen Unmount scheitert,
+und den Mount so in den Root-Namespace leckt — der nächste Build-Schritt trifft
+dann auf einen Snapshot, der noch als Upperdir eines anderen Mounts in Benutzung
+ist. Dafür kommt ein 14. Check dazu:
+
+| # | check_id | Prüfung | Bewertung |
+|---|----------|---------|-----------|
+| 14 | `av_docker_exclusion` | `/opt/sophos-spl` vorhanden, `on_access_policy.json` gelesen | kein Sophos → **SKIP** · Docker nicht installiert → **SKIP** · Policy unlesbar/unbekannte Form → **WARN** · On-Access aus → **OK** · `/var/lib/docker/` (oder alle drei engen Pfade `buildkit/`, `tmp/`, `overlay2/`) ausgenommen → **OK** · sonst → **FAIL** · Fix: Ausnahme in der Scanner-Policy setzen |
+
+Damit sind es jetzt 17 Checks statt 16. `update_docker_odoo.py`s
+`HOLLOW_IMAGE_ADVICE` und `bootstrap.sh`s Smoke-Test-Warnung wurden im selben
+Zug auf dieselbe Ursache umgestellt — Details in `RELEASE_NOTES.md` vom
+15.09.2026.
+
 ## Nebenbefund: `scripts/lib/` ist toter Code
 
 Bei der Analyse aufgefallen, **nicht Teil dieser Änderung**: Das Paket `scripts/lib/` (7451 Zeilen)

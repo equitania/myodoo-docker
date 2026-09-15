@@ -44,7 +44,7 @@ durch eure Werte.
 | [05 Backup und Restore](usage/05-backup-restore.md) | `edbk`, `dobk`, Aufbewahrung, Verschlüsselung, Wiederherstellung, Notfall |
 | [06 Wartung und optionale Komponenten](usage/06-maintenance.md) | Wartungs-Cron, Bereitschaftsprüfung, FastReport, Debian-Major-Upgrade |
 | [07 Betrieb hinter HTTP-Proxy](usage/07-proxy.md) | Server, die nur über einen Firmen-Proxy ins Internet dürfen |
-| [08 Troubleshooting](usage/08-troubleshooting.md) | Symptom → Ursache → Lösung, inklusive der Docker-≥-29-Fallen |
+| [08 Troubleshooting](usage/08-troubleshooting.md) | Symptom → Ursache → Lösung, inklusive der Falle mit hohlen Docker-Images durch einen On-Access-Virenscanner |
 | [09 Skript- und Shell-Referenz](usage/09-reference.md) | Alle Skripte mit Aufruf, alle fish-Aliase nach Kategorie |
 
 ## Der Ablauf
@@ -152,8 +152,8 @@ Alle Skripte des Repos mit Zweck und Aufruf, alle fish-Aliase nach Kategorie.
 <a id="de-16-troubleshooting"></a>
 ### Troubleshooting
 
-Symptom, Ursache, Lösung — darunter die Docker-≥-29-Fallen, bei denen Builds
-still hohle Images erzeugen.
+Symptom, Ursache, Lösung — darunter die Falle, bei der ein On-Access-Virenscanner
+(z. B. Sophos) Builds still hohle Images erzeugen lässt.
 → [08 Troubleshooting](usage/08-troubleshooting.md#de-16-troubleshooting)
 
 <a id="de-17-optionale-komponenten"></a>
@@ -209,7 +209,7 @@ with your values.
 | [05 Backup and Restore](usage/05-backup-restore.md) | `edbk`, `dobk`, retention, encryption, restoring, emergencies |
 | [06 Maintenance and Optional Components](usage/06-maintenance.md) | Maintenance cron, readiness check, FastReport, Debian major upgrade |
 | [07 Operation Behind an HTTP Proxy](usage/07-proxy.md) | Servers that may only reach the internet through a corporate proxy |
-| [08 Troubleshooting](usage/08-troubleshooting.md) | Symptom → cause → fix, including the Docker ≥ 29 traps |
+| [08 Troubleshooting](usage/08-troubleshooting.md) | Symptom → cause → fix, including the hollow-image trap caused by an on-access virus scanner |
 | [09 Script and Shell Reference](usage/09-reference.md) | Every script with its invocation, every fish alias by category |
 
 ## The sequence
@@ -317,8 +317,8 @@ alias by category.
 <a id="en-16-troubleshooting"></a>
 ### Troubleshooting
 
-Symptom, cause, fix — including the Docker ≥ 29 traps where builds silently
-produce hollow images.
+Symptom, cause, fix — including the trap where an on-access virus scanner
+(e.g. Sophos) makes builds silently produce hollow images.
 → [08 Troubleshooting](usage/08-troubleshooting.md#en-16-troubleshooting)
 
 <a id="en-17-optional-components"></a>
