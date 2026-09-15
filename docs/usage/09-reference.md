@@ -25,19 +25,19 @@ Alle Skripte des Repos (`scripts/`, Stand 15.09.2026):
 | `fr-local-deploy.sh` | FastReport-API-Container deployen (Default `/opt/fast-report`) | `./fr-local-deploy.sh` |
 | `update_docker_odoo.py` (5.20.0) | Odoo-Container-Updates per YAML | `doup` bzw. `python3 update_docker_odoo.py [-s NAME] [--validate]` |
 | `ownerp_console.py` (1.2.0) | Die Konsole: Serverzustand und Konfiguration bearbeiten, Vollbild. Startet nichts | `konsole` bzw. `python3 ownerp_console.py [--check]` |
-| `ownerp_state.py` (1.0.0) | Derselbe Zustand als Text, rein lesend; Exit `0`/`1`/`2` | `dostat` bzw. `python3 ownerp_state.py [--json]` |
+| `ownerp_state.py` (1.1.0) | Derselbe Zustand als Text, rein lesend; Exit `0`/`1`/`2` | `dostat` bzw. `python3 ownerp_state.py [--json]` |
 | `docker_table.py` (1.2.0) | `docker ps`/`docker images` als Tabelle, sortiert, Ports gekürzt | `dps` / `dpsall` / `dpi` bzw. `python3 docker_table.py [--details\|--images]` |
 | `odoo_build_cache.py` (1.6.0) | Release-Archiv-Cache aller Instanzen; pflegt zusätzlich Dockerfile und `odoo.conf` des Build-Ordners | von `doup` aufgerufen; `~/odoo_build_cache.py stats\|gc [--days 30]` |
 | `container2backup.py` (4.8.0) | SQL+Filestore-Backups, Kompression/Verschlüsselung/Streaming | `dobk` bzw. `~/container2backup.py [--sql-only\|--validate]` |
 | `ownerp_validate.py` (1.1.0) | Rein lesende Schema-Prüfung von `docker2update.yaml`/`container2backup.yaml` | `doval` bzw. `~/ownerp_validate.py [--update PATH\|--backup PATH]` |
 | `ownerp_wizard.py` (1.2.0) | Geführtes Aufnehmen einer Instanz bzw. Ändern eines Feldes in `docker2update.yaml`/`container2backup.yaml`; prüft, bevor er ersetzt, und entfernt nie einen Eintrag | `wiz` bzw. `~/ownerp_wizard.py [--update PATH\|--backup PATH]` |
-| `ownerp_cron.py` (1.0.2) | Wartungs-Cron (`/etc/cron.d/myodoo-maintenance`) anzeigen und bearbeiten | `docron` bzw. `~/ownerp_cron.py [--brief\|--json] [--set JOB --schedule EXPR\|--enable JOB\|--disable JOB]` |
+| `ownerp_cron.py` (1.1.0) | Wartungs-Cron (`/etc/cron.d/myodoo-maintenance`) anzeigen und bearbeiten; `--enable`/`--disable` schalten alle Zeilen eines Jobs auf einmal, Name auch ohne `.py` | `docron` bzw. `~/ownerp_cron.py [--brief\|--json] [--set JOB --schedule EXPR\|--enable JOB\|--disable JOB]` |
 | `ownerp_migrate.py` (1.5.0) | Legacy-CSV-Konfigurationen einmalig nach YAML migrieren; nie überschreibend, nie löschend | läuft automatisch bei `ups`; `~/ownerp_migrate.py --from-docker [--dry-run\|--quiet]` |
 | `restore-zip.sh` (2.1.0) | Backup-Restore (DB + Filestore) in Docker | siehe [Kapitel 13](05-backup-restore.md#de-13-restore--notfall) |
 | `ssl-renew.sh` (1.3.0) | certbot-Renewal, nginx nur bei Bedarf angehalten | `./ssl-renew.sh` (Cron) |
 | `nginx-cert-guard.py` (1.2.0) | Defekte Vhosts quarantänisieren statt nginx zu blockieren | `--reconcile [--start]`, `--check [--apply]`, `--list`, `--restore DOMAIN` |
 | `setup-maintenance-cron.sh` (1.3.0) | Wartungs-Cron + logrotate installieren | `./setup-maintenance-cron.sh [--remove]` |
-| `server-readiness.py` (1.6.0) | Konfigurations-Drift prüfen (rein lesend) | `chk` bzw. `~/server-readiness.py [--brief\|--quiet\|--muted]` |
+| `server-readiness.py` (1.7.0) | Konfigurations-Drift prüfen (rein lesend) | `chk` bzw. `~/server-readiness.py [--brief\|--quiet\|--muted]` |
 | `ownerp_mute.py` (1.0.0) | Readiness-Befund als geprüft, aber auf diesem Host nicht zutreffend markieren (dauerhaft, mit Begründung) | `konsole` → System → `[m]` bzw. `~/ownerp_mute.py CHECK_ID --reason TEXT` / `--list` / `--unmute CHECK_ID` |
 | `nightly-cleanup.sh` (1.1.0) | Container-Neustart bei Speicherdruck | Cron; `MEMORY_THRESHOLD=90 DRY_RUN=1 ./nightly-cleanup.sh` |
 | `cleanup-weblogs.py` (2.0.0) | nginx-Log-Rotation, DSGVO-Löschung nach 7 Tagen | Cron; `python3 cleanup-weblogs.py` |
@@ -133,19 +133,19 @@ All scripts in this repository (`scripts/`, as of 15.09.2026):
 | `fr-local-deploy.sh` | Deploy the FastReport API container (default `/opt/fast-report`) | `./fr-local-deploy.sh` |
 | `update_docker_odoo.py` (5.20.0) | Odoo container updates via YAML | `doup` or `python3 update_docker_odoo.py [-s NAME] [--validate]` |
 | `ownerp_console.py` (1.2.0) | The console: server state and configuration editing, full screen. Starts nothing | `konsole` or `python3 ownerp_console.py [--check]` |
-| `ownerp_state.py` (1.0.0) | The same state as text, read-only; exit `0`/`1`/`2` | `dostat` or `python3 ownerp_state.py [--json]` |
+| `ownerp_state.py` (1.1.0) | The same state as text, read-only; exit `0`/`1`/`2` | `dostat` or `python3 ownerp_state.py [--json]` |
 | `docker_table.py` (1.2.0) | `docker ps`/`docker images` as a table, sorted, ports shortened | `dps` / `dpsall` / `dpi` or `python3 docker_table.py [--details\|--images]` |
 | `odoo_build_cache.py` (1.6.0) | Release archive cache shared by all instances; also maintains the build folder's Dockerfile and `odoo.conf` | called by `doup`; `~/odoo_build_cache.py stats\|gc [--days 30]` |
 | `container2backup.py` (4.8.0) | SQL+filestore backups, compression/encryption/streaming | `dobk` or `~/container2backup.py [--sql-only\|--validate]` |
 | `ownerp_validate.py` (1.1.0) | Read-only schema validation of `docker2update.yaml`/`container2backup.yaml` | `doval` or `~/ownerp_validate.py [--update PATH\|--backup PATH]` |
 | `ownerp_wizard.py` (1.2.0) | Guided adding of an instance / changing a field in `docker2update.yaml`/`container2backup.yaml`; validates before it replaces, and never removes an entry | `wiz` or `~/ownerp_wizard.py [--update PATH\|--backup PATH]` |
-| `ownerp_cron.py` (1.0.2) | View and edit the maintenance cron (`/etc/cron.d/myodoo-maintenance`) | `docron` or `~/ownerp_cron.py [--brief\|--json] [--set JOB --schedule EXPR\|--enable JOB\|--disable JOB]` |
+| `ownerp_cron.py` (1.1.0) | View and edit the maintenance cron (`/etc/cron.d/myodoo-maintenance`); `--enable`/`--disable` now switch every line of a job at once, name accepted without `.py` | `docron` or `~/ownerp_cron.py [--brief\|--json] [--set JOB --schedule EXPR\|--enable JOB\|--disable JOB]` |
 | `ownerp_migrate.py` (1.5.0) | One-way conversion of the legacy CSV configs to YAML; never overwrites, never deletes | runs automatically from `ups`; `~/ownerp_migrate.py --from-docker [--dry-run\|--quiet]` |
 | `restore-zip.sh` (2.1.0) | Backup restore (DB + filestore) into Docker | see [chapter 13](05-backup-restore.md#en-13-restore--emergency) |
 | `ssl-renew.sh` (1.3.0) | certbot renewal, nginx stopped only when needed | `./ssl-renew.sh` (cron) |
 | `nginx-cert-guard.py` (1.2.0) | Quarantine broken vhosts instead of blocking nginx | `--reconcile [--start]`, `--check [--apply]`, `--list`, `--restore DOMAIN` |
 | `setup-maintenance-cron.sh` (1.3.0) | Install maintenance cron + logrotate | `./setup-maintenance-cron.sh [--remove]` |
-| `server-readiness.py` (1.6.0) | Check configuration drift (read-only) | `chk` or `~/server-readiness.py [--brief\|--quiet\|--muted]` |
+| `server-readiness.py` (1.7.0) | Check configuration drift (read-only) | `chk` or `~/server-readiness.py [--brief\|--quiet\|--muted]` |
 | `ownerp_mute.py` (1.0.0) | Mark a readiness finding as true but not applicable on this host (permanent, with a reason) | `konsole` → System → `[m]` or `~/ownerp_mute.py CHECK_ID --reason TEXT` / `--list` / `--unmute CHECK_ID` |
 | `nightly-cleanup.sh` (1.1.0) | Container restart under memory pressure | cron; `MEMORY_THRESHOLD=90 DRY_RUN=1 ./nightly-cleanup.sh` |
 | `cleanup-weblogs.py` (2.0.0) | nginx log rotation, GDPR purge after 7 days | cron; `python3 cleanup-weblogs.py` |

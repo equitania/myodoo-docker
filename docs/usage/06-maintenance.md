@@ -42,6 +42,34 @@ Bericht jederzeit auf Zuruf: `chk`.
 > logrotate-Konfiguration, und `/var/log/container2backup.log` wächst
 > unbemerkt ins Unendliche.
 
+### Server ohne Backups / ohne Odoo-Instanzen
+
+Ein reiner Entwickler-Terminalserver läuft absichtlich ohne `dobk` und ohne
+`doup` — `container2backup.yaml` und `docker2update.yaml` fehlen dort zu
+Recht. Damit `chk`, `dostat`/`konsole` und der Montags-Cron das nicht als
+Dauerfehler melden, wird der jeweilige Wartungsjob abgeschaltet, statt eine
+weitere Konfigurationsdatei zu pflegen:
+
+```bash
+# Keine Backups auf diesem Host — beide Backup-Einträge mit einem Aufruf
+# abschalten (der Job läuft zweimal täglich, --disable schaltet beide
+# Cron-Zeilen zugleich):
+docron --disable container2backup
+
+# Keine von doup verwalteten Odoo-Instanzen auf diesem Host:
+docron --disable odoo_build_cache
+```
+
+`server-readiness.py` liest das über `DERIVED_MUTES`: die zugehörigen Befunde
+(`backup_recency`/`backup_config` bzw. `update_config`) laufen weiter, zeigen
+im vollständigen Bericht aber `[MUTED] … cron job disabled on this host` statt
+`FAIL`, und zählen nicht mehr für `--brief`, `--quiet` oder den Exit-Code.
+`dostat`/`konsole` zeigen dieselbe Entscheidung als eigene Zeile: `off  backups
+disabled on this host — …` bzw. `off  no doup-managed instances — …`, statt
+der sonst üblichen „Datei nicht gefunden“-Meldung. Wieder einschalten mit
+`docron --enable <Job>` — der Bericht normalisiert sich sofort, ohne dass
+irgendwo etwas aufgeräumt werden muss.
+
 <a id="de-17-optionale-komponenten"></a>
 ## Optionale Komponenten
 
@@ -89,6 +117,33 @@ drift. For the full report at any time: `chk`.
 > server is fully set up. That is exactly what the tool exists for — on servers
 > where `setup-maintenance-cron.sh` never ran, the logrotate config is missing
 > and `/var/log/container2backup.log` grows unbounded unnoticed.
+
+### Server without backups / without Odoo instances
+
+A pure developers' terminal server deliberately runs neither `dobk` nor
+`doup` — `container2backup.yaml` and `docker2update.yaml` are rightly absent
+there. So that `chk`, `dostat`/`konsole` and the Monday cron do not report
+that as a permanent fault, switch off the matching maintenance job instead of
+maintaining yet another configuration file:
+
+```bash
+# No backups on this host — switch off both backup entries in one call
+# (the job runs twice a day, and --disable switches both cron lines at once):
+docron --disable container2backup
+
+# No doup-managed Odoo instances on this host:
+docron --disable odoo_build_cache
+```
+
+`server-readiness.py` reads that through `DERIVED_MUTES`: the corresponding
+findings (`backup_recency`/`backup_config`, or `update_config`) keep running,
+but the full report shows `[MUTED] … cron job disabled on this host` instead
+of `FAIL`, and they no longer count towards `--brief`, `--quiet` or the exit
+code. `dostat`/`konsole` show the same decision as their own line: `off
+backups disabled on this host — …` or `off  no doup-managed instances — …`,
+instead of the usual "file not found" message. Switch it back on with `docron
+--enable <job>` — the report normalises immediately, with nothing left to
+clean up anywhere.
 
 <a id="en-17-optional-components"></a>
 ## Optional Components

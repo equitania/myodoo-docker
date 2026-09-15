@@ -89,6 +89,70 @@ class ParsingTest(CronFixture):
         self.assertIn("ssl-renew.sh", str(ctx.exception))
 
 
+class SwitchByScriptTest(CronFixture):
+    """A server without backups has neither backup line. One call, both lines."""
+
+    def active(self, job_id):
+        return self.load().job(job_id).active
+
+    def test_script_name_switches_every_line_of_it(self):
+        jobs, _backup = oc.set_active(self.load(), "container2backup.py", False)
+        self.assertEqual([j.job_id for j in jobs],
+                         ["container2backup.py:1", "container2backup.py:2"])
+        self.assertFalse(self.active("container2backup.py:1"))
+        self.assertFalse(self.active("container2backup.py:2"))
+
+    def test_the_name_works_without_py(self):
+        oc.set_active(self.load(), "container2backup", False)
+        self.assertFalse(self.active("container2backup.py:1"))
+        self.assertFalse(self.active("container2backup.py:2"))
+        oc.set_active(self.load(), "odoo_build_cache", False)
+        self.assertFalse(self.active("odoo_build_cache.py"))
+
+    def test_an_exact_id_still_switches_one_line(self):
+        """The console toggles a row by its id; that must stay one line."""
+        oc.set_active(self.load(), "container2backup.py:2", False)
+        self.assertTrue(self.active("container2backup.py:1"))
+        self.assertFalse(self.active("container2backup.py:2"))
+
+    def test_nothing_else_changes(self):
+        oc.set_active(self.load(), "container2backup", False)
+        before = oc.parse_text(self.original, path=self.path)
+        after = self.load()
+        for old, new in zip(before.jobs, after.jobs):
+            if old.script == "container2backup.py":
+                continue
+            self.assertEqual((old.schedule, old.command, old.active),
+                             (new.schedule, new.command, new.active))
+
+    def test_enable_restores_every_job_as_it_was(self):
+        """A rewritten line loses its column padding; the job itself must not
+        change - schedule, command and state are what cron reads."""
+        oc.set_active(self.load(), "container2backup", False)
+        oc.set_active(self.load(), "container2backup", True)
+        before = oc.parse_text(self.original, path=self.path)
+        after = self.load()
+        self.assertEqual(
+            [(j.job_id, j.schedule, j.user, j.command, j.active) for j in before.jobs],
+            [(j.job_id, j.schedule, j.user, j.command, j.active) for j in after.jobs])
+
+    def test_cli_disables_both_lines_in_one_call(self):
+        code = oc.main(["--path", self.path, "--disable", "container2backup"])
+        self.assertEqual(code, 0)
+        self.assertFalse(self.active("container2backup.py:1"))
+        self.assertFalse(self.active("container2backup.py:2"))
+
+    def test_unknown_name_is_refused_and_the_file_untouched(self):
+        with self.assertRaises(oc.CronError):
+            oc.set_active(self.load(), "container2back", False)
+        self.assertEqual(self.text(), self.original)
+
+    def test_set_schedule_stays_strict(self):
+        """A schedule belongs to one line - a name that means two is refused."""
+        with self.assertRaises(oc.CronError):
+            oc.set_schedule(self.load(), "container2backup.py", "0 3 * * *")
+
+
 class HumaniseTest(unittest.TestCase):
     def test_daily(self):
         self.assertEqual(oc.humanise("0 2 * * *"), "daily 02:00")

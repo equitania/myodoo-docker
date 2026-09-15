@@ -253,6 +253,110 @@ class DerivedMuteTest(MuteFixture):
         self.assertIn("staging, never backed up", finding.note)
 
 
+class DerivedMuteMultiCheckTest(MuteFixture):
+    """container2backup and odoo_build_cache each explain more than one check
+    (or, for odoo_build_cache, exactly the one it was added for) — DERIVED_MUTES
+    maps a job to a tuple of check ids, not a single string."""
+
+    def install_cron(self, body):
+        path = self.ctx.p(sr.CRON_DEST)
+        os.makedirs(os.path.dirname(path), exist_ok=True)
+        with open(path, "w", encoding="utf-8") as handle:
+            handle.write(body)
+
+    def find(self, findings, check_id):
+        for finding in findings:
+            if finding.check_id == check_id:
+                return finding
+        self.fail(f"no finding with check_id {check_id!r}")
+
+    def test_disabled_backup_job_also_mutes_backup_config(self):
+        """Not just backup_recency: a host with backups off has no reason to
+        carry container2backup.yaml at all, so its own FAIL must not count
+        either."""
+        self.install_cron(
+            "#OWNERP-DISABLED# 0 2 * * * root /root/container2backup.py\n")
+        finding = self.find(sr.run_checks(self.ctx), "backup_config")
+        self.assertIs(finding.severity, sr.Severity.MUTED)
+        self.assertIn("cron job disabled", finding.note)
+
+    def test_disabled_build_cache_job_mutes_update_config(self):
+        self.install_cron(
+            "#OWNERP-DISABLED# 30 3 * * 0 root /usr/bin/python3 "
+            "/root/odoo_build_cache.py gc\n")
+        finding = self.find(sr.run_checks(self.ctx), "update_config")
+        self.assertIs(finding.severity, sr.Severity.MUTED)
+        self.assertIn("cron job disabled", finding.note)
+
+    def test_disabled_build_cache_job_does_not_mute_backup_checks(self):
+        """No blanket muting: the two jobs explain disjoint sets of checks."""
+        self.install_cron(
+            "#OWNERP-DISABLED# 30 3 * * 0 root /usr/bin/python3 "
+            "/root/odoo_build_cache.py gc\n")
+        findings = sr.run_checks(self.ctx)
+        self.assertIsNot(self.find(findings, "backup_recency").severity,
+                         sr.Severity.MUTED)
+        self.assertIsNot(self.find(findings, "backup_config").severity,
+                         sr.Severity.MUTED)
+
+    def test_disabled_backup_job_does_not_mute_update_config(self):
+        self.install_cron(
+            "#OWNERP-DISABLED# 0 2 * * * root /root/container2backup.py\n")
+        finding = self.find(sr.run_checks(self.ctx), "update_config")
+        self.assertIsNot(finding.severity, sr.Severity.MUTED)
+
+    def test_an_ok_backup_config_is_never_muted(self):
+        """Mutes never apply to OK findings — see run_checks(). A config that
+        is actually fine must render as OK even while the job is off."""
+        self.install_cron(
+            "#OWNERP-DISABLED# 0 2 * * * root /root/container2backup.py\n")
+        with open(os.path.join(self.home, "container2backup.yaml"),
+                  "w", encoding="utf-8") as handle:
+            handle.write("databases:\n"
+                         "  - name: test_db\n"
+                         "    sql_container: test-db\n"
+                         "    data_container: test-odoo\n")
+        finding = self.find(sr.run_checks(self.ctx), "backup_config")
+        self.assertIs(finding.severity, sr.Severity.OK)
+
+
+class DisabledJobMatchingRobustnessTest(MuteFixture):
+    """_disabled_jobs() matches on a word boundary, not a bare substring —
+    "odoo_build_cache" must not be caught by an unrelated script that merely
+    contains those letters, and must not itself swallow one."""
+
+    def install_cron(self, body):
+        path = self.ctx.p(sr.CRON_DEST)
+        os.makedirs(os.path.dirname(path), exist_ok=True)
+        with open(path, "w", encoding="utf-8") as handle:
+            handle.write(body)
+
+    def test_a_disabled_lookalike_script_does_not_match_container2backup(self):
+        """A plain `in` check would have matched "container2backup" inside
+        this longer name; the word-boundary regex must not."""
+        self.install_cron(
+            "#OWNERP-DISABLED# 0 2 * * * root "
+            "/root/my_container2backup_extra.py\n")
+        self.assertEqual(sr._disabled_jobs(self.ctx), [])
+
+    def test_a_disabled_lookalike_script_does_not_match_odoo_build_cache(self):
+        self.install_cron(
+            "#OWNERP-DISABLED# 0 0 * * * root "
+            "/root/check_odoo_build_cache_stats.py\n")
+        self.assertEqual(sr._disabled_jobs(self.ctx), [])
+
+    def test_the_real_odoo_build_cache_line_still_matches(self):
+        self.install_cron(
+            "#OWNERP-DISABLED# 30 3 * * 0 root /usr/bin/python3 "
+            "/root/odoo_build_cache.py gc\n")
+        self.assertEqual(sr._disabled_jobs(self.ctx), ["odoo_build_cache"])
+
+    def test_the_real_container2backup_line_still_matches(self):
+        self.install_cron(
+            "#OWNERP-DISABLED# 0 2 * * * root /root/container2backup.py\n")
+        self.assertEqual(sr._disabled_jobs(self.ctx), ["container2backup"])
+
+
 class MutedListingTest(MuteFixture):
     def run_cli(self, *args):
         out = io.StringIO()

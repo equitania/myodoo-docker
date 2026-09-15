@@ -484,6 +484,20 @@ Den installierten Zeitplan zeigt `docron` (`ownerp_cron.py`) an — wann die Job
 sie zuletzt liefen — und bearbeitet ihn gezielt über `--set <job> --schedule '…'` sowie
 `--enable`/`--disable`, ohne die Cron-Datei von Hand anzufassen.
 
+**Server ohne Backups:** Auf einem Host, der absichtlich nie `dobk` läuft (z. B. ein
+Entwickler-Terminalserver), schaltet `docron` beide Backup-Einträge mit einem Aufruf ab —
+der Job läuft zweimal täglich, `--disable` schaltet beide Cron-Zeilen zugleich:
+
+```bash
+docron --disable container2backup
+```
+
+`server-readiness.py` (`chk`/`dostat`) liest das und zeigt `[MUTED] … cron job disabled on
+this host` statt eines dauerhaften `FAIL`, ohne den Exit-Code zu beeinflussen. Wieder
+einschalten mit `docron --enable container2backup`. Details (inkl. der
+gleichen Regelung für `odoo_build_cache.py` auf Servern ohne doup-verwaltete Instanzen):
+[docs/usage/06-maintenance.md](../docs/usage/06-maintenance.md).
+
 Der installierte Job (Version 4.6.x) sieht so aus:
 
 ```cron
@@ -963,6 +977,20 @@ sudo /root/setup-maintenance-cron.sh --remove
 `docron` (`ownerp_cron.py`) shows the installed schedule — when the jobs run and when they
 last ran — and edits it selectively via `--set <job> --schedule '…'` plus `--enable`/`--disable`,
 without touching the cron file by hand.
+
+**Server without backups:** on a host that deliberately never runs `dobk` (e.g. a developers'
+terminal server), `docron` switches off both backup entries in one call — the job runs twice
+a day, and `--disable` switches both cron lines at once:
+
+```bash
+docron --disable container2backup
+```
+
+`server-readiness.py` (`chk`/`dostat`) reads that and shows `[MUTED] … cron job disabled on
+this host` instead of a permanent `FAIL`, without affecting the exit code. Switch it back on
+with `docron --enable container2backup`. Details (including the same rule for
+`odoo_build_cache.py` on hosts with no doup-managed instances):
+[docs/usage/06-maintenance.md](../docs/usage/06-maintenance.md).
 
 The installed job (version 4.6.x) looks like this:
 

@@ -19,6 +19,7 @@ import os
 import shutil
 import tempfile
 import time
+import types
 import unittest
 
 REPO = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..")
@@ -483,6 +484,216 @@ class CronCollectionTest(StateFixture):
         result = st.collect_maintenance(cron_path=template)
         self.assertTrue(result.known, result.error)
         self.assertGreater(len(result.jobs), 0)
+
+
+class JobSwitchedOffTest(unittest.TestCase):
+    """`_job_switched_off()` in isolation, before it is wired into collect()."""
+
+    def job(self, script, active):
+        return types.SimpleNamespace(script=script, active=active)
+
+    def test_a_single_inactive_job_is_off(self):
+        jobs = [self.job("odoo_build_cache.py", False)]
+        self.assertTrue(st._job_switched_off(jobs, "odoo_build_cache.py"))
+
+    def test_a_single_active_job_is_not_off(self):
+        jobs = [self.job("odoo_build_cache.py", True)]
+        self.assertFalse(st._job_switched_off(jobs, "odoo_build_cache.py"))
+
+    def test_both_backup_entries_inactive_is_off(self):
+        jobs = [self.job("container2backup.py", False),
+                self.job("container2backup.py", False)]
+        self.assertTrue(st._job_switched_off(jobs, "container2backup.py"))
+
+    def test_one_of_two_backup_entries_still_active_is_not_off(self):
+        """Backups only actually stop once every entry is disabled — one
+        running entry still writes to the log twice — well, once — a day."""
+        jobs = [self.job("container2backup.py", False),
+                self.job("container2backup.py", True)]
+        self.assertFalse(st._job_switched_off(jobs, "container2backup.py"))
+
+    def test_the_script_missing_entirely_is_not_off(self):
+        """No matching job is 'unknown', not 'disabled' — the section keeps
+        rendering its usual error rather than claiming a state nobody set."""
+        jobs = [self.job("ssl-renew.sh", True)]
+        self.assertFalse(st._job_switched_off(jobs, "container2backup.py"))
+
+
+@unittest.skipUnless(HAVE_YAML, "collect() needs the YAML collectors")
+class CollectDisabledTest(StateFixture):
+    """The end-to-end wiring: collect() reads the cron file once and both
+    sections agree with it, without a second place to keep the same fact."""
+
+    def write_cron(self, text):
+        path = os.path.join(self.home, "myodoo-maintenance.cron")
+        with open(path, "w", encoding="utf-8") as handle:
+            handle.write(text)
+        return path
+
+    def test_backups_disabled_when_both_entries_are_off(self):
+        cron = self.write_cron(
+            "#OWNERP-DISABLED# 0 2 * * * root /root/container2backup.py\n"
+            "#OWNERP-DISABLED# 0 14 * * * root /root/container2backup.py\n"
+            "0 0 * * * root /root/ssl-renew.sh\n"
+            "30 3 * * 0 root /usr/bin/python3 /root/odoo_build_cache.py gc\n")
+        state = st.collect(home=self.home, docker=False, scan=False,
+                           checks=False, cron_path=cron)
+        self.assertTrue(state.backups.disabled)
+        self.assertFalse(state.instances.disabled)
+
+    def test_instances_disabled_when_the_build_cache_job_is_off(self):
+        cron = self.write_cron(
+            "0 2 * * * root /root/container2backup.py\n"
+            "0 14 * * * root /root/container2backup.py\n"
+            "#OWNERP-DISABLED# 30 3 * * 0 root /usr/bin/python3 "
+            "/root/odoo_build_cache.py gc\n")
+        state = st.collect(home=self.home, docker=False, scan=False,
+                           checks=False, cron_path=cron)
+        self.assertTrue(state.instances.disabled)
+        self.assertFalse(state.backups.disabled)
+
+    def test_both_active_leaves_both_sections_ungraded_as_off(self):
+        cron = self.write_cron(
+            "0 2 * * * root /root/container2backup.py\n"
+            "0 14 * * * root /root/container2backup.py\n"
+            "30 3 * * 0 root /usr/bin/python3 /root/odoo_build_cache.py gc\n")
+        state = st.collect(home=self.home, docker=False, scan=False,
+                           checks=False, cron_path=cron)
+        self.assertFalse(state.backups.disabled)
+        self.assertFalse(state.instances.disabled)
+
+    def test_no_cron_at_all_leaves_both_sections_not_disabled(self):
+        """collect_maintenance() cannot know, so neither section may claim an
+        'off' state it never confirmed."""
+        state = st.collect(
+            home=self.home, docker=False, scan=False, checks=False,
+            cron_path=os.path.join(self.home, "no-such-cron"))
+        self.assertFalse(state.backups.disabled)
+        self.assertFalse(state.instances.disabled)
+
+
+class RenderDisabledTest(unittest.TestCase):
+    """Rendering the neutral 'off' line instead of the error, and alongside a
+    leftover configuration."""
+
+    def render_backups(self, backups):
+        stream = io.StringIO()
+        st._render_backups(backups, stream, st._palette(stream))
+        return stream.getvalue()
+
+    def render_instances(self, instances):
+        stream = io.StringIO()
+        st._render_instances(instances, stream, st._palette(stream))
+        return stream.getvalue()
+
+    def test_a_missing_backup_config_shows_off_not_the_error(self):
+        backups = st.Backups("backups", error="not found", disabled=True)
+        text = self.render_backups(backups)
+        self.assertIn("off", text)
+        self.assertIn("docron --enable container2backup", text)
+        self.assertNotIn("not found", text)
+
+    def test_a_missing_backup_config_without_the_job_disabled_shows_the_error(self):
+        backups = st.Backups("backups", error="not found", disabled=False)
+        text = self.render_backups(backups)
+        self.assertIn("not found", text)
+        self.assertNotIn("docron --enable", text)
+
+    def test_a_leftover_backup_config_is_still_listed_alongside_off(self):
+        entry = st.BackupEntry(database="test_db")
+        backups = st.Backups("backups", entries=[entry], disabled=True)
+        text = self.render_backups(backups)
+        self.assertIn("test_db", text)
+        self.assertIn("docron --enable container2backup", text)
+
+    def test_a_missing_update_config_shows_off_not_the_error(self):
+        instances = st.Instances("instances", error="not found", disabled=True)
+        text = self.render_instances(instances)
+        self.assertIn("off", text)
+        self.assertIn("docron --enable odoo_build_cache", text)
+        self.assertNotIn("not found", text)
+
+    def test_a_leftover_update_config_is_still_listed_alongside_off(self):
+        instance = st.Instance("test-odoo", active=True, running=False)
+        instances = st.Instances("instances", entries=[instance], disabled=True)
+        text = self.render_instances(instances)
+        self.assertIn("test-odoo", text)
+        self.assertIn("docron --enable odoo_build_cache", text)
+
+
+@unittest.skipUnless(HAVE_YAML, "the summary reads collected entries")
+class WorstDisabledTest(StateFixture):
+    """The exit-code half of the same feature: a switched-off job must not be
+    able to drive worst() towards WARN/FAIL through its own stale facts."""
+
+    def setUp(self):
+        super().setUp()
+        self.write_configs()
+
+    def state(self, **kwargs):
+        base = dict(instances=st.Instances("instances"),
+                    backups=st.collect_backups(self.home),
+                    maintenance=st.Maintenance("maintenance"),
+                    health=st.Health("health"))
+        base.update(kwargs)
+        return st.ServerState(**base)
+
+    def test_a_missing_backup_with_the_job_off_is_ok(self):
+        """The untouched-tree counterpart in WorstTest asserts FAIL for the
+        very same configuration with backups still enabled."""
+        backups = st.collect_backups(self.home)
+        backups.disabled = True
+        self.assertEqual(st.worst(self.state(backups=backups)), "OK")
+
+    def test_a_stale_backup_with_the_job_off_is_ok(self):
+        self.archive("live_db", "live-odoo", age_hours=100)
+        self.archive("test_db", "test-odoo", age_hours=100)
+        backups = st.collect_backups(self.home)
+        backups.disabled = True
+        self.assertEqual(st.worst(self.state(backups=backups)), "OK")
+
+    def test_disk_space_still_counts_while_backups_are_off(self):
+        backups = st.collect_backups(self.home)
+        backups.disabled = True
+        backups.disk = st.Disk("/", 100, 97, 3)
+        self.assertEqual(st.worst(self.state(backups=backups)), "FAIL")
+
+    def test_a_stopped_instance_with_the_build_cache_off_is_ok(self):
+        instances = st.Instances("instances", disabled=True, entries=[
+            st.Instance("live-odoo", active=True, running=False)])
+        self.archive("live_db", "live-odoo", age_hours=2)
+        self.archive("test_db", "test-odoo", age_hours=2)
+        self.assertEqual(st.worst(self.state(instances=instances)), "OK")
+
+    def test_a_stopped_instance_with_the_build_cache_on_still_fails(self):
+        """The contrast: worst() must not have stopped grading instances
+        altogether — only the ones the disabled job actually explains."""
+        instances = st.Instances("instances", disabled=False, entries=[
+            st.Instance("live-odoo", active=True, running=False)])
+        self.archive("live_db", "live-odoo", age_hours=2)
+        self.archive("test_db", "test-odoo", age_hours=2)
+        self.assertEqual(st.worst(self.state(instances=instances)), "FAIL")
+
+
+@unittest.skipUnless(HAVE_YAML, "the json mirrors the collected state")
+class JsonDisabledTest(StateFixture):
+    def test_disabled_is_reflected_for_both_sections(self):
+        state = st.ServerState(
+            instances=st.Instances("instances", disabled=True),
+            backups=st.Backups("backups", disabled=True),
+        )
+        data = json.loads(st.as_json(state))
+        self.assertTrue(data["instances"]["disabled"])
+        self.assertTrue(data["backups"]["disabled"])
+
+    def test_disabled_defaults_to_false(self):
+        state = st.ServerState(
+            instances=st.Instances("instances"),
+            backups=st.Backups("backups"),
+        )
+        data = json.loads(st.as_json(state))
+        self.assertFalse(data["instances"]["disabled"])
+        self.assertFalse(data["backups"]["disabled"])
 
 
 if __name__ == "__main__":

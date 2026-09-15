@@ -57,7 +57,7 @@ All commands run as **root** on the target server. The interactive login shell i
 | `cleanup-weblogs.py` | — | Rotate nginx logs, GDPR purge > 7 days | `--clear-cache` (also wipe proxy/FastCGI caches — off by default) |
 | `nightly-cleanup.sh` | — | Restart containers over memory threshold (Odoo→PG order) | env: `MEMORY_THRESHOLD=90` · `DRY_RUN=1` |
 | `setup-maintenance-cron.sh` | — | Install `/etc/cron.d/myodoo-maintenance` + logrotate (idempotent) | `--remove` · env: `SCRIPT_DIR=/root` |
-| `server-readiness.py` | `chk` | Report config drift vs. expected server state; read-only, one fix command per finding | `--brief` (non-OK only) \| `--quiet` (silent unless WARN/FAIL; for cron) · `--root DIR` `--home DIR` `--repo DIR` (testing) |
+| `server-readiness.py` | `chk` | Report config drift vs. expected server state; read-only, one fix command per finding. A host with `docron --disable container2backup` or `docron --disable odoo_build_cache` mutes the checks that job explains (`backup_recency`+`backup_config`, or `update_config`) instead of failing on a config that is missing on purpose; `dostat`/`konsole` show the same host as `off`, not as an error | `--brief` (non-OK only) \| `--quiet` (silent unless WARN/FAIL; for cron) \| `--muted` (list this host's muted checks) · `--root DIR` `--home DIR` `--repo DIR` (testing) |
 | `dist-upgrade-debian.sh` | — | Guided Debian major upgrade (bookworm→trixie→…) | `[CODENAME]` optional target · `--yes` |
 | `check_docker_volumes.sh` | `dkvol` | List volumes + referencing containers | none |
 

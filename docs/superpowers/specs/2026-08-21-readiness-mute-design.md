@@ -337,3 +337,55 @@ Version bumps, all dated 21.08.2026:
 `ownerp_console.py` section corrected as described above.
 
 The customer server receives all of it with one `ups`.
+
+---
+
+## Addendum, 15.09.2026 — a job explains more than one check
+
+The design above was written for `container2backup` → `backup_recency` alone.
+Two more findings turned out to describe the identical situation and were
+folded into the same mechanism rather than growing a second one:
+
+- A developers' terminal server that deliberately has no backups also has no
+  reason to carry `container2backup.yaml`, so `backup_config`'s own FAIL
+  ("file not found") needed exactly the same mute `backup_recency` already
+  gets.
+- The same host, with no doup-managed Odoo instance, produces the same shape
+  of FAIL from `check_update_config` against `docker2update.yaml`.
+
+`DERIVED_MUTES` now maps a job to a **tuple** of check ids instead of one:
+
+```python
+DERIVED_MUTES = {
+    "container2backup": ("backup_recency", "backup_config"),
+    "odoo_build_cache": ("update_config",),
+}
+```
+
+`odoo_build_cache` explains only `update_config`, deliberately not
+`docker_storage_driver`, the nginx checks, `certbot_timer_window` or
+`script_versions` — those describe the host's Docker/nginx setup on its own
+terms, independent of whether doup manages an instance here at all.
+
+`_disabled_jobs()` also moved from a bare substring test (`job in normalised`)
+to a word-boundary regex (`\bjob\b`): with two job names now driving the same
+mechanism, a future third one is more likely to share letters with an
+existing one, and a plain `in` check would rather catch that overlap
+silently than at review time.
+
+The exact `docron` invocation is worth spelling out, because `container2backup.py`
+runs twice a day as two separate cron entries. `ownerp_cron.py` 1.1.0 changed
+`--enable`/`--disable` to switch every line of a script at once, and to
+accept the name without `.py`, so one call — `docron --disable
+container2backup` — switches both entries. `odoo_build_cache.py` has a
+single entry, so `docron --disable odoo_build_cache` is just as short. The
+numbered ids (`container2backup.py:1`/`:2`) still exist and stay the way to
+change one line's own schedule via `--set`/`--schedule`.
+
+`ownerp_state.py` (`dostat`/`konsole`) reads the same cron file independently
+— through the `CronJob` objects `collect_maintenance()` already parses,
+requiring *every* matching entry to be inactive before it calls a section
+"off" — and renders a neutral line instead of the "config not found" error,
+without letting a missing config or a stale backup age raise `worst()`'s
+verdict. See `docs/COMPONENTS.md` (component 10) and
+`docs/usage/06-maintenance.md` for the operator-facing version of this.

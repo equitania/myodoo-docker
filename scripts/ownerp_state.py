@@ -4,8 +4,8 @@
 # Title:            ownerp_state.py
 # Description:      What state is this server in? Collected once, rendered as
 #                   text (dostat) or handed to the console.
-# Version:          1.0.0
-# Date:             13.08.2026
+# Version:          1.1.0
+# Date:             15.09.2026
 # Author:           Equitania Software GmbH
 # ==============================================================================
 # Why this exists:
@@ -34,6 +34,23 @@
 #   the data layer knew about the interface, it could not be tested without it
 #   and `dostat` could not exist. It stays plain Python; `dostat` is this file's
 #   own main(), and the console will be a second consumer.
+#
+# A host with no backups and no doup-managed instances (15.09.2026):
+#   A developers' terminal server never runs `dobk` or `doup` on purpose, so
+#   container2backup.yaml and docker2update.yaml legitimately do not exist —
+#   but until now the Backup and Instances sections still rendered "?
+#   ...not found" and that pushed the exit code to WARN/FAIL forever. The
+#   switch is the maintenance cron, already the source of truth for "this job
+#   is off on purpose" (ownerp_cron.py parks a disabled job behind a marker
+#   rather than deleting it — see server-readiness.py's DERIVED_MUTES, which
+#   this mirrors). When `docron --disable container2backup` (it switches both
+#   of the job's daily cron lines at once) or `docron --disable
+#   odoo_build_cache` show every matching job as off, the corresponding
+#   section renders a neutral "off" line instead of the error, and neither a
+#   missing config nor a stale/absent backup age can raise worst()'s verdict.
+#   A config that exists anyway (a
+#   leftover from before the job was switched off) is still listed — being off
+#   silences the grading, not the facts.
 # ==============================================================================
 #    Copyright (C) 2014-now Equitania Software GmbH(<http://www.equitania.de>).
 #
@@ -63,8 +80,8 @@ import time
 from dataclasses import dataclass, field
 from typing import Dict, List, Optional
 
-SCRIPT_VERSION = "1.0.0"
-SCRIPT_DATE = "13.08.2026"
+SCRIPT_VERSION = "1.1.0"
+SCRIPT_DATE = "15.09.2026"
 
 HOME = os.path.expanduser("~")
 UPDATE_YAML = "docker2update.yaml"
@@ -88,6 +105,13 @@ DISK_WARN_PERCENT = 85
 DISK_FAIL_PERCENT = 95
 
 DOCKER_TIMEOUT = 10
+
+# Script names as CronJob.script reports them (i.e. with their extension) —
+# the exact string ownerp_cron.py parses out of the cron line, not a display
+# name. Mirrors server-readiness.py's DERIVED_MUTES, but keyed for a direct
+# comparison against already-parsed CronJob objects rather than raw text.
+BACKUP_JOB_SCRIPT = "container2backup.py"
+BUILD_CACHE_JOB_SCRIPT = "odoo_build_cache.py"
 
 
 # ==============================================================================
@@ -208,6 +232,9 @@ class Section:
 class Instances(Section):
     entries: List[Instance] = field(default_factory=list)
     docker_error: Optional[str] = None
+    # True when every odoo_build_cache.py cron entry is switched off — this
+    # host deliberately runs no doup-managed instance. See collect().
+    disabled: bool = False
 
 
 @dataclass
@@ -215,6 +242,9 @@ class Backups(Section):
     entries: List[BackupEntry] = field(default_factory=list)
     backup_path: str = DEFAULT_BACKUP_PATH
     disk: Optional[Disk] = None
+    # True when every container2backup.py cron entry is switched off — this
+    # host deliberately runs no backups. See collect().
+    disabled: bool = False
 
 
 @dataclass
@@ -514,16 +544,37 @@ def collect_health(root: str = "/", home: str = HOME,
         return Health("health", error=f"the readiness checks failed: {exc}")
 
 
+def _job_switched_off(jobs: List[object], script: str) -> bool:
+    """True when at least one cron entry runs `script` and none of them are
+    active.
+
+    `all()` rather than `any()`: container2backup.py runs twice a day as two
+    separate entries, and backups are only actually off once both are — a
+    single disabled entry still lets the other one run. An empty match (the
+    script is not in the cron file at all) is not "disabled", it is "unknown";
+    this returns False for that case and the section renders its usual error.
+    """
+    matching = [job for job in jobs if getattr(job, "script", "") == script]
+    return bool(matching) and all(not getattr(job, "active", True)
+                                  for job in matching)
+
+
 def collect(home: str = HOME, root: str = "/", docker: bool = True,
             scan: bool = True, checks: bool = True,
             cron_path: Optional[str] = None) -> ServerState:
     """Everything, once. Each section fails on its own or not at all."""
+    maintenance = collect_maintenance(cron_path)
+    instances = collect_instances(home, docker=docker)
+    backups = collect_backups(home, scan=scan)
+    if maintenance.known:
+        instances.disabled = _job_switched_off(maintenance.jobs, BUILD_CACHE_JOB_SCRIPT)
+        backups.disabled = _job_switched_off(maintenance.jobs, BACKUP_JOB_SCRIPT)
     return ServerState(
         hostname=_hostname(),
         collected_at=time.time(),
-        instances=collect_instances(home, docker=docker),
-        backups=collect_backups(home, scan=scan),
-        maintenance=collect_maintenance(cron_path),
+        instances=instances,
+        backups=backups,
+        maintenance=maintenance,
         health=collect_health(root, home) if checks
                else Health("health", error="skipped"),
     )
@@ -585,12 +636,25 @@ def _unknown(section: Section, stream, colours: dict) -> None:
     print("", file=stream)
 
 
+def _instances_off_line(c: dict) -> str:
+    return (f"  {c['grey']}off{c['reset']}  no doup-managed instances — "
+            f"docron --enable {BUILD_CACHE_JOB_SCRIPT.removesuffix('.py')}")
+
+
 def _render_instances(instances: Instances, stream, c: dict) -> None:
     _section("Instances", stream, c)
+    if instances.disabled and not instances.known:
+        # odoo_build_cache.py is off and there is nothing else to show —
+        # the missing config is the expected state here, not a fault.
+        print(f"{_instances_off_line(c)}\n", file=stream)
+        return
     if not instances.known:
         return _unknown(instances, stream, c)
     if not instances.entries:
-        print(f"  {c['grey']}none configured{c['reset']}\n", file=stream)
+        if instances.disabled:
+            print(f"{_instances_off_line(c)}\n", file=stream)
+        else:
+            print(f"  {c['grey']}none configured{c['reset']}\n", file=stream)
         return
 
     for entry in instances.entries:
@@ -608,14 +672,31 @@ def _render_instances(instances: Instances, stream, c: dict) -> None:
     if instances.docker_error:
         print(f"  {c['yellow']}?{c['reset']} container state unknown: "
               f"{instances.docker_error}", file=stream)
+    if instances.disabled:
+        # A leftover configuration from before odoo_build_cache.py was
+        # switched off — still shown, only its grading is suppressed.
+        print(_instances_off_line(c), file=stream)
     print("", file=stream)
+
+
+def _backups_off_line(c: dict) -> str:
+    return (f"  {c['grey']}off{c['reset']}  backups disabled on this host — "
+            f"docron --enable {BACKUP_JOB_SCRIPT.removesuffix('.py')}")
 
 
 def _render_backups(backups: Backups, stream, c: dict) -> None:
     _section("Backup", stream, c)
+    if backups.disabled and not backups.known:
+        # container2backup.py is off and there is nothing else to show — the
+        # missing config is the expected state here, not a fault.
+        print(f"{_backups_off_line(c)}\n", file=stream)
+        return
     if not backups.known:
         return _unknown(backups, stream, c)
     if not backups.entries:
+        if backups.disabled:
+            print(f"{_backups_off_line(c)}\n", file=stream)
+            return
         print(f"  {c['grey']}no databases configured{c['reset']}\n",
               file=stream)
         return
@@ -643,6 +724,10 @@ def _render_backups(backups: Backups, stream, c: dict) -> None:
     else:
         print(f"  {c['yellow']}?{c['reset']} {backups.backup_path} "
               f"cannot be measured", file=stream)
+    if backups.disabled:
+        # A leftover configuration from before container2backup.py was
+        # switched off — the ages above are shown, but do not count.
+        print(_backups_off_line(c), file=stream)
     print("", file=stream)
 
 
@@ -705,6 +790,7 @@ def as_json(state: ServerState) -> str:
         "instances": {
             "error": state.instances.error,
             "docker_error": state.instances.docker_error,
+            "disabled": state.instances.disabled,
             "entries": [{"name": i.name, "database": i.database,
                          "version": i.version, "active": i.active,
                          "running": i.running, "last_run": i.last_run}
@@ -712,6 +798,7 @@ def as_json(state: ServerState) -> str:
         },
         "backups": {
             "error": state.backups.error,
+            "disabled": state.backups.disabled,
             "backup_path": state.backups.backup_path,
             "percent_used": state.backups.disk.percent_used
                             if state.backups.disk else None,
@@ -739,17 +826,28 @@ def as_json(state: ServerState) -> str:
 
 
 def worst(state: ServerState) -> str:
-    """The most severe thing in the whole report — this drives the exit code."""
+    """The most severe thing in the whole report — this drives the exit code.
+
+    Backups switched off deliberately (`docron --disable container2backup.py`)
+    contribute neither their archive ages nor a missing configuration — see
+    the module docstring. Disk usage still counts: a full backup_path is a
+    real problem regardless of whether backups are currently running into it.
+    Instances behave the same way for odoo_build_cache: a stopped container in
+    a leftover docker2update.yaml is not this host's business once doup is
+    off.
+    """
     levels = []
-    for entry in state.backups.entries:
-        levels.append(entry.severity)
+    if not state.backups.disabled:
+        for entry in state.backups.entries:
+            levels.append(entry.severity)
     if state.backups.disk:
         levels.append(state.backups.disk.severity)
     for finding in state.health.findings:
         levels.append(getattr(finding.severity, "value", "SKIP"))
-    for entry in state.instances.entries:
-        if entry.active and entry.running is False:
-            levels.append("FAIL")
+    if not state.instances.disabled:
+        for entry in state.instances.entries:
+            if entry.active and entry.running is False:
+                levels.append("FAIL")
     if "FAIL" in levels:
         return "FAIL"
     if "WARN" in levels:

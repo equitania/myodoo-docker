@@ -1,5 +1,52 @@
 # Release Notes
 
+## A Host Without Backups or Instances Is Not Broken (15.09.2026)
+
+*scripts/server-readiness.py v1.7.0 · scripts/ownerp_state.py v1.1.0 ·
+scripts/ownerp_cron.py v1.1.0 ·
+tests/test_readiness_mute.py · tests/test_ownerp_state.py · tests/test_ownerp_cron.py ·
+docs/COMPONENTS.md · docs/usage/09-reference.md ·
+docs/usage/06-maintenance.md · scripts/README_BackUp.md · usage/AGENT.md ·
+docs/superpowers/specs/2026-08-21-readiness-mute-design.md*
+
+### Fixed
+
+- **A server that deliberately has no backups and no doup-managed Odoo
+  instance — a developers' terminal server, say — reported permanent
+  failures that buried real findings.** `server-readiness.py` FAILed
+  `Backup config` and `Update config` forever (their YAML files legitimately
+  do not exist there), and `dostat`/`konsole` showed `Instances  ?
+  /root/docker2update.yaml not found` and `Backup  ?
+  /root/container2backup.yaml not found`, dragging their exit code down with
+  them. Nothing on the host was actually wrong; nothing said so.
+
+### Changed
+
+- **`DERIVED_MUTES` now maps a cron job to every check it explains, not just
+  one.** A host where `docron --disable container2backup` shows
+  the backup job off mutes both `backup_recency` and `backup_config`; a host
+  where `docron --disable odoo_build_cache` shows the build-cache job off
+  mutes `update_config`. Both keep running and keep showing their line in the
+  full report, `[MUTED] … cron job disabled on this host` — they simply stop
+  counting for `--brief`, `--quiet` and the exit code. `odoo_build_cache`
+  explains only `update_config`, deliberately: the Docker/nginx checks
+  describe the host on their own terms, independent of whether doup manages
+  an instance here. `_disabled_jobs()` now matches on a word boundary rather
+  than a bare substring, so a future job sharing letters with an existing one
+  cannot be caught by it, or catch it, by accident.
+- **`ownerp_state.py` reads the same cron file** — through the `CronJob`
+  objects `collect_maintenance()` already parses, requiring every matching
+  entry to be inactive — and renders a neutral line instead of the error:
+  `off  backups disabled on this host — docron --enable
+  container2backup` and `off  no doup-managed instances — docron
+  --enable odoo_build_cache`. Neither a missing config nor a stale/absent
+  backup age can raise `worst()`'s verdict while the matching job is off; a
+  leftover configuration from before the job was disabled is still listed,
+  only its grading is switched off. Both `Instances` and `Backups` gain a
+  `disabled` field, reflected in `--json`.
+- **`ownerp_cron.py` 1.1.0: `--enable`/`--disable` switch every line of a
+  script at once and accept the name without `.py`.**
+
 ## The Intranet Bypasses the Proxy by Itself (14.09.2026)
 
 *scripts/update_docker_odoo.py v5.20.0 · getScripts.py v9.22.0 ·

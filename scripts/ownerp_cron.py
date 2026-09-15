@@ -3,8 +3,8 @@
 # ==============================================================================
 # Title:            ownerp_cron.py
 # Description:      Overview and guided editing of the myodoo maintenance cron.
-# Version:          1.0.2
-# Date:             13.08.2026
+# Version:          1.1.0
+# Date:             15.09.2026
 # Author:           Equitania Software GmbH
 # ==============================================================================
 # Why this exists:
@@ -65,8 +65,8 @@ import time
 from dataclasses import dataclass, field
 from typing import List, Optional, Tuple
 
-SCRIPT_VERSION = "1.0.2"
-SCRIPT_DATE = "13.08.2026"
+SCRIPT_VERSION = "1.1.0"
+SCRIPT_DATE = "15.09.2026"
 
 CRON_PATH = "/etc/cron.d/myodoo-maintenance"
 
@@ -184,6 +184,24 @@ class CronFile:
                 f"'{job_id}' is ambiguous — {len(matches)} jobs run it. Use one of: "
                 + ", ".join(c.job_id for c in matches))
         raise CronError(f"unknown job '{job_id}'. Known: "
+                        + ", ".join(c.job_id for c in self.jobs))
+
+    def matching(self, name: str) -> List[CronJob]:
+        """Every job a switch by `name` applies to.
+
+        A schedule belongs to one line, so `job()` stays strict. Switching on or
+        off is a decision about the script: a server without backups has neither
+        backup line, and making the operator name both was a trap - one call left
+        the second run in place. An exact id (`container2backup.py:1`) still
+        selects that one line; a script name, with or without `.py`, selects all.
+        """
+        exact = [c for c in self.jobs if c.job_id == name]
+        if exact:
+            return exact
+        matches = [c for c in self.jobs if c.script in (name, f"{name}.py")]
+        if matches:
+            return matches
+        raise CronError(f"unknown job '{name}'. Known: "
                         + ", ".join(c.job_id for c in self.jobs))
 
     @property
@@ -323,8 +341,8 @@ def _validate_field(value: str, low: int, high: int, name: str) -> Optional[str]
     return None
 
 
-def _regression(before: CronFile, after: CronFile, expect: CronJob) -> Optional[str]:
-    """Refuse a write that changed anything beyond the one intended job.
+def _regression(before: CronFile, after: CronFile, expect) -> Optional[str]:
+    """Refuse a write that changed anything beyond the intended jobs.
 
     The same guard ownerp_wizard.py uses: a rewrite is allowed to alter exactly
     what was asked for, and the way to prove it is to compare the parse of the
@@ -333,8 +351,10 @@ def _regression(before: CronFile, after: CronFile, expect: CronJob) -> Optional[
     if len(before.jobs) != len(after.jobs):
         return (f"job count changed ({len(before.jobs)} -> {len(after.jobs)}) — "
                 "refusing the write")
+    expect = expect if isinstance(expect, (list, tuple)) else [expect]
+    intended = {job.job_id for job in expect}
     for old, new in zip(before.jobs, after.jobs):
-        if old.job_id == expect.job_id:
+        if old.job_id in intended:
             continue
         if (old.schedule, old.user, old.command, old.active) != \
            (new.schedule, new.user, new.command, new.active):
@@ -450,17 +470,22 @@ def _stamp_marker(cron: CronFile) -> None:
             job.line_no += 1
 
 
-def write(cron: CronFile, changed: CronJob) -> str:
+def write(cron: CronFile, changed) -> str:
     """Persist the file. Returns the backup path.
+
+    `changed` is one CronJob or a list of them - a switch by script name
+    changes every line of that script, and all of them go in one write.
 
     Order matters and is the whole point: backup first, then a temp file in the
     same directory (so the rename is atomic and cannot cross a filesystem), then
     validate what was actually written by re-parsing it, and only then replace.
     A failure at any step removes the temp file and leaves the original as it was.
     """
-    error = validate_schedule(changed.schedule)
-    if error:
-        raise CronError(error)
+    changed = list(changed) if isinstance(changed, (list, tuple)) else [changed]
+    for job in changed:
+        error = validate_schedule(job.schedule)
+        if error:
+            raise CronError(error)
 
     backup = _backup(cron.path)
     _stamp_marker(cron)
@@ -502,11 +527,13 @@ def set_schedule(cron: CronFile, job_id: str, schedule: str) -> Tuple[CronJob, s
     return job, write(cron, job)
 
 
-def set_active(cron: CronFile, job_id: str, active: bool) -> Tuple[CronJob, str]:
-    job = cron.job(job_id)
-    job.active = active
-    job.dirty = True
-    return job, write(cron, job)
+def set_active(cron: CronFile, name: str, active: bool) -> Tuple[List[CronJob], str]:
+    """Switch a job on or off. A script name switches all of its lines."""
+    jobs = cron.matching(name)
+    for job in jobs:
+        job.active = active
+        job.dirty = True
+    return jobs, write(cron, jobs)
 
 
 # ==============================================================================
@@ -606,8 +633,12 @@ def build_parser() -> argparse.ArgumentParser:
                         help="job to change, e.g. container2backup.py:1")
     parser.add_argument("--schedule", metavar="EXPR",
                         help="new schedule for --set, e.g. '0 3 * * *'")
-    parser.add_argument("--enable", metavar="JOB", help="switch a job back on")
-    parser.add_argument("--disable", metavar="JOB", help="switch a job off")
+    parser.add_argument("--enable", metavar="JOB",
+                        help="switch a job back on; a script name (with or "
+                             "without .py) switches all of its lines")
+    parser.add_argument("--disable", metavar="JOB",
+                        help="switch a job off; a script name (with or "
+                             "without .py) switches all of its lines")
     parser.add_argument("--version", action="version",
                         version=f"ownerp_cron.py {SCRIPT_VERSION} ({SCRIPT_DATE})")
     return parser
@@ -642,9 +673,10 @@ def main(argv=None) -> int:
             print(f"  backup: {backup}")
         elif args.enable or args.disable:
             target = args.enable or args.disable
-            job, backup = set_active(cron, target, bool(args.enable))
-            state = "enabled" if job.active else "switched off"
-            print(f"✓ {job.job_id} {state}")
+            jobs, backup = set_active(cron, target, bool(args.enable))
+            state = "enabled" if args.enable else "switched off"
+            for job in jobs:
+                print(f"✓ {job.job_id} {state}")
             print(f"  backup: {backup}")
         else:
             print_report(cron, brief=args.brief)

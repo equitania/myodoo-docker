@@ -4,8 +4,8 @@
 # Title:            server-readiness.py
 # Description:      Report whether this server matches the state myodoo-docker
 #                   expects, and name the exact command that closes each gap.
-# Version:          1.6.0
-# Date:             25.08.2026
+# Version:          1.7.0
+# Date:             15.09.2026
 # Author:           Equitania Software GmbH
 # ==============================================================================
 # Why this exists:
@@ -68,8 +68,8 @@ from dataclasses import dataclass
 from enum import Enum
 from typing import Callable, List, Optional, Tuple
 
-SCRIPT_VERSION = "1.6.0"
-SCRIPT_DATE = "25.08.2026"
+SCRIPT_VERSION = "1.7.0"
+SCRIPT_DATE = "15.09.2026"
 
 # Where nginx keeps its customer vhosts (mirrors nginx-cert-guard.py).
 NGINX_CONF_D = "etc/nginx/conf.d"
@@ -119,9 +119,24 @@ MANAGED_JOBS = (
 # a disabled job behind a marker rather than deleting it), so it is read rather
 # than asking the operator to state the same fact again in the mute file.
 #
-# Data, not an `if`: a second pair is a line here.
+# One job can explain more than one check, so each value is a tuple:
+#   * container2backup -> backup_recency, backup_config. A host with backups
+#     switched off (`docron --disable container2backup` — one call now
+#     switches both of the job's daily cron entries) has neither a recent
+#     backup nor a reason to carry container2backup.yaml at all.
+#   * odoo_build_cache -> update_config only. This is the one job tied to
+#     doup-managed instances, so it is the one that can explain
+#     docker2update.yaml being absent (`docron --disable odoo_build_cache`).
+#     docker_storage_driver, the nginx checks, certbot_timer_window and
+#     script_versions describe the host's Docker/nginx setup on its own terms,
+#     independent of whether doup manages an Odoo instance here — muting them
+#     on that basis would hide a real fault on a host that runs Odoo some
+#     other way (or none at all, but still serves other sites through nginx).
+#
+# Data, not an `if`: a further pair is a line here, not a new branch below.
 DERIVED_MUTES = {
-    "container2backup": "backup_recency",
+    "container2backup": ("backup_recency", "backup_config"),
+    "odoo_build_cache": ("update_config",),
 }
 
 # The two configurations in $HOME that the maintenance tooling runs on.
@@ -363,7 +378,15 @@ def read_mutes(ctx: HealthContext) -> List[MuteEntry]:
 
 
 def _disabled_jobs(ctx: HealthContext) -> List[str]:
-    """Basenames of the maintenance jobs switched off through ownerp_cron.py."""
+    """Basenames of the maintenance jobs switched off through ownerp_cron.py.
+
+    Matched with a word boundary (`\\bjob\\b`), not a bare substring: a plain
+    `job in normalised` would also fire on a future job whose name merely
+    contains this one (or the other way round) — "odoo_build_cache" must not
+    be caught by, or catch, some unrelated line that happens to share letters
+    with it. Word characters include digits and underscores, so this still
+    matches "container2backup" inside ".../container2backup.py" correctly.
+    """
     text = _read(ctx.p(CRON_DEST))
     if text is None:
         return []
@@ -371,15 +394,18 @@ def _disabled_jobs(ctx: HealthContext) -> List[str]:
     for line in _disabled_cron_lines(text):
         normalised = _normalise_cron_line(line)
         for job in DERIVED_MUTES:
-            if job in normalised:
+            if re.search(rf"\b{re.escape(job)}\b", normalised):
                 names.append(job)
     return names
 
 
 def derived_mutes(ctx: HealthContext) -> dict:
     """check_id -> reason, for checks explained by a deliberately disabled job."""
-    return {DERIVED_MUTES[job]: "cron job disabled on this host"
-            for job in _disabled_jobs(ctx)}
+    reasons = {}
+    for job in _disabled_jobs(ctx):
+        for check_id in DERIVED_MUTES[job]:
+            reasons[check_id] = "cron job disabled on this host"
+    return reasons
 
 
 # ==============================================================================

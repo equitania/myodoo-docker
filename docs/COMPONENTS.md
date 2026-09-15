@@ -326,9 +326,14 @@ in this repository, stay in `CLAUDE.md`.
   cannot run Textual still needs it — but an operator who does not know about
   `konsole` keeps coming back to a field-at-a-time prompt
 
-#### 8. ownerp_cron.py (v1.0.2)
+#### 8. ownerp_cron.py (v1.1.0)
 - **Purpose**: Overview and guided editing of `/etc/cron.d/myodoo-maintenance` —
   the backup, cert-renewal, DNS-guard and cleanup jobs an ownERP server runs
+- **`--enable`/`--disable` switch every cron line of a script at once**
+  (v1.1.0, 15.09.2026), and accept the script name without `.py` — so
+  `docron --disable container2backup` now covers both of that job's daily
+  entries in one call; the numbered ids (`container2backup.py:1`/`:2`) still
+  address a single line for `--set`/`--schedule`
 - **Two consumers, one implementation**: `getScripts.py` prints `--brief` after
   the install summary (read-only and non-interactive, because `ups` also runs
   unattended), `ownerp_console.py` edits through this module's API, so the
@@ -412,10 +417,18 @@ in this repository, stay in `CLAUDE.md`.
   script can convert nothing there; `--from-docker` is the whole answer for
   those hosts, and both readiness checks now point at it
 
-#### 10. ownerp_state.py (v1.0.0)
+#### 10. ownerp_state.py (v1.1.0)
 - **Purpose**: The whole server on one page — instances, backup ages,
   maintenance jobs, readiness checks. Started with `dostat`; stage 1 of the
   console design in `docs/superpowers/specs/2026-08-13-ownerp-console-design.md`
+- **A host with no backups and no doup-managed instances is not broken**
+  (v1.1.0, 15.09.2026). It reads the same disabled-job fact
+  `server-readiness.py`'s `DERIVED_MUTES` reads — `docron --disable
+  container2backup` or `docron --disable odoo_build_cache` — and
+  renders a neutral `off` line instead of the "config not found" error for
+  that section, without letting a missing config or a stale backup age push
+  `worst()` to WARN/FAIL. A leftover configuration is still listed, only its
+  grading is switched off
 - **Two consumers, one collector**: `dostat` is this file's own `main()`, and
   `ownerp_console.py` is the second. It therefore carries **no
   interface import** — a data layer that knew about its UI could not be tested
@@ -657,11 +670,16 @@ in this repository, stay in `CLAUDE.md`.
   entry survivable: an entry nobody can justify a year later gets deleted
   rather than understood, which brings the message back on a host that decided
   against it
-- **A disabled backup cron job mutes its own check, with no entry at all**
+- **A disabled cron job mutes the checks it explains, with no entry at all**
   (`DERIVED_MUTES`). `ownerp_cron.py` parks a switched-off job behind
   `#OWNERP-DISABLED#` rather than deleting it, so the cron file already records
   the decision — reading it beats asking for the same fact twice, and
-  re-enabling the job brings the check back with nothing left behind
+  re-enabling the job brings the checks back with nothing left behind. One job
+  can explain more than one check: `container2backup` (v1.7.0, 15.09.2026)
+  covers both `backup_recency` and `backup_config`, `odoo_build_cache` covers
+  `update_config`. Matched on a word boundary, not a bare substring, so a
+  future script that merely contains one of these names cannot be caught by
+  it (or catch it) by accident
 - **`mute_registry` is on `UNMUTABLE`**: it is the WARN that reports mute
   entries naming a check that no longer exists. Muting it would switch off the
   guard against silent mutes, and the failure it guards is the nastiest one
@@ -670,3 +688,27 @@ in this repository, stay in `CLAUDE.md`.
 - **No expiry date**, deliberately. Both driving cases are permanent, and the
   risk an expiry would guard against — a mute nobody remembers — is already
   covered by the visible `[MUTED]` line and the count in every summary
+
+#### 16. server-readiness.py (v1.7.0)
+- **Purpose**: Reports whether this server matches the state myodoo-docker
+  expects — 16 read-only checks (cron, logrotate, backup and update
+  configuration, Docker storage driver, nginx, certbot timing, script
+  versions), each non-OK finding carrying exactly one copy-paste fix. `chk`,
+  `dostat`/`konsole`, the block after `ups` and the Monday cron all go through
+  the same `run_checks()`, so a mute can never disagree between them
+- **Never writes.** No `/etc` change, no service restart, no network call —
+  safe to run on a live server at any time
+- **`MUTED`**: a finding that is true and simply does not apply on this host
+  (see `ownerp_mute.py` above for the write path and the derived-mute
+  mechanics). Still shown in the full report with its reason; carries no
+  weight in `--brief`, `--quiet` or the exit code
+- **`DERIVED_MUTES` maps a job to a tuple of checks** (v1.7.0, 15.09.2026):
+  `container2backup` → `backup_recency`, `backup_config`; `odoo_build_cache` →
+  `update_config`. Only `update_config` for the build-cache job, deliberately
+  — `docker_storage_driver`, the nginx checks, `certbot_timer_window` and
+  `script_versions` describe the host's Docker/nginx setup on its own terms,
+  independent of whether doup manages an instance here
+- **`check_update_config`** (v1.6.0) is `check_backup_config`'s counterpart:
+  SKIP without Docker, FAIL when `docker2update.yaml` is missing or does not
+  parse, WARN when every entry is parked `active: false` — doup then runs and
+  updates nothing, which looks exactly like success
