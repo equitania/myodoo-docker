@@ -1,5 +1,40 @@
 # Release Notes
 
+## Switching a Job Off No Longer Needs Its Name (15.09.2026)
+
+*getScripts.py v9.23.0 · scripts/ownerp_cron.py v1.2.0 ·
+tests/test_getscripts_noconfig.py · tests/test_ownerp_cron.py ·
+docs/usage/04-updates.md · docs/usage/06-maintenance.md · usage/AGENT.md*
+
+### Added
+
+- **Bare `docron` on a terminal asks.** Switching a maintenance job off meant
+  knowing its name, and knowing that the backup runs from two cron lines. A
+  bare call with stdin and stdout on a terminal now prints the usual report,
+  then a numbered menu — one entry per script, `container2backup (2 lines)`
+  as a single decision, marked `✓` on, `•` off, `◐` partly off. A number asks
+  for confirmation in German before anything is written, and for
+  `container2backup`/`odoo_build_cache` says what changes in `dostat` and the
+  readiness report afterwards. Every write goes through the same
+  `set_active()` as `--enable`/`--disable` and `konsole`. A pipe, cron,
+  `--brief`, `--json` or a mutation flag never prompt; the new `--no-input`
+  forces the plain report on a terminal, for scripts and agents.
+- **`ups` offers a way out of a server with no configuration.** When
+  `container2backup.yaml` and `docker2update.yaml` are both missing and the
+  backup or build-cache job is still on, `ups` used to name the problem and
+  move on. On a terminal it now asks: rebuild the configuration from the
+  running containers (`ownerp_migrate.py --from-docker`), switch backups and
+  build cache off after one confirmation (`docron --disable container2backup`,
+  `docron --disable odoo_build_cache`; schedules are kept), or decide later.
+  Without a terminal it prints one line naming both commands and changes
+  nothing. It stays silent when a configuration exists, when `ownerp_cron.py`
+  is missing or unreadable, or when both jobs are already off — an operator
+  who decided once is not asked again. The prompt lives in `getScripts.py`
+  itself and every command it starts runs with `interactive=True`: a prompt
+  inside a captured child process would be invisible and hang `ups`.
+  `ups` copies the new `getScripts.py` into place only after it has run, so
+  the offer appears from the second `ups` after this release.
+
 ## Backup Recency Lied, and One Missing Report Path Blocked Every Database (15.09.2026)
 
 *scripts/server-readiness.py v1.8.0 · scripts/container2backup.py v4.9.0 ·

@@ -3,7 +3,7 @@
 # ==============================================================================
 # Title:            ownerp_cron.py
 # Description:      Overview and guided editing of the myodoo maintenance cron.
-# Version:          1.1.1
+# Version:          1.2.0
 # Date:             15.09.2026
 # Author:           Equitania Software GmbH
 # ==============================================================================
@@ -15,12 +15,19 @@
 #   silent. cron does not complain about a malformed line, it just never runs
 #   the job, and nobody notices until a restore is needed.
 #
-#   Two consumers, one implementation:
+#   Three consumers, one implementation:
 #     * getScripts.py (`ups`) prints --brief after the install summary. Purely
 #       informational and non-interactive, because ups also runs from scripts
 #       and from cron itself, where there is no terminal to prompt on.
 #     * ownerp_console.py edits through this module's API, so the write
 #       path exists exactly once.
+#     * An operator running bare `docron` on a real terminal (both stdin and
+#       stdout a TTY, no --json/--brief/--set/--enable/--disable/--no-input)
+#       gets the report followed by a numbered on/off menu (see interactive()
+#       below) — switching a job off no longer requires knowing its exact
+#       name or that container2backup runs from two cron lines. `--no-input`
+#       forces the old report-only behaviour on a terminal; every other mode
+#       (piped output, cron, --brief, --json) never prompted and still does not.
 #
 # Write safety (mirrors ownerp_wizard.py, deliberately):
 #   timestamped backup -> build in memory -> temp file in the SAME directory ->
@@ -76,7 +83,7 @@ import time
 from dataclasses import dataclass, field
 from typing import List, Optional, Tuple
 
-SCRIPT_VERSION = "1.1.1"
+SCRIPT_VERSION = "1.2.0"
 SCRIPT_DATE = "15.09.2026"
 
 CRON_PATH = "/etc/cron.d/myodoo-maintenance"
@@ -620,6 +627,231 @@ def set_active(cron: CronFile, name: str, active: bool) -> Tuple[List[CronJob], 
 
 
 # ==============================================================================
+# Interactive menu — pure helpers (no I/O; see interactive() for the loop)
+# ==============================================================================
+
+@dataclass
+class JobEntry:
+    """A script's cron line(s), grouped for the interactive on/off menu.
+
+    container2backup runs twice a day from two lines; to the operator that is
+    one decision ("backups on or off"), and a menu with two near-identical
+    rows invites switching only one of them by accident — exactly the trap
+    `matching()`/`set_active()` already avoid for --enable/--disable.
+    """
+
+    script: str
+    jobs: List[CronJob]
+
+    @property
+    def display(self) -> str:
+        """Name as shown to the operator - the ".py" is implementation detail."""
+        return self.script[:-3] if self.script.endswith(".py") else self.script
+
+    @property
+    def state(self) -> str:
+        actives = {job.active for job in self.jobs}
+        if actives == {True}:
+            return "on"
+        if actives == {False}:
+            return "off"
+        return "partial"
+
+    @property
+    def mark(self) -> str:
+        return {"on": "✓", "off": "•", "partial": "◐"}[self.state]
+
+    @property
+    def schedules_human(self) -> str:
+        seen: List[str] = []
+        for job in self.jobs:
+            human = humanise(job.schedule)
+            if human not in seen:
+                seen.append(human)
+        return ", ".join(seen)
+
+
+def group_by_script(jobs: List[CronJob]) -> List[JobEntry]:
+    """Group cron lines by script, in file order.
+
+    Pure and stream-free on purpose: the menu, the confirmation text and the
+    unit tests all read from this without a terminal in sight.
+    """
+    order: List[str] = []
+    by_script: dict = {}
+    for job in jobs:
+        if job.script not in by_script:
+            order.append(job.script)
+            by_script[job.script] = []
+        by_script[job.script].append(job)
+    return [JobEntry(script, by_script[script]) for script in order]
+
+
+def _entry_last_run(entry: JobEntry) -> str:
+    """Same phrasing as describe(), for whichever of the entry's lines ran
+    most recently - the two backup lines share one log, but nothing requires
+    that of every script."""
+    logged = [job for job in entry.jobs if job.log_path]
+    if not logged:
+        return "no log"
+    known = [(job, last_run(job)) for job in logged]
+    known = [(job, stamp) for job, stamp in known if stamp is not None]
+    if not known:
+        return "never"
+    _job, stamp = max(known, key=lambda pair: pair[1])
+    return _age(time.time() - stamp)
+
+
+def format_menu(entries: List[JobEntry]) -> List[str]:
+    """Render the numbered on/off menu lines. No colour: this path only ever
+    runs on a real terminal already (see the TTY gate in main()), and colour
+    codes would just clutter a scrollback full of confirmations."""
+    if not entries:
+        return []
+    names = []
+    for entry in entries:
+        suffix = f" ({len(entry.jobs)} lines)" if len(entry.jobs) > 1 else ""
+        names.append(f"{entry.display}{suffix}")
+    number_width = len(str(len(entries)))
+    name_width = max(len(name) for name in names)
+    lines = []
+    for number, (entry, name) in enumerate(zip(entries, names), start=1):
+        lines.append(
+            f"{number:>{number_width}}  {entry.mark} {name:<{name_width}}  "
+            f"{entry.schedules_human}  {_entry_last_run(entry)}")
+    return lines
+
+
+# Jobs whose "off" state has a consequence the operator should know before
+# confirming - dostat/server-readiness.py treat them as deliberately absent
+# configuration rather than a fault (see docs/usage/06-maintenance.md).
+_OFF_EXPLANATIONS = {
+    "container2backup.py": (
+        "Danach meldet dostat Backup als „off“ und die Bereitschaftsprüfung "
+        "zählt die fehlende Backup-Konfiguration nicht mehr."),
+    "odoo_build_cache.py": (
+        "Danach meldet dostat Instanzen als „off“ und die Bereitschaftsprüfung "
+        "zählt die fehlende Update-Konfiguration nicht mehr."),
+}
+
+MENU_PROMPT = "Nummer zum Ein-/Ausschalten, Enter zum Beenden: "
+
+
+def _parse_menu_choice(raw: str, count: int) -> Optional[int]:
+    """0-based entry index for a valid "1".."count" answer, else None.
+
+    Blank input ("stop the loop") is the caller's concern, not this
+    function's - it only ever sees non-blank text here.
+    """
+    text = raw.strip()
+    if not text.isdigit():
+        return None
+    number = int(text)
+    if not 1 <= number <= count:
+        return None
+    return number - 1
+
+
+def _is_yes(answer: str) -> bool:
+    return answer.strip().lower() in ("j", "ja", "y", "yes")
+
+
+def _is_tty(stream) -> bool:
+    return bool(getattr(stream, "isatty", None) and stream.isatty())
+
+
+# ==============================================================================
+# Interactive menu — the loop itself
+# ==============================================================================
+
+def interactive(path: str, stdin, stdout,
+                 load_fn=load, set_active_fn=set_active) -> int:
+    """Bare `docron` on a real terminal: the report, then a numbered menu
+    that switches a whole script on or off without the operator needing to
+    know its exact job id or that container2backup is two cron lines.
+
+    Streams are parameters, not sys.stdin/sys.stdout, precisely so a test can
+    drive this with a StringIO instead of a real TTY - see _is_tty() at the
+    call site in main() for where the real terminal is actually detected.
+    """
+    try:
+        cron = load_fn(path)
+    except CronError as exc:
+        print(f"✗ {exc}", file=stdout)
+        return 2
+
+    print_report(cron, stream=stdout)
+    changed_any = False
+
+    while True:
+        entries = group_by_script(cron.jobs)
+        if not entries:
+            return 0
+        for line in format_menu(entries):
+            print(line, file=stdout)
+        stdout.write(MENU_PROMPT)
+        stdout.flush()
+        try:
+            raw = stdin.readline()
+        except (EOFError, KeyboardInterrupt):
+            print(file=stdout)
+            return 0
+        if raw == "":
+            print(file=stdout)
+            return 0
+        if raw.strip() == "":
+            break
+
+        index = _parse_menu_choice(raw, len(entries))
+        if index is None:
+            print("Ungültige Eingabe — bitte eine Nummer aus der Liste, "
+                  "oder Enter zum Beenden.", file=stdout)
+            continue
+
+        entry = entries[index]
+        turn_on = entry.state != "on"
+        verb = "einschalten" if turn_on else "abschalten"
+        print(f"{entry.display} auf diesem Server {verb}? "
+              f"Die Zeitpläne bleiben erhalten.", file=stdout)
+        if not turn_on:
+            explanation = _OFF_EXPLANATIONS.get(entry.script)
+            if explanation:
+                print(explanation, file=stdout)
+        stdout.write("[j/N] ")
+        stdout.flush()
+        try:
+            answer = stdin.readline()
+        except (EOFError, KeyboardInterrupt):
+            print(file=stdout)
+            return 0
+        if answer == "":
+            print(file=stdout)
+            return 0
+        if not _is_yes(answer):
+            continue
+
+        try:
+            jobs, backup = set_active_fn(cron, entry.script, turn_on)
+        except CronError as exc:
+            print(f"✗ {exc}", file=stdout)
+            cron = load_fn(path)
+            continue
+
+        changed_any = True
+        state_word = "eingeschaltet" if turn_on else "abgeschaltet"
+        for job in jobs:
+            print(f"✓ {job.job_id} {state_word}", file=stdout)
+        print(f"  backup: {backup}", file=stdout)
+        _print_moved(backup, path)
+        cron = load_fn(path)
+
+    if changed_any:
+        print(file=stdout)
+        print("Rückgängig machen: docron --enable <name>", file=stdout)
+    return 0
+
+
+# ==============================================================================
 # Report
 # ==============================================================================
 
@@ -705,13 +937,20 @@ def as_json(cron: CronFile) -> str:
 
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
-        description="Overview and editing of /etc/cron.d/myodoo-maintenance.")
+        description="Overview and editing of /etc/cron.d/myodoo-maintenance. "
+                     "A bare call on a real terminal shows a numbered menu to "
+                     "switch a job on or off; pass --no-input for the old "
+                     "report-only behaviour there too (piped output, --brief, "
+                     "--json and cron itself never prompt).")
     parser.add_argument("--path", default=CRON_PATH,
                         help="cron file to operate on (default: %(default)s)")
     parser.add_argument("--brief", action="store_true",
                         help="compact overview, as printed by ups")
     parser.add_argument("--json", action="store_true",
                         help="machine-readable output; implies no editing")
+    parser.add_argument("--no-input", action="store_true",
+                        help="never show the interactive menu, even on a "
+                             "terminal (report only, like a pipe or --brief)")
     parser.add_argument("--set", metavar="JOB",
                         help="job to change, e.g. container2backup.py:1")
     parser.add_argument("--schedule", metavar="EXPR",
@@ -757,6 +996,14 @@ def main(argv=None) -> int:
         print("✗ --set, --enable and --disable are mutually exclusive",
               file=sys.stderr)
         return 2
+
+    # The interactive menu only ever replaces the plain report, and only on a
+    # real terminal - piped output, --brief (ups), --json and any mutation
+    # flag behave exactly as before. sys.stdin/sys.stdout, not args: this is
+    # the one thing an operator's actual terminal decides, not a flag.
+    if not any(mutations) and not args.brief and not args.no_input \
+            and _is_tty(sys.stdin) and _is_tty(sys.stdout):
+        return interactive(args.path, sys.stdin, sys.stdout)
 
     try:
         if args.set:

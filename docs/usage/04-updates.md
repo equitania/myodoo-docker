@@ -46,6 +46,20 @@ Nützliche Optionen: `doup --validate` (Config prüfen), `-s CONTAINER`
 (einzelner Container), `-v` (verbose). **Proxy-Kunden:** `defaults.proxy` und
 `pre_build_files` in der YAML, Daemon-Proxy via `getScripts.py --proxy-check`.
 
+### Server ohne jede Konfiguration
+
+Fehlen `container2backup.yaml` und `docker2update.yaml` beide — etwa nach
+einem CSV-Löschfenster oder auf einem frisch übernommenen Server —, meldet
+`ups` das und bietet am Terminal direkt einen Weg heraus: die Konfiguration
+aus den laufenden Containern wiederherstellen (`ownerp_migrate.py
+--from-docker`), Backup- und Build-Cache-Job bewusst abschalten (für Server,
+die wirklich keine Backups und keine Odoo-Updates brauchen, etwa ein
+Entwickler-Terminalserver), oder später entscheiden. Läuft `ups` unbeaufsichtigt
+— aus einem Skript, per Cron, ohne Terminal —, erscheint nur ein Hinweis und
+nichts wird automatisch verändert. Abschalten geschieht über `docron --disable
+container2backup` bzw. `docron --disable odoo_build_cache` und lässt die
+Zeitpläne stehen; rückgängig mit `docron --enable <job>`.
+
 ### Einzelne Systeme, Modus und Kommentar
 
 `doup` fährt alle aktiven Instanzen. Für einen einzelnen Lauf genügen Argumente —
@@ -157,6 +171,20 @@ containers:
 Useful options: `doup --validate` (check config), `-s CONTAINER` (single
 container), `-v` (verbose). **Proxy customers:** `defaults.proxy` and
 `pre_build_files` in the YAML, daemon proxy via `getScripts.py --proxy-check`.
+
+### A server with no configuration at all
+
+When both `container2backup.yaml` and `docker2update.yaml` are missing —
+after a CSV deletion window, say, or on a freshly taken-over server — `ups`
+reports it and, at the terminal, offers a way out directly: rebuild the
+configuration from the running containers (`ownerp_migrate.py
+--from-docker`), deliberately switch off the backup and build-cache jobs (for
+a server that genuinely needs neither backups nor Odoo updates, such as a
+developers' terminal server), or decide later. When `ups` runs unattended —
+from a script, from cron, with no terminal attached — only a hint is printed
+and nothing changes on its own. Switching off goes through `docron --disable
+container2backup` and `docron --disable odoo_build_cache` and leaves the
+schedules in place; undo with `docron --enable <job>`.
 
 ### Single systems, mode and comment
 

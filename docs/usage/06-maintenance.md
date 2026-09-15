@@ -70,6 +70,25 @@ der sonst üblichen „Datei nicht gefunden“-Meldung. Wieder einschalten mit
 `docron --enable <Job>` — der Bericht normalisiert sich sofort, ohne dass
 irgendwo etwas aufgeräumt werden muss.
 
+**Jobs interaktiv abschalten:** Ohne Flags im Terminal aufgerufen, zeigt
+`docron` nach dem Bericht ein nummeriertes Menü — kein Merken von Job-Namen
+oder Cron-Zeilen nötig:
+
+```
+docron
+…
+1  ✓ container2backup (2 lines)  daily 02:00, 14:00  1h ago
+2  ✓ nginx-cert-guard            daily 23:50         3h ago
+Nummer zum Ein-/Ausschalten, Enter zum Beenden: 1
+container2backup auf diesem Server abschalten? Die Zeitpläne bleiben erhalten.
+Danach meldet dostat Backup als „off“ und die Bereitschaftsprüfung zählt die
+fehlende Backup-Konfiguration nicht mehr. [j/N] j
+```
+
+Läuft `docron` ohne Terminal (Skript, Cron, `--brief`, `--json`), erscheint
+das Menü nicht — genau wie bisher. `docron --no-input` erzwingt den reinen
+Bericht auch im Terminal.
+
 <a id="de-17-optionale-komponenten"></a>
 ## Optionale Komponenten
 
@@ -144,6 +163,26 @@ backups disabled on this host — …` or `off  no doup-managed instances — �
 instead of the usual "file not found" message. Switch it back on with `docron
 --enable <job>` — the report normalises immediately, with nothing left to
 clean up anywhere.
+
+**Switching jobs off interactively:** run bare in a terminal, `docron` shows
+a numbered menu after the report — no need to remember job names or which
+script runs from two cron lines. The prompts stay German, since that is the
+operators' language on these servers:
+
+```
+docron
+…
+1  ✓ container2backup (2 lines)  daily 02:00, 14:00  1h ago
+2  ✓ nginx-cert-guard            daily 23:50         3h ago
+Nummer zum Ein-/Ausschalten, Enter zum Beenden: 1
+container2backup auf diesem Server abschalten? Die Zeitpläne bleiben erhalten.
+Danach meldet dostat Backup als „off“ und die Bereitschaftsprüfung zählt die
+fehlende Backup-Konfiguration nicht mehr. [j/N] j
+```
+
+Running `docron` without a terminal (script, cron, `--brief`, `--json`)
+never shows the menu — as before. `docron --no-input` forces the plain
+report even in a terminal.
 
 <a id="en-17-optional-components"></a>
 ## Optional Components

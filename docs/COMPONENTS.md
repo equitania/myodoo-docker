@@ -11,7 +11,7 @@ in this repository, stay in `CLAUDE.md`.
 
 ### Key Components
 
-#### 1. getScripts.py (v9.22.1)
+#### 1. getScripts.py (v9.23.0)
 - **Purpose**: Main installation and update script
 - **Features**:
   - `--proxy-check` (v9.22.0) seeds `no_proxy` with the same intranet defaults
@@ -27,6 +27,10 @@ in this repository, stay in `CLAUDE.md`.
     the initial clone (no checkout to fall back on) stays fatal. The one-shot
     curl downloads (Starship, uv, zoxide, the Fish signing key, Fisher) carry
     a matching `--max-time 120`
+  - `offer_noconfig_recovery()` (v9.23.0): when both YAML configurations are
+    missing and the backup or build-cache job is still on, a terminal run
+    offers rebuild from Docker / switch both jobs off / later; without a
+    terminal one hint line and no change
   - Lean console output: without `-v` only server-optimization status,
     warnings and errors reach the screen; every INFO line and all child
     process output (apt, git, curl) go to `~/getscripts.log`. A failed command
@@ -340,7 +344,7 @@ in this repository, stay in `CLAUDE.md`.
   cannot run Textual still needs it — but an operator who does not know about
   `konsole` keeps coming back to a field-at-a-time prompt
 
-#### 8. ownerp_cron.py (v1.1.1)
+#### 8. ownerp_cron.py (v1.2.0)
 - **Purpose**: Overview and guided editing of `/etc/cron.d/myodoo-maintenance` —
   the backup, cert-renewal, DNS-guard and cleanup jobs an ownERP server runs
 - **`--enable`/`--disable` switch every cron line of a script at once**
@@ -348,6 +352,14 @@ in this repository, stay in `CLAUDE.md`.
   `docron --disable container2backup` now covers both of that job's daily
   entries in one call; the numbered ids (`container2backup.py:1`/`:2`) still
   address a single line for `--set`/`--schedule`
+- **Bare `docron` on a terminal is interactive** (v1.2.0, 15.09.2026): after
+  the report a numbered menu groups a script's cron lines into one on/off
+  entry (`container2backup (2 lines)`, marker ✓/•/◐), confirms in German
+  before writing and explains the `dostat`/readiness consequence for
+  `container2backup` and `odoo_build_cache`. Only a terminal on both stdin and
+  stdout triggers it; `--brief`, `--json`, a mutation flag, a pipe or
+  `--no-input` print the plain report. `interactive()` takes its streams as
+  parameters, so it is tested without a real terminal
 - **Two consumers, one implementation**: `getScripts.py` prints `--brief` after
   the install summary (read-only and non-interactive, because `ups` also runs
   unattended), `ownerp_console.py` edits through this module's API, so the

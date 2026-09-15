@@ -17,7 +17,7 @@ Alle Skripte des Repos (`scripts/`, Stand 15.09.2026):
 | Skript | Zweck | Aufruf |
 |---|---|---|
 | `bootstrap.sh` (1.14.0) | Grundausstattung frischer Server (Docker, nginx, certbot, UFW, fail2ban) | `curl … bootstrap.sh -o /opt/… && /opt/myodoo-bootstrap.sh` |
-| `getScripts.py` (9.22.1) | fish-Shell, Aliase, Verwaltungsskripte nach `/root` | `./getScripts.py [--dns-check\|--proxy-check\|--reconfigure]` |
+| `getScripts.py` (9.23.0) | fish-Shell, Aliase, Verwaltungsskripte nach `/root`; bietet auf einem Server ohne Konfiguration Wiederherstellen oder Abschalten der Jobs an | `./getScripts.py [--dns-check\|--proxy-check\|--reconfigure]` |
 | `server_hardening.py` (1.8.0) | Audit + Härtung (UFW, fail2ban, SSH, sysctl, auditd, AIDE) | `sudo python3 server_hardening.py [--apply] [-m MODUL …]` |
 | `deploy-nginx-base.sh` (1.3.0) | nginx-Basis: Includes, Wartungsseite, nginx.conf (mit Rollback) | `./deploy-nginx-base.sh [--dry-run] [--no-main-conf]` |
 | `ngx-conf-wizard.sh` (1.1.0) | Interaktiver YAML-Assistent für nginx-set-conf | `./ngx-conf-wizard.sh` |
@@ -31,7 +31,7 @@ Alle Skripte des Repos (`scripts/`, Stand 15.09.2026):
 | `container2backup.py` (4.9.0) | SQL+Filestore-Backups, Kompression/Verschlüsselung/Streaming | `dobk` bzw. `~/container2backup.py [--sql-only\|--validate]` |
 | `ownerp_validate.py` (1.1.0) | Rein lesende Schema-Prüfung von `docker2update.yaml`/`container2backup.yaml` | `doval` bzw. `~/ownerp_validate.py [--update PATH\|--backup PATH]` |
 | `ownerp_wizard.py` (1.2.0) | Geführtes Aufnehmen einer Instanz bzw. Ändern eines Feldes in `docker2update.yaml`/`container2backup.yaml`; prüft, bevor er ersetzt, und entfernt nie einen Eintrag | `wiz` bzw. `~/ownerp_wizard.py [--update PATH\|--backup PATH]` |
-| `ownerp_cron.py` (1.1.1) | Wartungs-Cron (`/etc/cron.d/myodoo-maintenance`) anzeigen und bearbeiten; `--enable`/`--disable` schalten alle Zeilen eines Jobs auf einmal, Name auch ohne `.py`; Backups landen unter `/var/backups/myodoo-docker`, nie im `cron.d`-Verzeichnis selbst | `docron` bzw. `~/ownerp_cron.py [--brief\|--json] [--set JOB --schedule EXPR\|--enable JOB\|--disable JOB]` |
+| `ownerp_cron.py` (1.2.0) | Wartungs-Cron (`/etc/cron.d/myodoo-maintenance`) anzeigen und bearbeiten; `--enable`/`--disable` schalten alle Zeilen eines Jobs auf einmal, Name auch ohne `.py`; Backups landen unter `/var/backups/myodoo-docker`, nie im `cron.d`-Verzeichnis selbst; ohne Argumente im Terminal folgt auf den Bericht ein Menü zum Ein- und Ausschalten (`--no-input` erzwingt den reinen Bericht) | `docron` bzw. `~/ownerp_cron.py [--brief\|--json\|--no-input] [--set JOB --schedule EXPR\|--enable JOB\|--disable JOB]` |
 | `ownerp_migrate.py` (1.5.0) | Legacy-CSV-Konfigurationen einmalig nach YAML migrieren; nie überschreibend, nie löschend | läuft automatisch bei `ups`; `~/ownerp_migrate.py --from-docker [--dry-run\|--quiet]` |
 | `restore-zip.sh` (2.1.0) | Backup-Restore (DB + Filestore) in Docker | siehe [Kapitel 13](05-backup-restore.md#de-13-restore--notfall) |
 | `ssl-renew.sh` (1.3.0) | certbot-Renewal, nginx nur bei Bedarf angehalten | `./ssl-renew.sh` (Cron) |
@@ -125,7 +125,7 @@ All scripts in this repository (`scripts/`, as of 15.09.2026):
 | Script | Purpose | Invocation |
 |---|---|---|
 | `bootstrap.sh` (1.14.0) | Baseline for fresh servers (Docker, nginx, certbot, UFW, fail2ban) | `curl … bootstrap.sh -o /opt/… && /opt/myodoo-bootstrap.sh` |
-| `getScripts.py` (9.22.1) | fish shell, aliases, management scripts into `/root` | `./getScripts.py [--dns-check\|--proxy-check\|--reconfigure]` |
+| `getScripts.py` (9.23.0) | fish shell, aliases, management scripts into `/root`; offers restore or switching the jobs off on a server without configuration | `./getScripts.py [--dns-check\|--proxy-check\|--reconfigure]` |
 | `server_hardening.py` (1.8.0) | Audit + hardening (UFW, fail2ban, SSH, sysctl, auditd, AIDE) | `sudo python3 server_hardening.py [--apply] [-m MODULE …]` |
 | `deploy-nginx-base.sh` (1.3.0) | nginx base: includes, maintenance page, nginx.conf (with rollback) | `./deploy-nginx-base.sh [--dry-run] [--no-main-conf]` |
 | `ngx-conf-wizard.sh` (1.1.0) | Interactive YAML wizard for nginx-set-conf | `./ngx-conf-wizard.sh` |
@@ -139,7 +139,7 @@ All scripts in this repository (`scripts/`, as of 15.09.2026):
 | `container2backup.py` (4.9.0) | SQL+filestore backups, compression/encryption/streaming | `dobk` or `~/container2backup.py [--sql-only\|--validate]` |
 | `ownerp_validate.py` (1.1.0) | Read-only schema validation of `docker2update.yaml`/`container2backup.yaml` | `doval` or `~/ownerp_validate.py [--update PATH\|--backup PATH]` |
 | `ownerp_wizard.py` (1.2.0) | Guided adding of an instance / changing a field in `docker2update.yaml`/`container2backup.yaml`; validates before it replaces, and never removes an entry | `wiz` or `~/ownerp_wizard.py [--update PATH\|--backup PATH]` |
-| `ownerp_cron.py` (1.1.1) | View and edit the maintenance cron (`/etc/cron.d/myodoo-maintenance`); `--enable`/`--disable` now switch every line of a job at once, name accepted without `.py`; backups land under `/var/backups/myodoo-docker`, never inside `cron.d` itself | `docron` or `~/ownerp_cron.py [--brief\|--json] [--set JOB --schedule EXPR\|--enable JOB\|--disable JOB]` |
+| `ownerp_cron.py` (1.2.0) | View and edit the maintenance cron (`/etc/cron.d/myodoo-maintenance`); `--enable`/`--disable` switch every line of a job at once, name accepted without `.py`; backups land under `/var/backups/myodoo-docker`, never inside `cron.d` itself; run bare on a terminal, a menu to switch jobs on and off follows the report (`--no-input` forces the plain report) | `docron` or `~/ownerp_cron.py [--brief\|--json\|--no-input] [--set JOB --schedule EXPR\|--enable JOB\|--disable JOB]` |
 | `ownerp_migrate.py` (1.5.0) | One-way conversion of the legacy CSV configs to YAML; never overwrites, never deletes | runs automatically from `ups`; `~/ownerp_migrate.py --from-docker [--dry-run\|--quiet]` |
 | `restore-zip.sh` (2.1.0) | Backup restore (DB + filestore) into Docker | see [chapter 13](05-backup-restore.md#en-13-restore--emergency) |
 | `ssl-renew.sh` (1.3.0) | certbot renewal, nginx stopped only when needed | `./ssl-renew.sh` (cron) |

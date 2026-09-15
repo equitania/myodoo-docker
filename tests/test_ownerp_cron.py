@@ -12,6 +12,7 @@ Run from the repository root:
     python3 -m unittest tests.test_ownerp_cron -v
 """
 
+import io
 import os
 import shutil
 import sys
@@ -360,6 +361,196 @@ class MissingFileTest(unittest.TestCase):
             with self.assertRaises(oc.CronError) as ctx:
                 oc.load(os.path.join(tmp, "nope"))
         self.assertIn("setup-maintenance-cron.sh", str(ctx.exception))
+
+
+# ==============================================================================
+# Interactive menu — bare `docron` on a real terminal (v1.2.0)
+# ==============================================================================
+
+class GroupByScriptTest(CronFixture):
+    """Pure grouping helper behind the menu - no terminal involved."""
+
+    def entry(self, cron, script):
+        return {e.script: e for e in oc.group_by_script(cron.jobs)}[script]
+
+    def test_the_two_backup_lines_become_one_entry(self):
+        entry = self.entry(self.load(), "container2backup.py")
+        self.assertEqual(len(entry.jobs), 2)
+        self.assertEqual(entry.state, "on")
+        self.assertEqual(entry.mark, "✓")
+        self.assertEqual(entry.display, "container2backup")
+
+    def test_a_single_line_script_is_its_own_entry(self):
+        entry = self.entry(self.load(), "ssl-renew.sh")
+        self.assertEqual(len(entry.jobs), 1)
+        self.assertEqual(entry.display, "ssl-renew.sh")
+
+    def test_switching_one_of_two_lines_off_is_partial(self):
+        oc.set_active(self.load(), "container2backup.py:1", False)
+        entry = self.entry(self.load(), "container2backup.py")
+        self.assertEqual(entry.state, "partial")
+        self.assertEqual(entry.mark, "◐")
+
+    def test_switching_both_lines_off_is_off(self):
+        oc.set_active(self.load(), "container2backup.py", False)
+        entry = self.entry(self.load(), "container2backup.py")
+        self.assertEqual(entry.state, "off")
+        self.assertEqual(entry.mark, "•")
+
+    def test_entries_keep_file_order(self):
+        scripts = [e.script for e in oc.group_by_script(self.load().jobs)]
+        self.assertEqual(scripts[0], "container2backup.py")
+        self.assertEqual(len(scripts), 7)  # 8 jobs, 2 of them one script
+
+    def test_menu_lines_number_from_one(self):
+        lines = oc.format_menu(oc.group_by_script(self.load().jobs))
+        self.assertTrue(lines[0].startswith("1"))
+        self.assertIn("container2backup (2 lines)", lines[0])
+        self.assertTrue(lines[-1].startswith("7"))
+
+
+class MenuParsingTest(unittest.TestCase):
+    """The bits interactive() delegates to instead of parsing input inline."""
+
+    def test_a_valid_number_is_zero_based(self):
+        self.assertEqual(oc._parse_menu_choice("1", 7), 0)
+        self.assertEqual(oc._parse_menu_choice(" 7 \n", 7), 6)
+
+    def test_out_of_range_is_invalid(self):
+        self.assertIsNone(oc._parse_menu_choice("0", 7))
+        self.assertIsNone(oc._parse_menu_choice("8", 7))
+
+    def test_non_numeric_is_invalid(self):
+        self.assertIsNone(oc._parse_menu_choice("abc", 7))
+        self.assertIsNone(oc._parse_menu_choice("", 7))
+
+    def test_yes_answers(self):
+        for answer in ("j", "J", "ja", "Ja", "y", "Y", "yes", " j \n"):
+            self.assertTrue(oc._is_yes(answer), answer)
+
+    def test_no_answers(self):
+        for answer in ("n", "nein", "", "\n", "x"):
+            self.assertFalse(oc._is_yes(answer), answer)
+
+
+class InteractiveTest(CronFixture):
+    """Drives interactive() with StringIO - no real TTY needed, per the
+    module's design (streams are parameters, not sys.stdin/sys.stdout)."""
+
+    def run_interactive(self, script):
+        stdin = io.StringIO(script)
+        stdout = io.StringIO()
+        code = oc.interactive(self.path, stdin, stdout)
+        return code, stdout.getvalue()
+
+    def test_switching_entry_one_off_writes_both_backup_lines(self):
+        code, out = self.run_interactive("1\nj\n\n")
+        self.assertEqual(code, 0)
+        cron = self.load()
+        self.assertFalse(cron.job("container2backup.py:1").active)
+        self.assertFalse(cron.job("container2backup.py:2").active)
+        self.assertIn("container2backup.py:1 abgeschaltet", out)
+        self.assertIn("container2backup.py:2 abgeschaltet", out)
+        self.assertIn("Rückgängig machen: docron --enable <name>", out)
+
+    def test_declining_with_capital_n_writes_nothing(self):
+        code, out = self.run_interactive("1\nN\n")
+        self.assertEqual(code, 0)
+        self.assertEqual(self.text(), self.original)
+        self.assertNotIn("Rückgängig machen", out)
+
+    def test_empty_confirmation_answer_is_no(self):
+        code, out = self.run_interactive("1\n\n")
+        self.assertEqual(code, 0)
+        self.assertEqual(self.text(), self.original)
+
+    def test_off_switch_shows_the_backup_explanation(self):
+        _code, out = self.run_interactive("1\nN\n")
+        self.assertIn("dostat Backup als „off“", out)
+
+    def test_partial_entry_choice_switches_everything_on(self):
+        oc.set_active(self.load(), "container2backup.py:1", False)
+        code, out = self.run_interactive("1\nj\n\n")
+        self.assertEqual(code, 0)
+        cron = self.load()
+        self.assertTrue(cron.job("container2backup.py:1").active)
+        self.assertTrue(cron.job("container2backup.py:2").active)
+        self.assertIn("einschalten", out)
+        # Turning something on never shows the "off" consequence explanation.
+        self.assertNotIn("dostat Backup als", out)
+
+    def test_invalid_input_reprompts_and_recovers(self):
+        code, out = self.run_interactive("abc\n99\n\n")
+        self.assertEqual(code, 0)
+        self.assertEqual(out.count("Ungültige Eingabe"), 2)
+        self.assertEqual(self.text(), self.original)
+
+    def test_eof_on_the_menu_prompt_exits_cleanly(self):
+        code, out = self.run_interactive("")
+        self.assertEqual(code, 0)
+        self.assertEqual(self.text(), self.original)
+
+    def test_eof_during_confirmation_exits_cleanly(self):
+        code, out = self.run_interactive("1\n")
+        self.assertEqual(code, 0)
+        self.assertEqual(self.text(), self.original)
+
+
+class TtyDispatchTest(CronFixture):
+    """main()'s gate between the plain report and the interactive menu -
+    a fake stream's isatty() stands in for a real terminal."""
+
+    class _FakeStream(io.StringIO):
+        def __init__(self, initial="", tty=True):
+            super().__init__(initial)
+            self._tty = tty
+
+        def isatty(self):
+            return self._tty
+
+    def call_main(self, argv, stdin_tty, stdout_tty, stdin_text=""):
+        fake_in = self._FakeStream(stdin_text, tty=stdin_tty)
+        fake_out = self._FakeStream(tty=stdout_tty)
+        old_in, old_out = sys.stdin, sys.stdout
+        sys.stdin, sys.stdout = fake_in, fake_out
+        try:
+            code = oc.main(argv)
+        finally:
+            sys.stdin, sys.stdout = old_in, old_out
+        return code, fake_out.getvalue()
+
+    def test_non_tty_bare_call_prints_report_without_prompt(self):
+        code, out = self.call_main(["--path", self.path],
+                                    stdin_tty=False, stdout_tty=False)
+        self.assertEqual(code, 0)
+        self.assertIn("Maintenance cron", out)
+        self.assertNotIn(oc.MENU_PROMPT, out)
+
+    def test_tty_bare_call_shows_the_menu(self):
+        code, out = self.call_main(["--path", self.path],
+                                    stdin_tty=True, stdout_tty=True, stdin_text="")
+        self.assertEqual(code, 0)
+        self.assertIn(oc.MENU_PROMPT, out)
+
+    def test_no_input_suppresses_the_menu_even_on_a_tty(self):
+        code, out = self.call_main(["--path", self.path, "--no-input"],
+                                    stdin_tty=True, stdout_tty=True, stdin_text="")
+        self.assertEqual(code, 0)
+        self.assertIn("Maintenance cron", out)
+        self.assertNotIn(oc.MENU_PROMPT, out)
+
+    def test_brief_never_prompts_even_on_a_tty(self):
+        code, out = self.call_main(["--path", self.path, "--brief"],
+                                    stdin_tty=True, stdout_tty=True, stdin_text="")
+        self.assertEqual(code, 0)
+        self.assertNotIn(oc.MENU_PROMPT, out)
+
+    def test_a_mutation_flag_never_prompts_even_on_a_tty(self):
+        code, out = self.call_main(
+            ["--path", self.path, "--disable", "nightly-cleanup.sh"],
+            stdin_tty=True, stdout_tty=True, stdin_text="")
+        self.assertEqual(code, 0)
+        self.assertNotIn(oc.MENU_PROMPT, out)
 
 
 if __name__ == "__main__":

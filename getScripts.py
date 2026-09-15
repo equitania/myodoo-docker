@@ -136,7 +136,7 @@ if os.environ.get('GETSCRIPTS_DEBUG', '').lower() in ('1', 'true', 'yes'):
     logger.debug("Debug logging enabled")
 
 # Script version and date
-SCRIPT_VERSION = "9.22.1"
+SCRIPT_VERSION = "9.23.0"
 SCRIPT_DATE = "15.09.2026"
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -4186,6 +4186,131 @@ def migrate_legacy_csv(_myhome: str) -> None:
         logger.warning(f"Legacy CSV migration could not run: {e}")
 
 
+# Cron job names offer_noconfig_recovery() may switch off. Keys are what
+# ownerp_cron.py --disable accepts; values are the "script" field its --json
+# output reports (see CronJob.script in ownerp_cron.py).
+_NOCONFIG_CRON_JOBS = {
+    "container2backup": "container2backup.py",
+    "odoo_build_cache": "odoo_build_cache.py",
+}
+
+
+def _active_noconfig_jobs(_myhome: str) -> Optional[Dict[str, bool]]:
+    """Read whether the backup and build-cache cron jobs are switched on.
+
+    Returns one bool per job in _NOCONFIG_CRON_JOBS (True if at least one of
+    its cron lines is active - container2backup runs twice a day from two
+    lines), or None when ownerp_cron.py is missing or its --json output could
+    not be read. None means "skip the offer", never "assume active" - a
+    misread must not turn into an unwanted prompt or, worse, a disable.
+    """
+    script = os.path.join(_myhome, "ownerp_cron.py")
+    if not os.path.exists(script):
+        return None
+    try:
+        result = subprocess.run([sys.executable, script, "--json"],
+                                 capture_output=True, text=True, timeout=30)
+        if result.returncode != 0:
+            return None
+        data = json.loads(result.stdout)
+    except Exception as e:
+        logger.debug(f"Could not read cron state for no-config offer: {e}")
+        return None
+
+    active = {name: False for name in _NOCONFIG_CRON_JOBS}
+    for job in data.get("jobs", []):
+        for name, job_script in _NOCONFIG_CRON_JOBS.items():
+            if job.get("script") == job_script and job.get("active"):
+                active[name] = True
+    return active
+
+
+def offer_noconfig_recovery(_myhome: str) -> None:
+    """Offer a way out for a server with neither backup nor update config.
+
+    migrate_legacy_csv() already names this case on its own console output
+    ("this server has no configuration to run on") but, being ownerp_migrate.py
+    invoked with --quiet, can only report it - --from-docker is opt-in on
+    purpose and never runs unattended. This closes the loop for the operator
+    sitting at the terminal, and stays out of the way everywhere else:
+
+    - Nothing to do once either YAML exists, or once both jobs below are
+      already switched off (an operator who already decided is not asked
+      again on every `ups`).
+    - Interactive only when stdin AND stdout are a TTY. Every existing
+      non-interactive path (--dns-check, --proxy-check, --first-run,
+      --reconfigure) exits before main() is ever called, so there is nothing
+      further to special-case here; a piped or cron `ups` still reaches this
+      function and gets the one-line, non-interactive form.
+    - Every command that talks to the operator (ownerp_migrate.py
+      --from-docker prints its results; ownerp_cron.py --disable prints its
+      confirmation lines) runs with interactive=True, or a lean `ups` would
+      swallow that output and the operator would see nothing happen.
+    """
+    backup_yaml = os.path.join(_myhome, "container2backup.yaml")
+    update_yaml = os.path.join(_myhome, "docker2update.yaml")
+    if os.path.isfile(backup_yaml) or os.path.isfile(update_yaml):
+        return
+
+    active_jobs = _active_noconfig_jobs(_myhome)
+    if not active_jobs or not any(active_jobs.values()):
+        return
+
+    later_hint = ("Später: docron --disable container2backup / "
+                  "ownerp_migrate.py --from-docker")
+
+    if not (sys.stdin.isatty() and sys.stdout.isatty()):
+        status("Dieser Server hat weder Backup- noch Update-Konfiguration. "
+               + later_hint)
+        return
+
+    print("\nDieser Server hat weder Backup- noch Update-Konfiguration.")
+    print("  1) Aus den laufenden Containern wiederherstellen (ownerp_migrate.py --from-docker)")
+    print("  2) Dieser Server braucht keine Backups und keine Odoo-Updates → beide Jobs abschalten")
+    print("  3) Später entscheiden")
+
+    choice = "3"
+    for _attempt in range(3):
+        try:
+            answer = input("Auswahl [3]: ").strip()
+        except (EOFError, KeyboardInterrupt):
+            print()
+            break
+        if answer in ("", "3"):
+            break
+        if answer in ("1", "2"):
+            choice = answer
+            break
+        print("Bitte 1, 2 oder 3 eingeben.")
+    else:
+        choice = "3"
+
+    migrate_script = os.path.join(_myhome, "ownerp_migrate.py")
+    cron_script = os.path.join(_myhome, "ownerp_cron.py")
+
+    if choice == "1":
+        run_command(f"{sys.executable} {migrate_script} --from-docker",
+                    interactive=True)
+    elif choice == "2":
+        try:
+            confirm = input(
+                "Backups und Build-Cache auf diesem Server abschalten? Die "
+                "Zeitpläne bleiben erhalten, rückgängig mit docron --enable "
+                "… [j/N]: ").strip().lower()
+        except (EOFError, KeyboardInterrupt):
+            confirm = ""
+            print()
+        if confirm in ("j", "ja", "y", "yes"):
+            run_command(f"{sys.executable} {cron_script} --disable container2backup",
+                        interactive=True)
+            run_command(f"{sys.executable} {cron_script} --disable odoo_build_cache",
+                        interactive=True)
+        else:
+            status(later_hint)
+    else:
+        status(later_hint)
+
+
 def print_cron_overview(_myhome: str) -> None:
     """Show the maintenance cron schedule and when each job last ran.
 
@@ -4395,6 +4520,11 @@ def main() -> None:
         # copy_scripts (which delivers ownerp_migrate.py) and BEFORE the legacy
         # cleanup below, which is where the CSVs used to be destroyed.
         migrate_legacy_csv(_myhome)
+
+        # Offer a way out when that left the server with no configuration at
+        # all. Must run AFTER migrate_legacy_csv (which delivers the verdict)
+        # and does not depend on cleanup_legacy_files below.
+        offer_noconfig_recovery(_myhome)
 
         # Clean up legacy files ONLY on fresh Fish installation
         # This prevents running cleanup on every script execution
