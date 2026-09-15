@@ -260,6 +260,78 @@ class WriteTest(CronFixture):
         self.assertEqual({job.job_id for job in self.load().jobs}, before)
 
 
+class BackupLocationTest(unittest.TestCase):
+    """_backup() must never write inside cron.d (fixed 15.09.2026): a copy
+    named "myodoo-maintenance.bak_..." sits exactly where cron.d's own
+    run-parts naming rule (cron(8): only [A-Za-z0-9_-]) hides it from cron,
+    but server-readiness.py's check_duplicate_cron_entries() read every file
+    in the directory and reported it as a competing schedule."""
+
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(self.tmp.cleanup)
+        self.cron_d = os.path.join(self.tmp.name, "etc", "cron.d")
+        os.makedirs(self.cron_d)
+        self.path = os.path.join(self.cron_d, "myodoo-maintenance")
+        shutil.copy2(TEMPLATE, self.path)
+
+        self.backup_dir = os.path.join(self.tmp.name, "backups")
+        old_backup_dir = oc.BACKUP_DIR
+        oc.BACKUP_DIR = self.backup_dir
+        self.addCleanup(setattr, oc, "BACKUP_DIR", old_backup_dir)
+
+    def load(self):
+        return oc.load(self.path)
+
+    def test_backup_lands_in_backup_dir_for_a_cron_d_file(self):
+        _job, backup = oc.set_schedule(self.load(), "ssl-renew.sh", "30 0 * * *")
+        self.assertEqual(os.path.dirname(backup), self.backup_dir)
+        self.assertTrue(os.path.basename(backup).startswith(
+            "myodoo-maintenance.bak_"))
+        self.assertTrue(os.path.exists(backup))
+        self.assertEqual(
+            [n for n in os.listdir(self.cron_d) if ".bak_" in n], [])
+
+    def test_backup_stays_next_to_the_file_outside_cron_d(self):
+        outside = os.path.join(self.tmp.name, "myodoo-maintenance")
+        shutil.copy2(TEMPLATE, outside)
+        _job, backup = oc.set_schedule(oc.load(outside), "ssl-renew.sh",
+                                       "30 0 * * *")
+        self.assertEqual(os.path.dirname(backup), self.tmp.name)
+
+    def test_a_stray_bak_file_is_moved_not_deleted(self):
+        stray = self.path + ".bak_20260101_000000"
+        shutil.copy2(TEMPLATE, stray)
+        _job, backup = oc.set_schedule(self.load(), "ssl-renew.sh", "30 0 * * *")
+        self.assertFalse(os.path.exists(stray))
+        moved_path = os.path.join(self.backup_dir,
+                                  "myodoo-maintenance.bak_20260101_000000")
+        self.assertTrue(os.path.exists(moved_path))
+        self.assertEqual(backup.moved, [moved_path])
+
+    def test_a_collision_keeps_both(self):
+        stray = self.path + ".bak_20260101_000000"
+        shutil.copy2(TEMPLATE, stray)
+        os.makedirs(self.backup_dir, mode=0o700, exist_ok=True)
+        existing = os.path.join(self.backup_dir,
+                                "myodoo-maintenance.bak_20260101_000000")
+        shutil.copy2(TEMPLATE, existing)
+
+        oc.set_schedule(self.load(), "ssl-renew.sh", "30 0 * * *")
+
+        self.assertTrue(os.path.exists(existing))
+        self.assertTrue(os.path.exists(existing + ".1"))
+
+    def test_an_unrelated_file_in_cron_d_is_untouched(self):
+        unrelated = os.path.join(self.cron_d, "other-package")
+        with open(unrelated, "w", encoding="utf-8") as handle:
+            handle.write("0 3 * * * root /usr/bin/true\n")
+
+        oc.set_schedule(self.load(), "ssl-renew.sh", "30 0 * * *")
+
+        self.assertTrue(os.path.exists(unrelated))
+
+
 class RegressionGuardTest(CronFixture):
     def test_a_changed_job_count_is_refused(self):
         before = self.load()

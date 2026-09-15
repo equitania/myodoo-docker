@@ -326,7 +326,7 @@ in this repository, stay in `CLAUDE.md`.
   cannot run Textual still needs it — but an operator who does not know about
   `konsole` keeps coming back to a field-at-a-time prompt
 
-#### 8. ownerp_cron.py (v1.1.0)
+#### 8. ownerp_cron.py (v1.1.1)
 - **Purpose**: Overview and guided editing of `/etc/cron.d/myodoo-maintenance` —
   the backup, cert-renewal, DNS-guard and cleanup jobs an ownERP server runs
 - **`--enable`/`--disable` switch every cron line of a script at once**
@@ -342,6 +342,18 @@ in this repository, stay in `CLAUDE.md`.
   memory → temp file **in the same directory** → re-parse and validate that
   file → `os.replace()`. Mode 0644 is set **before** the rename: cron silently
   ignores a group- or world-writable `cron.d` file
+- **Backups of a cron.d file never land in cron.d** (v1.1.1, 15.09.2026,
+  fixing a bug found on a server): a `.bak_<timestamp>` copy next to
+  `/etc/cron.d/myodoo-maintenance` sits exactly where cron.d's own run-parts
+  naming rule (cron(8): only `[A-Za-z0-9_-]`) makes it invisible to cron, but
+  `server-readiness.py`'s `check_duplicate_cron_entries()` read every file in
+  the directory and reported it as a competing schedule — nothing ran twice,
+  but the finding was wrong and the backup was in the wrong place. Such a
+  backup now goes to `BACKUP_DIR` (`/var/backups/myodoo-docker`) instead;
+  anything outside cron.d (a test's temp copy, say) keeps landing next to the
+  file. Any stray backup a previous version left in cron.d is swept into
+  `BACKUP_DIR` on the next write — moved, never deleted; a same-named file
+  already there keeps both
 - **Only the named job's line is rewritten** — `_regression()` refuses the write
   if any other job would move, and untouched lines keep the template's column
   alignment byte for byte
@@ -689,7 +701,7 @@ in this repository, stay in `CLAUDE.md`.
   risk an expiry would guard against — a mute nobody remembers — is already
   covered by the visible `[MUTED]` line and the count in every summary
 
-#### 16. server-readiness.py (v1.7.0)
+#### 16. server-readiness.py (v1.7.1)
 - **Purpose**: Reports whether this server matches the state myodoo-docker
   expects — 16 read-only checks (cron, logrotate, backup and update
   configuration, Docker storage driver, nginx, certbot timing, script
@@ -712,3 +724,9 @@ in this repository, stay in `CLAUDE.md`.
   SKIP without Docker, FAIL when `docker2update.yaml` is missing or does not
   parse, WARN when every entry is parked `active: false` — doup then runs and
   updates nothing, which looks exactly like success
+- **`check_duplicate_cron_entries` now skips a cron.d name cron itself would
+  skip** (v1.7.1, 15.09.2026): a file whose name holds anything outside
+  `[A-Za-z0-9_-]` — run-parts naming, cron(8) — is never read by cron, so it
+  reported `ownerp_cron.py`'s own `.bak_<timestamp>` backup as a duplicate
+  job that in fact never ran. See `ownerp_cron.py` above, which fixes the
+  backup's location for the same reason

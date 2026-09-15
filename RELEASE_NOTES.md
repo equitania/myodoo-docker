@@ -1,5 +1,29 @@
 # Release Notes
 
+## A Cron Backup Reported Itself as a Duplicate Job (15.09.2026)
+
+*scripts/ownerp_cron.py v1.1.1 · scripts/server-readiness.py v1.7.1 ·
+tests/test_ownerp_cron.py · tests/test_server_readiness.py ·
+docs/COMPONENTS.md · docs/usage/09-reference.md*
+
+### Fixed
+
+- **`docron`'s own backup made `server-readiness.py` report a duplicate cron
+  job that never actually ran twice.** `ownerp_cron.py` wrote its timestamped
+  backup next to the file it edits — for the real maintenance cron that is
+  `/etc/cron.d/myodoo-maintenance.bak_<timestamp>`, inside the very directory
+  cron reads. Debian/Ubuntu's cron.d applies run-parts naming (cron(8)): a
+  file whose name holds anything outside `[A-Za-z0-9_-]` is never read, so
+  nothing ran twice — but `check_duplicate_cron_entries()` reads every file
+  in the directory regardless and FAILed with "scheduled twice", and the
+  backup itself sat in the wrong place. `ownerp_cron.py` now writes backups
+  of a cron.d file to `/var/backups/myodoo-docker` instead of next to it
+  (unchanged for anything outside cron.d, such as a test's temp copy), and
+  moves any earlier stray `.bak_*` file out of cron.d — never deleting, a
+  same-named file already there keeps both. `server-readiness.py` now skips
+  any cron.d entry whose name does not match cron's own naming rule, since
+  cron never reads it either.
+
 ## A Host Without Backups or Instances Is Not Broken (15.09.2026)
 
 *scripts/server-readiness.py v1.7.0 · scripts/ownerp_state.py v1.1.0 ·

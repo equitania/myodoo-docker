@@ -3,7 +3,7 @@
 # ==============================================================================
 # Title:            ownerp_cron.py
 # Description:      Overview and guided editing of the myodoo maintenance cron.
-# Version:          1.1.0
+# Version:          1.1.1
 # Date:             15.09.2026
 # Author:           Equitania Software GmbH
 # ==============================================================================
@@ -28,6 +28,17 @@
 #   is removed and the original is left byte-identical. cron.d also demands mode
 #   0644 and root ownership, which the temp file gets BEFORE the rename — a
 #   group-writable cron.d file is ignored by cron without a word.
+#
+#   The backup itself never lands next to a file inside a cron.d directory
+#   (found 15.09.2026): a copy named ".../cron.d/myodoo-maintenance.bak_..."
+#   sits exactly where cron.d's own naming rule (run-parts, see cron(8): only
+#   `[A-Za-z0-9_-]`) makes it invisible to cron itself, but NOT invisible to
+#   server-readiness.py's check_duplicate_cron_entries(), which read every file
+#   in the directory and reported the backup as a second, competing schedule.
+#   Nothing ran twice, but the finding was wrong and the backup was in the
+#   wrong place. Backups of a cron.d file now go to BACKUP_DIR instead; a
+#   backup of anything else (a test's temp copy, for instance) still lands
+#   next to the file, as before.
 #
 # Local customisation vs. drift:
 #   Editing a schedule makes the installed file differ from the repository
@@ -65,10 +76,15 @@ import time
 from dataclasses import dataclass, field
 from typing import List, Optional, Tuple
 
-SCRIPT_VERSION = "1.1.0"
+SCRIPT_VERSION = "1.1.1"
 SCRIPT_DATE = "15.09.2026"
 
 CRON_PATH = "/etc/cron.d/myodoo-maintenance"
+
+# Where backups of a cron.d file go — never inside cron.d itself (see module
+# docstring). A module attribute rather than a function default so tests can
+# patch it to a throwaway directory.
+BACKUP_DIR = "/var/backups/myodoo-docker"
 
 # A job switched off through this tool keeps its line, prefixed with an explicit
 # marker. Plain "#" would be indistinguishable from the file's documentation
@@ -440,10 +456,74 @@ def describe(job: CronJob) -> str:
 # Writing
 # ==============================================================================
 
+def _is_cron_d(path: str) -> bool:
+    return os.path.basename(os.path.dirname(path)) == "cron.d"
+
+
+class _BackupPath(str):
+    """The backup path `write()` returns, with the migration side-effect
+    attached rather than changing the return type.
+
+    ownerp_console.py and the tests use this as a plain string (compare it,
+    print it, join it into a path); `moved` is extra and empty unless
+    `_migrate_stray_backups()` actually found something to sweep up.
+    """
+    moved: List[str] = []
+
+
 def _backup(path: str) -> str:
-    target = f"{path}.bak_{time.strftime('%Y%m%d_%H%M%S')}"
+    """Copy `path` to a timestamped backup and return where it landed.
+
+    A file inside a directory named "cron.d" is backed up to BACKUP_DIR
+    instead of next to itself: cron.d's own naming rule (run-parts, see
+    cron(8) — only `[A-Za-z0-9_-]`) makes a ".bak_..." file invisible to cron,
+    but not to server-readiness.py's check_duplicate_cron_entries(), which
+    reads every file in the directory. See the module docstring.
+    """
+    stamp = time.strftime("%Y%m%d_%H%M%S")
+    if _is_cron_d(path):
+        os.makedirs(BACKUP_DIR, mode=0o700, exist_ok=True)
+        target = os.path.join(BACKUP_DIR, f"{os.path.basename(path)}.bak_{stamp}")
+    else:
+        target = f"{path}.bak_{stamp}"
     shutil.copy2(path, target)
     return target
+
+
+def _migrate_stray_backups(path: str) -> List[str]:
+    """Move earlier `_backup()` output that landed inside cron.d out to
+    BACKUP_DIR, before this version ever writes another one there.
+
+    Never deletes: a same-named file already in BACKUP_DIR keeps both, the
+    incoming one gets a numeric suffix. Only files matching exactly
+    "<basename>.bak_*" are touched — an unrelated file in cron.d is left
+    alone, and this only runs for a real cron.d file, never a test's temp copy.
+    """
+    if not _is_cron_d(path):
+        return []
+    directory = os.path.dirname(path)
+    prefix = f"{os.path.basename(path)}.bak_"
+    try:
+        entries = sorted(os.listdir(directory))
+    except OSError:
+        return []
+
+    moved: List[str] = []
+    for name in entries:
+        if not name.startswith(prefix):
+            continue
+        source = os.path.join(directory, name)
+        if not os.path.isfile(source):
+            continue
+        os.makedirs(BACKUP_DIR, mode=0o700, exist_ok=True)
+        destination = os.path.join(BACKUP_DIR, name)
+        counter = 1
+        while os.path.exists(destination):
+            destination = os.path.join(BACKUP_DIR, f"{name}.{counter}")
+            counter += 1
+        shutil.move(source, destination)
+        moved.append(destination)
+    return moved
 
 
 def _stamp_marker(cron: CronFile) -> None:
@@ -487,6 +567,7 @@ def write(cron: CronFile, changed) -> str:
         if error:
             raise CronError(error)
 
+    moved = _migrate_stray_backups(cron.path)
     backup = _backup(cron.path)
     _stamp_marker(cron)
     text = render(cron)
@@ -514,7 +595,9 @@ def write(cron: CronFile, changed) -> str:
         if os.path.exists(temp):
             os.unlink(temp)
         raise
-    return backup
+    result = _BackupPath(backup)
+    result.moved = moved
+    return result
 
 
 def set_schedule(cron: CronFile, job_id: str, schedule: str) -> Tuple[CronJob, str]:
@@ -644,6 +727,19 @@ def build_parser() -> argparse.ArgumentParser:
     return parser
 
 
+def _print_moved(backup, path: str) -> None:
+    """One line naming any stray old-style backups swept out of cron.d.
+
+    `backup` is whatever set_schedule()/set_active() returned — a plain str
+    on any path that never touches cron.d, a _BackupPath with `moved` set
+    otherwise. Silent when there is nothing to report.
+    """
+    moved = getattr(backup, "moved", None)
+    if moved:
+        print(f"  moved {len(moved)} old backup(s) out of "
+              f"{os.path.dirname(path)} to {BACKUP_DIR}")
+
+
 def main(argv=None) -> int:
     args = build_parser().parse_args(argv)
     try:
@@ -671,6 +767,7 @@ def main(argv=None) -> int:
             print(f"✓ {job.job_id} now runs {humanise(job.schedule)} "
                   f"({job.schedule})")
             print(f"  backup: {backup}")
+            _print_moved(backup, args.path)
         elif args.enable or args.disable:
             target = args.enable or args.disable
             jobs, backup = set_active(cron, target, bool(args.enable))
@@ -678,6 +775,7 @@ def main(argv=None) -> int:
             for job in jobs:
                 print(f"✓ {job.job_id} {state}")
             print(f"  backup: {backup}")
+            _print_moved(backup, args.path)
         else:
             print_report(cron, brief=args.brief)
             return 0

@@ -4,7 +4,7 @@
 # Title:            server-readiness.py
 # Description:      Report whether this server matches the state myodoo-docker
 #                   expects, and name the exact command that closes each gap.
-# Version:          1.7.0
+# Version:          1.7.1
 # Date:             15.09.2026
 # Author:           Equitania Software GmbH
 # ==============================================================================
@@ -68,7 +68,7 @@ from dataclasses import dataclass
 from enum import Enum
 from typing import Callable, List, Optional, Tuple
 
-SCRIPT_VERSION = "1.7.0"
+SCRIPT_VERSION = "1.7.1"
 SCRIPT_DATE = "15.09.2026"
 
 # Where nginx keeps its customer vhosts (mirrors nginx-cert-guard.py).
@@ -104,6 +104,12 @@ DELIVERED_SCRIPTS = (
     "ownerp_mute.py",
     "ownerp_migrate.py",
 )
+
+# cron.d applies run-parts naming (cron(8)): a file whose name contains
+# anything outside this set is never read. check_duplicate_cron_entries()
+# skips such files for the same reason cron does — see the FIX_SETUP_CRON
+# incident this rule closes, found 15.09.2026.
+_CROND_NAME_RE = re.compile(r"^[A-Za-z0-9_-]+$")
 
 # Job names that must run from /etc/cron.d/myodoo-maintenance and nowhere else.
 MANAGED_JOBS = (
@@ -533,6 +539,13 @@ def check_duplicate_cron_entries(ctx: HealthContext) -> Finding:
         entries = []
     for name in entries:
         if name == managed:
+            continue
+        # run-parts naming (cron(8)): cron.d ignores any file whose name is
+        # not [A-Za-z0-9_-]+, so a name like "myodoo-maintenance.bak_..." —
+        # ownerp_cron.py's own backup, before it moved to BACKUP_DIR — was
+        # never read by cron and never ran twice, only by this check
+        # (found 15.09.2026).
+        if not _CROND_NAME_RE.match(name):
             continue
         content = _read(os.path.join(cron_d, name))
         if not content:

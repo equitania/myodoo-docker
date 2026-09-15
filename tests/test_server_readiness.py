@@ -123,6 +123,48 @@ class UpdateConfigTest(unittest.TestCase):
         self.assertNotIn("update_config", sr.UNMUTABLE)
 
 
+class DuplicateCronEntriesTest(unittest.TestCase):
+    """check_duplicate_cron_entries() reads every file in /etc/cron.d, but
+    cron itself does not: run-parts naming (cron(8)) makes it skip any name
+    outside [A-Za-z0-9_-]. Before this fix (15.09.2026) ownerp_cron.py's own
+    backup — "myodoo-maintenance.bak_<timestamp>", written next to the file
+    it edits — tripped the check while never actually running twice."""
+
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(self.tmp.cleanup)
+        self.ctx = sr.HealthContext(root=self.tmp.name, home=self.tmp.name,
+                                    repo=self.tmp.name)
+        self.cron_d = os.path.join(self.tmp.name, "etc", "cron.d")
+        os.makedirs(self.cron_d)
+        # The managed file itself must exist so a real duplicate is FAIL, not
+        # WARN — the branch this test cares about.
+        self.write("myodoo-maintenance", "0 2 * * * root /root/container2backup.py\n")
+        # Avoid depending on the test runner's own crontab.
+        patcher = unittest.mock.patch.object(sr, "_run", return_value=(1, ""))
+        patcher.start()
+        self.addCleanup(patcher.stop)
+
+    def write(self, name, content):
+        path = os.path.join(self.cron_d, name)
+        with open(path, "w", encoding="utf-8") as handle:
+            handle.write(content)
+        return path
+
+    def test_a_stray_ownerp_cron_backup_is_not_reported(self):
+        self.write("myodoo-maintenance.bak_20260915_112658",
+                   "0 2 * * * root /root/container2backup.py\n")
+        finding = sr.check_duplicate_cron_entries(self.ctx)
+        self.assertEqual(finding.severity, sr.Severity.OK)
+
+    def test_a_dot_free_foreign_file_is_still_reported(self):
+        self.write("legacy-backup-cron",
+                   "0 2 * * * root /root/container2backup.py\n")
+        finding = sr.check_duplicate_cron_entries(self.ctx)
+        self.assertEqual(finding.severity, sr.Severity.FAIL)
+        self.assertIn("legacy-backup-cron", finding.detail)
+
+
 class ConfigLoaderTest(unittest.TestCase):
     """Both configs go through one loader; the backup wrapper is what keeps
     its two callers unchanged."""
