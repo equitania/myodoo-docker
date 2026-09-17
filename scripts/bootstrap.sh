@@ -1,6 +1,6 @@
 #!/bin/bash
 # bootstrap.sh — Out-of-the-box initializer for fresh Debian/Ubuntu servers
-# Version 1.15.1 — 17.09.2026
+# Version 1.15.2 — 17.09.2026
 #
 # Supported: Debian 12 (bookworm) / 13 (trixie); Ubuntu 20.04/22.04/24.04/26.04
 # (focal/jammy/noble/resolute). OS + codename are auto-detected from os-release;
@@ -90,7 +90,7 @@ set -Eeuo pipefail
 # Configuration
 # ──────────────────────────────────────────
 
-SCRIPT_VERSION="1.15.1"
+SCRIPT_VERSION="1.15.2"
 SCRIPT_DATE="17.09.2026"
 
 REPO_URL="${REPO_URL:-https://github.com/equitania/myodoo-docker.git}"
@@ -181,14 +181,39 @@ write_file() {
 # When invoked via sudo we target the original (non-root) user where possible.
 TARGET_USER=""
 TARGET_HOME=""
+
+# True when SUDO_COMMAND names an interactive shell rather than a script: 'sudo su',
+# 'sudo su -', 'sudo -s' ('/usr/bin/fish'), 'sudo -i' ('/bin/bash -l'). Such a shell
+# still carries SUDO_USER although the operator now works as root. A shell with a
+# non-option argument ('sudo bash bootstrap.sh') runs a script and does not count.
+started_from_sudo_root_shell() {
+    local command="${SUDO_COMMAND:-}"
+    [ -n "${command}" ] || return 1
+    local -a words
+    read -r -a words <<< "${command}"
+    case "$(basename "${words[0]}")" in
+        su) return 0 ;;
+        sh|bash|zsh|fish|dash) ;;
+        *) return 1 ;;
+    esac
+    local word
+    for word in "${words[@]:1}"; do
+        case "${word}" in
+            -*) ;;
+            *) return 1 ;;
+        esac
+    done
+    return 0
+}
+
 resolve_target_user() {
-    if [ -n "${SUDO_USER:-}" ] && [ "${SUDO_USER}" != "root" ]; then
+    if [ -n "${SUDO_USER:-}" ] && [ "${SUDO_USER}" != "root" ] \
+            && ! started_from_sudo_root_shell; then
         TARGET_USER="${SUDO_USER}"
-        TARGET_HOME="$(getent passwd "${SUDO_USER}" | cut -d: -f6)"
     else
         TARGET_USER="$(id -un)"
-        TARGET_HOME="${HOME}"
     fi
+    TARGET_HOME="$(getent passwd "${TARGET_USER}" | cut -d: -f6)"
     [ -n "${TARGET_HOME}" ] || TARGET_HOME="/root"
     log "Target user: ${TARGET_USER} (home: ${TARGET_HOME})"
 }

@@ -108,6 +108,72 @@ class Overlay2PinTest(unittest.TestCase):
         self.assertIn("could not be read as JSON", result.stderr)
 
 
+def resolve_target_user_call(current_user, sudo_user="", sudo_command=""):
+    """Source bootstrap.sh with id/getent stubbed and print the resolved target.
+
+    SUDO_USER and SUDO_COMMAND are exported exactly as sudo leaves them behind;
+    an empty value means the variable is unset.
+    """
+    exports = ""
+    if sudo_user:
+        exports += f'export SUDO_USER="{sudo_user}"\n'
+    if sudo_command:
+        exports += f'export SUDO_COMMAND="{sudo_command}"\n'
+    script = (
+        f'unset SUDO_USER SUDO_COMMAND\n'
+        f'export BOOTSTRAP_NO_MAIN=1\n'
+        f'source "{BOOTSTRAP}"\n'
+        f'{exports}'
+        f'id() {{ echo {current_user}; }}\n'
+        f'getent() {{ echo "$2:x:0:0::/home/$2:/bin/bash" | sed "s#/home/root#/root#"; }}\n'
+        f'resolve_target_user >/dev/null\n'
+        f'echo "$TARGET_USER $TARGET_HOME"\n'
+    )
+    return subprocess.run(["bash", "-c", script],
+                          capture_output=True, text=True)
+
+
+@unittest.skipUnless(HAS_BASH, "needs bash to source the script")
+class ResolveTargetUserTest(unittest.TestCase):
+    """Operators on customer servers work in a root shell opened with
+    'sudo su'. That shell still carries SUDO_USER, so before 1.15.2 the script
+    cloned myodoo-docker into the operator's home and ran getScripts.py as the
+    operator — while getScripts.py itself (>= 9.7.3) installs for root there."""
+
+    def test_sudo_su_targets_root(self):
+        result = resolve_target_user_call("root", "operator", "/usr/bin/su")
+        self.assertEqual(result.stdout.strip(), "root /root", result.stderr)
+
+    def test_sudo_su_with_a_dash_targets_root(self):
+        result = resolve_target_user_call("root", "operator", "/usr/bin/su -")
+        self.assertEqual(result.stdout.strip(), "root /root", result.stderr)
+
+    def test_sudo_dash_s_targets_root(self):
+        result = resolve_target_user_call("root", "operator", "/usr/bin/fish")
+        self.assertEqual(result.stdout.strip(), "root /root", result.stderr)
+
+    def test_sudo_dash_i_targets_root(self):
+        result = resolve_target_user_call("root", "operator", "/bin/bash -l")
+        self.assertEqual(result.stdout.strip(), "root /root", result.stderr)
+
+    def test_sudo_on_the_script_targets_the_operator(self):
+        result = resolve_target_user_call(
+            "root", "operator", "/opt/myodoo-bootstrap.sh")
+        self.assertEqual(result.stdout.strip(), "operator /home/operator",
+                         result.stderr)
+
+    def test_sudo_bash_on_the_script_targets_the_operator(self):
+        """A shell that runs a script is not an interactive root shell."""
+        result = resolve_target_user_call(
+            "root", "operator", "/usr/bin/bash /opt/myodoo-bootstrap.sh")
+        self.assertEqual(result.stdout.strip(), "operator /home/operator",
+                         result.stderr)
+
+    def test_plain_root_targets_root(self):
+        result = resolve_target_user_call("root")
+        self.assertEqual(result.stdout.strip(), "root /root", result.stderr)
+
+
 def run_as_target_call(uid, current_user, target_user):
     """Source bootstrap.sh with id/runuser/sudo stubbed and call run_as_target.
 

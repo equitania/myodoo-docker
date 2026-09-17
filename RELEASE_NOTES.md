@@ -1,5 +1,21 @@
 # Release Notes
 
+## Bootstrap in a `sudo su` Shell Installs for root (17.09.2026)
+
+*bootstrap.sh v1.15.2 · tests/test_bootstrap.py · docs/usage/09-reference.md*
+
+### Fixed
+
+- **Started from a `sudo su` root shell, `bootstrap.sh` still targeted the
+  operator.** That shell keeps `SUDO_USER`, so the script cloned myodoo-docker
+  into the operator's home and ran `getScripts.py` as the operator — while
+  `getScripts.py` itself (>= 9.7.3) installs for root in exactly that case.
+  The new `started_from_sudo_root_shell()` reads `SUDO_COMMAND`: `su` and a
+  bare shell (`sudo -s`, `sudo -i`) mean root is the target; a shell running a
+  script (`sudo bash bootstrap.sh`) still targets the operator. The target's
+  home now always comes from `getent passwd` instead of an inherited `$HOME`.
+  Covered by seven tests.
+
 ## Bootstrap Started with sudo Clones the Repository Again (17.09.2026)
 
 *bootstrap.sh v1.15.1 · tests/test_bootstrap.py · docs/usage/09-reference.md*
