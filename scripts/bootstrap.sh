@@ -1,6 +1,6 @@
 #!/bin/bash
 # bootstrap.sh — Out-of-the-box initializer for fresh Debian/Ubuntu servers
-# Version 1.15.0 — 15.09.2026
+# Version 1.15.1 — 17.09.2026
 #
 # Supported: Debian 12 (bookworm) / 13 (trixie); Ubuntu 20.04/22.04/24.04/26.04
 # (focal/jammy/noble/resolute). OS + codename are auto-detected from os-release;
@@ -90,8 +90,8 @@ set -Eeuo pipefail
 # Configuration
 # ──────────────────────────────────────────
 
-SCRIPT_VERSION="1.15.0"
-SCRIPT_DATE="15.09.2026"
+SCRIPT_VERSION="1.15.1"
+SCRIPT_DATE="17.09.2026"
 
 REPO_URL="${REPO_URL:-https://github.com/equitania/myodoo-docker.git}"
 REPO_BRANCH="${REPO_BRANCH:-2026}"
@@ -194,11 +194,16 @@ resolve_target_user() {
 }
 
 # Run a command as the target user (handles both root and sudo invocations).
+# Started with sudo, the script runs as root (SUDO is empty) while the target is
+# the operator who called sudo — so root switches with runuser, which util-linux
+# ships even on hosts without sudo.
 run_as_target() {
     if [ "$(id -un)" = "${TARGET_USER}" ]; then
         "$@"
+    elif [ "$(id -u)" -eq 0 ]; then
+        runuser -u "${TARGET_USER}" -- env HOME="${TARGET_HOME}" "$@"
     else
-        $SUDO -u "${TARGET_USER}" -H "$@"
+        sudo -u "${TARGET_USER}" -H "$@"
     fi
 }
 

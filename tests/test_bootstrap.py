@@ -108,6 +108,50 @@ class Overlay2PinTest(unittest.TestCase):
         self.assertIn("could not be read as JSON", result.stderr)
 
 
+def run_as_target_call(uid, current_user, target_user):
+    """Source bootstrap.sh with id/runuser/sudo stubbed and call run_as_target.
+
+    The stubs print what would be executed instead of switching users, so the
+    test needs neither root nor a second account on the machine running it.
+    """
+    script = (
+        f'export BOOTSTRAP_NO_MAIN=1\n'
+        f'source "{BOOTSTRAP}"\n'
+        f'id() {{ if [ "$1" = "-u" ]; then echo {uid}; else echo {current_user}; fi; }}\n'
+        f'runuser() {{ echo "runuser $*"; }}\n'
+        f'sudo() {{ echo "sudo $*"; }}\n'
+        f'resolve_privilege >/dev/null\n'
+        f'TARGET_USER={target_user}\n'
+        f'TARGET_HOME=/home/{target_user}\n'
+        f'run_as_target echo hello\n'
+    )
+    return subprocess.run(["bash", "-c", script],
+                          capture_output=True, text=True)
+
+
+@unittest.skipUnless(HAS_BASH, "needs bash to source the script")
+class RunAsTargetTest(unittest.TestCase):
+    """Started with sudo, the script runs as root with SUDO="" while the target
+    is the operator who called sudo. Before 1.15.1 that case expanded to
+    `-u <user> -H git clone …` and aborted with "-u: command not found"."""
+
+    def test_root_switches_to_the_operator_with_runuser(self):
+        result = run_as_target_call(0, "root", "operator")
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(result.stdout.strip(),
+                         "runuser -u operator -- env HOME=/home/operator echo hello")
+
+    def test_a_non_root_caller_uses_sudo(self):
+        result = run_as_target_call(1000, "someone", "operator")
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(result.stdout.strip(), "sudo -u operator -H echo hello")
+
+    def test_the_target_user_itself_runs_the_command_directly(self):
+        result = run_as_target_call(1000, "operator", "operator")
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(result.stdout.strip(), "hello")
+
+
 @unittest.skipUnless(HAS_BASH, "needs bash to parse the script")
 class ScriptShapeTest(unittest.TestCase):
 

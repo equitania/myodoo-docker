@@ -1,5 +1,20 @@
 # Release Notes
 
+## Bootstrap Started with sudo Clones the Repository Again (17.09.2026)
+
+*bootstrap.sh v1.15.1 · tests/test_bootstrap.py · docs/usage/09-reference.md*
+
+### Fixed
+
+- **`bootstrap.sh` aborted with `-u: command not found` when started with
+  sudo.** Under sudo the script runs as root, so `SUDO` is empty, but the
+  target user is the operator who called sudo. `run_as_target()` then
+  expanded `$SUDO -u <user> -H git clone …` to `-u <user> -H git clone …` and
+  the clone of myodoo-docker failed (exit 127). Root now switches to the
+  target user with `runuser -u <user> -- env HOME=<home>` (util-linux, present
+  even without sudo); a non-root caller uses `sudo -u <user> -H` explicitly.
+  Covered by three tests that stub `id`, `runuser` and `sudo`.
+
 ## Backup Pre-flight No Longer Refuses Backups That Fit (17.09.2026)
 
 *container2backup.py v4.9.1 · tests/test_container2backup.py ·
