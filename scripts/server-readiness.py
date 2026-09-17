@@ -4,8 +4,8 @@
 # Title:            server-readiness.py
 # Description:      Report whether this server matches the state myodoo-docker
 #                   expects, and name the exact command that closes each gap.
-# Version:          1.9.1
-# Date:             15.09.2026
+# Version:          1.10.0
+# Date:             17.09.2026
 # Author:           Equitania Software GmbH
 # ==============================================================================
 # Why this exists:
@@ -70,8 +70,8 @@ from dataclasses import dataclass
 from enum import Enum
 from typing import Callable, List, Optional, Tuple
 
-SCRIPT_VERSION = "1.9.1"
-SCRIPT_DATE = "15.09.2026"
+SCRIPT_VERSION = "1.10.0"
+SCRIPT_DATE = "17.09.2026"
 
 # Where nginx keeps its customer vhosts (mirrors nginx-cert-guard.py).
 NGINX_CONF_D = "etc/nginx/conf.d"
@@ -1269,6 +1269,148 @@ def check_build_cache(ctx: HealthContext) -> Finding:
     return _ok("build_cache", "Build cache", f"{count} archive(s), {_human(total)}")
 
 
+# Odoo's defaults for the keys the capacity check reads (odoo/tools/config.py).
+ODOO_DEFAULT_WORKERS = 0
+ODOO_DEFAULT_CRON_THREADS = 2
+ODOO_DEFAULT_LIMIT_MEMORY_SOFT = 2048 * 1024 * 1024
+# Share of the machine's RAM the Odoo soft limits may claim; the rest belongs
+# to PostgreSQL, the page cache and the OS.
+ODOO_MEMORY_SHARE = 0.8
+
+
+def _host_cpu_count(ctx: HealthContext) -> Optional[int]:
+    text = _read(ctx.p("proc/cpuinfo"))
+    if text is None:
+        return None
+    count = len(re.findall(r"^processor\s*:", text, re.MULTILINE))
+    return count or None
+
+
+def _host_memory_bytes(ctx: HealthContext) -> Optional[int]:
+    text = _read(ctx.p("proc/meminfo"))
+    match = re.search(r"^MemTotal:\s*(\d+)\s*kB", text or "", re.MULTILINE)
+    return int(match.group(1)) * 1024 if match else None
+
+
+def _odoo_conf_load(text: str) -> Tuple[int, int]:
+    """Return (processes, limit_memory_soft) for one odoo.conf.
+
+    workers = 0 is threaded mode: one process that also runs the cron threads.
+    With workers > 0 every HTTP worker and every cron thread is its own process,
+    each allowed to grow to limit_memory_soft before it is recycled.
+    """
+    import configparser  # noqa: PLC0415 — only this check needs it
+    parser = configparser.ConfigParser(interpolation=None, strict=False)
+    parser.read_string(text)
+    options = parser["options"] if parser.has_section("options") else {}
+
+    def number(key: str, default: int) -> int:
+        try:
+            return int(float(str(options.get(key, default)).strip()))
+        except ValueError:
+            return default
+
+    workers = number("workers", ODOO_DEFAULT_WORKERS)
+    cron = number("max_cron_threads", ODOO_DEFAULT_CRON_THREADS)
+    soft = number("limit_memory_soft", ODOO_DEFAULT_LIMIT_MEMORY_SOFT)
+    processes = workers + cron if workers > 0 else 1
+    return processes, soft
+
+
+def _running_odoo_confs(ctx: HealthContext) -> Optional[List[Tuple[str, str]]]:
+    """Return (container, host path of odoo.conf) for every running container
+    that mounts /opt/odoo/etc — that mount, not the name, is what makes it an
+    Odoo instance. None when docker cannot be asked."""
+    code, output = _run(["docker", "ps", "--format", "{{.Names}}"])
+    if code != 0:
+        return None
+    names = [line.strip() for line in output.splitlines() if line.strip()]
+    if not names:
+        return []
+    code, output = _run(["docker", "inspect", *names])
+    if code != 0:
+        return None
+    try:
+        details = json.loads(output)
+    except ValueError:
+        return None
+    confs = []
+    for container in details:
+        for mount in container.get("Mounts") or []:
+            if mount.get("Destination") == "/opt/odoo/etc" and mount.get("Source"):
+                confs.append((str(container.get("Name", "")).lstrip("/"),
+                              os.path.join(mount["Source"], "odoo.conf")))
+    return confs
+
+
+def check_odoo_capacity(ctx: HealthContext) -> Finding:
+    """Do the running Odoo instances fit this machine?
+
+    Written for a 4-CPU / 16 GB host carrying live and test on the shipped
+    odoo.conf: 3 workers + 2 cron threads each make ten processes, Odoo's
+    sizing rule allows 2 x cores + 1 = 9, and the soft memory limits add up to
+    20 GiB — more than the machine has, before PostgreSQL gets a byte.
+
+    Memory is judged by the sum of limit_memory_soft over every process, the
+    point at which Odoo recycles a worker: a worst case, deliberately, because
+    when it is reached the kernel's OOM killer picks the victim, not Odoo.
+    Only running containers count — a stopped test instance uses nothing.
+    """
+    check_id, title = "odoo_capacity", "Odoo capacity"
+    if not shutil.which("docker"):
+        return _skip(check_id, title, "docker not installed")
+
+    cpus, memory = _host_cpu_count(ctx), _host_memory_bytes(ctx)
+    if not cpus or not memory:
+        return _skip(check_id, title, "CPU count or memory size not readable from /proc")
+
+    confs = _running_odoo_confs(ctx)
+    if confs is None:
+        return _skip(check_id, title, "docker ps/inspect unavailable (daemon not running?)")
+    if not confs:
+        return _skip(check_id, title, "no running Odoo containers")
+
+    processes = soft_total = 0
+    parts, unreadable = [], []
+    for name, path in confs:
+        text = _read(ctx.p(path))
+        if text is None:
+            unreadable.append(name)
+            continue
+        count, soft = _odoo_conf_load(text)
+        processes += count
+        soft_total += count * soft
+        parts.append(f"{name} {count}x{_human(soft)}")
+    if not parts:
+        return _skip(check_id, title,
+                     f"odoo.conf unreadable for {', '.join(unreadable)}")
+
+    cpu_budget = 2 * cpus + 1
+    memory_budget = memory * ODOO_MEMORY_SHARE
+    summary = (f"{processes} Odoo processes ({', '.join(parts)}) on {cpus} CPU / "
+               f"{_human(memory)}")
+    if unreadable:
+        summary += f"; odoo.conf unreadable, not counted: {', '.join(unreadable)}"
+
+    problems = []
+    if processes > cpu_budget:
+        problems.append(f"CPU: {processes} processes > {cpu_budget} (2 x cores + 1)")
+    if soft_total > memory_budget:
+        problems.append(f"memory: soft limits add up to {_human(soft_total)} > "
+                        f"{_human(memory_budget)} (80 % of RAM)")
+    if not problems:
+        return _ok(check_id, title,
+                   f"{summary}; {processes}/{cpu_budget} processes, "
+                   f"{_human(soft_total)}/{_human(memory_budget)} soft limits")
+    return Finding(
+        check_id, Severity.WARN, title,
+        f"{summary} — {'; '.join(problems)}",
+        "Lower workers / max_cron_threads / limit_memory_soft in the instances' "
+        "odoo.conf, stop an unused instance, or add CPU/RAM"
+        '  # or accept it: ownerp_mute.py odoo_capacity --reason "..."',
+    )
+
+
 CHECKS: Tuple[Callable[[HealthContext], Finding], ...] = (
     check_maintenance_cron_present,
     check_maintenance_cron_current,
@@ -1287,6 +1429,7 @@ CHECKS: Tuple[Callable[[HealthContext], Finding], ...] = (
     check_script_versions,
     check_backup_disk_space,
     check_build_cache,
+    check_odoo_capacity,
 )
 
 

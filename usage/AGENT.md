@@ -203,6 +203,10 @@ CIDR (wget/apt/urllib do not). Full walkthrough: `docs/usage/07-proxy.md`.
   source: exclude `/var/lib/docker/` (trailing slash) in the scanner policy; `server-readiness.py`
   checks it (`av_docker_exclusion`). `systemctl restart docker` only releases mounts already
   leaked; `doup` already retries once with an emptied builder cache.
+- **The shipped `odoo.conf` is sized for one instance per host:** `workers = 3` +
+  `max_cron_threads = 2` = 5 processes at 2 GB `limit_memory_soft` each. Live + test on 4 CPU / 16 GB
+  exceeds Odoo's `2 x cores + 1` and 80 % of RAM; `server-readiness.py` warns (`odoo_capacity`,
+  running containers only). Lower those keys in the instance's `odoo.conf` (volume `/opt/odoo/etc`).
 - **overlay2 is pinned by `bootstrap.sh` for SPEED, not safety:** the containerd store is slower
   (2.6x cold build) and its build cache does not survive `doup`'s prune. A non-overlay2 driver is a
   readiness **WARN**. After a storage-driver switch reboot the server — that is about the switch,

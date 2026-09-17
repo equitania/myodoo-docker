@@ -1,5 +1,24 @@
 # Release Notes
 
+## Readiness Check Warns When Odoo Outgrows the Machine (17.09.2026)
+
+*server-readiness.py v1.10.0 · tests/test_server_readiness.py ·
+docs/COMPONENTS.md · docs/usage/09-reference.md · ReadMe.md · usage/AGENT.md*
+
+### Added
+
+- **New check `odoo_capacity` ("Odoo capacity").** Nothing compared the
+  running Odoo instances with the hardware: a 4-CPU / 16 GB host with live and
+  test on the shipped V19 `odoo.conf` runs ten Odoo processes (3 workers + 2
+  cron threads each) against Odoo's sizing rule of `2 x cores + 1` = 9, and
+  their `limit_memory_soft` values add up to 20 GB — more than the machine
+  has before PostgreSQL gets any. The check finds running containers by their
+  `/opt/odoo/etc` mount, reads each `odoo.conf` from the volume on the host
+  and warns when processes exceed `2 x cores + 1` or the soft limits exceed
+  80 % of RAM. Stopped instances do not count. Read-only; the fix names the
+  three `odoo.conf` keys to lower and `ownerp_mute.py odoo_capacity` for a
+  host that runs overbooked on purpose. Nine tests.
+
 ## Bootstrap in a `sudo su` Shell Installs for root (17.09.2026)
 
 *bootstrap.sh v1.15.2 · tests/test_bootstrap.py · docs/usage/09-reference.md*

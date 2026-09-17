@@ -12,6 +12,7 @@ Run from the repository root:
 """
 
 import importlib.util
+import json
 import os
 import tempfile
 import time
@@ -475,6 +476,129 @@ class AvOnAccessScannerTest(unittest.TestCase):
         self.assertEqual(finding.severity, sr.Severity.FAIL)
         self.assertIn("/var/lib/docker/", finding.fix)
         self.assertIn("hollow images", finding.detail)
+
+
+GIB = 1024 ** 3
+
+
+class OdooCapacityTest(unittest.TestCase):
+    """A 4-CPU / 16 GB host with live and test on the shipped odoo.conf runs
+    ten Odoo processes (3 workers + 2 cron threads each). Odoo's own sizing
+    rule allows 2 x cores + 1 = 9, and the soft limits add up to 20 GiB, more
+    than the whole machine has. Nothing said so."""
+
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(self.tmp.cleanup)
+        self.ctx = sr.HealthContext(root=self.tmp.name, home=self.tmp.name,
+                                    repo=self.tmp.name)
+        patcher = unittest.mock.patch.object(sr.shutil, "which",
+                                             return_value="/usr/bin/docker")
+        patcher.start()
+        self.addCleanup(patcher.stop)
+        self.containers = []
+
+    def host(self, cpus, mem_gib):
+        os.makedirs(os.path.join(self.tmp.name, "proc"), exist_ok=True)
+        with open(os.path.join(self.tmp.name, "proc", "cpuinfo"), "w") as handle:
+            handle.write("".join(f"processor\t: {n}\nmodel name\t: x\n\n"
+                                 for n in range(cpus)))
+        with open(os.path.join(self.tmp.name, "proc", "meminfo"), "w") as handle:
+            handle.write(f"MemTotal:       {mem_gib * 1024 * 1024} kB\n"
+                         f"MemFree:        1024 kB\n")
+
+    def instance(self, name, conf=None):
+        source = f"/var/lib/docker/volumes/{name}-etc/_data"
+        if conf is not None:
+            folder = os.path.join(self.tmp.name, source.lstrip("/"))
+            os.makedirs(folder, exist_ok=True)
+            with open(os.path.join(folder, "odoo.conf"), "w") as handle:
+                handle.write(conf)
+        self.containers.append({
+            "Name": f"/{name}",
+            "Mounts": [
+                {"Source": source, "Destination": "/opt/odoo/etc"},
+                {"Source": f"/opt/odoo/{name}", "Destination": "/opt/odoo/data"},
+            ],
+        })
+
+    def fake_run(self, command, timeout=15):
+        if command[:2] == ["docker", "ps"]:
+            return 0, "\n".join(c["Name"].lstrip("/") for c in self.containers)
+        if command[:2] == ["docker", "inspect"]:
+            return 0, json.dumps(self.containers)
+        return 1, "unexpected"
+
+    def check(self):
+        with unittest.mock.patch.object(sr, "_run", side_effect=self.fake_run):
+            return sr.check_odoo_capacity(self.ctx)
+
+    TEMPLATE = ("[options]\nworkers = 3\nmax_cron_threads = 2\n"
+                "limit_memory_soft = 2147483648\n")
+
+    def test_live_and_test_on_the_template_overload_4_cpus_16_gb(self):
+        self.host(4, 16)
+        self.instance("live-odoo", self.TEMPLATE)
+        self.instance("test-odoo", self.TEMPLATE)
+        finding = self.check()
+        self.assertEqual(finding.severity, sr.Severity.WARN)
+        self.assertIn("10 Odoo processes", finding.detail)
+        self.assertIn("9", finding.detail)
+        self.assertIn("20.0 GB", finding.detail)
+        self.assertIn("live-odoo", finding.detail)
+        self.assertIn("ownerp_mute.py odoo_capacity", finding.fix)
+
+    def test_live_alone_on_the_template_fits(self):
+        self.host(4, 16)
+        self.instance("live-odoo", self.TEMPLATE)
+        finding = self.check()
+        self.assertEqual(finding.severity, sr.Severity.OK, finding.detail)
+
+    def test_memory_alone_can_overload(self):
+        """Enough cores, too little RAM: 5 x 2 GiB = 10 GiB > 80 % of 8 GiB."""
+        self.host(16, 8)
+        self.instance("live-odoo", self.TEMPLATE)
+        finding = self.check()
+        self.assertEqual(finding.severity, sr.Severity.WARN)
+        self.assertIn("memory", finding.detail)
+
+    def test_cpu_alone_can_overload(self):
+        self.host(2, 64)
+        self.instance("live-odoo", "[options]\nworkers = 6\nmax_cron_threads = 1\n")
+        finding = self.check()
+        self.assertEqual(finding.severity, sr.Severity.WARN)
+        self.assertIn("CPU", finding.detail)
+
+    def test_odoo_defaults_apply_to_missing_keys(self):
+        """No workers key means threaded mode: one process. Odoo's default
+        soft limit is 2048 MiB."""
+        self.host(1, 4)
+        self.instance("live-odoo", "[options]\n")
+        finding = self.check()
+        self.assertEqual(finding.severity, sr.Severity.OK, finding.detail)
+
+    def test_an_unreadable_conf_is_named_not_guessed(self):
+        self.host(4, 16)
+        self.instance("live-odoo", self.TEMPLATE)
+        self.instance("test-odoo", None)
+        finding = self.check()
+        self.assertEqual(finding.severity, sr.Severity.OK)
+        self.assertIn("test-odoo", finding.detail)
+
+    def test_containers_without_an_odoo_etc_mount_are_ignored(self):
+        self.host(4, 16)
+        self.containers.append({"Name": "/live-db", "Mounts": [
+            {"Source": "/opt/pg", "Destination": "/var/lib/postgresql/data"}]})
+        finding = self.check()
+        self.assertEqual(finding.severity, sr.Severity.SKIP)
+
+    def test_no_docker_is_skipped(self):
+        with unittest.mock.patch.object(sr.shutil, "which", return_value=None):
+            finding = sr.check_odoo_capacity(self.ctx)
+        self.assertEqual(finding.severity, sr.Severity.SKIP)
+
+    def test_it_is_registered(self):
+        self.assertIn(sr.check_odoo_capacity, sr.CHECKS)
 
 
 class ConfigLoaderTest(unittest.TestCase):

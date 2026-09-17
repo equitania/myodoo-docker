@@ -789,11 +789,11 @@ in this repository, stay in `CLAUDE.md`.
   risk an expiry would guard against — a mute nobody remembers — is already
   covered by the visible `[MUTED]` line and the count in every summary
 
-#### 16. server-readiness.py (v1.9.1)
+#### 16. server-readiness.py (v1.10.0)
 - **Purpose**: Reports whether this server matches the state myodoo-docker
-  expects — 17 read-only checks (cron, logrotate, backup and update
+  expects — 18 read-only checks (cron, logrotate, backup and update
   configuration, Docker storage driver, virus-scanner exclusion for
-  `/var/lib/docker/`, nginx, certbot timing, script versions), each non-OK finding carrying exactly one copy-paste fix. `chk`,
+  `/var/lib/docker/`, nginx, certbot timing, script versions, Odoo CPU/RAM sizing), each non-OK finding carrying exactly one copy-paste fix. `chk`,
   `dostat`/`konsole`, the block after `ups` and the Monday cron all go through
   the same `run_checks()`, so a mute can never disagree between them
 - **Never writes.** No `/etc` change, no service restart, no network call —
@@ -808,6 +808,18 @@ in this repository, stay in `CLAUDE.md`.
   `BACKUP_FAIL_AGE` is now 50 hours, agreeing with `ownerp_state.py`. Falls
   back to the log-mtime reading when `container2backup.yaml` is missing,
   unreadable or empty; names the log's abort line in the detail when present
+- **`odoo_capacity` ("Odoo capacity")** (v1.10.0, 17.09.2026): do the running
+  Odoo instances fit the machine? Finds running containers by their
+  `/opt/odoo/etc` mount (not by name), reads each `odoo.conf` from the volume's
+  host path and counts processes — `workers + max_cron_threads`, or 1 in
+  threaded mode (`workers = 0`), Odoo's defaults for missing keys. WARN when
+  the processes exceed `2 x cores + 1` (Odoo's sizing rule) or the sum of
+  `limit_memory_soft` over all processes exceeds 80 % of RAM — a deliberate
+  worst case, since at that point the OOM killer and not Odoo picks the
+  victim. Stopped instances do not count. Example: live + test on the shipped
+  V19 `odoo.conf` on 4 CPU / 16 GB = 10 processes > 9 and 20 GB > 12.8 GB.
+  SKIP without Docker, without running Odoo containers or when `/proc` is
+  unreadable; an unreadable `odoo.conf` is named in the detail, not guessed
 - **`check_docker_storage_driver` is a WARN, not a FAIL** (v1.9.0,
   15.09.2026): a non-overlay2 driver costs build speed and the build cache
   after `doup`'s prune; it was never shown to break a build. Its fix hint
