@@ -259,5 +259,85 @@ class BackupFastReportTest(unittest.TestCase):
         c2b.compress_directory.assert_called_once()
 
 
+GIB = 1024 ** 3
+
+
+class DatabaseDataSizeTest(unittest.TestCase):
+    """The pre-flight sizes the dump from table data only: indexes never end
+    up in a pg_dump, and on an index-heavy Odoo database they can be 80% of
+    pg_database_size - which refused backups that fit comfortably."""
+
+    def test_the_probe_sums_table_size_and_not_database_size(self):
+        done = mock.Mock(returncode=0, stdout=b"19327352832\n")
+        with mock.patch.object(c2b.subprocess, "run", return_value=done) as run:
+            size = c2b.get_database_data_size_bytes("live-db", "ownerp", "live_db")
+        self.assertEqual(size, 19327352832)
+        sql = run.call_args[0][0][-1]
+        self.assertIn("pg_table_size", sql)
+        self.assertNotIn("pg_database_size", sql)
+        self.assertNotIn("live_db", sql)
+
+    def test_a_failed_probe_returns_none(self):
+        done = mock.Mock(returncode=2, stdout=b"")
+        with mock.patch.object(c2b.subprocess, "run", return_value=done):
+            self.assertIsNone(
+                c2b.get_database_data_size_bytes("live-db", "ownerp", "live_db"))
+
+
+class DiskPreflightTest(unittest.TestCase):
+    """Numbers from a real refusal: 18 GiB table data (72 GiB indexes on
+    top), 52.6 GiB filestore, 99.1 GiB free, temp and target on one mount."""
+
+    def preflight(self, data_size, filestore_size, free, streaming=True):
+        with mock.patch.object(c2b, "_free_bytes", return_value=int(free)), \
+                mock.patch("sys.stdout", io.StringIO()):
+            return c2b.disk_preflight(tempfile.gettempdir(), tempfile.gettempdir(),
+                                      int(data_size), int(filestore_size), streaming)
+
+    def test_streaming_passes_when_dump_and_archive_fit(self):
+        ok, _ = self.preflight(18 * GIB, 52.6 * GIB, 99.1 * GIB)
+        self.assertTrue(ok)
+
+    def test_streaming_still_refuses_when_they_do_not(self):
+        ok, msg = self.preflight(18 * GIB, 52.6 * GIB, 60 * GIB)
+        self.assertFalse(ok)
+        self.assertIn("SQL dump", msg)
+
+
+class PreflightHintTest(unittest.TestCase):
+
+    def test_streaming_is_not_recommended_when_it_already_runs(self):
+        self.assertNotIn("stream: true", c2b.preflight_hint(streaming=True))
+
+    def test_staging_still_recommends_streaming(self):
+        self.assertIn("stream: true", c2b.preflight_hint(streaming=False))
+
+
+class StaleTempDirsTest(unittest.TestCase):
+    """A run killed mid-backup leaves its <db>_<timestamp> staging directory
+    behind; nothing removed or reported it, so 41 GiB sat unnoticed for a year."""
+
+    def test_leftovers_of_the_same_database_are_reported_but_kept(self):
+        with tempfile.TemporaryDirectory() as base:
+            for name in ("live_db_20250820_180002", "live_db_20260917_115437",
+                         "other_db_20250101_000000", "live_db_notes"):
+                os.makedirs(os.path.join(base, name))
+            current = os.path.join(base, "live_db_20260917_115437")
+            buf = io.StringIO()
+            with mock.patch("sys.stdout", buf):
+                stale = c2b.warn_stale_temp_dirs(base, "live_db", current)
+            self.assertEqual([os.path.basename(p) for p in stale],
+                             ["live_db_20250820_180002"])
+            self.assertTrue(os.path.isdir(stale[0]))
+            self.assertIn("live_db_20250820_180002", buf.getvalue())
+
+    def test_a_clean_temp_path_prints_nothing(self):
+        with tempfile.TemporaryDirectory() as base:
+            buf = io.StringIO()
+            with mock.patch("sys.stdout", buf):
+                self.assertEqual(c2b.warn_stale_temp_dirs(base, "live_db", None), [])
+            self.assertEqual(buf.getvalue(), "")
+
+
 if __name__ == "__main__":
     unittest.main()

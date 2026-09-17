@@ -93,7 +93,7 @@ in this repository, stay in `CLAUDE.md`.
   - Detects Hetzner DNS issues with DigitalOcean
   - Supports systemd-resolved, resolvconf, and direct DNS config
 
-#### 2. container2backup.py (v4.9.0)
+#### 2. container2backup.py (v4.9.1)
 - **Purpose**: Automated backup system for Odoo deployments
 - **Features**:
   - SQL + Filestore backup
@@ -109,6 +109,10 @@ in this repository, stay in `CLAUDE.md`.
     skips only that FastReport backup (the DB dump and filestore still run);
     the latter (a service with no usable `source_path`, or an unusable
     `backup_path`/`temp_path`) still aborts a non-interactive run
+  - Disk pre-flight (v4.9.1) sizes the SQL dump from table data without
+    indexes (`pg_table_size`, x1.5), not `pg_database_size`; the refusal hint
+    matches the mode, and leftover `<db>_<timestamp>` staging directories
+    under `temp_path` are reported as a WARNING (never removed)
 
 #### 3. update_docker_myodoo.py (v4.0.6)
 - **Purpose**: Automated Docker container updates

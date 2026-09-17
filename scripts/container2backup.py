@@ -3,8 +3,8 @@
 # ==============================================================================
 # Title:            container2backup.py
 # Description:      Script to backup Odoo database including FileStore under Docker
-# Version:          4.9.0
-# Date:             15.09.2026
+# Version:          4.9.1
+# Date:             17.09.2026
 # Author:           Equitania Software GmbH
 # ==============================================================================
 # Feature Overview:
@@ -63,8 +63,8 @@ import signal  # Decode negative subprocess returncodes (signal kills) for diagn
 # Single source of truth for the version banner printed at runtime. Keep these
 # in sync with the header comment above. The __main__ banner is derived from
 # these constants so it cannot silently drift out of date again.
-SCRIPT_VERSION = "4.9.0"
-SCRIPT_DATE = "15.09.2026"
+SCRIPT_VERSION = "4.9.1"
+SCRIPT_DATE = "17.09.2026"
 
 # Whitelist for database names and Docker container names. Both propagate
 # into filesystem paths and subprocess argv, so restrict to shell-inert chars.
@@ -336,13 +336,20 @@ def _remove_partial_archive(output_file):
             print(f"  Could not remove partial archive {output_file}: {exc}")
 
 
-def get_database_size_bytes(sql_container, db_user, db_name):
-    """Return the on-disk size of the database in bytes via pg_database_size,
-    or None if it cannot be determined."""
+def get_database_data_size_bytes(sql_container, db_user, db_name):
+    """Return the table data size of the database in bytes (heap + TOAST of
+    tables and materialized views, WITHOUT indexes), or None if it cannot be
+    determined.
+
+    This is what a pg_dump actually writes out. pg_database_size() also counts
+    indexes, which never reach a dump and can make up most of an Odoo
+    database - sizing the dump from it refused backups that fit easily.
+    """
     try:
         proc = subprocess.run(
             ['docker', 'exec', sql_container, 'psql', '-U', db_user, '-d', db_name,
-             '-tAc', f"SELECT pg_database_size('{db_name}')"],
+             '-tAc', "SELECT COALESCE(sum(pg_table_size(oid)), 0)::bigint "
+                     "FROM pg_class WHERE relkind IN ('r', 'm')"],
             stdout=subprocess.PIPE, stderr=subprocess.PIPE, check=False,
         )
         if proc.returncode == 0:
@@ -418,8 +425,16 @@ def resolve_filestore_host_path(data_container, db_name):
     return host_path if os.path.isdir(host_path) else None
 
 
+# A plain-text dump can outgrow the table data it comes from: TOAST-compressed
+# text is written out uncompressed and bytea as hex (2x).
+DUMP_SIZE_FACTOR = 1.5
+
+
 def disk_preflight(temp_dir, dest_dir, db_size, filestore_size, streaming):
     """Check there is enough free space before a full backup starts.
+
+    ``db_size`` is the table data size (see get_database_data_size_bytes),
+    not pg_database_size - indexes are not part of a dump.
 
     Streaming (Design A) only stages the SQL dump in temp; the filestore is
     streamed compressed straight to the target. Legacy staging needs room for
@@ -431,7 +446,7 @@ def disk_preflight(temp_dir, dest_dir, db_size, filestore_size, streaming):
     """
     free_temp = _free_bytes(temp_dir)
     free_dest = _free_bytes(dest_dir)
-    print(f"Disk pre-flight: db_size={_human(db_size)}, "
+    print(f"Disk pre-flight: db_data_size={_human(db_size)} (tables, no indexes), "
           f"filestore_size={_human(filestore_size)}, "
           f"free(temp)={_human(free_temp)}, free(target)={_human(free_dest)}, "
           f"mode={'streaming' if streaming else 'staging'}")
@@ -442,6 +457,7 @@ def disk_preflight(temp_dir, dest_dir, db_size, filestore_size, streaming):
     same_mount = (free_temp is not None and free_dest is not None
                   and os.stat(_existing_parent(temp_dir)).st_dev
                   == os.stat(_existing_parent(dest_dir)).st_dev)
+    dump_est = int(db_size * DUMP_SIZE_FACTOR)
 
     if streaming:
         # temp holds only the uncompressed dump; the archive is written to the
@@ -449,7 +465,7 @@ def disk_preflight(temp_dir, dest_dir, db_size, filestore_size, streaming):
         # archive barely shrinks - estimate it at 0.9x the filestore size.
         fs = filestore_size or 0
         archive_est = int(fs * 0.9)
-        need_temp = int(db_size * 1.2)
+        need_temp = dump_est
         if same_mount:
             # dump (temp) and archive (target) share the same free space.
             need = need_temp + archive_est
@@ -471,8 +487,8 @@ def disk_preflight(temp_dir, dest_dir, db_size, filestore_size, streaming):
     # mostly already-compressed media (~0.9x) - the previous 0.4x guess was far
     # too optimistic and would wrongly pass a media-heavy DB that then fails.
     fs = filestore_size or 0
-    staging = int((db_size + fs) * 1.05)
-    archive_est = int(db_size * 0.3 + fs * 0.9)
+    staging = int(dump_est + fs * 1.05)
+    archive_est = int(dump_est * 0.3 + fs * 0.9)
     if same_mount:
         # staging (temp) and archive (target) compete for the same free space.
         need = staging + archive_est
@@ -488,6 +504,42 @@ def disk_preflight(temp_dir, dest_dir, db_size, filestore_size, streaming):
             return False, (f"target mount needs ~{_human(archive_est)} for the "
                            f"archive but only {_human(free_dest)} is free")
     return True, "ok"
+
+
+def preflight_hint(streaming):
+    """Advice printed after a refused pre-flight - never recommend streaming
+    to a run that is already streaming."""
+    if streaming:
+        return ("  Hint: free space on the backup mount (check temp_path for "
+                "leftover staging directories), or point 'temp_path' at a "
+                "larger mount.")
+    return ("  Hint: enable streaming ('stream: true') to avoid the "
+            "uncompressed staging copy, free space, or point 'temp_path' at "
+            "a larger mount.")
+
+
+def warn_stale_temp_dirs(temp_base, db_name, current_dir):
+    """Report <db_name>_<YYYYMMDD>_<HHMMSS> directories under temp_base that
+    belong to an earlier run. A run killed mid-backup never reaches its own
+    cleanup, and the leftover silently eats the space later runs need.
+
+    Only reports - removing is the operator's decision. Returns the paths.
+    """
+    pattern = re.compile(re.escape(db_name) + r'_\d{8}_\d{6}')
+    stale = []
+    try:
+        entries = sorted(os.listdir(temp_base))
+    except OSError:
+        return stale
+    for name in entries:
+        path = os.path.join(temp_base, name)
+        if (pattern.fullmatch(name) and os.path.isdir(path)
+                and path != current_dir):
+            stale.append(path)
+    for path in stale:
+        print(f"WARNING: leftover temp directory from an earlier run: {path} "
+              f"- it still takes up space; remove it once no backup is running")
+    return stale
 
 
 def _existing_parent(path):
@@ -649,16 +701,17 @@ def create_backup(db_name, db_user, sql_container, data_container, backup_path, 
 
         # Disk pre-flight for full backups: refuse cleanly instead of failing
         # halfway with a swallowed error.
+        if custom_temp:
+            warn_stale_temp_dirs(temp_base, db_name, temp_dir)
+
         if not only_sql_dump:
-            db_size = get_database_size_bytes(sql_container, db_user, db_name)
+            db_size = get_database_data_size_bytes(sql_container, db_user, db_name)
             fs_size = get_filestore_size_bytes(data_container, db_name)
             ok, msg = disk_preflight(temp_dir, docker_backup_path, db_size,
                                      fs_size, use_stream)
             if not ok:
                 print(f"ABORTING backup for {db_name}: insufficient disk space - {msg}")
-                print("  Hint: enable streaming ('stream: true') to avoid the "
-                      "uncompressed staging copy, free space, or point "
-                      "'temp_path' at a larger mount.")
+                print(preflight_hint(use_stream))
                 return False
 
         # 1. Export SQL dump to file

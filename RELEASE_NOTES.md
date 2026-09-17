@@ -1,5 +1,36 @@
 # Release Notes
 
+## Backup Pre-flight No Longer Refuses Backups That Fit (17.09.2026)
+
+*container2backup.py v4.9.1 · tests/test_container2backup.py ·
+docs/COMPONENTS.md · docs/usage/09-reference.md*
+
+### Fixed
+
+- **The disk pre-flight sized the SQL dump from `pg_database_size()`.** That
+  figure includes every index, and indexes never reach a `pg_dump`. On an
+  index-heavy Odoo database (observed: 18 GiB table data, 72 GiB indexes)
+  the pre-flight demanded ~156 GiB for a streaming backup that needs ~74 GiB
+  and aborted the database backup every night, while services, FastReport
+  and rsync still ran and the run ended with "Backup completed!". The new
+  `get_database_data_size_bytes()` sums `pg_table_size()` (heap + TOAST) over
+  tables and materialized views; the dump estimate is that figure x1.5
+  (`DUMP_SIZE_FACTOR`), since TOAST-compressed text is written uncompressed
+  and bytea as hex. The query no longer interpolates the database name.
+- **The refusal hint recommended `stream: true` to a run that was already
+  streaming.** `preflight_hint()` now only suggests streaming in staging
+  mode; a streaming run is pointed at freeing space in `temp_path` or moving
+  it to a larger mount.
+
+### Added
+
+- **`warn_stale_temp_dirs()`**: before the pre-flight, directories named
+  `<db>_<YYYYMMDD>_<HHMMSS>` under the configured `temp_path` that belong to
+  an earlier run are reported as a WARNING. A run killed mid-backup never
+  reaches its own cleanup, and such a leftover (observed: 41 GiB, a year
+  old) silently eats the space the pre-flight then finds missing. The
+  script only reports them; removing them stays the operator's decision.
+
 ## `ups` Now Takes Effect the Same Run It Pulls (15.09.2026)
 
 *getScripts.py v9.25.0 · fish/functions/linux/ups.fish v1.3.0 ·
