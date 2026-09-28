@@ -1270,7 +1270,11 @@ def check_script_versions(ctx: HealthContext) -> Finding:
 # ==============================================================================
 
 HARDENING_SCRIPT = "server_hardening.py"
-HARDENING_TIMEOUT = 180
+# getScripts.py's print_readiness_report() runs this whole script (--brief)
+# under its own outer timeout (READINESS_REPORT_TIMEOUT) - that must stay
+# comfortably above this one, or a hung audit wipes the entire report
+# instead of just this one finding.
+HARDENING_TIMEOUT = 120
 # Mirrors server_hardening.AREAS (a test holds them equal). Kept here as well
 # because every id must produce a finding even when the script is missing —
 # otherwise a mute on it would be reported as stale.
@@ -1324,6 +1328,23 @@ def check_hardening_env(ctx: HealthContext) -> Finding:
     path = env.get("path") or "/root/.config/myodoo-docker/.env"
     create = (f"ups   # offers to create it  # or: cp {ctx.repo}/scripts/.env.example "
               f"{path}; and mcedit {path}")
+    # data["error"] used to be ignored here: a bad ALLOWED_IP or an
+    # out-of-range SSH_PORT made this check report OK (env present, loaded,
+    # ssh_port set) while every hardening_* area SKIPped behind the same
+    # error - a report that looked clean and mailed nothing with --quiet.
+    if data.get("error"):
+        if env.get("present") is True:
+            # .env exists and was read; the error is a real config problem
+            # in it (bad IP, port out of range, ...).
+            return Finding("hardening_env", Severity.FAIL, title,
+                           data["error"], f"mcedit {path}")
+        if env.get("present") is False:
+            # Explicitly absent - the plain "no .env" case below, unchanged.
+            pass
+        else:
+            # present unknown: the script exited (e.g. "root required")
+            # before load_env() ran, so this says nothing about the .env.
+            return _skip("hardening_env", title, data["error"])
     if not env.get("present"):
         return Finding("hardening_env", Severity.FAIL, title,
                        f"no {path} — hardening cannot know the SSH port or the admin IPs",

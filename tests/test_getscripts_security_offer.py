@@ -15,7 +15,9 @@ Run from the repository root:
     python3 -m unittest tests.test_getscripts_security_offer -v
 """
 
+import importlib.util
 import os
+import re
 import stat
 import sys
 import tempfile
@@ -106,9 +108,40 @@ class EnvFileTest(unittest.TestCase):
         for line in text.splitlines():
             self.assertFalse(line.startswith("BACKUP_ENCRYPTION_ENABLED="), line)
             self.assertFalse(line.startswith("BACKUP_PASSWORD="), line)
+        # No key survives active except the ones this offer actually manages -
+        # not "some prefix wasn't BACKUP_*", every other active line of the
+        # real template must be gone too, indented or "export "-prefixed
+        # included (both still activate the variable when the file is read).
+        active_key_re = re.compile(r"^(SSH_PORT|ALLOWED_IP_(\d+)(_COMMENT)?)=")
+        for line in text.splitlines():
+            if not line.strip() or line.lstrip().startswith("#"):
+                continue
+            self.assertRegex(line, active_key_re, line)
         self.assertIn("# BACKUP_ENCRYPTION_ENABLED=true", text)
         self.assertIn("SSH_PORT=22\n", text)
         self.assertIn("ALLOWED_IP_1=192.0.2.10\n", text)
+
+
+class EnvCreationDeclineTest(unittest.TestCase):
+    def test_declining_prints_a_fish_and_command(self):
+        # "; und mcedit" was Bash/German inside an otherwise fish copy-paste
+        # command - fish has no "und", the command would fail as typed.
+        with tempfile.TemporaryDirectory() as home:
+            template_dir = os.path.join(home, "myodoo-docker", "scripts")
+            os.makedirs(template_dir)
+            with open(os.path.join(template_dir, ".env.example"), "w",
+                     encoding="utf-8") as handle:
+                handle.write("SSH_PORT=\n")
+            env_path = os.path.join(home, gs.HARDENING_ENV_RELATIVE)
+            with mock.patch("builtins.input", return_value="n"), \
+                 mock.patch.object(gs, "status") as status_mock, \
+                 mock.patch.object(gs, "_ssh_listen_ports", return_value=[22]), \
+                 mock.patch.object(gs, "_ssh_peers", return_value=[]):
+                result = gs._offer_env_creation(home, env_path)
+        self.assertFalse(result)
+        message = status_mock.call_args_list[-1].args[0]
+        self.assertIn("; and mcedit", message)
+        self.assertNotIn("und mcedit", message)
 
 
 class MutesTest(unittest.TestCase):
@@ -152,10 +185,17 @@ class LockoutGateTest(unittest.TestCase):
                             for b in gs._lockout_blockers(env, [22], ["192.0.2.10"], False)))
         self.assertTrue(gs._is_port_change(env, [22]))
 
-    def test_gate_accepts_any_listening_port(self):
+    def test_gate_blocks_when_sshd_still_listens_on_a_second_port(self):
+        # sshd mid-transition: still on 22 as well as the new 16667, while
+        # SSH_PORT is already 16667. The old gate accepted this because
+        # 16667 was among the listening ports - but the ssh module rewrites
+        # every "Port" line to 16667 alone and UFW opens only 16667, locking
+        # out anyone still connecting on 22. Only "SSH_PORT and nothing
+        # else" is safe.
         env = dict(ENV, SSH_PORT="16667")
-        self.assertEqual(gs._lockout_blockers(env, [22, 16667], ["192.0.2.10"], False), [])
-        self.assertFalse(gs._is_port_change(env, [22, 16667]))
+        self.assertTrue(any("Portwechsel" in b
+                            for b in gs._lockout_blockers(env, [22, 16667], ["192.0.2.10"], False)))
+        self.assertTrue(gs._is_port_change(env, [22, 16667]))
 
     def test_socket_activation_blocks(self):
         blockers = gs._lockout_blockers(ENV, [22], ["192.0.2.10"], True)
@@ -187,10 +227,25 @@ class SshFactsTest(unittest.TestCase):
         with mock.patch.object(gs.subprocess, "run", side_effect=OSError("no ss")):
             self.assertIsNone(gs._ssh_peers([22]))
 
-    def test_running_containers(self):
+    def test_any_containers(self):
         with mock.patch.object(gs.shutil, "which", return_value="/usr/bin/docker"), \
              mock.patch.object(gs.subprocess, "run", return_value=self.run_result("")):
-            self.assertEqual(gs._running_containers(), 0)
+            self.assertFalse(gs._any_containers())
+
+    def test_any_containers_true_for_a_stopped_one(self):
+        # docker ps -aq, not -q: a container stopped on purpose still carries
+        # --restart=always and would come back on the next daemon restart.
+        with mock.patch.object(gs.shutil, "which", return_value="/usr/bin/docker"), \
+             mock.patch.object(gs.subprocess, "run",
+                               return_value=self.run_result("abc123\n")) as spy:
+            self.assertTrue(gs._any_containers())
+        self.assertIn("-aq", spy.call_args.args[0])
+
+    def test_socket_active_check_fails_closed(self):
+        # Fail closed: an unreadable systemctl must be treated as a blocker,
+        # not as "socket inactive, go ahead".
+        with mock.patch.object(gs.subprocess, "run", side_effect=OSError("no systemctl")):
+            self.assertTrue(gs._ssh_socket_active())
 
 
 def _audit(*areas, error=None, env=None):
@@ -221,7 +276,7 @@ class OfferTest(unittest.TestCase):
             mock.patch.object(gs, "_ssh_listen_ports", return_value=[22]),
             mock.patch.object(gs, "_ssh_peers", return_value=["192.0.2.10"]),
             mock.patch.object(gs, "_ssh_socket_active", return_value=False),
-            mock.patch.object(gs, "_running_containers", return_value=0),
+            mock.patch.object(gs, "_any_containers", return_value=False),
         ]
         for patcher in patches:
             patcher.start()
@@ -282,7 +337,9 @@ class OfferTest(unittest.TestCase):
         self.assertIn("systemctl restart docker", self.commands)
         self.commands.clear()
         self.answers = ["1"]
-        with mock.patch.object(gs, "_running_containers", return_value=3):
+        # A container exists - even one stopped on purpose carries
+        # --restart=always and must not be woken up by the daemon restart.
+        with mock.patch.object(gs, "_any_containers", return_value=True):
             self.offer(_audit(("hardening_docker", ["docker"], "warn")))
         self.assertEqual(self.applied(), ["docker"])
         self.assertNotIn("systemctl restart docker", self.commands)
@@ -347,6 +404,53 @@ class OfferTest(unittest.TestCase):
         self.assertFalse(os.path.isfile(self.env_path))
         self.assertEqual(self.commands, [])
 
+    def _write_hardening_config(self, auto_reboot=True, reboot_time='"03:30"'):
+        text = "auto_updates:\n  enabled: true\n"
+        if auto_reboot:
+            text += f"  auto_reboot: true\n  reboot_time: {reboot_time}\n"
+        with open(os.path.join(self.home, "hardening_config.yaml"), "w",
+                 encoding="utf-8") as handle:
+            handle.write(text)
+
+    def test_auto_updates_confirmation_declined_leaves_it_out(self):
+        # hardening_config.yaml ships auto_reboot: true at 03:30 while
+        # backups start 02:00 - auto_updates is otherwise harmless and would
+        # have activated the nightly reboot unasked.
+        self._write_hardening_config()
+        self.answers = ["1", "n"]
+        self.offer(_audit(("hardening_updates", ["auto_updates"], "fail")))
+        self.assertEqual(self.applied(), [])
+        message = gs.status.call_args_list[-1].args[0]
+        self.assertIn("auto_updates", message)
+
+    def test_auto_updates_confirmation_default_is_no(self):
+        self._write_hardening_config()
+        self.answers = ["1", ""]  # empty answer -> the [j/N] default
+        self.offer(_audit(("hardening_updates", ["auto_updates"], "fail")))
+        self.assertEqual(self.applied(), [])
+
+    def test_auto_updates_confirmation_accepted_applies_it(self):
+        self._write_hardening_config()
+        self.answers = ["1", "j"]
+        self.offer(_audit(("hardening_updates", ["auto_updates"], "fail")))
+        self.assertEqual(self.applied(), ["auto_updates"])
+
+    def test_auto_updates_without_auto_reboot_applies_without_asking(self):
+        # No hardening_config.yaml at all (nothing deployed yet) must not
+        # block the harmless apply on a question nobody can answer.
+        self.answers = ["1"]
+        self.offer(_audit(("hardening_updates", ["auto_updates"], "fail")))
+        self.assertEqual(self.applied(), ["auto_updates"])
+
+    def test_offer_list_flags_the_auto_reboot_area(self):
+        self._write_hardening_config()
+        self.answers = ["3"]
+        printed = []
+        with mock.patch("builtins.print",
+                        side_effect=lambda *a, **k: printed.append(" ".join(map(str, a)))):
+            self.offer(_audit(("hardening_updates", ["auto_updates"], "fail")))
+        self.assertTrue(any("automatischem Neustart" in line for line in printed))
+
     def test_fail2ban_waits_when_the_ssh_port_is_unreadable(self):
         self.answers = ["1"]
         with mock.patch.object(gs, "_ssh_listen_ports", return_value=[]):
@@ -356,7 +460,7 @@ class OfferTest(unittest.TestCase):
 
     def test_docker_restart_needs_a_successful_apply_too(self):
         self.answers = ["1"]
-        with mock.patch.object(gs, "_running_containers", return_value=None):
+        with mock.patch.object(gs, "_any_containers", return_value=None):
             self.offer(_audit(("hardening_docker", ["docker"], "warn")))
         self.assertNotIn("systemctl restart docker", self.commands)
 
@@ -372,6 +476,41 @@ class OfferTest(unittest.TestCase):
         with mock.patch.object(gs, "_hardening_audit", side_effect=KeyboardInterrupt):
             gs.offer_security_hardening(self.home)  # must not raise
         self.assertEqual(self.commands, [])
+
+    def test_missing_env_without_a_template_gets_a_clear_message(self):
+        # No .env and no template - _offer_env_creation() bows out on its
+        # own, so the raw "ssh.port invalid: ''" from server_hardening.py
+        # (nothing to substitute the placeholder with) used to be all ups
+        # printed. That names a symptom, not the cause.
+        os.unlink(self.env_path)
+        self.offer(_audit(error="ssh.port invalid: ''"))
+        message = gs.status.call_args_list[-1].args[0]
+        self.assertNotIn("ssh.port invalid", message)
+        self.assertIn(self.env_path, message)
+        self.assertIn("mcedit", message)
+
+    def test_env_error_for_another_reason_still_shows_the_real_message(self):
+        # The .env exists here (setUp), so an audit error is a real config
+        # problem (e.g. a malformed ALLOWED_IP_<n>) - that message must stay.
+        self.offer(_audit(error="Invalid IP address: 'nope'"))
+        message = gs.status.call_args_list[-1].args[0]
+        self.assertIn("Invalid IP address", message)
+
+
+class TimeoutRelationshipTest(unittest.TestCase):
+    """getScripts.py's print_readiness_report() runs server-readiness.py
+    --brief under READINESS_REPORT_TIMEOUT; that script's own internal
+    HARDENING_TIMEOUT (the --json audit it shells out to) must stay well
+    below it, or a hung audit wipes the whole report instead of just its own
+    finding."""
+
+    def test_readiness_hardening_timeout_fits_inside_the_outer_timeout(self):
+        path = os.path.join(os.path.dirname(os.path.abspath(__file__)),
+                            "..", "scripts", "server-readiness.py")
+        spec = importlib.util.spec_from_file_location("server_readiness", path)
+        sr = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(sr)
+        self.assertLess(sr.HARDENING_TIMEOUT, gs.READINESS_REPORT_TIMEOUT)
 
 
 if __name__ == "__main__":

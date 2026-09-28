@@ -181,12 +181,16 @@ passiert:
    auf dem sshd tatsächlich lauscht, und `ssh.socket` darf nicht aktiv sein.
    Schlägt die Prüfung fehl, druckt `ups` die Befehle statt sie auszuführen —
    bei einem Port-Unterschied die sechs Schritte aus
-   *SSH-Port wechseln* unten.
+   *SSH-Port wechseln* unten. Das `docker`-Modul unterliegt dieser
+   Aussperr-Prüfung nicht — sein einziges Gate ist die Container-Prüfung im
+   nächsten Punkt.
 4. **Was `ups` nie tut**: den SSH-Port ändern, und den Docker-Daemon
-   neustarten, solange ein Container läuft oder die `docker`-Härtung selbst
-   fehlschlug — `daemon.json` wird geschrieben, der Neustart nur bei
-   erfolgreichem Apply und null laufenden Containern ausgeführt, sonst als
-   Wartungsfenster-Hinweis ausgegeben.
+   neustarten, solange irgendein Container existiert — auch ein gestoppter
+   trägt `--restart=always` und würde beim Neustart ungefragt wieder anlaufen
+   — oder die `docker`-Härtung selbst fehlschlug. `daemon.json` wird
+   geschrieben, der Neustart nur ausgeführt, wenn das Apply erfolgreich war
+   *und* kein Container existiert, sonst als Wartungsfenster-Hinweis
+   ausgegeben.
 
 Ohne Terminal (Cron, CI) meldet nur `chk` die offenen Bereiche — `ups` fragt
 dort nichts.
@@ -410,12 +414,14 @@ already ran this along the way; this is what happens under the hood:
    must match the port sshd actually listens on, and `ssh.socket` must not
    be active. When that check fails, `ups` prints the commands instead of
    running them — on a port mismatch, the six steps from *Changing the SSH
-   port* below.
+   port* below. The `docker` module is not subject to this lockout check —
+   its only gate is the container check in the next point.
 4. **What `ups` never does**: change the SSH port, or restart the Docker
-   daemon while a container is running or after the `docker` hardening
-   itself failed to apply — `daemon.json` is still written, the restart only
-   runs on a successful apply with zero containers running, otherwise it is
-   printed as a maintenance-window hint.
+   daemon while any container exists — a stopped one still carries
+   `--restart=always` and would come back unasked on the restart — or after
+   the `docker` hardening itself failed to apply. `daemon.json` is still
+   written; the restart only runs when the apply succeeded *and* no
+   container exists, otherwise it is printed as a maintenance-window hint.
 
 Without a terminal (cron, CI) only `chk` reports the open areas — `ups` asks
 nothing there.

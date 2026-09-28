@@ -41,16 +41,21 @@ in this repository, stay in `CLAUDE.md`.
     otherwise it applies with the harmless group. `ufw`/`ssh` only behind the
     **lockout gate**: every established SSH peer on sshd's port (`ss -tnH
     state established` — not `$SSH_CONNECTION`, which `sudo` strips) must be
-    allowlisted, `SSH_PORT` must equal the port sshd actually listens on,
-    and `ssh.socket` must be inactive; failing any of those prints the
-    command and the reason instead, and a port mismatch prints the six-step
-    manual sequence (`PORT_CHANGE_STEPS`) instead of touching anything.
-    `docker`'s `daemon.json` is applied either way; the restart only runs
-    when that apply succeeded *and* zero containers are running — a failed
-    apply is reported and skips the restart outright, a successful one with
-    containers running prints a maintenance-window hint instead.
-    Never changes the SSH port. Any failure anywhere in the gate — including
-    Ctrl-C — is "skip", never a broken `ups`
+    allowlisted, sshd must listen on `SSH_PORT` and *only* `SSH_PORT` (a host
+    still also listening on the old port counts as a pending port change,
+    not a pass — the ssh module would otherwise rewrite every `Port` line to
+    the new value alone and lock out anyone still on the old one), and
+    `ssh.socket` must be inactive; failing any of those prints the command
+    and the reason instead, and a port mismatch prints the six-step manual
+    sequence (`PORT_CHANGE_STEPS`) instead of touching anything. `docker` is
+    not subject to this lockout gate at all — its `daemon.json` is applied
+    either way, and the restart only runs when that apply succeeded *and* no
+    container exists at all (`docker ps -aq`, not `-q`: a container stopped
+    on purpose still carries `--restart=always` and would come back on the
+    restart) — a failed apply is reported and skips the restart outright, a
+    successful one with any container present prints a maintenance-window
+    hint instead. Never changes the SSH port. Any failure anywhere in the
+    gate — including Ctrl-C — is "skip", never a broken `ups`
   - `copy_scripts()` (v9.26.0, 28.09.2026) now also delivers
     `server_hardening.py` and `hardening_config.yaml`, so
     `/root/server_hardening.py` — the path the documentation has always

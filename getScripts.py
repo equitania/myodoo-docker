@@ -4301,6 +4301,12 @@ def _ensure_executable(path: str) -> None:
         logger.warning(f"Could not make {os.path.basename(path)} executable: {exc}")
 
 
+# server-readiness.py's own HARDENING_TIMEOUT (the hardening --json audit it
+# runs internally) is 120s; this outer timeout must stay well above it, or a
+# hung audit wipes the entire readiness report instead of just that finding.
+READINESS_REPORT_TIMEOUT = 240
+
+
 def print_readiness_report(_myhome: str) -> None:
     """Run server-readiness.py and pass its output straight through.
 
@@ -4322,7 +4328,7 @@ def print_readiness_report(_myhome: str) -> None:
     try:
         # No capture_output: the report is meant for the console, and streaming
         # it keeps the colour handling inside server-readiness.py.
-        subprocess.run([sys.executable, script, "--brief"], timeout=120)
+        subprocess.run([sys.executable, script, "--brief"], timeout=READINESS_REPORT_TIMEOUT)
     except Exception as e:
         logger.warning(f"Readiness report could not be generated: {e}")
 
@@ -4565,7 +4571,10 @@ def _allowed_ips(env: Dict[str, str]) -> List[str]:
 
 
 _ENV_ACTIVE_KEY_RE = re.compile(r"^(SSH_PORT|ALLOWED_IP_(\d+)(_COMMENT)?)=")
-_ENV_KEY_LINE_RE = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*=")
+# Indentation or a leading "export " must not let a template key slip past
+# the comment-out below - either form still activates the variable once the
+# shell (or python-dotenv) reads the file.
+_ENV_KEY_LINE_RE = re.compile(r"^\s*(export\s+)?[A-Za-z_][A-Za-z0-9_]*=")
 
 
 def _render_env(template: str, ssh_port: int, ips: List[str]) -> str:
@@ -4676,30 +4685,46 @@ def _ssh_peers(ports: List[int]) -> Optional[List[str]]:
 
 
 def _ssh_socket_active() -> bool:
+    # Fail closed: an unreadable systemctl must count as a blocker, not as
+    # "socket inactive, go ahead" - the opposite mistake would apply ufw/ssh
+    # while ssh.socket, not sshd_config, actually owns the port.
     try:
         result = subprocess.run(["systemctl", "is-active", "ssh.socket"],
                                 capture_output=True, text=True, timeout=10)
     except Exception:
-        return False
+        return True
     return result.stdout.strip() == "active"
 
 
-def _running_containers() -> Optional[int]:
+def _any_containers() -> Optional[bool]:
+    """Whether ANY container exists on this host, running or stopped.
+
+    `docker ps -q` (running only) used to gate the restart: a container
+    stopped on purpose still carries --restart=always and comes back on the
+    next daemon restart, undoing the operator's own stop. `-a` is the only
+    question that matters here - not whether something is running right now,
+    but whether restarting the daemon would touch anything at all.
+    """
     if not shutil.which("docker"):
         return None
     try:
-        result = subprocess.run(["docker", "ps", "-q"], capture_output=True,
+        result = subprocess.run(["docker", "ps", "-aq"], capture_output=True,
                                 text=True, timeout=20)
     except Exception:
         return None
     if result.returncode != 0:
         return None
-    return len([line for line in result.stdout.splitlines() if line.strip()])
+    return any(line.strip() for line in result.stdout.splitlines())
 
 
 def _is_port_change(env: Dict[str, str], listen_ports: List[int]) -> bool:
+    # Not "SSH_PORT not in listen_ports": a host mid-transition (sshd still on
+    # 22 while also listening on the new 16667, SSH_PORT already 16667) used
+    # to pass this gate - the ssh module then rewrites every "Port" line to
+    # 16667 alone and UFW opens only 16667, locking out anyone still on 22.
+    # The only safe state is sshd listening on SSH_PORT and nothing else.
     port = env.get("SSH_PORT", "").strip()
-    return port.isdigit() and bool(listen_ports) and int(port) not in listen_ports
+    return port.isdigit() and bool(listen_ports) and set(listen_ports) != {int(port)}
 
 
 def _lockout_blockers(env: Dict[str, str], listen_ports: List[int],
@@ -4866,7 +4891,7 @@ def offer_storage_driver_mute(_myhome: str) -> None:
 # Security hardening offer
 # ---------------------------------------------------------------------------
 
-HARDENING_AUDIT_TIMEOUT = 180
+HARDENING_AUDIT_TIMEOUT = 120
 HARDENING_CHECK_TITLES = {
     "hardening_firewall": "Firewall (UFW)",
     "hardening_fail2ban": "fail2ban",
@@ -4922,7 +4947,7 @@ def _offer_env_creation(_myhome: str, env_path: str) -> bool:
     print(f"\nDie Härtung braucht {env_path} (SSH-Port und Admin-IPs) – die Datei fehlt.")
     create = _prompt("Jetzt anlegen? [J/n]: ", "j")
     if create is None or create.lower() not in ("j", "ja", "y", "yes"):
-        status(f"Später: cp {template_path} {env_path}; und mcedit {env_path}")
+        status(f"Später: cp {template_path} {env_path}; and mcedit {env_path}")
         return False
     port = _prompt(f"SSH_PORT [{listen[0] if listen else 22}]: ",
                    str(listen[0] if listen else 22))
@@ -4973,6 +4998,45 @@ def _print_hardening_commands(script: str, pending: List[dict]) -> None:
         print("  Bei UFW/SSH eine zweite SSH-Sitzung offen halten.")
 
 
+# Nightly auto-reboot vs. the 02:00 backup window: hardening_config.yaml's
+# auto_updates.auto_reboot (03:30 by default) is what schedules it, and
+# auto_updates otherwise counts as harmless. Read as text, not YAML -
+# getScripts.py runs on bare system Python and this offer is the only thing
+# here that would otherwise need PyYAML.
+_AUTO_REBOOT_RE = re.compile(r"^\s*auto_reboot:\s*true\b", re.MULTILINE)
+_REBOOT_TIME_RE = re.compile(r'^\s*reboot_time:\s*"?([0-9:]+)"?', re.MULTILINE)
+
+
+def _hardening_config_path(_myhome: str) -> Optional[str]:
+    """Same fallback order as _offer_env_creation's template lookup: the
+    deployed file first, the repository checkout (tests, a fresh clone
+    before the first `ups`) second."""
+    central = os.path.join(_myhome, "hardening_config.yaml")
+    if os.path.isfile(central):
+        return central
+    fallback = os.path.join(_myhome, "myodoo-docker", "scripts", "hardening_config.yaml")
+    return fallback if os.path.isfile(fallback) else None
+
+
+def _auto_reboot_time(_myhome: str) -> Optional[str]:
+    """The configured reboot time when auto_updates.auto_reboot is active,
+    "" if active but the time could not be read, else None - also when the
+    config is missing or unreadable, which must not turn into a false
+    "confirm this" the operator cannot even check."""
+    path = _hardening_config_path(_myhome)
+    if not path:
+        return None
+    try:
+        with open(path, "r", encoding="utf-8") as handle:
+            text = handle.read()
+    except OSError:
+        return None
+    if not _AUTO_REBOOT_RE.search(text):
+        return None
+    match = _REBOOT_TIME_RE.search(text)
+    return match.group(1) if match else ""
+
+
 def _apply_hardening(_myhome: str, script: str, pending: List[dict]) -> None:
     """Harmless modules first, then ufw/ssh behind the lockout gate, then
     Docker, and AIDE last so its database records the finished state."""
@@ -4993,6 +5057,23 @@ def _apply_hardening(_myhome: str, script: str, pending: List[dict]) -> None:
                 # port-change sequence (step 3) then.
                 and not (m == "fail2ban" and hold_fail2ban)]
     guarded = [m for m in modules if m in ("ufw", "ssh")]
+
+    if "auto_updates" in harmless:
+        # auto_updates sits in the harmless group, but hardening_config.yaml
+        # ships auto_reboot: true (03:30) while backups start 02:00 - a
+        # server found on 28.09.2026 with both active. Ask separately, off
+        # by default, rather than fold a nightly reboot into "jetzt beheben".
+        reboot_time = _auto_reboot_time(_myhome)
+        if reboot_time is not None:
+            when = f" ({reboot_time} Uhr)" if reboot_time else ""
+            confirm = _prompt(
+                f"Automatische Updates aktivieren auch den nächtlichen "
+                f"Neustart{when} - das kann mit dem Backup-Fenster "
+                f"kollidieren. Trotzdem aktivieren? [j/N]: ", "n")
+            if confirm is None or confirm.lower() not in ("j", "ja", "y", "yes"):
+                harmless = [m for m in harmless if m != "auto_updates"]
+                status("Automatische Updates übersprungen. Von Hand: "
+                      f"{_hardening_command(script, ['auto_updates'])}")
 
     if harmless:
         run_command(_hardening_command(script, harmless), shell=True, interactive=True)
@@ -5032,7 +5113,7 @@ def _apply_hardening(_myhome: str, script: str, pending: List[dict]) -> None:
         applied = getattr(result, "returncode", None) == 0
         if not applied:
             status("Docker-Härtung fehlgeschlagen – kein Neustart")
-        elif _running_containers() == 0:
+        elif _any_containers() is False:
             run_command("systemctl restart docker", shell=True, interactive=True)
         else:
             status("daemon.json geschrieben. Docker-Neustart im Wartungsfenster: "
@@ -5092,7 +5173,17 @@ def offer_security_hardening(_myhome: str) -> None:
             elif _offer_env_creation(_myhome, env_path):
                 audit = _hardening_audit(script) or audit
         if audit.get("error"):
-            status(f"Härtungs-Audit nicht möglich: {audit['error']}")
+            # A raw validation error ("ssh.port invalid: ''") is what
+            # server_hardening.py sees with no SSH_PORT to substitute -
+            # correct, but meaningless to an operator who never got asked to
+            # create the .env at all (creation declined, or hardening_env
+            # muted). Name the real cause instead.
+            if not (os.path.isfile(env_path) or os.path.isfile(legacy_env_path)):
+                template = os.path.join(_myhome, "myodoo-docker", "scripts", ".env.example")
+                status(f"Härtung braucht {env_path} (SSH-Port und Admin-IPs) – "
+                      f"anlegen mit: cp {template} {env_path}; and mcedit {env_path}")
+            else:
+                status(f"Härtungs-Audit nicht möglich: {audit['error']}")
             return
         pending = [area for area in audit.get("areas", [])
                    if area.get("status") != "ok" and area.get("check_id") not in muted]
@@ -5100,8 +5191,12 @@ def offer_security_hardening(_myhome: str) -> None:
             return
 
         print("\nSicherheits-Härtung: diese Bereiche weichen ab")
+        reboot_time = _auto_reboot_time(_myhome)
         for area in pending:
-            print(f"  – {HARDENING_CHECK_TITLES.get(area['check_id'], area['check_id'])}")
+            title = HARDENING_CHECK_TITLES.get(area["check_id"], area["check_id"])
+            if reboot_time is not None and "auto_updates" in area.get("modules", []):
+                title += " (inkl. automatischem Neustart …)"
+            print(f"  – {title}")
         print("  1) Jetzt beheben (Firewall/SSH nur nach Aussperr-Prüfung)")
         print("  2) Befehle anzeigen")
         print("  3) Später")

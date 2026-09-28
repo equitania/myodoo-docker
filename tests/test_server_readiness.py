@@ -688,6 +688,26 @@ class HardeningChecksTest(unittest.TestCase):
         self.audit(env=dict(GOOD_ENV, allowed_ips=0))
         self.assertEqual(self.check("hardening_env").severity, sr.Severity.FAIL)
 
+    def test_a_present_env_with_a_config_error_fails_with_the_real_message(self):
+        # A bad ALLOWED_IP or an out-of-range SSH_PORT used to be invisible
+        # here: env.present/loaded/ssh_port all looked fine and data["error"]
+        # was never read, while every hardening_* area SKIPped on the same
+        # error underneath - a report that read OK and mailed nothing.
+        self.audit(env=dict(GOOD_ENV), error="Invalid IP address: 'nope'")
+        finding = self.check("hardening_env")
+        self.assertEqual(finding.severity, sr.Severity.FAIL)
+        self.assertIn("Invalid IP address", finding.detail)
+        self.assertIn("mcedit", finding.fix)
+
+    def test_an_error_unrelated_to_the_env_skips_instead_of_no_env(self):
+        # "root required" fires before load_env() runs - env is {} (present
+        # unknown), and this must not be read as "no .env" (env.present is
+        # not explicitly False here, it is simply not known).
+        self.audit(env={}, error="root required")
+        finding = self.check("hardening_env")
+        self.assertEqual(finding.severity, sr.Severity.SKIP)
+        self.assertIn("root required", finding.detail)
+
     def test_no_script_is_skip_not_alarm(self):
         finding = self.check("hardening_firewall")
         self.assertEqual(finding.severity, sr.Severity.SKIP)

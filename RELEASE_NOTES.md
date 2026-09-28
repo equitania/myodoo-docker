@@ -30,14 +30,14 @@ bootstrap.sh · tests · docs*
   `fail2ban`, held back (with the port-change steps, or a wait note) whenever
   a port change is pending or sshd's port cannot be read, since its jail
   follows `SSH_PORT` — and applies UFW/SSH only behind a lockout gate: every
-  established SSH connection must come from an allowlisted IP, `SSH_PORT`
-  must match the port sshd actually listens on, and `ssh.socket` must be
+  established SSH connection must come from an allowlisted IP, sshd must
+  listen on `SSH_PORT` and only `SSH_PORT`, and `ssh.socket` must be
   inactive — otherwise it prints the commands and the reason instead, with
-  the six-step manual sequence on a port mismatch. The Docker daemon's
-  `daemon.json` is applied unconditionally; the daemon restart only runs
-  when that apply succeeded and zero containers are running. `ups` never
-  changes the SSH port. Without a terminal (cron, CI) it only reports,
-  exactly as before.
+  the six-step manual sequence on a port mismatch. The Docker module is not
+  subject to this gate: its `daemon.json` is applied unconditionally, and
+  the daemon restart only runs when that apply succeeded and no container
+  exists at all (running or stopped). `ups` never changes the SSH port.
+  Without a terminal (cron, CI) it only reports, exactly as before.
 - **`.env` creation.** When `/root/.config/myodoo-docker/.env` and any
   legacy `/root/.env` are both missing, `ups` offers to create the central
   file: `SSH_PORT` suggested from `sshd -T`, `ALLOWED_IP_1` from the current
@@ -74,6 +74,36 @@ on a fresh VPS on 28.09.2026:
 - Cloud images lock root's password and set `disable_root: true`, which
   conflicts with a `hardening_config.yaml` expecting `PermitRootLogin yes`
   — nothing reported the mismatch; the new `root_login_locked` check does.
+
+A further five surfaced in the branch's final whole-branch review:
+
+- **Dual-port lockout.** The gate accepted sshd listening on both the old
+  and the new port as "no change" once `SSH_PORT` matched one of them — the
+  `ssh` module then rewrote every `Port` line to the new value alone and UFW
+  opened only that port, locking out an operator still connected on the old
+  one. The gate now requires sshd to listen on `SSH_PORT` and nothing else;
+  anything wider counts as a pending port change.
+- **Docker restart could wake up a container stopped on purpose.** The
+  check only asked whether a container was currently *running*
+  (`docker ps -q`); one stopped deliberately still carries
+  `--restart=always` and would come back on the daemon restart anyway. It
+  now asks whether any container exists at all (`docker ps -aq`).
+- **`auto_updates` could silently turn on a nightly reboot.** It sits in the
+  harmless group, but `hardening_config.yaml` ships `auto_reboot: true` at
+  03:30 while backups start 02:00. "Fix now" now asks a separate question
+  for it, naming the configured reboot time, default No.
+- **`check_hardening_env` ignored `data["error"]`.** A bad `ALLOWED_IP_<n>`
+  or an out-of-range `SSH_PORT` made the `.env` check report OK while every
+  `hardening_*` area SKIPped underneath on the same error — a report that
+  read clean and mailed nothing with `--quiet`. It now reads the error and
+  FAILs with it (or SKIPs when the error has nothing to do with the `.env`,
+  e.g. "root required").
+- **A hung hardening audit could wipe the whole readiness report.**
+  `getScripts.py` ran `server-readiness.py --brief` under a 120 s timeout
+  while that script's own internal hardening-audit timeout was 180 s — the
+  outer timeout could fire first and discard everything already printed.
+  The internal timeout is now 120 s and the outer one 240 s, so the inner
+  timeout always fires first and only that one finding is lost.
 
 ### Upgrade note
 
