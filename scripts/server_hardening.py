@@ -2,7 +2,7 @@
 """
 Server-Härtungs-Skript
 =======================
-Version: 1.8.0 / Date: 11.06.2026
+Version: 1.9.0 / Date: 28.09.2026
 
 Prüft und härtet: UFW, Fail2Ban, SSH, Kernel, Kernel-Module, Docker,
 Auto-Updates, auditd, AIDE, Nginx
@@ -19,7 +19,7 @@ import subprocess
 import sys
 import os
 
-SCRIPT_VERSION = "1.8.0"
+SCRIPT_VERSION = "1.9.0"
 import re
 import json
 import shutil
@@ -71,6 +71,26 @@ def run(cmd, check=False, timeout=30):
     if check and r.returncode != 0:
         return None
     return r.stdout.strip()
+
+# apt on a fresh host runs `update` first and may pull in dependencies (AIDE
+# brings a mail transport agent). 30 s — run()'s default — was not enough on
+# 28.09.2026: the call timed out and the install finished unseen in the
+# background. DEBIAN_FRONTEND keeps a debconf prompt from waiting on a
+# terminal nobody is looking at.
+APT_INSTALL_TIMEOUT = 600
+
+
+def apt_install(packages):
+    """Install Debian packages non-interactively with a timeout that fits apt."""
+    return run("DEBIAN_FRONTEND=noninteractive apt-get update -qq && "
+               f"DEBIAN_FRONTEND=noninteractive apt-get install -y -qq {packages}",
+               timeout=APT_INSTALL_TIMEOUT)
+
+
+def _ssh_value_matches(current, expected):
+    """sshd_config values compared the way sshd reads them: case-insensitive,
+    any run of whitespace equal to one space."""
+    return " ".join(str(current).split()).lower() == " ".join(str(expected).split()).lower()
 
 def backup_file(path):
     """Erstellt ein Backup mit Zeitstempel."""
@@ -283,7 +303,7 @@ def audit_ufw(config, apply=False, force=False):
         fail("UFW nicht installiert")
         if apply:
             info("Installiere UFW...")
-            run("apt-get update -qq && apt-get install -y -qq ufw")
+            apt_install("ufw")
         else:
             return
 
@@ -466,7 +486,7 @@ def audit_fail2ban(config, apply=False, force=False):
         if apply:
             info("Installiere Fail2Ban...")
             # python3-systemd is required for the 'backend = systemd' jails below.
-            run("apt-get update -qq && apt-get install -y -qq fail2ban python3-systemd")
+            apt_install("fail2ban python3-systemd")
         else:
             return
 
@@ -644,7 +664,7 @@ def audit_ssh(config, apply=False, force=False):
 
         if match:
             current = match.group(1).strip()
-            if current.lower() == expected_str.lower():
+            if _ssh_value_matches(current, expected_str):
                 ok(f"{key}: {current}")
                 Stats.ok_count += 1
             else:
@@ -987,7 +1007,7 @@ def audit_auto_updates(config, apply=False, force=False):
         Stats.fail_count += 1
         if apply:
             info("Installiere unattended-upgrades...")
-            run("apt-get update -qq && apt-get install -y -qq unattended-upgrades apt-listchanges")
+            apt_install("unattended-upgrades apt-listchanges")
 
     auto_file = Path("/etc/apt/apt.conf.d/20auto-upgrades")
     periodic_ok = auto_file.exists() and 'Unattended-Upgrade "1"' in auto_file.read_text()
@@ -1078,7 +1098,7 @@ def audit_auditd(config, apply=False, force=False):
         Stats.fail_count += 1
         if apply:
             info("Installiere auditd...")
-            run("apt-get update -qq && apt-get install -y -qq auditd audispd-plugins")
+            apt_install("auditd audispd-plugins")
 
     rules_file = Path("/etc/audit/rules.d/hardening.rules")
     if rules_file.exists():
@@ -1118,7 +1138,7 @@ def audit_aide(config, apply=False, force=False):
         Stats.fail_count += 1
         if apply:
             info("Installiere AIDE...")
-            run("apt-get update -qq && apt-get install -y -qq aide aide-common")
+            apt_install("aide aide-common")
 
     db = Path("/var/lib/aide/aide.db")
     if db.exists():
