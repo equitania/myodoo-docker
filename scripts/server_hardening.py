@@ -310,14 +310,15 @@ def audit_ufw(config, apply=False, force=False):
     # 2. Status prüfen
     sub("UFW Status")
     status = run("ufw status verbose")
+    enable_pending = False
     if "Status: active" in status:
         ok("UFW ist aktiv")
     else:
         fail("UFW ist NICHT aktiv")
-        if apply:
-            run("echo 'y' | ufw enable")
-            ok("UFW aktiviert")
-            Stats.fix_count += 1
+        # Enabled only at the very end, after the defaults and every allow
+        # rule exist — enabling first refused new SSH connections for the
+        # seconds in between (28.09.2026).
+        enable_pending = apply
 
     # 3. Default Policies
     sub("Default Policies")
@@ -470,6 +471,11 @@ def audit_ufw(config, apply=False, force=False):
             info(f"Ausführe: {cmd}")
             run(cmd)
             Stats.fix_count += 1
+
+    if enable_pending:
+        run("echo 'y' | ufw enable")
+        ok("UFW aktiviert")
+        Stats.fix_count += 1
 
 
 # ─── MODUL: Fail2Ban ─────────────────────────────────────────
@@ -1356,6 +1362,30 @@ def audit_open_ports(config, apply=False, force=False):
                 Stats.ok_count += 1
 
 
+# Apply order is part of the safety story: the firewall rule for a new SSH
+# port must exist before sshd moves to it, so `-m ssh ufw` runs ufw first.
+MODULE_ORDER = ("ufw", "fail2ban", "ssh", "sysctl", "sysctl_persist",
+                "kernel_modules", "docker", "auto_updates", "auditd", "aide",
+                "nginx", "ports")
+
+
+def module_functions():
+    """Name -> audit function, looked up at call time so tests can patch them."""
+    return {
+        "ufw": audit_ufw, "fail2ban": audit_fail2ban, "ssh": audit_ssh,
+        "sysctl": audit_sysctl, "sysctl_persist": audit_sysctl_persist,
+        "kernel_modules": audit_kernel_modules, "docker": audit_docker,
+        "auto_updates": audit_auto_updates, "auditd": audit_auditd,
+        "aide": audit_aide, "nginx": audit_nginx, "ports": audit_open_ports,
+    }
+
+
+def ordered_modules(requested):
+    """The requested modules in MODULE_ORDER, whatever order they were typed in."""
+    wanted = set(requested) if requested else set(MODULE_ORDER)
+    return [name for name in MODULE_ORDER if name in wanted]
+
+
 # ─── HAUPTPROGRAMM ───────────────────────────────────────────
 def main():
     parser = argparse.ArgumentParser(
@@ -1431,9 +1461,7 @@ Beispiele:
     parser.add_argument("-f", "--force", action="store_true",
                         help="Keine Rückfragen")
     parser.add_argument("-m", "--module", nargs="+",
-                        choices=["ufw", "fail2ban", "ssh", "sysctl", "sysctl_persist",
-                                 "kernel_modules", "docker", "auto_updates", "auditd",
-                                 "aide", "nginx", "ports"],
+                        choices=list(MODULE_ORDER),
                         help="Nur bestimmte Module ausführen")
     args = parser.parse_args()
 
@@ -1520,26 +1548,9 @@ Beispiele:
         info("Dry-Run Modus - keine Änderungen")
         info("Mit --apply ausführen um zu härten\n")
 
-    modules = {
-        "ufw":            audit_ufw,
-        "fail2ban":       audit_fail2ban,
-        "ssh":            audit_ssh,
-        "sysctl":         audit_sysctl,
-        "sysctl_persist": audit_sysctl_persist,
-        "kernel_modules": audit_kernel_modules,
-        "docker":         audit_docker,
-        "auto_updates":   audit_auto_updates,
-        "auditd":         audit_auditd,
-        "aide":           audit_aide,
-        "nginx":          audit_nginx,
-        "ports":          audit_open_ports,
-    }
-
-    selected = args.module or list(modules.keys())
-
-    for mod_name in selected:
-        if mod_name in modules:
-            modules[mod_name](config, apply=args.apply, force=args.force)
+    modules = module_functions()
+    for mod_name in ordered_modules(args.module):
+        modules[mod_name](config, apply=args.apply, force=args.force)
 
     # Zusammenfassung
     header("ZUSAMMENFASSUNG")

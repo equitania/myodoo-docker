@@ -65,5 +65,70 @@ class SshValueMatchTest(unittest.TestCase):
         self.assertFalse(sh._ssh_value_matches("LANG LC_* COLORTERM", "LANG LC_*"))
 
 
+UFW_CONFIG = {
+    "ufw": {
+        "defaults": {"incoming": "deny", "outgoing": "allow", "routed": "deny"},
+        "ipv6": True,
+        "public_ports": [{"port": 80, "proto": "tcp", "comment": "HTTP"}],
+        "restricted_ports": [{"port": 22, "proto": "tcp", "comment": "SSH",
+                              "allowed_ips": [{"ip": "192.0.2.10", "comment": "Office A"}]}],
+    }
+}
+
+
+class UfwOrderTest(unittest.TestCase):
+    """For a few seconds on 28.09.2026 new SSH connections were refused:
+    UFW was enabled before its allow rules existed."""
+
+    def test_enable_comes_after_every_allow(self):
+        calls = []
+
+        def fake_run(cmd, check=False, timeout=30):
+            calls.append(cmd)
+            if cmd == "ufw status verbose":
+                return "Status: inactive"
+            if cmd == "cat /etc/default/ufw":
+                return "IPV6=yes"
+            return ""
+
+        with mock.patch.object(sh, "run", side_effect=fake_run), \
+             mock.patch.object(sh.shutil, "which", return_value="/usr/sbin/ufw"), \
+             redirect_stdout(io.StringIO()):
+            sh.audit_ufw(UFW_CONFIG, apply=True, force=True)
+
+        enable = [i for i, c in enumerate(calls) if "ufw enable" in c]
+        allows = [i for i, c in enumerate(calls) if c.startswith("ufw allow")]
+        self.assertEqual(len(enable), 1)
+        self.assertTrue(allows)
+        self.assertGreater(enable[0], max(allows))
+
+    def test_an_active_ufw_is_not_enabled_again(self):
+        calls = []
+
+        def fake_run(cmd, check=False, timeout=30):
+            calls.append(cmd)
+            if cmd == "ufw status verbose":
+                return "Status: active"
+            return "IPV6=yes" if cmd == "cat /etc/default/ufw" else ""
+
+        with mock.patch.object(sh, "run", side_effect=fake_run), \
+             mock.patch.object(sh.shutil, "which", return_value="/usr/sbin/ufw"), \
+             redirect_stdout(io.StringIO()):
+            sh.audit_ufw(UFW_CONFIG, apply=True, force=True)
+        self.assertFalse(any("ufw enable" in c for c in calls))
+
+
+class ModuleOrderTest(unittest.TestCase):
+    def test_typed_order_does_not_matter(self):
+        self.assertEqual(sh.ordered_modules(["ssh", "ufw", "fail2ban"]),
+                         ["ufw", "fail2ban", "ssh"])
+
+    def test_no_selection_means_all_in_order(self):
+        self.assertEqual(sh.ordered_modules(None), list(sh.MODULE_ORDER))
+
+    def test_every_ordered_module_has_a_function(self):
+        self.assertEqual(set(sh.module_functions()), set(sh.MODULE_ORDER))
+
+
 if __name__ == "__main__":
     unittest.main()
