@@ -1,5 +1,86 @@
 # Release Notes
 
+## `ups` Checks and Offers the Security Hardening (28.09.2026)
+
+*getScripts.py v9.26.0 · server-readiness.py v1.11.0 · server_hardening.py v1.9.0 ·
+bootstrap.sh · tests · docs*
+
+### Added
+
+- **`server_hardening.py --json`.** Runs the same audit as a plain dry-run
+  and prints it as one JSON document instead of coloured text, so it can be
+  consumed by another script instead of scraped from console output. Writes
+  nothing — unlike the old dry-run, which still seeded
+  `~/.config/myodoo-docker/` from `.env.example`. Admin IPs never appear as
+  addresses: a finding names its `ALLOWED_IP_<n>_COMMENT`, or the bare slot
+  when there is no comment. Any error (missing root, unreadable/invalid
+  config, a module crash) becomes a JSON error document with exit 1, never a
+  traceback.
+- **Nine new `server-readiness.py` checks** — `hardening_env`,
+  `hardening_firewall`, `hardening_fail2ban`, `hardening_ssh` (FAIL when off),
+  `hardening_kernel`, `hardening_docker`, `hardening_updates`,
+  `hardening_integrity`, `root_login_locked` (WARN when off) — sharing one
+  `--json` audit per report. Each is mutable on its own, so a server that
+  deviates on purpose (a corporate firewall in front of it, say) mutes only
+  that part and keeps reporting on the rest.
+- **`ups` offers to close what it finds.** On a terminal, after the storage-
+  driver offer and before the readiness report, `ups` runs the audit and, if
+  anything is off, offers a menu: fix now / show the commands / later /
+  mute one area. "Fix now" applies the harmless modules directly and
+  applies UFW/SSH/the Docker daemon only behind a lockout gate: every
+  established SSH connection must come from an allowlisted IP, `SSH_PORT`
+  must match the port sshd actually listens on, and `ssh.socket` must be
+  inactive — otherwise it prints the commands and the reason instead, with
+  the six-step manual sequence on a port mismatch. The Docker daemon
+  restart only runs with zero containers running. `ups` never changes the
+  SSH port. Without a terminal (cron, CI) it only reports, exactly as
+  before.
+- **`.env` creation.** When `/root/.config/myodoo-docker/.env` and any
+  legacy `/root/.env` are both missing, `ups` offers to create the central
+  file: `SSH_PORT` suggested from `sshd -T`, `ALLOWED_IP_1` from the current
+  SSH session, more IPs optional. Written 0600 in a 0700 directory, every
+  template line beyond `SSH_PORT`/`ALLOWED_IP_<n>` commented out (so backups
+  are not silently switched to encryption), an existing file never
+  overwritten.
+
+### Fixed
+
+Eight defects surfaced while walking the hardening through module by module
+on a fresh VPS on 28.09.2026:
+
+- `getScripts.py` never delivered `server_hardening.py` or
+  `hardening_config.yaml` to `/root` — the documented `/root/server_hardening.py`
+  path did not exist until the repository was cloned by hand.
+- `check_backup_config`/`check_update_config` pointed a host with no
+  container at all to `ownerp_migrate.py --from-docker`, which has nothing
+  to rebuild from there — they now point at `wizup`.
+- With no `.env`, hardening could never run in the first place — nothing on
+  the host offered to create one.
+- `--json` (and the old dry-run) leaked allowlisted admin IPs into its
+  output — they now appear only as their `.env` comment.
+- `apt-get install` ran with the 30 s default timeout; AIDE (which pulls in
+  a mail transport agent) timed out on a fresh VPS and kept installing in
+  the background — installs now get `timeout=600` and
+  `DEBIAN_FRONTEND=noninteractive`.
+- `--apply` enabled UFW before adding any allow rule, refusing new SSH
+  connections for a few seconds — rules are now set first, `ufw enable`
+  last.
+- The SSH audit compared `sshd_config` values literally; Debian's own
+  `Subsystem sftp     /usr/lib/openssh/sftp-server` (extra spaces) reported
+  a permanent false mismatch — comparison now collapses whitespace first.
+- Cloud images lock root's password and set `disable_root: true`, which
+  conflicts with a `hardening_config.yaml` expecting `PermitRootLogin yes`
+  — nothing reported the mismatch; the new `root_login_locked` check does.
+
+### Upgrade note
+
+Every server where the hardening was never applied shows new FAILs after
+its first `ups` with this version — in the block after `ups`, in `chk`, and
+in the Monday mail. That is the intent: `chk` reported none of this before,
+because none of it was among its checks. A server that deviates on purpose
+mutes the area once, with a reason: `ownerp_mute.py hardening_firewall
+--reason "..."`.
+
 ## Readiness Check Warns When Odoo Outgrows the Machine (17.09.2026)
 
 *server-readiness.py v1.10.0 · tests/test_server_readiness.py ·

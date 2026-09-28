@@ -11,9 +11,46 @@ in this repository, stay in `CLAUDE.md`.
 
 ### Key Components
 
-#### 1. getScripts.py (v9.25.0)
+#### 1. getScripts.py (v9.26.0)
 - **Purpose**: Main installation and update script
 - **Features**:
+  - `offer_security_hardening()` (v9.26.0, 28.09.2026): the hardening
+    `bootstrap.sh` deliberately leaves off (UFW installed but inactive) had
+    nothing on the host reminding an operator of it after the bootstrap's
+    closing message scrolled away — a fresh VPS provisioned by the book on
+    28.09.2026 stayed wide open (253 failed SSH logins in six hours) because
+    nobody ran `server_hardening.py` a second time. Runs after
+    `offer_storage_driver_mute()`, before the readiness report, so the report
+    reflects whatever the operator chose. Silent unless stdin/stdout are a
+    terminal, `~/server_hardening.py` exists, its `--json` audit ran, and at
+    least one `hardening_*` check is non-OK and not muted. If
+    `~/.config/myodoo-docker/.env` is missing (and no legacy `~/.env`
+    exists), offers to create it first — `SSH_PORT` suggested from
+    `sshd -T`, `ALLOWED_IP_1` from the current SSH session(s) read via `ss`,
+    further IPs optional; written 0600 in a 0700 directory, every other
+    template line commented out (so backups are not silently switched to
+    encryption), an existing file never touched. Then a menu: fix now / show
+    the commands / later / mute one area (`ownerp_mute.py <check_id>
+    --reason "..."`, argument mandatory). "Fix now" applies the harmless
+    modules (`sysctl sysctl_persist kernel_modules auto_updates auditd aide
+    fail2ban`) directly with `-f`, AIDE last so its database does not
+    immediately report the other changes; `ufw`/`ssh` only behind the
+    **lockout gate**: every established SSH peer on sshd's port (`ss -tnH
+    state established` — not `$SSH_CONNECTION`, which `sudo` strips) must be
+    allowlisted, `SSH_PORT` must equal the port sshd actually listens on,
+    and `ssh.socket` must be inactive; failing any of those prints the
+    command and the reason instead, and a port mismatch prints the six-step
+    manual sequence (`PORT_CHANGE_STEPS`) instead of touching anything.
+    `docker`'s `daemon.json` is applied either way; the restart only runs
+    with zero containers running, else it is a maintenance-window hint.
+    Never changes the SSH port. Any failure anywhere in the gate — including
+    Ctrl-C — is "skip", never a broken `ups`
+  - `copy_scripts()` (v9.26.0, 28.09.2026) now also delivers
+    `server_hardening.py` and `hardening_config.yaml`, so
+    `/root/server_hardening.py` — the path the documentation has always
+    named — actually exists. The YAML is overwritten on every `ups` like
+    every other delivered file; host-specific values belong in `.env`, never
+    in it
   - `self_update_and_reexec()` (v9.25.0, 15.09.2026): a newer getScripts.py
     used to keep executing the OLD code for the rest of that same `ups` run —
     `update_repository()` pulled it, but the interpreter had already loaded
@@ -789,13 +826,36 @@ in this repository, stay in `CLAUDE.md`.
   risk an expiry would guard against — a mute nobody remembers — is already
   covered by the visible `[MUTED]` line and the count in every summary
 
-#### 16. server-readiness.py (v1.10.0)
+#### 16. server-readiness.py (v1.11.0)
 - **Purpose**: Reports whether this server matches the state myodoo-docker
-  expects — 18 read-only checks (cron, logrotate, backup and update
+  expects — 27 read-only checks (cron, logrotate, backup and update
   configuration, Docker storage driver, virus-scanner exclusion for
-  `/var/lib/docker/`, nginx, certbot timing, script versions, Odoo CPU/RAM sizing), each non-OK finding carrying exactly one copy-paste fix. `chk`,
-  `dostat`/`konsole`, the block after `ups` and the Monday cron all go through
-  the same `run_checks()`, so a mute can never disagree between them
+  `/var/lib/docker/`, nginx, certbot timing, script versions, Odoo CPU/RAM
+  sizing, nine security-hardening areas), each non-OK finding carrying
+  exactly one copy-paste fix. `chk`, `dostat`/`konsole`, the block after
+  `ups` and the Monday cron all go through the same `run_checks()`, so a mute
+  can never disagree between them
+- **Nine hardening checks** (v1.11.0, 28.09.2026): `hardening_env`,
+  `hardening_firewall`, `hardening_fail2ban`, `hardening_ssh` (FAIL when off)
+  and `hardening_kernel`, `hardening_docker`, `hardening_updates`,
+  `hardening_integrity`, `root_login_locked` (WARN when off) — one audit run
+  (`server_hardening.py --json`, subprocess, 180 s timeout) shared and cached
+  on the context, so nine checks cost one process, not nine. Each id is
+  mutable on its own — `ownerp_mute.py hardening_firewall --reason "..."`
+  mutes only the firewall on a host that deviates on purpose (a corporate
+  firewall in front of it, say), everything else keeps reporting. `hardening_env`
+  points the fix at `ups` (which offers to create the file) and at the
+  manual `cp`/`mcedit` alternative; the other checks' fix names the module(s)
+  and `ups`. **SKIP, never a false alarm**, when `server_hardening.py` is
+  missing (a host one `ups` behind), the subprocess fails or times out, or
+  the JSON does not parse — the SKIP detail names the reason.
+  `root_login_locked`: cloud images lock root's password and set
+  `disable_root: true` in `/etc/cloud/cloud.cfg`, which conflicts with a
+  `hardening_config.yaml` expecting `PermitRootLogin yes`; WARN, never
+  auto-fixed (needs a password). On a host with no container at all,
+  `check_backup_config`/`check_update_config` point at `wizup` (add the
+  first instance) instead of `ownerp_migrate.py --from-docker`, which has
+  nothing to rebuild from there
 - **Never writes.** No `/etc` change, no service restart, no network call —
   safe to run on a live server at any time
 - **`MUTED`**: a finding that is true and simply does not apply on this host
@@ -851,3 +911,52 @@ in this repository, stay in `CLAUDE.md`.
   reported `ownerp_cron.py`'s own `.bak_<timestamp>` backup as a duplicate
   job that in fact never ran. See `ownerp_cron.py` above, which fixes the
   backup's location for the same reason
+
+#### 17. server_hardening.py (v1.9.0)
+- **Purpose**: Audits and applies the server hardening `bootstrap.sh`
+  deliberately leaves off (UFW installed but inactive) — UFW, fail2ban, SSH,
+  sysctl, sysctl persistence, kernel module blacklisting, the Docker daemon,
+  automatic security updates, auditd and AIDE, plus a read-only nginx/ports
+  overview. Default is a dry-run audit; `--apply` writes, always with a
+  `<file>.backup_YYYYMMDD_HHMMSS` before touching anything. SSH reloads only
+  after `sshd -t` accepts the candidate config, atomically. Docker is never
+  auto-restarted (would stop every container)
+- **`--json`** (v1.9.0, 28.09.2026): prints the audit — never combined with
+  `--apply` — as one JSON document instead of coloured text, so
+  `server-readiness.py` and `getScripts.py`'s hardening offer can consume it
+  without scraping console output. Writes nothing: seeding
+  `~/.config/myodoo-docker/` from `.env.example` now happens only under
+  `--apply` (or `getScripts.py`'s own offer), never during a plain audit —
+  every other readiness check is side-effect-free too, and this one wasn't.
+  Admin IPs never appear as addresses: a finding naming an allowlist entry
+  carries its `ALLOWED_IP_<n>_COMMENT`, or the bare `ALLOWED_IP_<n>` slot
+  when it has no comment; only the text-mode summary line (console, not
+  JSON) still prints the address, because an operator at the console needs
+  it to act. A root check, a config error or a module crash all become a
+  JSON error document with exit 1, never a traceback with empty stdout
+- **Modules always run in a fixed order** (v1.9.0): `ufw` before `fail2ban`
+  before `ssh`, regardless of the order given to `-m` — `-m ssh ufw` used to
+  run SSH first
+- **UFW: rules before enable** (v1.9.0, first-setup defect found
+  28.09.2026): `--apply` used to enable UFW before adding any allow rule, so
+  new SSH connections were refused for a few seconds. Defaults and every
+  allow rule are now set first, `ufw enable` runs last
+- **apt installs get a real timeout** (v1.9.0): every `apt-get install` now
+  runs with `timeout=600` and `DEBIAN_FRONTEND=noninteractive` — AIDE pulls
+  in a mail transport agent whose debconf prompt nobody would see, and used
+  to time out at the old 30 s default and keep installing in the background
+- **SSH comparison ignores whitespace** (v1.9.0): Debian writes
+  `Subsystem sftp     /usr/lib/openssh/sftp-server` with runs of spaces the
+  audit used to compare literally, reporting a permanent false mismatch;
+  values are now compared after collapsing whitespace
+- **Delivered to `/root/server_hardening.py`** since `getScripts.py` 9.26.0
+  (`copy_scripts()`, together with `hardening_config.yaml`) — the path the
+  documentation has always named now actually exists after one `ups`
+- **`AREAS`** groups the modules into the seven check ids `--json` reports
+  under (`hardening_firewall`→`ufw`, `hardening_fail2ban`→`fail2ban`,
+  `hardening_ssh`→`ssh`, `hardening_kernel`→`sysctl`+`sysctl_persist`+
+  `kernel_modules`, `hardening_docker`→`docker`, `hardening_updates`→
+  `auto_updates`, `hardening_integrity`→`auditd`+`aide`), each with its
+  `on_fail` severity. `server-readiness.py`'s `HARDENING_AREAS` mirrors this
+  list rather than importing it — that script must keep running without
+  PyYAML — so a test holds both equal

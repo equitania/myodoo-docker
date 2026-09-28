@@ -1,6 +1,6 @@
 #!/bin/bash
 # bootstrap.sh — Out-of-the-box initializer for fresh Debian/Ubuntu servers
-# Version 1.15.2 — 17.09.2026
+# Version 1.15.3 — 28.09.2026
 #
 # Supported: Debian 12 (bookworm) / 13 (trixie); Ubuntu 20.04/22.04/24.04/26.04
 # (focal/jammy/noble/resolute). OS + codename are auto-detected from os-release;
@@ -90,8 +90,8 @@ set -Eeuo pipefail
 # Configuration
 # ──────────────────────────────────────────
 
-SCRIPT_VERSION="1.15.2"
-SCRIPT_DATE="17.09.2026"
+SCRIPT_VERSION="1.15.3"
+SCRIPT_DATE="28.09.2026"
 
 REPO_URL="${REPO_URL:-https://github.com/equitania/myodoo-docker.git}"
 REPO_BRANCH="${REPO_BRANCH:-2026}"
@@ -890,9 +890,9 @@ print_summary() {
     echo "  • Start the Fish shell:  exec fish"
     echo "    (Do NOT 'source' the Fish config from bash — it uses Fish syntax.)"
     echo "  • getScripts.py has configured Fish and offered to set it as your default shell."
-    echo "  • Apply full hardening: fill /root/.config/myodoo-docker/.env, then run"
-    echo "    'sudo python3 ${TARGET_HOME}/myodoo-docker/scripts/server_hardening.py' (audit),"
-    echo "    then add --apply.  See --help for what each module changes."
+    echo "  • Security hardening is NOT applied yet (UFW is off). Run 'ups' in a terminal:"
+    echo "    it creates /root/.config/myodoo-docker/.env and offers the hardening,"
+    echo "    firewall and SSH only after a lockout check. 'chk' lists what is open."
     echo "  • Set up maintenance cron (after configuring container2backup.yaml):"
     echo "    'sudo ${TARGET_HOME}/setup-maintenance-cron.sh' (backup + cert renewal + DSGVO weblog purge)."
     echo "  • Deploy the nginx base files BEFORE creating vhosts (so 'include nginxconfig.io/...'"

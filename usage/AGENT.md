@@ -2,7 +2,7 @@
   Capability Card — generated/maintained via the `cli-capability-card` skill.
   Audience: an LLM/agent that wants to USE this toolkit. Keep it dense and current.
   Command tables extracted from `--help` output (argparse) and script headers (bash)
-  on 15.09.2026 — re-extract after CLI changes. No Click introspection available:
+  on 28.09.2026 — re-extract after CLI changes. No Click introspection available:
   this repo is a multi-script admin toolkit, flag coverage is taken verbatim from
   each script's --help/usage text.
 -->
@@ -39,8 +39,8 @@ All commands run as **root** on the target server. The interactive login shell i
 | Command | Alias | Purpose | Args / Flags |
 |---|---|---|---|
 | `bootstrap.sh` | — | Fresh-server baseline init (idempotent) | env: `REPO_BRANCH=2026` `REPO_URL=…` `INSTALL_NGINX=1` `INSTALL_CERTBOT=1` `INSTALL_DOCKER=1` `INSTALL_UFW=1` `INSTALL_FAIL2BAN=1` `INSTALL_UNATTENDED=1` `INSTALL_PYTHON_DEPS=1` `RUN_GETSCRIPTS=1` `SELF_INSTALL=1` (set `0` to skip) |
-| `getScripts.py` | `ups` (self-updates and restarts mid-run when the repo pull brings a newer version, so one `ups` is enough) | Deploy fish config, aliases, management scripts to `/root`. Console is lean: without `-v` only server-optimization status, warnings and errors appear; every INFO line and all child output (apt, git, curl) goes to `~/getscripts.log`, and a failed command's output tail comes back on screen | `-v/--verbose` · `--clear-cache` · `--no-cache` · `--debug` · `--dns-check` · `--proxy-check` · `--first-run` · `--reconfigure` |
-| `server_hardening.py` | — | Audit (default) / apply server hardening | `-c/--config CONFIG` · `-a/--apply` · `-f/--force` · `-m/--module {ufw,fail2ban,ssh,sysctl,sysctl_persist,kernel_modules,docker,auto_updates,auditd,aide,nginx,ports}…` |
+| `getScripts.py` | `ups` (self-updates and restarts mid-run when the repo pull brings a newer version, so one `ups` is enough) | Deploy fish config, aliases, management scripts to `/root`. Console is lean: without `-v` only server-optimization status, warnings and errors appear; every INFO line and all child output (apt, git, curl) goes to `~/getscripts.log`, and a failed command's output tail comes back on screen. On a terminal it also checks the security hardening and offers to close the gaps: if `/root/.config/myodoo-docker/.env` is missing (and no legacy `/root/.env` exists), it offers to create it (`SSH_PORT` from `sshd -T`, `ALLOWED_IP_1` from the current SSH session); then, if any hardening area is off, a menu — fix now / show the commands / later / mute one area. UFW and SSH are only applied when every established SSH connection comes from an allowlist IP, `SSH_PORT` equals the port sshd actually listens on, and `ssh.socket` is inactive; otherwise it prints the commands and, on a port mismatch, the six-step port-change sequence. Docker's `daemon.json` is written either way, but the daemon restart only runs with zero containers running. Never changes the SSH port | `-v/--verbose` · `--clear-cache` · `--no-cache` · `--debug` · `--dns-check` · `--proxy-check` · `--first-run` · `--reconfigure` |
+| `server_hardening.py` | — | Audit (default) / apply server hardening. Delivered to `/root/server_hardening.py` since getScripts 9.26.0 — that path in the recipes below is now literal, not aspirational | `-c/--config CONFIG` · `-a/--apply` · `-f/--force` · `-m/--module {ufw,fail2ban,ssh,sysctl,sysctl_persist,kernel_modules,docker,auto_updates,auditd,aide,nginx,ports}…` · `--json` (audit only, exclusive with `--apply`: one JSON document on stdout, writes nothing, admin IPs appear only as their `.env` comment or `ALLOWED_IP_<n>` — never the address; consumed by `server-readiness.py` and by `ups`'s offer). Modules always run in a fixed order (`ufw` before `fail2ban` before `ssh`) regardless of the order given to `-m` |
 | `deploy-nginx-base.sh` | — | Roll out shared nginx includes + maintenance page + nginx.conf (backup/validate/rollback) | `--no-main-conf` · `--dry-run` · `--src DIR` · `--dest DIR` · `--help` |
 | `ngx-conf-wizard.sh` | — | Interactive builder for the `nginx-set-conf` YAML (`$HOME/docker-builds/ngx-conf/`) | interactive only (template, domain, cert, ports, "one more?" loop, optional deploy) |
 | `nginx-set-conf` | `ngxset` | Generate + deploy vhosts from the wizard YAML (PyPI tool) | `--config_path=$HOME/docker-builds/ngx-conf/` (alias preset) |
@@ -58,7 +58,7 @@ All commands run as **root** on the target server. The interactive login shell i
 | `nightly-cleanup.sh` | — | Restart containers over memory threshold (Odoo→PG order) | env: `MEMORY_THRESHOLD=90` · `DRY_RUN=1` |
 | `setup-maintenance-cron.sh` | — | Install `/etc/cron.d/myodoo-maintenance` + logrotate (idempotent) | `--remove` · env: `SCRIPT_DIR=/root` |
 | `ownerp_cron.py` | `docron` (edit: `konsole`) | Report + guided editing of `/etc/cron.d/myodoo-maintenance`. **Bare call on a real terminal is interactive**: report, then a German numbered on/off menu (a script name is one entry even when it is two cron lines, e.g. `container2backup`). **Agents must never rely on that prompt** — always pass `--brief`/`--json`/`--set`/`--enable`/`--disable`, or `--no-input` for the plain report; every one of those (and any non-TTY invocation) skips the menu exactly as before | `--path FILE` · `--brief` · `--json` · `--no-input` (suppress the menu on a terminal) · `--set JOB --schedule EXPR` · `--enable JOB` \| `--disable JOB` (script name, with or without `.py`, switches every line of it) |
-| `server-readiness.py` | `chk` | Report config drift vs. expected server state; read-only, one fix command per finding. A host with `docron --disable container2backup` or `docron --disable odoo_build_cache` mutes the checks that job explains (`backup_recency`+`backup_config`, or `update_config`) instead of failing on a config that is missing on purpose; `dostat`/`konsole` show the same host as `off`, not as an error | `--brief` (non-OK only) \| `--quiet` (silent unless WARN/FAIL; for cron) \| `--muted` (list this host's muted checks) · `--root DIR` `--home DIR` `--repo DIR` (testing) |
+| `server-readiness.py` | `chk` | Report config drift vs. expected server state; read-only, one fix command per finding. A host with `docron --disable container2backup` or `docron --disable odoo_build_cache` mutes the checks that job explains (`backup_recency`+`backup_config`, or `update_config`) instead of failing on a config that is missing on purpose; `dostat`/`konsole` show the same host as `off`, not as an error. Nine checks run `server_hardening.py --json` once per report and share its result: `hardening_env`, `hardening_firewall`, `hardening_fail2ban`, `hardening_ssh` (FAIL when off) and `hardening_kernel`, `hardening_docker`, `hardening_updates`, `hardening_integrity`, `root_login_locked` (WARN when off) — each mutable on its own (`ownerp_mute.py hardening_firewall --reason "…"`), so a server that deviates on purpose (e.g. behind a corporate firewall) mutes only that part. SKIP when `server_hardening.py` is missing or its audit fails, never a false alarm | `--brief` (non-OK only) \| `--quiet` (silent unless WARN/FAIL; for cron) \| `--muted` (list this host's muted checks) · `--root DIR` `--home DIR` `--repo DIR` (testing) |
 | `dist-upgrade-debian.sh` | — | Guided Debian major upgrade (bookworm→trixie→…) | `[CODENAME]` optional target · `--yes` |
 | `check_docker_volumes.sh` | `dkvol` | List volumes + referencing containers | none |
 
@@ -70,6 +70,13 @@ Notation: `[ARG]` optional positional · `ARG` required positional · `a|b` choi
 ```bash
 curl -fsSL https://raw.githubusercontent.com/equitania/myodoo-docker/2026/scripts/bootstrap.sh \
   -o /opt/myodoo-bootstrap.sh && chmod +x /opt/myodoo-bootstrap.sh && /opt/myodoo-bootstrap.sh
+ups   # on a terminal: offers to create .env (SSH_PORT, ALLOWED_IP_1..n), then the hardening menu
+```
+`ups` fixes the harmless modules directly and applies UFW/SSH/Docker only after a lockout
+check (every established SSH session must be on the allowlist, `SSH_PORT` must match sshd,
+`ssh.socket` must be inactive); when that check fails it prints the commands instead. Manual
+alternative, e.g. from cron/CI or to control the order by hand:
+```bash
 mcedit /root/.config/myodoo-docker/.env          # SSH_PORT, ALLOWED_IP_1..n
 sudo python3 /root/server_hardening.py           # audit first — changes nothing
 sudo python3 /root/server_hardening.py --apply   # then apply (ssh module last, keep a 2nd session open)
@@ -232,6 +239,19 @@ CIDR (wget/apt/urllib do not). Full walkthrough: `docs/usage/07-proxy.md`.
   `bash -c '…'`. Scripts themselves are bash/python and run normally.
 - **Hardening order:** apply the `ssh` module last, with a second open SSH session as safety net.
   `docker` module never auto-restarts the daemon; UFW rules only take effect once UFW is enabled.
+- **Cloud images lock root.** `disable_root: true` in `/etc/cloud/cloud.cfg` plus a locked
+  password (`passwd -S root` reports `L`) is deliberate on most cloud images, and conflicts with
+  a `hardening_config.yaml` that expects `PermitRootLogin yes` — `root_login_locked` WARNs, never
+  fixes it automatically (it needs a password). Fix: `passwd root` and a drop-in
+  `/etc/cloud/cloud.cfg.d/99-ownerp-root.cfg` with `disable_root: false`.
+- **Changing the SSH port is manual, always.** `ups` and `server_hardening.py --apply` never touch
+  it — the provider's firewall/security group must open the new port first, which nothing on the
+  host can see. When `SSH_PORT` in `.env` differs from the port sshd listens on, `ups` prints this
+  sequence instead of applying anything guarded: (1) open the new port for the admin IPs at the
+  provider, old port still open; (2) set `SSH_PORT` in `/root/.config/myodoo-docker/.env`;
+  (3) `server_hardening.py --apply -f -m ufw fail2ban ssh`; (4) log in on the new port from a
+  second terminal, keep the old session open; (5) `ufw delete allow from <IP> to any port <old>`;
+  (6) close the old port at the provider.
 - **Proxy hosts:** the Docker daemon drop-in written by `--proxy-check` (getScripts ≥ 9.8.0) only
   takes effect after `systemctl restart docker` — maintenance window, restarts all containers.
   fastfetch's `publicip` module ignores `http_proxy` and is stripped automatically on proxy hosts;

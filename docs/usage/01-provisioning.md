@@ -157,15 +157,39 @@ Fix ist damit noch im selben Lauf aktiv, nicht erst beim nächsten `ups`.
 <a id="de-5-schritt-3-server-härtung"></a>
 ## Schritt 3: Server-Härtung
 
-1. Secrets-Datei pflegen (Vorlage: `scripts/.env.example`):
+**`ups` fragt nach.** Auf einem Terminal prüft jeder `ups`-Lauf die Härtung
+(`server_hardening.py --json`) und bietet an, offene Bereiche zu schließen —
+Schritt 2 hat das bereits mitlaufen lassen, hier nur zur Erklärung, was dabei
+passiert:
+
+1. **Fehlt `/root/.config/myodoo-docker/.env`**, bietet `ups` an, sie
+   anzulegen: `SSH_PORT` wird aus `sshd -T` vorgeschlagen, `ALLOWED_IP_1` aus
+   der laufenden SSH-Sitzung — beides bestätigen oder überschreiben, weitere
+   IPs optional. Eine bestehende `/root/.env` (Alt-Pfad) wird unverändert
+   übernommen, nie überschrieben.
+2. **Weicht danach noch ein Bereich ab**, erscheint ein Menü: `1)` jetzt
+   beheben `2)` Befehle anzeigen `3)` später `4)` einen Bereich dauerhaft
+   stummschalten (`ownerp_mute.py <check_id> --reason "…"`).
+3. **„Jetzt beheben“ wendet die unkritischen Module direkt an**
+   (sysctl, Kernel-Module, Auto-Updates, auditd, AIDE, fail2ban). **Firewall
+   und SSH nur nach einer Aussperr-Prüfung**: jede bestehende SSH-Verbindung
+   muss von einer erlaubten IP kommen, `SSH_PORT` muss dem Port entsprechen,
+   auf dem sshd tatsächlich lauscht, und `ssh.socket` darf nicht aktiv sein.
+   Schlägt die Prüfung fehl, druckt `ups` die Befehle statt sie auszuführen —
+   bei einem Port-Unterschied die sechs Schritte aus
+   *SSH-Port wechseln* unten.
+4. **Was `ups` nie tut**: den SSH-Port ändern, und den Docker-Daemon
+   neustarten, solange ein Container läuft — `daemon.json` wird geschrieben,
+   der Neustart als Wartungsfenster-Hinweis ausgegeben.
+
+Ohne Terminal (Cron, CI) meldet nur `chk` die offenen Bereiche — `ups` fragt
+dort nichts.
+
+Der manuelle Weg bleibt die Alternative, z. B. für gezielte Module oder
+außerhalb eines Terminals:
 
 ```bash
 mcedit /root/.config/myodoo-docker/.env   # SSH_PORT, ALLOWED_IP_1..n, Alert-Mail
-```
-
-2. Erst **Audit** (ändert nichts), dann anwenden:
-
-```bash
 sudo python3 /root/server_hardening.py            # Audit / Dry-Run
 sudo python3 /root/server_hardening.py --apply    # UFW, fail2ban, SSH, sysctl, auditd, AIDE, ...
 ```
@@ -174,6 +198,37 @@ UFW wird erst hier aktiviert — nach konfiguriertem SSH-Port und erlaubten
 IPs, damit man sich nicht aussperrt. Einzelne Module gezielt:
 `--apply --module ufw` bzw. `-m fail2ban ssh sysctl`. Konfiguration:
 `scripts/hardening_config.yaml`.
+
+<a id="de-5a-ssh-port-wechseln"></a>
+### SSH-Port wechseln
+
+Kein Skript ändert den SSH-Port automatisch — die Firewall/Security Group
+des Anbieters muss den neuen Port zuerst öffnen, und das sieht kein Skript
+auf dem Host. Reihenfolge, am 28.09.2026 so durchgespielt:
+
+1. Neuen Port in der Firewall/Security Group des Anbieters für die
+   Admin-IPs öffnen (alten Port offen lassen)
+2. `SSH_PORT` in `/root/.config/myodoo-docker/.env` auf den neuen Port setzen
+3. `sudo python3 /root/server_hardening.py --apply -f -m ufw fail2ban ssh`
+4. In einem zweiten Terminal auf dem neuen Port anmelden — die alte Sitzung
+   offen lassen
+5. Alte UFW-Regel löschen: `ufw delete allow from 192.0.2.10 to any port <alter Port>`
+6. Alten Port beim Anbieter schließen
+
+<a id="de-5b-cloud-images-root-gesperrt"></a>
+### Cloud-Images: root gesperrt
+
+Cloud-Images (OpenStack, die meisten Provider-Images) sperren das
+root-Passwort und setzen `disable_root: true` in `/etc/cloud/cloud.cfg` —
+das kollidiert mit einer `hardening_config.yaml`, die `PermitRootLogin yes`
+erwartet: `passwd -S root` meldet `L`, root kann sich also gar nicht
+anmelden, obwohl die Härtung es erlaubt. `chk` meldet das als `root_login_locked`
+(WARN) und behebt es nicht automatisch — das braucht ein Passwort:
+
+```bash
+passwd root
+printf '%s\n' 'disable_root: false' > /etc/cloud/cloud.cfg.d/99-ownerp-root.cfg
+```
 
 ---
 
@@ -327,15 +382,37 @@ in that same run instead of only the next `ups`.
 <a id="en-5-step-3-server-hardening"></a>
 ## Step 3: Server Hardening
 
-1. Maintain the secrets file (template: `scripts/.env.example`):
+**`ups` asks.** On a terminal, every `ups` run checks the hardening
+(`server_hardening.py --json`) and offers to close whatever is open — step 2
+already ran this along the way; this is what happens under the hood:
+
+1. **If `/root/.config/myodoo-docker/.env` is missing**, `ups` offers to
+   create it: `SSH_PORT` is suggested from `sshd -T`, `ALLOWED_IP_1` from the
+   current SSH session — confirm or overwrite either, further IPs are
+   optional. An existing `/root/.env` (legacy path) is used as is and never
+   overwritten.
+2. **If any area still deviates afterwards**, a menu appears: `1)` fix now
+   `2)` show the commands `3)` later `4)` permanently mute one area
+   (`ownerp_mute.py <check_id> --reason "…"`).
+3. **"Fix now" applies the harmless modules directly** (sysctl, kernel
+   modules, auto-updates, auditd, AIDE, fail2ban). **Firewall and SSH only
+   after a lockout check**: every established SSH connection must come from
+   an allowlisted IP, `SSH_PORT` must match the port sshd actually listens
+   on, and `ssh.socket` must not be active. When that check fails, `ups`
+   prints the commands instead of running them — on a port mismatch, the six
+   steps from *Changing the SSH port* below.
+4. **What `ups` never does**: change the SSH port, or restart the Docker
+   daemon while a container is running — `daemon.json` is still written, and
+   the restart is printed as a maintenance-window hint.
+
+Without a terminal (cron, CI) only `chk` reports the open areas — `ups` asks
+nothing there.
+
+The manual path remains the alternative, e.g. for targeting individual
+modules or outside a terminal:
 
 ```bash
 mcedit /root/.config/myodoo-docker/.env   # SSH_PORT, ALLOWED_IP_1..n, alert mail
-```
-
-2. **Audit first** (changes nothing), then apply:
-
-```bash
 sudo python3 /root/server_hardening.py            # audit / dry run
 sudo python3 /root/server_hardening.py --apply    # UFW, fail2ban, SSH, sysctl, auditd, AIDE, ...
 ```
@@ -344,3 +421,33 @@ UFW is only enabled here — after the SSH port and allowed IPs are configured,
 so you cannot lock yourself out. Target individual modules with
 `--apply --module ufw` or `-m fail2ban ssh sysctl`. Configuration:
 `scripts/hardening_config.yaml`.
+
+<a id="en-5a-changing-the-ssh-port"></a>
+### Changing the SSH port
+
+No script changes the SSH port automatically — the provider's
+firewall/security group must open the new port first, and nothing on the
+host can see that. The sequence, proven on 28.09.2026:
+
+1. Open the new port in the provider's firewall/security group for the
+   admin IPs (leave the old port open)
+2. Set `SSH_PORT` in `/root/.config/myodoo-docker/.env` to the new port
+3. `sudo python3 /root/server_hardening.py --apply -f -m ufw fail2ban ssh`
+4. Log in on the new port from a second terminal — keep the old session open
+5. Delete the old UFW rule: `ufw delete allow from 192.0.2.10 to any port <old port>`
+6. Close the old port at the provider
+
+<a id="en-5b-cloud-images-root-locked"></a>
+### Cloud images: root locked
+
+Cloud images (OpenStack, most provider images) lock root's password and set
+`disable_root: true` in `/etc/cloud/cloud.cfg` — that conflicts with a
+`hardening_config.yaml` that expects `PermitRootLogin yes`: `passwd -S root`
+reports `L`, so root cannot log in at all even though the hardening allows
+it. `chk` reports this as `root_login_locked` (WARN) and does not fix it
+automatically — that needs a password:
+
+```bash
+passwd root
+printf '%s\n' 'disable_root: false' > /etc/cloud/cloud.cfg.d/99-ownerp-root.cfg
+```
