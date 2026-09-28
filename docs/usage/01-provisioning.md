@@ -171,7 +171,11 @@ passiert:
    beheben `2)` Befehle anzeigen `3)` später `4)` einen Bereich dauerhaft
    stummschalten (`ownerp_mute.py <check_id> --reason "…"`).
 3. **„Jetzt beheben“ wendet die unkritischen Module direkt an**
-   (sysctl, Kernel-Module, Auto-Updates, auditd, AIDE, fail2ban). **Firewall
+   (sysctl, Kernel-Module, Auto-Updates, auditd, AIDE). `fail2ban` gehört
+   nicht dazu, wenn ein Portwechsel ansteht oder `sshd -T` den Port nicht
+   lesen kann — seine sshd-Jail folgt `SSH_PORT`, deshalb wartet sie dann
+   ebenfalls (Portwechsel-Schritte bzw. Hinweis auf den unbekannten Port);
+   sonst läuft sie mit den unkritischen Modulen mit. **Firewall
    und SSH nur nach einer Aussperr-Prüfung**: jede bestehende SSH-Verbindung
    muss von einer erlaubten IP kommen, `SSH_PORT` muss dem Port entsprechen,
    auf dem sshd tatsächlich lauscht, und `ssh.socket` darf nicht aktiv sein.
@@ -179,8 +183,10 @@ passiert:
    bei einem Port-Unterschied die sechs Schritte aus
    *SSH-Port wechseln* unten.
 4. **Was `ups` nie tut**: den SSH-Port ändern, und den Docker-Daemon
-   neustarten, solange ein Container läuft — `daemon.json` wird geschrieben,
-   der Neustart als Wartungsfenster-Hinweis ausgegeben.
+   neustarten, solange ein Container läuft oder die `docker`-Härtung selbst
+   fehlschlug — `daemon.json` wird geschrieben, der Neustart nur bei
+   erfolgreichem Apply und null laufenden Containern ausgeführt, sonst als
+   Wartungsfenster-Hinweis ausgegeben.
 
 Ohne Terminal (Cron, CI) meldet nur `chk` die offenen Bereiche — `ups` fragt
 dort nichts.
@@ -395,15 +401,21 @@ already ran this along the way; this is what happens under the hood:
    `2)` show the commands `3)` later `4)` permanently mute one area
    (`ownerp_mute.py <check_id> --reason "…"`).
 3. **"Fix now" applies the harmless modules directly** (sysctl, kernel
-   modules, auto-updates, auditd, AIDE, fail2ban). **Firewall and SSH only
-   after a lockout check**: every established SSH connection must come from
-   an allowlisted IP, `SSH_PORT` must match the port sshd actually listens
-   on, and `ssh.socket` must not be active. When that check fails, `ups`
-   prints the commands instead of running them — on a port mismatch, the six
-   steps from *Changing the SSH port* below.
+   modules, auto-updates, auditd, AIDE). `fail2ban` is not among them when a
+   port change is pending or `sshd -T` cannot read the port — its sshd jail
+   follows `SSH_PORT`, so it waits too (printing the port-change steps, or a
+   note about the unreadable port); otherwise it applies along with the
+   harmless group. **Firewall and SSH only after a lockout check**: every
+   established SSH connection must come from an allowlisted IP, `SSH_PORT`
+   must match the port sshd actually listens on, and `ssh.socket` must not
+   be active. When that check fails, `ups` prints the commands instead of
+   running them — on a port mismatch, the six steps from *Changing the SSH
+   port* below.
 4. **What `ups` never does**: change the SSH port, or restart the Docker
-   daemon while a container is running — `daemon.json` is still written, and
-   the restart is printed as a maintenance-window hint.
+   daemon while a container is running or after the `docker` hardening
+   itself failed to apply — `daemon.json` is still written, the restart only
+   runs on a successful apply with zero containers running, otherwise it is
+   printed as a maintenance-window hint.
 
 Without a terminal (cron, CI) only `chk` reports the open areas — `ups` asks
 nothing there.

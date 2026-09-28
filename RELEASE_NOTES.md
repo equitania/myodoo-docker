@@ -26,15 +26,18 @@ bootstrap.sh · tests · docs*
 - **`ups` offers to close what it finds.** On a terminal, after the storage-
   driver offer and before the readiness report, `ups` runs the audit and, if
   anything is off, offers a menu: fix now / show the commands / later /
-  mute one area. "Fix now" applies the harmless modules directly and
-  applies UFW/SSH/the Docker daemon only behind a lockout gate: every
+  mute one area. "Fix now" applies the harmless modules directly — except
+  `fail2ban`, held back (with the port-change steps, or a wait note) whenever
+  a port change is pending or sshd's port cannot be read, since its jail
+  follows `SSH_PORT` — and applies UFW/SSH only behind a lockout gate: every
   established SSH connection must come from an allowlisted IP, `SSH_PORT`
   must match the port sshd actually listens on, and `ssh.socket` must be
   inactive — otherwise it prints the commands and the reason instead, with
-  the six-step manual sequence on a port mismatch. The Docker daemon
-  restart only runs with zero containers running. `ups` never changes the
-  SSH port. Without a terminal (cron, CI) it only reports, exactly as
-  before.
+  the six-step manual sequence on a port mismatch. The Docker daemon's
+  `daemon.json` is applied unconditionally; the daemon restart only runs
+  when that apply succeeded and zero containers are running. `ups` never
+  changes the SSH port. Without a terminal (cron, CI) it only reports,
+  exactly as before.
 - **`.env` creation.** When `/root/.config/myodoo-docker/.env` and any
   legacy `/root/.env` are both missing, `ups` offers to create the central
   file: `SSH_PORT` suggested from `sshd -T`, `ALLOWED_IP_1` from the current

@@ -32,9 +32,13 @@ in this repository, stay in `CLAUDE.md`.
     encryption), an existing file never touched. Then a menu: fix now / show
     the commands / later / mute one area (`ownerp_mute.py <check_id>
     --reason "..."`, argument mandatory). "Fix now" applies the harmless
-    modules (`sysctl sysctl_persist kernel_modules auto_updates auditd aide
-    fail2ban`) directly with `-f`, AIDE last so its database does not
-    immediately report the other changes; `ufw`/`ssh` only behind the
+    modules (`sysctl sysctl_persist kernel_modules auto_updates auditd aide`)
+    directly with `-f`, AIDE last so its database does not immediately
+    report the other changes. `fail2ban` is *not* unconditionally harmless:
+    its sshd jail follows `SSH_PORT`, so it is held back — printing the
+    port-change steps, or a wait note when sshd's port cannot be read —
+    whenever a port change is pending or `sshd -T`'s port is unreadable;
+    otherwise it applies with the harmless group. `ufw`/`ssh` only behind the
     **lockout gate**: every established SSH peer on sshd's port (`ss -tnH
     state established` — not `$SSH_CONNECTION`, which `sudo` strips) must be
     allowlisted, `SSH_PORT` must equal the port sshd actually listens on,
@@ -42,7 +46,9 @@ in this repository, stay in `CLAUDE.md`.
     command and the reason instead, and a port mismatch prints the six-step
     manual sequence (`PORT_CHANGE_STEPS`) instead of touching anything.
     `docker`'s `daemon.json` is applied either way; the restart only runs
-    with zero containers running, else it is a maintenance-window hint.
+    when that apply succeeded *and* zero containers are running — a failed
+    apply is reported and skips the restart outright, a successful one with
+    containers running prints a maintenance-window hint instead.
     Never changes the SSH port. Any failure anywhere in the gate — including
     Ctrl-C — is "skip", never a broken `ups`
   - `copy_scripts()` (v9.26.0, 28.09.2026) now also delivers
