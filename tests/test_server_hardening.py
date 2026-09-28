@@ -249,6 +249,50 @@ class JsonAuditTest(unittest.TestCase):
              self.assertRaises(SystemExit):
             sh.main(["--json", "--apply"])
 
+    def test_json_with_a_non_mapping_config_is_an_error_document(self):
+        """A YAML list (or any non-mapping document) must not end as a
+        traceback with empty stdout in --json mode — same contract as a
+        missing/invalid config file."""
+        with tempfile.TemporaryDirectory() as tmp:
+            list_yaml = Path(tmp) / "list.yaml"
+            list_yaml.write_text("- a\n- b\n")
+            out = io.StringIO()
+            env = {k: v for k, v in os.environ.items() if not k.startswith("ALLOWED_IP_")}
+            env.update(SSH_PORT="22", ALLOWED_IP_1="192.0.2.1")
+            with self.fakes(), self.hermetic(tmp), \
+                 mock.patch.object(sh, "CENTRAL_DIR", Path(tmp) / "cfg"), \
+                 mock.patch.object(sh.os, "geteuid", return_value=0), \
+                 mock.patch.dict(os.environ, env, clear=True), \
+                 redirect_stdout(out), \
+                 self.assertRaises(SystemExit) as exit_:
+                sh.main(["--json", "-c", str(list_yaml)])
+        self.assertEqual(exit_.exception.code, 1)
+        document = json.loads(out.getvalue())
+        self.assertTrue(document["error"])
+        self.assertEqual(document["areas"], [])
+
+    def test_json_when_a_module_raises_is_an_error_document(self):
+        """A crashing module must become a JSON error document, not a
+        traceback with empty stdout."""
+        def _raiser(config, apply=False, force=False):
+            raise RuntimeError("boom")
+
+        with tempfile.TemporaryDirectory() as tmp:
+            out = io.StringIO()
+            env = {k: v for k, v in os.environ.items() if not k.startswith("ALLOWED_IP_")}
+            env.update(SSH_PORT="22", ALLOWED_IP_1="192.0.2.1")
+            with self.fakes(ufw=_raiser), self.hermetic(tmp), \
+                 mock.patch.object(sh, "CENTRAL_DIR", Path(tmp) / "cfg"), \
+                 mock.patch.object(sh.os, "geteuid", return_value=0), \
+                 mock.patch.dict(os.environ, env, clear=True), \
+                 redirect_stdout(out), \
+                 self.assertRaises(SystemExit) as exit_:
+                sh.main(["--json", "-c", self.REPO_YAML])
+        self.assertEqual(exit_.exception.code, 1)
+        document = json.loads(out.getvalue())
+        self.assertIn("boom", document["error"])
+        self.assertEqual(document["areas"], [])
+
 
 if __name__ == "__main__":
     unittest.main()

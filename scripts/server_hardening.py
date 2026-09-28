@@ -1627,6 +1627,10 @@ Beispiele:
     # carry exactly one JSON document.
     quiet = (contextlib.redirect_stdout(io.StringIO()) if args.json
              else contextlib.nullcontext())
+    config_error = None
+    config = {}
+    allowed_ips = []
+    validation_errors = []
     with quiet:
         env_info = load_env(script_dir)
 
@@ -1634,30 +1638,47 @@ Beispiele:
         for w in check_prerequisites():
             warn(w)
 
-        # Config laden
-        config_path = Path(args.config)
-        if not config_path.is_absolute():
-            config_path = script_dir / config_path
-        config = yaml.safe_load(config_path.read_text())
-        if not isinstance(config, dict):
-            sys.exit(f"Fehler: {config_path} muss ein YAML-Mapping sein "
-                     f"(gefunden: {type(config).__name__})")
+        # Config laden. A missing/unreadable file, invalid YAML, or a YAML
+        # document that isn't a mapping all land here as one exception — in
+        # --json mode that must become an error document (exit 1), never a
+        # traceback with empty stdout; text mode keeps the old exact message
+        # for the mapping check via the sys.exit() below.
+        try:
+            config_path = Path(args.config)
+            if not config_path.is_absolute():
+                config_path = script_dir / config_path
+            config = yaml.safe_load(config_path.read_text())
+            if not isinstance(config, dict):
+                raise ValueError(f"{config_path} muss ein YAML-Mapping sein "
+                                 f"(gefunden: {type(config).__name__})")
 
-        # Resolve ${ENV_VAR} placeholders (e.g. ${SSH_PORT})
-        config = resolve_env_vars(config)
+            # Resolve ${ENV_VAR} placeholders (e.g. ${SSH_PORT})
+            config = resolve_env_vars(config)
 
-        # Build the admin-IP allowlist dynamically from ALLOWED_IP_<n> env vars
-        # (any count) and inject it BEFORE validation so those IPs get validated too.
-        allowed_ips = inject_allowed_ips(config)
-        if allowed_ips:
-            info(f"Allowlist: {len(allowed_ips)} IP(s) aus .env erkannt "
-                 f"({', '.join(_allowlist_label(a) for a in allowed_ips)})")
-        else:
-            warn("Keine ALLOWED_IP_<n> in .env gefunden — eine aktivierte UFW würde den "
-                 "SSH-Port für NIEMANDEN öffnen (Lockout-Gefahr)!")
+            # Build the admin-IP allowlist dynamically from ALLOWED_IP_<n> env
+            # vars (any count) and inject it BEFORE validation so those IPs get
+            # validated too.
+            allowed_ips = inject_allowed_ips(config)
+            if allowed_ips:
+                info(f"Allowlist: {len(allowed_ips)} IP(s) aus .env erkannt "
+                     f"({', '.join(_allowlist_label(a) for a in allowed_ips)})")
+            else:
+                warn("Keine ALLOWED_IP_<n> in .env gefunden — eine aktivierte UFW würde den "
+                     "SSH-Port für NIEMANDEN öffnen (Lockout-Gefahr)!")
 
-        # Validate config
-        validation_errors = validate_config(config)
+            # Validate config
+            validation_errors = validate_config(config)
+        except Exception as exc:
+            config_error = str(exc)
+
+    # config_error is reported outside the "with quiet:" block (like the
+    # validation_errors/run_json_audit errors below) so the JSON document
+    # reaches the REAL stdout, not the buffer "with quiet:" just discarded.
+    if config_error is not None:
+        if args.json:
+            _emit_json({"version": SCRIPT_VERSION, "env": env_info, "areas": [],
+                        "error": config_error}, code=1)
+        sys.exit(f"Fehler: {config_error}")
 
     port = config.get("ssh", {}).get("port")
     env_info["ssh_port"] = port if isinstance(port, int) else None
@@ -1666,7 +1687,13 @@ Beispiele:
         if validation_errors:
             _emit_json({"version": SCRIPT_VERSION, "env": env_info, "areas": [],
                         "error": "; ".join(validation_errors)}, code=1)
-        _emit_json(run_json_audit(config, allowed_ips, env_info))
+        try:
+            document = run_json_audit(config, allowed_ips, env_info)
+        except Exception as exc:
+            _emit_json({"version": SCRIPT_VERSION, "env": env_info, "areas": [],
+                        "error": f"audit failed: {type(exc).__name__}: {exc}"}, code=1)
+        else:
+            _emit_json(document)
         return
 
     if validation_errors:
