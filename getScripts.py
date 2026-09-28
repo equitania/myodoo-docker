@@ -26,7 +26,8 @@ import subprocess
 import requests
 import sys
 import logging
-from typing import Tuple, Optional, Dict, List, Any
+import shutil
+from typing import Tuple, Optional, Dict, List, Any, Set
 from functools import wraps, lru_cache
 import time
 import platform
@@ -4487,32 +4488,214 @@ STORAGE_DRIVER_CHECK_ID = "docker_storage_driver"
 STORAGE_DRIVER_MUTES_RELATIVE = os.path.join(".config", "myodoo-docker", "readiness-mutes.conf")
 
 
-def _docker_storage_driver_muted(_myhome: str) -> bool:
-    """Whether docker_storage_driver is already muted on this host.
-
-    Reads the mutes file directly rather than importing server-readiness.py
-    (hyphenated filename, not on the import path, and ownerp_mute.py already
-    carries the importlib dance for the scripts that need it). Same format
-    server-readiness.py's parse_mutes() reads: '<check_id> | <date> | <reason>',
-    '#' comments and blank lines ignored, first three pipe-separated fields.
-    Anything unreadable propagates to the caller, which treats it as "skip",
-    never as "not muted" - a mute this cannot see must not turn into a repeat
-    prompt, but it also must never suppress the offer by guessing.
-    """
+def _muted_check_ids(_myhome: str) -> Set[str]:
+    """Every check_id muted on this host, from the file server-readiness.py's
+    parse_mutes() reads: '<check_id> | <date> | <reason>', '#' comments and
+    blank lines ignored. Unreadable propagates, like before: the callers treat
+    it as "skip", never as "nothing muted"."""
     path = os.path.join(_myhome, STORAGE_DRIVER_MUTES_RELATIVE)
+    muted: Set[str] = set()
     if not os.path.isfile(path):
-        return False
+        return muted
     with open(path, "r", encoding="utf-8", errors="replace") as handle:
         for line in handle:
             line = line.strip()
             if not line or line.startswith("#"):
                 continue
             parts = line.split("|", 2)
-            if len(parts) != 3:
+            if len(parts) == 3:
+                muted.add(parts[0].strip())
+    return muted
+
+
+def _docker_storage_driver_muted(_myhome: str) -> bool:
+    """Whether docker_storage_driver is already muted on this host."""
+    return STORAGE_DRIVER_CHECK_ID in _muted_check_ids(_myhome)
+
+
+# ---------------------------------------------------------------------------
+# Security hardening offer: facts and gate (see offer_security_hardening)
+# ---------------------------------------------------------------------------
+
+HARDENING_ENV_RELATIVE = os.path.join(".config", "myodoo-docker", ".env")
+# Modules that can lock the operator out (ufw, ssh) or stop every container
+# (docker needs a daemon restart). Applied only behind _lockout_blockers().
+GUARDED_MODULES = ("ufw", "ssh", "docker")
+
+
+def _read_env_file(path: str) -> Dict[str, str]:
+    """KEY=VALUE lines of a .env, tolerant of quotes, spaces and CRLF."""
+    values: Dict[str, str] = {}
+    with open(path, "r", encoding="utf-8", errors="replace") as handle:
+        for raw in handle:
+            line = raw.strip()
+            if not line or line.startswith("#") or "=" not in line:
                 continue
-            if parts[0].strip() == STORAGE_DRIVER_CHECK_ID:
-                return True
-    return False
+            key, value = line.split("=", 1)
+            value = value.strip()
+            if len(value) >= 2 and value[0] == value[-1] and value[0] in "\"'":
+                value = value[1:-1]
+            values[key.strip()] = value
+    return values
+
+
+def _allowed_ips(env: Dict[str, str]) -> List[str]:
+    """ALLOWED_IP_<n> values in slot order, empty slots skipped."""
+    slots = []
+    for key, value in env.items():
+        match = re.match(r"^ALLOWED_IP_(\d+)$", key)
+        if match and value.strip():
+            slots.append((int(match.group(1)), value.strip()))
+    return [ip for _, ip in sorted(slots)]
+
+
+def _render_env(template: str, ssh_port: int, ips: List[str]) -> str:
+    """The template with SSH_PORT and the admin IPs filled in.
+
+    Every ALLOWED_IP_<n> slot not given here is blanked, comments included: a
+    template example address left in place would be an open SSH port for it.
+    """
+    lines, seen = [], set()
+    for line in template.splitlines():
+        match = re.match(r"^(SSH_PORT|ALLOWED_IP_(\d+)(_COMMENT)?)=", line)
+        if not match:
+            lines.append(line)
+            continue
+        key = match.group(1)
+        seen.add(key)
+        if key == "SSH_PORT":
+            lines.append(f"SSH_PORT={ssh_port}")
+        elif match.group(3):
+            lines.append(f"{key}=")
+        else:
+            slot = int(match.group(2))
+            lines.append(f"{key}={ips[slot - 1] if slot <= len(ips) else ''}")
+    if "SSH_PORT" not in seen:
+        lines.append(f"SSH_PORT={ssh_port}")
+    for slot, ip in enumerate(ips, 1):
+        if f"ALLOWED_IP_{slot}" not in seen:
+            lines.append(f"ALLOWED_IP_{slot}={ip}")
+    return "\n".join(lines) + "\n"
+
+
+def _write_env(path: str, text: str) -> bool:
+    """Create the .env (0600, directory 0700) atomically; never overwrite one."""
+    if os.path.exists(path):
+        return False
+    directory = os.path.dirname(path)
+    os.makedirs(directory, mode=0o700, exist_ok=True)
+    os.chmod(directory, 0o700)
+    tmp = f"{path}.tmp-{os.getpid()}"
+    fd = os.open(tmp, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
+    with os.fdopen(fd, "w", encoding="utf-8") as handle:
+        handle.write(text)
+    if os.path.exists(path):
+        os.unlink(tmp)
+        return False
+    os.replace(tmp, path)
+    return True
+
+
+def _peer_host(peer: str) -> str:
+    """'192.0.2.1:5000', '[2001:db8::1]:5000', '[::ffff:192.0.2.1]:5000' -> the address."""
+    peer = peer.strip()
+    if peer.startswith("["):
+        host = peer[1:peer.index("]")]
+    else:
+        host = peer.rsplit(":", 1)[0]
+    return host[7:] if host.lower().startswith("::ffff:") else host
+
+
+def _ssh_listen_ports() -> List[int]:
+    """The ports sshd is configured to listen on (`sshd -T`); [] when unknown."""
+    try:
+        result = subprocess.run(["sshd", "-T"], capture_output=True, text=True, timeout=10)
+    except Exception:
+        return []
+    ports = []
+    for line in result.stdout.splitlines():
+        parts = line.split()
+        if len(parts) == 2 and parts[0] == "port" and parts[1].isdigit():
+            ports.append(int(parts[1]))
+    return ports
+
+
+def _ssh_peers(ports: List[int]) -> Optional[List[str]]:
+    """Source addresses of every established connection to sshd.
+
+    Read from the socket table, not from SSH_CONNECTION: sudo strips that, and
+    the session that runs `ups` is not the only one that must survive.
+    """
+    hosts = set()
+    for port in ports:
+        try:
+            result = subprocess.run(["ss", "-tnH", "state", "established",
+                                     f"( sport = :{port} )"],
+                                    capture_output=True, text=True, timeout=10)
+        except Exception:
+            return None
+        if result.returncode != 0:
+            return None
+        for line in result.stdout.splitlines():
+            columns = line.split()
+            if len(columns) >= 4:
+                hosts.add(_peer_host(columns[3]))
+    return sorted(hosts)
+
+
+def _ssh_socket_active() -> bool:
+    try:
+        result = subprocess.run(["systemctl", "is-active", "ssh.socket"],
+                                capture_output=True, text=True, timeout=10)
+    except Exception:
+        return False
+    return result.stdout.strip() == "active"
+
+
+def _running_containers() -> Optional[int]:
+    if not shutil.which("docker"):
+        return None
+    try:
+        result = subprocess.run(["docker", "ps", "-q"], capture_output=True,
+                                text=True, timeout=20)
+    except Exception:
+        return None
+    if result.returncode != 0:
+        return None
+    return len([line for line in result.stdout.splitlines() if line.strip()])
+
+
+def _is_port_change(env: Dict[str, str], listen_ports: List[int]) -> bool:
+    port = env.get("SSH_PORT", "").strip()
+    return port.isdigit() and bool(listen_ports) and int(port) not in listen_ports
+
+
+def _lockout_blockers(env: Dict[str, str], listen_ports: List[int],
+                      peers: Optional[List[str]], socket_active: bool) -> List[str]:
+    """Why ufw/ssh must not be applied now; [] means it is safe."""
+    blockers = []
+    ips = _allowed_ips(env)
+    if not ips:
+        blockers.append("keine ALLOWED_IP_<n> in der .env – UFW würde SSH für niemanden öffnen")
+    port = env.get("SSH_PORT", "").strip()
+    if not port.isdigit():
+        blockers.append("SSH_PORT fehlt in der .env")
+    elif not listen_ports:
+        blockers.append("sshd-Port nicht lesbar (sshd -T)")
+    elif _is_port_change(env, listen_ports):
+        blockers.append(f"SSH_PORT={port}, sshd lauscht auf "
+                        f"{', '.join(map(str, listen_ports))} – das wäre ein Portwechsel, "
+                        f"den ups nie selbst macht")
+    if socket_active:
+        blockers.append("ssh.socket ist aktiv – dort wird der Port festgelegt, nicht in sshd_config")
+    if peers is None:
+        blockers.append("aktive SSH-Verbindungen nicht lesbar (ss)")
+    else:
+        outside = [peer for peer in peers if peer not in ips]
+        if outside:
+            blockers.append(f"{len(outside)} aktive SSH-Verbindung(en) von IPs "
+                            f"außerhalb der Allowlist")
+    return blockers
 
 
 def _print_storage_driver_maintenance_steps(driver: str) -> None:
