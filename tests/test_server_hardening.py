@@ -130,5 +130,125 @@ class ModuleOrderTest(unittest.TestCase):
         self.assertEqual(set(sh.module_functions()), set(sh.MODULE_ORDER))
 
 
+ALLOWED = [{"n": 1, "ip": "192.0.2.1", "comment": "Office A"},
+           {"n": 2, "ip": "192.0.2.10", "comment": ""}]
+
+
+class MaskTest(unittest.TestCase):
+    def test_ip_becomes_comment_or_slot(self):
+        text = "Port 22 von 192.0.2.1 FEHLT; Port 22 von 192.0.2.10 FEHLT"
+        self.assertEqual(sh.mask_ips(text, ALLOWED),
+                         "Port 22 von Office A FEHLT; Port 22 von ALLOWED_IP_2 FEHLT")
+
+    def test_mask_does_not_cut_a_longer_ip(self):
+        masked = sh.mask_ips("from 192.0.2.10", [ALLOWED[0]])
+        self.assertEqual(masked, "from 192.0.2.10")
+
+    def test_allowlist_entries_carry_their_slot(self):
+        with mock.patch.dict(os.environ, {"ALLOWED_IP_3": "192.0.2.30"}, clear=True):
+            allowed = sh.inject_allowed_ips({"ufw": {"restricted_ports": []}})
+        self.assertEqual(allowed, [{"n": 3, "ip": "192.0.2.30", "comment": ""}])
+
+
+def _fake_module(fail_text=None, warn_text=None, noise=False):
+    def audit(config, apply=False, force=False):
+        if noise:
+            print("stray output that must not reach the JSON")
+        sh.ok("fine")
+        if warn_text:
+            sh.warn(warn_text)
+        if fail_text:
+            sh.fail(fail_text)
+    return audit
+
+
+class JsonAuditTest(unittest.TestCase):
+    def fakes(self, **overrides):
+        functions = {name: _fake_module() for name in sh.MODULE_ORDER}
+        functions.update(overrides)
+        return mock.patch.object(sh, "module_functions", return_value=functions)
+
+    def test_areas_follow_the_worst_module(self):
+        env = {"path": "/x/.env", "present": True, "loaded": True,
+               "ssh_port": 22, "allowed_ips": 1}
+        with self.fakes(ufw=_fake_module(fail_text="UFW ist NICHT aktiv"),
+                        sysctl=_fake_module(warn_text="x")):
+            result = sh.run_json_audit({}, ALLOWED, env)
+        areas = {a["check_id"]: a for a in result["areas"]}
+        self.assertEqual([a[0] for a in sh.AREAS], [a["check_id"] for a in result["areas"]])
+        self.assertEqual(areas["hardening_firewall"]["status"], "fail")
+        self.assertEqual(areas["hardening_kernel"]["status"], "warn")
+        self.assertEqual(areas["hardening_ssh"]["status"], "ok")
+        self.assertEqual(areas["hardening_firewall"]["findings"],
+                         [{"module": "ufw", "level": "fail", "text": "UFW ist NICHT aktiv"}])
+        self.assertIsNone(result["error"])
+
+    def test_no_ip_in_the_document(self):
+        with self.fakes(ufw=_fake_module(fail_text="Port 22 von 192.0.2.1 FEHLT")):
+            result = sh.run_json_audit({}, ALLOWED, {})
+        self.assertNotIn("192.0.2.1", json.dumps(result))
+
+    def test_stray_prints_do_not_leak(self):
+        out = io.StringIO()
+        with self.fakes(ufw=_fake_module(noise=True)), redirect_stdout(out):
+            sh.run_json_audit({}, [], {})
+        self.assertEqual(out.getvalue(), "")
+
+    # Hermetic: __file__ points into a temp dir, so a developer's own
+    # scripts/.env is never loaded; the real YAML is passed with -c.
+    REPO_YAML = str(Path(_PATH).resolve().parent / "hardening_config.yaml")
+
+    def hermetic(self, tmp):
+        return mock.patch.object(sh, "__file__", str(Path(tmp) / "server_hardening.py"))
+
+    def test_json_mode_writes_nothing_and_prints_one_document(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            central = Path(tmp) / "cfg"
+            out = io.StringIO()
+            env = {k: v for k, v in os.environ.items() if not k.startswith("ALLOWED_IP_")}
+            env.update(SSH_PORT="22", ALLOWED_IP_1="192.0.2.1")
+            with self.fakes(), self.hermetic(tmp), \
+                 mock.patch.object(sh, "CENTRAL_DIR", central), \
+                 mock.patch.object(sh.os, "geteuid", return_value=0), \
+                 mock.patch.dict(os.environ, env, clear=True), \
+                 redirect_stdout(out):
+                sh.main(["--json", "-c", self.REPO_YAML])
+            self.assertFalse(central.exists())
+            self.assertEqual(sorted(os.listdir(tmp)), [])
+        document = json.loads(out.getvalue())
+        self.assertEqual(document["env"]["allowed_ips"], 1)
+        self.assertEqual(document["env"]["ssh_port"], 22)
+        self.assertFalse(document["env"]["present"])
+
+    def test_json_reports_a_missing_ssh_port_as_error(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            out = io.StringIO()
+            env = {k: v for k, v in os.environ.items()
+                   if k != "SSH_PORT" and not k.startswith("ALLOWED_IP_")}
+            with self.fakes(), self.hermetic(tmp), \
+                 mock.patch.object(sh, "CENTRAL_DIR", Path(tmp) / "cfg"), \
+                 mock.patch.object(sh.os, "geteuid", return_value=0), \
+                 mock.patch.dict(os.environ, env, clear=True), \
+                 redirect_stdout(out), \
+                 self.assertRaises(SystemExit) as exit_:
+                sh.main(["--json", "-c", self.REPO_YAML])
+        self.assertEqual(exit_.exception.code, 1)
+        document = json.loads(out.getvalue())
+        self.assertTrue(document["error"])
+        self.assertEqual(document["areas"], [])
+
+    def test_json_without_root_is_a_json_error(self):
+        out = io.StringIO()
+        with mock.patch.object(sh.os, "geteuid", return_value=1000), \
+             redirect_stdout(out), self.assertRaises(SystemExit):
+            sh.main(["--json"])
+        self.assertIn("root", json.loads(out.getvalue())["error"])
+
+    def test_json_and_apply_exclude_each_other(self):
+        with redirect_stdout(io.StringIO()), mock.patch("sys.stderr", io.StringIO()), \
+             self.assertRaises(SystemExit):
+            sh.main(["--json", "--apply"])
+
+
 if __name__ == "__main__":
     unittest.main()

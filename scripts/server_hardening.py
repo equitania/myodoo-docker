@@ -24,6 +24,8 @@ import re
 import json
 import shutil
 import argparse
+import contextlib
+import io
 import ipaddress
 from pathlib import Path
 from datetime import datetime
@@ -49,9 +51,17 @@ class C:
     DIM  = "\033[2m"
     END  = "\033[0m"
 
-def ok(msg):     print(f"  {C.OK}✓{C.END} {msg}")
-def warn(msg):   print(f"  {C.WARN}⚠{C.END} {msg}")
-def fail(msg):   print(f"  {C.FAIL}✗{C.END} {msg}")
+def ok(msg):
+    Report.record("ok", msg)
+    print(f"  {C.OK}✓{C.END} {msg}")
+
+def warn(msg):
+    Report.record("warn", msg)
+    print(f"  {C.WARN}⚠{C.END} {msg}")
+
+def fail(msg):
+    Report.record("fail", msg)
+    print(f"  {C.FAIL}✗{C.END} {msg}")
 def info(msg):   print(f"  {C.INFO}ℹ{C.END} {msg}")
 def header(msg): print(f"\n{C.BOLD}{'─'*60}\n  {msg}\n{'─'*60}{C.END}")
 def sub(msg):    print(f"\n  {C.BOLD}{msg}{C.END}")
@@ -120,6 +130,28 @@ class Stats:
     def reset(cls):
         cls.ok_count = cls.warn_count = cls.fail_count = cls.fix_count = 0
 
+
+class Report:
+    """What each module found, for --json. Filled by ok()/warn()/fail() while
+    Report.current names the running module; outside a module nothing is kept."""
+    current = None
+    modules = {}
+
+    @classmethod
+    def reset(cls):
+        cls.current = None
+        cls.modules = {}
+
+    @classmethod
+    def record(cls, level, text):
+        if cls.current is None:
+            return
+        entry = cls.modules.setdefault(cls.current,
+                                       {"ok": 0, "warn": 0, "fail": 0, "findings": []})
+        entry[level] += 1
+        if level != "ok":
+            entry["findings"].append({"level": level, "text": text})
+
 # ─── Environment-Variablen Substitution ─────────────────────
 def resolve_env_vars(obj):
     """Recursively replace ${ENV_VAR} placeholders in a YAML data structure.
@@ -180,7 +212,7 @@ def inject_allowed_ips(config):
         comment = (os.environ.get(f"ALLOWED_IP_{n}_COMMENT", "") or "").strip()
         entries.append((n, ip, comment))
     entries.sort(key=lambda e: e[0])
-    allowed = [{"ip": ip, "comment": comment} for _, ip, comment in entries]
+    allowed = [{"n": n, "ip": ip, "comment": comment} for n, ip, comment in entries]
 
     # UFW: fill restricted_ports that do not define a static allowed_ips list.
     for rp in config.get("ufw", {}).get("restricted_ports", []):
@@ -194,6 +226,19 @@ def inject_allowed_ips(config):
     f2b["ignoreip"] = [x for x in base + [a["ip"] for a in allowed]
                        if not (x in seen or seen.add(x))]
     return allowed
+
+
+def _allowlist_label(entry):
+    return entry.get("comment") or f"ALLOWED_IP_{entry['n']}"
+
+
+def mask_ips(text, allowed):
+    """Replace each admin IP with its comment (or ALLOWED_IP_<n>). The audit
+    output travels into support chats and tickets; the IPs need not."""
+    for entry in sorted(allowed, key=lambda e: len(e["ip"]), reverse=True):
+        pattern = rf"(?<![0-9A-Fa-f.:]){re.escape(entry['ip'])}(?![0-9A-Fa-f.:])"
+        text = re.sub(pattern, _allowlist_label(entry), text)
+    return text
 
 
 def validate_config(config):
@@ -1386,8 +1431,101 @@ def ordered_modules(requested):
     return [name for name in MODULE_ORDER if name in wanted]
 
 
+# One readiness check per area, so a host that deviates on purpose mutes only
+# that part. server-readiness.py mirrors these ids in HARDENING_AREAS; a test
+# holds the two lists equal.
+AREAS = (
+    ("hardening_firewall",  ("ufw",),                                        "FAIL"),
+    ("hardening_fail2ban",  ("fail2ban",),                                   "FAIL"),
+    ("hardening_ssh",       ("ssh",),                                        "FAIL"),
+    ("hardening_kernel",    ("sysctl", "sysctl_persist", "kernel_modules"),  "WARN"),
+    ("hardening_docker",    ("docker",),                                     "WARN"),
+    ("hardening_updates",   ("auto_updates",),                               "WARN"),
+    ("hardening_integrity", ("auditd", "aide"),                              "WARN"),
+)
+
+
+def run_json_audit(config, allowed, env_info):
+    """Audit every area module (never applies) and summarise per area.
+
+    stdout is redirected while the modules run: the document must be the only
+    thing on stdout, and a stray print in any module would break the parse.
+    """
+    Report.reset()
+    functions = module_functions()
+    wanted = [m for _, modules, _ in AREAS for m in modules]
+    with contextlib.redirect_stdout(io.StringIO()):
+        for name in ordered_modules(wanted):
+            Report.current = name
+            functions[name](config, apply=False, force=False)
+    Report.current = None
+
+    areas = []
+    for check_id, modules, on_fail in AREAS:
+        fails = warns = 0
+        findings = []
+        for name in modules:
+            result = Report.modules.get(name, {"ok": 0, "warn": 0, "fail": 0, "findings": []})
+            fails += result["fail"]
+            warns += result["warn"]
+            findings += [{"module": name, "level": f["level"],
+                          "text": mask_ips(f["text"], allowed)} for f in result["findings"]]
+        status = "fail" if fails else "warn" if warns else "ok"
+        areas.append({"check_id": check_id, "modules": list(modules),
+                      "on_fail": on_fail, "status": status, "findings": findings})
+    return {"version": SCRIPT_VERSION, "env": env_info, "areas": areas, "error": None}
+
+
+def _emit_json(document, code=0):
+    print(json.dumps(document, ensure_ascii=False))
+    if code:
+        sys.exit(code)
+
+
+CENTRAL_DIR = Path("/root/.config/myodoo-docker")
+REPO_SCRIPTS = Path("/root/myodoo-docker/scripts")
+
+
+def seed_central_dir(script_dir):
+    """Create the central directory and drop the .env template beside it.
+    Only with --apply: an audit — and the readiness check built on it — must
+    not write anything."""
+    if not CENTRAL_DIR.exists():
+        CENTRAL_DIR.mkdir(parents=True, mode=0o700)
+        info(f"Verzeichnis erstellt: {CENTRAL_DIR}")
+    target = CENTRAL_DIR / ".env.example"
+    if target.exists():
+        return
+    for candidate in (script_dir / ".env.example", REPO_SCRIPTS / ".env.example"):
+        if candidate.exists():
+            shutil.copy2(candidate, target)
+            info(f".env.example kopiert nach {CENTRAL_DIR}")
+            return
+
+
+def load_env(script_dir):
+    """Load the first .env found; report what was found. Never writes."""
+    central_env = CENTRAL_DIR / ".env"
+    info_ = {"path": str(central_env), "present": False, "loaded": False}
+    for env_path in (central_env, script_dir / ".env"):
+        if not env_path.exists():
+            continue
+        info_.update(path=str(env_path), present=True)
+        if load_dotenv is not None:
+            load_dotenv(env_path)
+            info(f".env geladen: {env_path}")
+            info_["loaded"] = True
+        else:
+            warn("python-dotenv nicht installiert - .env wird ignoriert")
+            warn("Installation: sudo apt install -y python3-dotenv")
+        return info_
+    warn(f"Keine .env gefunden. Erwartet: {central_env}")
+    warn(f"Vorlage anpassen: cp {CENTRAL_DIR / '.env.example'} {central_env}")
+    return info_
+
+
 # ─── HAUPTPROGRAMM ───────────────────────────────────────────
-def main():
+def main(argv=None):
     parser = argparse.ArgumentParser(
         description="Server-Härtungs-Skript — prüft (Audit) und härtet (--apply) einen "
                     "Debian-Server. Alle Werte stammen aus hardening_config.yaml; "
@@ -1398,6 +1536,8 @@ AUDIT vs. APPLY
   Ohne --apply  : reiner Dry-Run, es wird NICHTS verändert (nur geprüft/berichtet).
   Mit  --apply  : Dateien werden geändert. Vor jeder Änderung wird ein Backup
                   angelegt: <datei>.backup_YYYYMMDD_HHMMSS
+  --json        : Audit als ein JSON-Dokument (für server-readiness.py und ups);
+                  schreibt nichts, Admin-IPs erscheinen nur als Kommentar/Slot.
 
 WAS JEDES MODUL ÄNDERT (Datei, die mit --apply geschrieben wird)
   ufw            UFW-Firewall: Default-Policies + Regeln (public/restricted Ports).
@@ -1463,76 +1603,72 @@ Beispiele:
     parser.add_argument("-m", "--module", nargs="+",
                         choices=list(MODULE_ORDER),
                         help="Nur bestimmte Module ausführen")
-    args = parser.parse_args()
+    parser.add_argument("--json", action="store_true",
+                        help="Audit als JSON auf stdout (nur ohne --apply; schreibt nichts)")
+    args = parser.parse_args(argv)
+
+    if args.json and args.apply:
+        parser.error("--json gibt es nur im Audit-Modus (ohne --apply)")
 
     # Root-Check
     if os.geteuid() != 0:
+        if args.json:
+            _emit_json({"version": SCRIPT_VERSION, "env": {}, "areas": [],
+                        "error": "root required"}, code=1)
         print(f"{C.FAIL}Fehler: Root-Rechte erforderlich.{C.END}")
         sys.exit(1)
 
-    # Load .env (python-dotenv optional)
-    # Primary: /root/.config/myodoo-docker/.env
-    # Fallback: scripts/.env (legacy, same directory as this script)
     script_dir = Path(__file__).resolve().parent
-    central_dir = Path("/root/.config/myodoo-docker")
-    central_env = central_dir / ".env"
-    example_env = script_dir / ".env.example"
+    if args.apply:
+        seed_central_dir(script_dir)
 
-    # Ensure central config directory exists and seed .env.example
-    if not central_dir.exists():
-        central_dir.mkdir(parents=True, mode=0o700)
-        info(f"Verzeichnis erstellt: {central_dir}")
-    if example_env.exists() and not (central_dir / ".env.example").exists():
-        shutil.copy2(example_env, central_dir / ".env.example")
-        info(f".env.example kopiert nach {central_dir}")
-    if not central_env.exists():
-        warn(f"Keine .env gefunden in {central_dir}")
-        warn(f"Vorlage anpassen: cp {central_dir / '.env.example'} {central_env}")
+    # In --json mode everything printed before the document — .env notes,
+    # prerequisite warnings, the allowlist line — is swallowed: stdout must
+    # carry exactly one JSON document.
+    quiet = (contextlib.redirect_stdout(io.StringIO()) if args.json
+             else contextlib.nullcontext())
+    with quiet:
+        env_info = load_env(script_dir)
 
-    env_candidates = [central_env, script_dir / ".env"]
-    env_loaded = False
-    for env_path in env_candidates:
-        if env_path.exists():
-            if load_dotenv is not None:
-                load_dotenv(env_path)
-                info(f".env geladen: {env_path}")
-                env_loaded = True
-            else:
-                warn("python-dotenv nicht installiert - .env wird ignoriert")
-                warn("Installation: sudo apt install -y python3-dotenv")
-            break
-    if not env_loaded and load_dotenv is not None:
-        warn("Keine .env gefunden. Erwartet: /root/.config/myodoo-docker/.env")
+        # Prerequisites check
+        for w in check_prerequisites():
+            warn(w)
 
-    # Prerequisites check
-    prereq_warnings = check_prerequisites()
-    for w in prereq_warnings:
-        warn(w)
+        # Config laden
+        config_path = Path(args.config)
+        if not config_path.is_absolute():
+            config_path = script_dir / config_path
+        config = yaml.safe_load(config_path.read_text())
+        if not isinstance(config, dict):
+            sys.exit(f"Fehler: {config_path} muss ein YAML-Mapping sein "
+                     f"(gefunden: {type(config).__name__})")
 
-    # Config laden
-    config_path = Path(args.config)
-    if not config_path.is_absolute():
-        config_path = script_dir / config_path
-    config = yaml.safe_load(config_path.read_text())
-    if not isinstance(config, dict):
-        sys.exit(f"Fehler: {config_path} muss ein YAML-Mapping sein "
-                 f"(gefunden: {type(config).__name__})")
+        # Resolve ${ENV_VAR} placeholders (e.g. ${SSH_PORT})
+        config = resolve_env_vars(config)
 
-    # Resolve ${ENV_VAR} placeholders (e.g. ${SSH_PORT})
-    config = resolve_env_vars(config)
+        # Build the admin-IP allowlist dynamically from ALLOWED_IP_<n> env vars
+        # (any count) and inject it BEFORE validation so those IPs get validated too.
+        allowed_ips = inject_allowed_ips(config)
+        if allowed_ips:
+            info(f"Allowlist: {len(allowed_ips)} IP(s) aus .env erkannt "
+                 f"({', '.join(_allowlist_label(a) for a in allowed_ips)})")
+        else:
+            warn("Keine ALLOWED_IP_<n> in .env gefunden — eine aktivierte UFW würde den "
+                 "SSH-Port für NIEMANDEN öffnen (Lockout-Gefahr)!")
 
-    # Build the admin-IP allowlist dynamically from ALLOWED_IP_<n> env vars
-    # (any count) and inject it BEFORE validation so those IPs get validated too.
-    allowed_ips = inject_allowed_ips(config)
-    if allowed_ips:
-        info(f"Allowlist: {len(allowed_ips)} IP(s) aus .env erkannt "
-             f"({', '.join(a['ip'] for a in allowed_ips)})")
-    else:
-        warn("Keine ALLOWED_IP_<n> in .env gefunden — eine aktivierte UFW würde den "
-             "SSH-Port für NIEMANDEN öffnen (Lockout-Gefahr)!")
+        # Validate config
+        validation_errors = validate_config(config)
 
-    # Validate config
-    validation_errors = validate_config(config)
+    port = config.get("ssh", {}).get("port")
+    env_info["ssh_port"] = port if isinstance(port, int) else None
+    env_info["allowed_ips"] = len(allowed_ips)
+    if args.json:
+        if validation_errors:
+            _emit_json({"version": SCRIPT_VERSION, "env": env_info, "areas": [],
+                        "error": "; ".join(validation_errors)}, code=1)
+        _emit_json(run_json_audit(config, allowed_ips, env_info))
+        return
+
     if validation_errors:
         print(f"\n{C.FAIL}Konfigurationsfehler:{C.END}")
         for err in validation_errors:
