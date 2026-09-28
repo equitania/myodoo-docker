@@ -4,8 +4,8 @@
 # Title:            server-readiness.py
 # Description:      Report whether this server matches the state myodoo-docker
 #                   expects, and name the exact command that closes each gap.
-# Version:          1.10.0
-# Date:             17.09.2026
+# Version:          1.11.0
+# Date:             28.09.2026
 # Author:           Equitania Software GmbH
 # ==============================================================================
 # Why this exists:
@@ -21,7 +21,10 @@
 #
 # What it does:
 #   Runs a registry of read-only checks and prints a traffic-light report. Every
-#   non-OK finding carries exactly one copy-paste command that fixes it.
+#   non-OK finding carries exactly one copy-paste command that fixes it. Since
+#   1.11.0 the registry also covers the hardening .env, the seven
+#   server_hardening.py areas (firewall, fail2ban, SSH, kernel, Docker, auto
+#   updates, audit/integrity) and a locked-root/PermitRootLogin mismatch.
 #
 #   (no flag)   Full report, including the checks that passed.
 #   --brief     Only non-OK lines plus the summary. Used by getScripts.py.
@@ -70,8 +73,8 @@ from dataclasses import dataclass
 from enum import Enum
 from typing import Callable, List, Optional, Tuple
 
-SCRIPT_VERSION = "1.10.0"
-SCRIPT_DATE = "17.09.2026"
+SCRIPT_VERSION = "1.11.0"
+SCRIPT_DATE = "28.09.2026"
 
 # Where nginx keeps its customer vhosts (mirrors nginx-cert-guard.py).
 NGINX_CONF_D = "etc/nginx/conf.d"
@@ -275,6 +278,16 @@ def _run(command: List[str], timeout: int = 15) -> Tuple[int, str]:
         return 124, "timed out"
     except OSError as exc:
         return 1, str(exc)
+
+
+def _container_count() -> Optional[int]:
+    """How many containers exist (running or not); None when unknown."""
+    if not shutil.which("docker"):
+        return None
+    code, output = _run(["docker", "ps", "-aq"])
+    if code != 0:
+        return None
+    return len([line for line in output.splitlines() if line.strip()])
 
 
 def _human(num_bytes: float) -> str:
@@ -826,9 +839,14 @@ def check_backup_config(ctx: HealthContext) -> Finding:
         # one. Sending the operator to an empty editor makes them retype what
         # `docker inspect` can still read; send them to the reconstruction.
         if shutil.which("docker"):
-            fix = (f"{ctx.home}/ownerp_migrate.py --from-docker   "
-                   f"# rebuild from the running containers, then: edbk"
-                   f"  # or, if this host needs no backups: docron --disable container2backup")
+            if _container_count() == 0:
+                # A fresh host: nothing to rebuild from, the first instance comes next.
+                fix = ("wizup   # add the first Odoo instance, then: wizbk   # its backup"
+                       "  # or, if this host needs no backups: docron --disable container2backup")
+            else:
+                fix = (f"{ctx.home}/ownerp_migrate.py --from-docker   "
+                       f"# rebuild from the running containers, then: edbk"
+                       f"  # or, if this host needs no backups: docron --disable container2backup")
         else:
             fix = ("edbk   # create or repair the backup configuration"
                    "  # or, if this host needs no backups: docron --disable container2backup")
@@ -872,12 +890,14 @@ def check_update_config(ctx: HealthContext) -> Finding:
     if error:
         # Same reasoning as check_backup_config: what `docker inspect` can
         # still read should not be retyped into an empty editor.
-        return Finding(
-            "update_config", Severity.FAIL, "Update config", error,
-            f"{ctx.home}/ownerp_migrate.py --from-docker   "
-            f"# rebuild from the running containers, then: edup"
-            f"  # or, if this host runs no doup instances: docron --disable odoo_build_cache",
-        )
+        if _container_count() == 0:
+            fix = ("wizup   # add the first Odoo instance"
+                   "  # or, if this host runs no doup instances: docron --disable odoo_build_cache")
+        else:
+            fix = (f"{ctx.home}/ownerp_migrate.py --from-docker   "
+                   f"# rebuild from the running containers, then: edup"
+                   f"  # or, if this host runs no doup instances: docron --disable odoo_build_cache")
+        return Finding("update_config", Severity.FAIL, "Update config", error, fix)
 
     # The key is `containers` — that is what update_docker_odoo.py iterates
     # over, and what ownerp_validate.py requires.
@@ -1246,6 +1266,140 @@ def check_script_versions(ctx: HealthContext) -> Finding:
 
 
 # ==============================================================================
+# Security hardening (server_hardening.py --json)
+# ==============================================================================
+
+HARDENING_SCRIPT = "server_hardening.py"
+HARDENING_TIMEOUT = 180
+# Mirrors server_hardening.AREAS (a test holds them equal). Kept here as well
+# because every id must produce a finding even when the script is missing —
+# otherwise a mute on it would be reported as stale.
+HARDENING_AREAS = (
+    ("hardening_firewall",  "Firewall"),
+    ("hardening_fail2ban",  "fail2ban"),
+    ("hardening_ssh",       "SSH hardening"),
+    ("hardening_kernel",    "Kernel hardening"),
+    ("hardening_docker",    "Docker hardening"),
+    ("hardening_updates",   "Auto updates"),
+    ("hardening_integrity", "Audit/integrity"),
+)
+LOCKOUT_MODULES = ("ufw", "ssh")
+
+
+def _hardening_audit(ctx: HealthContext) -> Tuple[Optional[dict], Optional[str]]:
+    """Run the hardening audit once per report and cache it on the context.
+
+    A subprocess, not an import: server_hardening.py needs PyYAML and this
+    script must keep running without it. stdout only — stderr would break the
+    parse. Every failure is a reason string for a SKIP, never an exception.
+    """
+    cached = getattr(ctx, "_hardening_cache", None)
+    if cached is not None:
+        return cached
+    script = os.path.join(ctx.home, HARDENING_SCRIPT)
+    if not os.path.isfile(script):
+        result = (None, f"{HARDENING_SCRIPT} not deployed — run ups")
+    else:
+        try:
+            proc = subprocess.run([sys.executable, script, "--json"],
+                                  capture_output=True, text=True,
+                                  timeout=HARDENING_TIMEOUT)
+            data = json.loads(proc.stdout) if proc.stdout.strip() else None
+            result = ((data, None) if isinstance(data, dict)
+                      else (None, f"hardening audit gave no JSON (exit {proc.returncode})"))
+        except subprocess.TimeoutExpired:
+            result = (None, f"hardening audit timed out after {HARDENING_TIMEOUT}s")
+        except (OSError, ValueError) as exc:
+            result = (None, f"hardening audit failed: {exc}")
+    ctx._hardening_cache = result
+    return result
+
+
+def check_hardening_env(ctx: HealthContext) -> Finding:
+    title = "Hardening .env"
+    data, error = _hardening_audit(ctx)
+    if data is None:
+        return _skip("hardening_env", title, error)
+    env = data.get("env") or {}
+    path = env.get("path") or "/root/.config/myodoo-docker/.env"
+    create = (f"ups   # offers to create it  # or: cp {ctx.repo}/scripts/.env.example "
+              f"{path}; and mcedit {path}")
+    if not env.get("present"):
+        return Finding("hardening_env", Severity.FAIL, title,
+                       f"no {path} — hardening cannot know the SSH port or the admin IPs",
+                       create)
+    if not env.get("loaded"):
+        return Finding("hardening_env", Severity.FAIL, title,
+                       ".env present but python3-dotenv is missing, so it is ignored",
+                       "apt install -y python3-dotenv")
+    if not env.get("ssh_port"):
+        return Finding("hardening_env", Severity.FAIL, title,
+                       "SSH_PORT is not set", f"mcedit {path}")
+    if not env.get("allowed_ips"):
+        return Finding("hardening_env", Severity.FAIL, title,
+                       "no ALLOWED_IP_<n> — an enabled UFW would open SSH to nobody",
+                       f"mcedit {path}")
+    return _ok("hardening_env", title,
+               f"SSH_PORT {env['ssh_port']}, {env['allowed_ips']} admin IP(s)")
+
+
+def _make_hardening_check(check_id: str, title: str) -> Callable[[HealthContext], Finding]:
+    def check(ctx: HealthContext) -> Finding:
+        data, error = _hardening_audit(ctx)
+        if data is None:
+            return _skip(check_id, title, error)
+        if data.get("error"):
+            return _skip(check_id, title, f"audit not run: {data['error']}")
+        area = next((a for a in data.get("areas", []) if a.get("check_id") == check_id), None)
+        if area is None:
+            return _skip(check_id, title, "not reported by this server_hardening.py")
+        modules = " ".join(area.get("modules", []))
+        if area.get("status") == "ok":
+            return _ok(check_id, title, f"{modules}: as configured")
+        findings = area.get("findings") or []
+        first = findings[0]["text"] if findings else "deviates from hardening_config.yaml"
+        more = f" (+{len(findings) - 1} more)" if len(findings) > 1 else ""
+        severity = (Severity.FAIL if area.get("status") == "fail"
+                    and area.get("on_fail") == "FAIL" else Severity.WARN)
+        fix = (f"python3 {ctx.home}/{HARDENING_SCRIPT} --apply -m {modules}"
+               f"   # or: ups (offers it, with a lockout check)")
+        if set(area.get("modules", [])) & set(LOCKOUT_MODULES):
+            fix += "  # keep a second SSH session open"
+        return Finding(check_id, severity, title, f"{first}{more}", fix)
+    check.__name__ = f"check_{check_id}"
+    return check
+
+
+HARDENING_CHECKS = tuple(_make_hardening_check(check_id, title)
+                         for check_id, title in HARDENING_AREAS)
+
+
+def check_root_login_locked(ctx: HealthContext) -> Finding:
+    """Cloud images lock root's password and set disable_root: true. The
+    hardening then expects PermitRootLogin yes for a root nobody can log in
+    as (28.09.2026). Reported, never fixed: it needs a password."""
+    title = "Root login"
+    config = (_read(os.path.join(ctx.home, "hardening_config.yaml"))
+              or _read(os.path.join(ctx.repo, "scripts", "hardening_config.yaml")))
+    if not config or not re.search(r'^\s*PermitRootLogin:\s*"?yes"?\s*$', config, re.M):
+        return _skip("root_login_locked", title, "hardening does not expect root login")
+    code, output = _run(["passwd", "-S", "root"])
+    fields = output.split()
+    if code != 0 or len(fields) < 2:
+        return _skip("root_login_locked", title, "passwd -S root unavailable")
+    if fields[1] != "L":
+        return _ok("root_login_locked", title, "root has a usable password")
+    cloud = _read(ctx.p("etc/cloud/cloud.cfg")) or ""
+    by_cloud = bool(re.search(r"^\s*disable_root:\s*true", cloud, re.M))
+    detail = ("root's password is locked"
+              + (" and cloud-init sets disable_root: true" if by_cloud else "")
+              + " — hardening expects PermitRootLogin yes, but root cannot log in")
+    fix = ("passwd root; printf '%s\\n' 'disable_root: false' > "
+           "/etc/cloud/cloud.cfg.d/99-ownerp-root.cfg")
+    return Finding("root_login_locked", Severity.WARN, title, detail, fix)
+
+
+# ==============================================================================
 # Registry and runner
 # ==============================================================================
 
@@ -1431,6 +1585,9 @@ CHECKS: Tuple[Callable[[HealthContext], Finding], ...] = (
     check_backup_disk_space,
     check_build_cache,
     check_odoo_capacity,
+    check_hardening_env,
+    *HARDENING_CHECKS,
+    check_root_login_locked,
 )
 
 

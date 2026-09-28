@@ -14,6 +14,8 @@ Run from the repository root:
 import importlib.util
 import json
 import os
+import subprocess
+import sys
 import tempfile
 import time
 import unittest
@@ -59,6 +61,9 @@ class UpdateConfigTest(unittest.TestCase):
                                              return_value="/usr/bin/docker")
         patcher.start()
         self.addCleanup(patcher.stop)
+        patcher2 = unittest.mock.patch.object(sr, "_container_count", return_value=2)
+        patcher2.start()
+        self.addCleanup(patcher2.stop)
 
     def write(self, text):
         path = os.path.join(self.tmp.name, sr.UPDATE_CONFIG)
@@ -318,7 +323,8 @@ class BackupConfigTest(unittest.TestCase):
 
     def test_the_fix_names_the_docron_alternative_with_docker(self):
         with unittest.mock.patch.object(sr.shutil, "which",
-                                        return_value="/usr/bin/docker"):
+                                        return_value="/usr/bin/docker"), \
+             unittest.mock.patch.object(sr, "_container_count", return_value=2):
             finding = sr.check_backup_config(self.ctx)
         self.assertEqual(finding.severity, sr.Severity.FAIL)
         self.assertIn("docron --disable container2backup", finding.fix)
@@ -610,6 +616,179 @@ class ConfigLoaderTest(unittest.TestCase):
             ctx = sr.HealthContext(root=home, home=home, repo=home)
             _config, error = sr._load_backup_config(ctx)
         self.assertIn(sr.BACKUP_CONFIG, error)
+
+
+def _area(check_id, status="ok", findings=(), on_fail="FAIL", modules=("ufw",)):
+    return {"check_id": check_id, "modules": list(modules), "on_fail": on_fail,
+            "status": status, "findings": list(findings)}
+
+
+GOOD_ENV = {"path": "/root/.config/myodoo-docker/.env", "present": True,
+            "loaded": True, "ssh_port": 22, "allowed_ips": 2}
+
+
+class HardeningChecksTest(unittest.TestCase):
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(self.tmp.cleanup)
+        self.ctx = sr.HealthContext(root=self.tmp.name, home=self.tmp.name,
+                                    repo=self.tmp.name)
+
+    def audit(self, env=GOOD_ENV, areas=(), error=None):
+        self.ctx._hardening_cache = ({"version": "1.9.0", "env": env,
+                                      "areas": list(areas), "error": error}, None)
+
+    def check(self, check_id):
+        return next(c for c in sr.CHECKS if c.__name__ == f"check_{check_id}")(self.ctx)
+
+    def test_all_checks_are_registered(self):
+        names = {c.__name__ for c in sr.CHECKS}
+        for check_id, _ in sr.HARDENING_AREAS:
+            self.assertIn(f"check_{check_id}", names)
+        self.assertIn("check_hardening_env", names)
+        self.assertIn("check_root_login_locked", names)
+
+    def test_readiness_and_hardening_agree_on_the_areas(self):
+        path = os.path.join(os.path.dirname(os.path.abspath(__file__)),
+                            "..", "scripts", "server_hardening.py")
+        spec = importlib.util.spec_from_file_location("server_hardening", path)
+        sh = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(sh)
+        self.assertEqual([a[0] for a in sh.AREAS], [a[0] for a in sr.HARDENING_AREAS])
+
+    def test_a_failing_firewall_is_a_fail_with_the_command(self):
+        self.audit(areas=[_area("hardening_firewall", "fail",
+                                [{"module": "ufw", "level": "fail", "text": "UFW ist NICHT aktiv"},
+                                 {"module": "ufw", "level": "fail", "text": "x"}])])
+        finding = self.check("hardening_firewall")
+        self.assertEqual(finding.severity, sr.Severity.FAIL)
+        self.assertIn("UFW ist NICHT aktiv (+1 more)", finding.detail)
+        self.assertIn("server_hardening.py --apply -m ufw", finding.fix)
+
+    def test_a_warn_area_stays_warn_even_on_fail(self):
+        self.audit(areas=[_area("hardening_kernel", "fail", [{"module": "sysctl",
+                   "level": "fail", "text": "rp_filter"}], on_fail="WARN",
+                   modules=("sysctl", "sysctl_persist", "kernel_modules"))])
+        self.assertEqual(self.check("hardening_kernel").severity, sr.Severity.WARN)
+
+    def test_ok_area_is_ok(self):
+        self.audit(areas=[_area("hardening_ssh", "ok", modules=("ssh",))])
+        self.assertEqual(self.check("hardening_ssh").severity, sr.Severity.OK)
+
+    def test_missing_env_fails_and_areas_skip(self):
+        self.audit(env={"path": "/root/.config/myodoo-docker/.env", "present": False,
+                        "loaded": False, "ssh_port": None, "allowed_ips": 0},
+                   error="ssh.port invalid: ''")
+        env = self.check("hardening_env")
+        self.assertEqual(env.severity, sr.Severity.FAIL)
+        self.assertIn("ups", env.fix)
+        self.assertEqual(self.check("hardening_firewall").severity, sr.Severity.SKIP)
+
+    def test_env_without_admin_ips_fails(self):
+        self.audit(env=dict(GOOD_ENV, allowed_ips=0))
+        self.assertEqual(self.check("hardening_env").severity, sr.Severity.FAIL)
+
+    def test_no_script_is_skip_not_alarm(self):
+        finding = self.check("hardening_firewall")
+        self.assertEqual(finding.severity, sr.Severity.SKIP)
+        self.assertIn("server_hardening.py", finding.detail)
+
+    def test_the_audit_runs_once_per_report(self):
+        script = os.path.join(self.tmp.name, "server_hardening.py")
+        with open(script, "w", encoding="utf-8") as handle:
+            handle.write("import json\nprint(json.dumps({'env': {}, 'areas': [], 'error': None}))\n")
+        with unittest.mock.patch.object(sr.subprocess, "run",
+                                        wraps=subprocess.run) as spy:
+            sr._hardening_audit(self.ctx)
+            sr._hardening_audit(self.ctx)
+        self.assertEqual(spy.call_count, 1)
+
+    def test_timeout_and_garbage_are_skip(self):
+        with unittest.mock.patch.object(sr.os.path, "isfile", return_value=True), \
+             unittest.mock.patch.object(sr.subprocess, "run",
+                                        side_effect=subprocess.TimeoutExpired("x", 1)):
+            data, error = sr._hardening_audit(self.ctx)
+        self.assertIsNone(data)
+        self.assertIn("timed out", error)
+        ctx = sr.HealthContext(root=self.tmp.name, home=self.tmp.name, repo=self.tmp.name)
+        with unittest.mock.patch.object(sr.os.path, "isfile", return_value=True), \
+             unittest.mock.patch.object(sr.subprocess, "run", return_value=
+                                        subprocess.CompletedProcess([], 1, "Traceback", "")):
+            data, error = sr._hardening_audit(ctx)
+        self.assertIsNone(data)
+
+    def test_a_muted_area_is_muted(self):
+        self.audit(areas=[_area("hardening_firewall", "fail",
+                                [{"module": "ufw", "level": "fail", "text": "x"}])])
+        mutes = os.path.join(self.tmp.name, sr.MUTES_RELATIVE)
+        os.makedirs(os.path.dirname(mutes), exist_ok=True)
+        with open(mutes, "w", encoding="utf-8") as handle:
+            handle.write("hardening_firewall | 28.09.2026 | corporate firewall in front\n")
+        with unittest.mock.patch.object(sr, "CHECKS",
+                                        (next(c for c in sr.CHECKS
+                                              if c.__name__ == "check_hardening_firewall"),)):
+            findings = sr.run_checks(self.ctx)
+        self.assertEqual(findings[0].severity, sr.Severity.MUTED)
+
+
+class RootLoginLockedTest(unittest.TestCase):
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(self.tmp.cleanup)
+        self.ctx = sr.HealthContext(root=self.tmp.name, home=self.tmp.name,
+                                    repo=self.tmp.name)
+        with open(os.path.join(self.tmp.name, "hardening_config.yaml"), "w",
+                  encoding="utf-8") as handle:
+            handle.write('ssh:\n  settings:\n    PermitRootLogin: "yes"\n')
+        os.makedirs(os.path.join(self.tmp.name, "etc", "cloud"))
+        with open(os.path.join(self.tmp.name, "etc", "cloud", "cloud.cfg"), "w",
+                  encoding="utf-8") as handle:
+            handle.write("disable_root: true\n")
+
+    def run_check(self, passwd_output):
+        with unittest.mock.patch.object(sr, "_run", return_value=(0, passwd_output)):
+            return sr.check_root_login_locked(self.ctx)
+
+    def test_locked_root_on_cloud_image_warns(self):
+        finding = self.run_check("root L 2026-07-22 0 99999 7 -1")
+        self.assertEqual(finding.severity, sr.Severity.WARN)
+        self.assertIn("disable_root", finding.detail)
+        self.assertIn("passwd root", finding.fix)
+
+    def test_root_with_password_is_ok(self):
+        self.assertEqual(self.run_check("root P 2026-09-28 0 99999 7 -1").severity,
+                         sr.Severity.OK)
+
+    def test_config_not_expecting_root_is_skip(self):
+        with open(os.path.join(self.tmp.name, "hardening_config.yaml"), "w",
+                  encoding="utf-8") as handle:
+            handle.write('ssh:\n  settings:\n    PermitRootLogin: "prohibit-password"\n')
+        self.assertEqual(self.run_check("root L").severity, sr.Severity.SKIP)
+
+
+class FreshHostHintTest(unittest.TestCase):
+    """A host without any container has nothing --from-docker could rebuild."""
+
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(self.tmp.cleanup)
+        self.ctx = sr.HealthContext(root=self.tmp.name, home=self.tmp.name,
+                                    repo=self.tmp.name)
+        for patcher in (unittest.mock.patch.object(sr.shutil, "which",
+                                                   return_value="/usr/bin/docker"),
+                        unittest.mock.patch.object(sr, "_container_count", return_value=0)):
+            patcher.start()
+            self.addCleanup(patcher.stop)
+
+    def test_update_config_points_at_wiz(self):
+        finding = sr.check_update_config(self.ctx)
+        self.assertIn("wizup", finding.fix)
+        self.assertNotIn("--from-docker", finding.fix)
+
+    def test_backup_config_points_at_wiz(self):
+        finding = sr.check_backup_config(self.ctx)
+        self.assertIn("wizup", finding.fix)
+        self.assertNotIn("--from-docker", finding.fix)
 
 
 if __name__ == "__main__":
