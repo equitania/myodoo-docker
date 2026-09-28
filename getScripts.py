@@ -4525,6 +4525,19 @@ HARDENING_ENV_RELATIVE = os.path.join(".config", "myodoo-docker", ".env")
 GUARDED_MODULES = ("ufw", "ssh", "docker")
 
 
+def _hardening_env_path(_myhome: str) -> Optional[str]:
+    """The .env server_hardening.py and container2backup.py will actually
+    read: the central file if it exists, else the legacy <home>/.env
+    (their own fallback order, e.g. load_env() in server_hardening.py) -
+    never a guess of our own that could point ups at a different file than
+    the one the applied hardening acts on."""
+    central = os.path.join(_myhome, HARDENING_ENV_RELATIVE)
+    if os.path.isfile(central):
+        return central
+    legacy = os.path.join(_myhome, ".env")
+    return legacy if os.path.isfile(legacy) else None
+
+
 def _read_env_file(path: str) -> Dict[str, str]:
     """KEY=VALUE lines of a .env, tolerant of quotes, spaces and CRLF."""
     values: Dict[str, str] = {}
@@ -4551,17 +4564,31 @@ def _allowed_ips(env: Dict[str, str]) -> List[str]:
     return [ip for _, ip in sorted(slots)]
 
 
+_ENV_ACTIVE_KEY_RE = re.compile(r"^(SSH_PORT|ALLOWED_IP_(\d+)(_COMMENT)?)=")
+_ENV_KEY_LINE_RE = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*=")
+
+
 def _render_env(template: str, ssh_port: int, ips: List[str]) -> str:
     """The template with SSH_PORT and the admin IPs filled in.
+
+    Every other KEY=value line is written commented out - BACKUP_PASSWORD
+    foremost. scripts/.env.example ships with BACKUP_ENCRYPTION_ENABLED=true
+    and a placeholder BACKUP_PASSWORD, and container2backup.py's
+    get_encryption_settings() reads this file first: an ups-created .env that
+    activated it verbatim would encrypt every backup with a password that is
+    sitting in public GitHub history. Only the hardening keys this offer
+    actually manages - SSH_PORT, ALLOWED_IP_<n>(_COMMENT) - come out active;
+    everything else documents itself, commented, for an operator to enable
+    by hand.
 
     Every ALLOWED_IP_<n> slot not given here is blanked, comments included: a
     template example address left in place would be an open SSH port for it.
     """
     lines, seen = [], set()
     for line in template.splitlines():
-        match = re.match(r"^(SSH_PORT|ALLOWED_IP_(\d+)(_COMMENT)?)=", line)
+        match = _ENV_ACTIVE_KEY_RE.match(line)
         if not match:
-            lines.append(line)
+            lines.append(f"# {line}" if _ENV_KEY_LINE_RE.match(line) else line)
             continue
         key = match.group(1)
         seen.add(key)
@@ -4907,6 +4934,12 @@ def _offer_env_creation(_myhome: str, env_path: str) -> bool:
         suggestion = peers[0] if (not ips and peers) else ""
         hint = f" [{suggestion}]" if suggestion else ""
         ip = _prompt(f"ALLOWED_IP_{len(ips) + 1}{hint} (leer = fertig): ", suggestion)
+        # None is Ctrl-C/EOF (_prompt's own signal) - cancel outright, keep no
+        # partial IP list. "" is the normal "leer = fertig" done-signal and
+        # must stay distinct from it.
+        if ip is None:
+            status("Abgebrochen – keine .env angelegt")
+            return False
         if not ip:
             break
         try:
@@ -4929,7 +4962,7 @@ def _offer_env_creation(_myhome: str, env_path: str) -> bool:
 
 def _hardening_command(script: str, modules: List[str]) -> str:
     return (f"{shlex.quote(sys.executable)} {shlex.quote(script)} "
-            f"--apply -f -m {' '.join(modules)}")
+            f"--apply -f -m {' '.join(shlex.quote(m) for m in modules)}")
 
 
 def _print_hardening_commands(script: str, pending: List[dict]) -> None:
@@ -4940,27 +4973,43 @@ def _print_hardening_commands(script: str, pending: List[dict]) -> None:
         print("  Bei UFW/SSH eine zweite SSH-Sitzung offen halten.")
 
 
-def _apply_hardening(_myhome: str, script: str, pending: List[dict], env_path: str) -> None:
+def _apply_hardening(_myhome: str, script: str, pending: List[dict]) -> None:
     """Harmless modules first, then ufw/ssh behind the lockout gate, then
     Docker, and AIDE last so its database records the finished state."""
     modules = [m for area in pending for m in area["modules"]]
-    env = _read_env_file(env_path) if os.path.isfile(env_path) else {}
+    env_path = _hardening_env_path(_myhome)
+    env = _read_env_file(env_path) if env_path else {}
     listen = _ssh_listen_ports()
     port_change = _is_port_change(env, listen)
+    # sshd's real port unreadable (sshd -T failed) is not a *detected* port
+    # change, but SSH_PORT in the .env cannot be trusted against it either -
+    # fail2ban's jail follows that value, so treat "unknown" the same as
+    # "changed" rather than gamble on a value we cannot verify.
+    port_unknown = bool(env.get("SSH_PORT", "").strip()) and not listen
+    hold_fail2ban = port_change or port_unknown
     harmless = [m for m in modules if m not in GUARDED_MODULES and m != "aide"
                 # The sshd jail follows SSH_PORT: moved ahead of sshd it would
                 # watch a port nobody logs in on. It belongs to the manual
                 # port-change sequence (step 3) then.
-                and not (m == "fail2ban" and port_change)]
+                and not (m == "fail2ban" and hold_fail2ban)]
     guarded = [m for m in modules if m in ("ufw", "ssh")]
 
     if harmless:
         run_command(_hardening_command(script, harmless), shell=True, interactive=True)
 
-    if port_change and "fail2ban" in modules and not guarded:
-        print("\nfail2ban wartet auf den Portwechsel:")
-        for step in PORT_CHANGE_STEPS:
-            print(f"  {step}")
+    if "fail2ban" in modules and hold_fail2ban:
+        # When port_change AND guarded are both true, the guarded block below
+        # already prints PORT_CHANGE_STEPS (which covers fail2ban - step 3
+        # applies all three together) - printing it twice would be noise.
+        if not (port_change and guarded):
+            if port_change:
+                print("\nfail2ban wartet auf den Portwechsel:")
+                for step in PORT_CHANGE_STEPS:
+                    print(f"  {step}")
+            else:
+                print("\nfail2ban wartet: SSH_PORT steht in der .env, aber sshd -T "
+                      "liefert aktuell keinen Port (unbekannt). Von Hand, sobald "
+                      f"sshd wieder lesbar ist: {_hardening_command(script, ['fail2ban'])}")
 
     if guarded:
         blockers = _lockout_blockers(env, listen, _ssh_peers(listen) if listen else None,
@@ -4979,8 +5028,11 @@ def _apply_hardening(_myhome: str, script: str, pending: List[dict], env_path: s
             run_command(_hardening_command(script, guarded), shell=True, interactive=True)
 
     if "docker" in modules:
-        run_command(_hardening_command(script, ["docker"]), shell=True, interactive=True)
-        if _running_containers() == 0:
+        result = run_command(_hardening_command(script, ["docker"]), shell=True, interactive=True)
+        applied = getattr(result, "returncode", None) == 0
+        if not applied:
+            status("Docker-Härtung fehlgeschlagen – kein Neustart")
+        elif _running_containers() == 0:
             run_command("systemctl restart docker", shell=True, interactive=True)
         else:
             status("daemon.json geschrieben. Docker-Neustart im Wartungsfenster: "
@@ -5006,7 +5058,8 @@ def _mute_hardening_area(_myhome: str, pending: List[dict]) -> None:
         return
     check_id = pending[int(choice) - 1]["check_id"]
     run_command(f"{shlex.quote(sys.executable)} {shlex.quote(mute_script)} "
-                f"{check_id} --reason {shlex.quote(reason)}", shell=True, interactive=True)
+                f"{shlex.quote(check_id)} --reason {shlex.quote(reason)}",
+                shell=True, interactive=True)
 
 
 def offer_security_hardening(_myhome: str) -> None:
@@ -5014,7 +5067,11 @@ def offer_security_hardening(_myhome: str) -> None:
 
     Silent unless stdin and stdout are a terminal, ~/server_hardening.py
     exists, its --json audit ran, and at least one area is off and not muted.
-    A missing .env is offered first. Any failure is "skip", never a broken ups.
+    A missing .env is offered first - unless a legacy <home>/.env already
+    exists, which server_hardening.py and container2backup.py fall back to
+    themselves; creating a central one then would shadow it (and whatever
+    real BACKUP_PASSWORD it holds) instead of replacing it. Any failure is
+    "skip", never a broken ups - Ctrl-C included.
     """
     try:
         if not (sys.stdin.isatty() and sys.stdout.isatty()):
@@ -5022,13 +5079,17 @@ def offer_security_hardening(_myhome: str) -> None:
         script = os.path.join(_myhome, "server_hardening.py")
         if not os.path.isfile(script):
             return
+        status("Prüfe Sicherheits-Härtung …")
         audit = _hardening_audit(script)
         if audit is None:
             return
         muted = _muted_check_ids(_myhome)
         env_path = os.path.join(_myhome, HARDENING_ENV_RELATIVE)
+        legacy_env_path = os.path.join(_myhome, ".env")
         if not os.path.isfile(env_path) and "hardening_env" not in muted:
-            if _offer_env_creation(_myhome, env_path):
+            if os.path.isfile(legacy_env_path):
+                status(f"Verwende die bestehende .env: {legacy_env_path}")
+            elif _offer_env_creation(_myhome, env_path):
                 audit = _hardening_audit(script) or audit
         if audit.get("error"):
             status(f"Härtungs-Audit nicht möglich: {audit['error']}")
@@ -5047,13 +5108,16 @@ def offer_security_hardening(_myhome: str) -> None:
         print("  4) Einen Bereich dauerhaft stummschalten")
         choice = _prompt("Auswahl [3]: ", "3")
         if choice == "1":
-            _apply_hardening(_myhome, script, pending, env_path)
+            _apply_hardening(_myhome, script, pending)
         elif choice == "2":
             _print_hardening_commands(script, pending)
         elif choice == "4":
             _mute_hardening_area(_myhome, pending)
         else:
             status("Später: chk zeigt die offenen Bereiche, ups fragt beim nächsten Mal erneut")
+    except KeyboardInterrupt:
+        print()
+        status("Härtungs-Angebot übersprungen (Ctrl-C) - ups läuft weiter")
     except Exception as e:
         logger.debug(f"Security hardening offer skipped: {e}")
 

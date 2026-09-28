@@ -92,6 +92,24 @@ class EnvFileTest(unittest.TestCase):
             with open(path, encoding="utf-8") as handle:
                 self.assertEqual(handle.read(), "SSH_PORT=22\n")
 
+    def test_render_env_never_activates_backup_credentials(self):
+        # The real template, not a test fixture: BACKUP_ENCRYPTION_ENABLED=true
+        # and a placeholder BACKUP_PASSWORD ship in it, and
+        # container2backup.py's get_encryption_settings() reads the central
+        # .env first. An ups-created .env that activated them verbatim would
+        # encrypt every backup with a password sitting in public GitHub
+        # history.
+        template_path = os.path.join(os.path.dirname(__file__), "..", "scripts", ".env.example")
+        with open(template_path, encoding="utf-8") as handle:
+            template = handle.read()
+        text = gs._render_env(template, 22, ["192.0.2.10"])
+        for line in text.splitlines():
+            self.assertFalse(line.startswith("BACKUP_ENCRYPTION_ENABLED="), line)
+            self.assertFalse(line.startswith("BACKUP_PASSWORD="), line)
+        self.assertIn("# BACKUP_ENCRYPTION_ENABLED=true", text)
+        self.assertIn("SSH_PORT=22\n", text)
+        self.assertIn("ALLOWED_IP_1=192.0.2.10\n", text)
+
 
 class MutesTest(unittest.TestCase):
     def test_reads_every_muted_id(self):
@@ -293,6 +311,67 @@ class OfferTest(unittest.TestCase):
         values = gs._read_env_file(self.env_path)
         self.assertEqual(values["SSH_PORT"], "22")
         self.assertEqual(values["ALLOWED_IP_1"], "192.0.2.10")
+
+    def test_legacy_env_is_used_without_a_creation_offer(self):
+        # server_hardening.py and container2backup.py both fall back to
+        # <home>/.env themselves; a new central .env would shadow it (and
+        # whatever real BACKUP_PASSWORD it holds).
+        os.unlink(self.env_path)
+        legacy = os.path.join(self.home, ".env")
+        with open(legacy, "w", encoding="utf-8") as handle:
+            handle.write("SSH_PORT=22\nALLOWED_IP_1=192.0.2.10\n")
+        self.answers = ["3"]
+        self.offer(_audit(("hardening_firewall", ["ufw"], "fail")))
+        self.assertFalse(os.path.isfile(self.env_path))
+        self.assertEqual(self.commands, [])
+
+    def test_apply_reads_the_legacy_env_when_the_central_one_is_missing(self):
+        os.unlink(self.env_path)
+        legacy = os.path.join(self.home, ".env")
+        with open(legacy, "w", encoding="utf-8") as handle:
+            handle.write("SSH_PORT=22\nALLOWED_IP_1=192.0.2.10\n")
+        self.answers = ["1"]
+        self.offer(_audit(("hardening_ssh", ["ssh"], "fail")))
+        self.assertEqual(self.applied(), ["ssh"])
+
+    def test_ctrl_c_during_ip_entry_cancels_env_creation(self):
+        os.unlink(self.env_path)
+        template = os.path.join(self.home, "myodoo-docker", "scripts", ".env.example")
+        os.makedirs(os.path.dirname(template))
+        with open(template, "w", encoding="utf-8") as handle:
+            handle.write("SSH_PORT=\nALLOWED_IP_1=\nALLOWED_IP_2=\n")
+        # create? yes, port: default, ip 1: explicit, ip 2: Ctrl-C, then "later"
+        with mock.patch("builtins.input",
+                        side_effect=["", "", "192.0.2.20", KeyboardInterrupt, "3"]):
+            self.offer(_audit(("hardening_firewall", ["ufw"], "fail")))
+        self.assertFalse(os.path.isfile(self.env_path))
+        self.assertEqual(self.commands, [])
+
+    def test_fail2ban_waits_when_the_ssh_port_is_unreadable(self):
+        self.answers = ["1"]
+        with mock.patch.object(gs, "_ssh_listen_ports", return_value=[]):
+            self.offer(_audit(("hardening_fail2ban", ["fail2ban"], "fail"),
+                              ("hardening_kernel", ["sysctl"], "warn")))
+        self.assertEqual(self.applied(), ["sysctl"])
+
+    def test_docker_restart_needs_a_successful_apply_too(self):
+        self.answers = ["1"]
+        with mock.patch.object(gs, "_running_containers", return_value=None):
+            self.offer(_audit(("hardening_docker", ["docker"], "warn")))
+        self.assertNotIn("systemctl restart docker", self.commands)
+
+        self.commands.clear()
+        self.answers = ["1"]
+        with mock.patch.object(gs, "run_command",
+                               side_effect=lambda c, **k: self.commands.append(c)
+                               or types.SimpleNamespace(returncode=1)):
+            self.offer(_audit(("hardening_docker", ["docker"], "warn")))
+        self.assertNotIn("systemctl restart docker", self.commands)
+
+    def test_ctrl_c_during_the_audit_skips_the_offer(self):
+        with mock.patch.object(gs, "_hardening_audit", side_effect=KeyboardInterrupt):
+            gs.offer_security_hardening(self.home)  # must not raise
+        self.assertEqual(self.commands, [])
 
 
 if __name__ == "__main__":
