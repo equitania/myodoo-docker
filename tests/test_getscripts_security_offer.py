@@ -159,6 +159,12 @@ class SshFactsTest(unittest.TestCase):
         with mock.patch.object(gs.subprocess, "run", return_value=self.run_result(out)):
             self.assertEqual(gs._ssh_peers([22]), ["192.0.2.10", "192.0.2.11"])
 
+    def test_peers_from_ss_with_state_column(self):
+        out = ("ESTAB 0 0 192.0.2.5:22 192.0.2.10:51000\n"
+               "ESTAB 0 0 [2001:db8::1]:22 [2001:db8::5]:51001\n")
+        with mock.patch.object(gs.subprocess, "run", return_value=self.run_result(out)):
+            self.assertEqual(gs._ssh_peers([22]), ["192.0.2.10", "2001:db8::5"])
+
     def test_ss_failure_is_none(self):
         with mock.patch.object(gs.subprocess, "run", side_effect=OSError("no ss")):
             self.assertIsNone(gs._ssh_peers([22]))

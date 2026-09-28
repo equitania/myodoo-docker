@@ -4638,6 +4638,9 @@ def _ssh_peers(ports: List[int]) -> Optional[List[str]]:
             return None
         for line in result.stdout.splitlines():
             columns = line.split()
+            # Some ss versions print State as leading column (ESTAB ...), others don't (-H omits it).
+            if columns and not columns[0].isdigit():
+                columns = columns[1:]
             if len(columns) >= 4:
                 hosts.add(_peer_host(columns[3]))
     return sorted(hosts)
