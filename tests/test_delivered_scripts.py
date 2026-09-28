@@ -97,7 +97,8 @@ class DeliveredScriptsTest(unittest.TestCase):
     def test_the_new_tools_are_on_the_delivery_list(self):
         delivered = delivered_names()
         for name in ("ownerp_cron.py", "ownerp_migrate.py", "ownerp_mute.py",
-                     "nginx-cert-guard.py", "server-readiness.py"):
+                     "nginx-cert-guard.py", "server-readiness.py",
+                     "server_hardening.py", "hardening_config.yaml"):
             self.assertIn(name, delivered)
 
     def test_delivery_and_the_version_check_agree(self):

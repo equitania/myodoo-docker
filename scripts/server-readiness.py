@@ -105,6 +105,7 @@ DELIVERED_SCRIPTS = (
     "ownerp_cron.py",
     "ownerp_mute.py",
     "ownerp_migrate.py",
+    "server_hardening.py",
 )
 
 # cron.d applies run-parts naming (cron(8)): a file whose name contains

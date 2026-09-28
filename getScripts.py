@@ -4135,6 +4135,11 @@ def copy_scripts(_myhome: str, myodoo_docker: str) -> None:
         "myodoo-maintenance.logrotate",
         "server-readiness.py",
         "ownerp_mute.py",
+        # server_hardening.py reads hardening_config.yaml from its own
+        # directory, so both travel together. The documentation always named
+        # /root/server_hardening.py; until 9.26.0 nothing put it there.
+        "server_hardening.py",
+        "hardening_config.yaml",
         "odoo_build_cache.py",
         "getScripts.py"
     ]

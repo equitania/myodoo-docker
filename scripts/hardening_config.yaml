@@ -2,7 +2,9 @@
 # Server-Härtung Konfiguration
 # =============================================================
 # Alle Einstellungen werden von server_hardening.py gelesen.
-# Anpassungen hier vornehmen, nicht im Skript.
+# Diese Datei wird bei jedem `ups` nach /root ausgeliefert und dabei
+# überschrieben: serverspezifische Werte (SSH-Port, Admin-IPs) gehören in
+# /root/.config/myodoo-docker/.env, nie hierher.
 # =============================================================
 
 # --- UFW Firewall ---
