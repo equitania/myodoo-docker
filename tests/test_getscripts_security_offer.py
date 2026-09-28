@@ -175,5 +175,125 @@ class SshFactsTest(unittest.TestCase):
             self.assertEqual(gs._running_containers(), 0)
 
 
+def _audit(*areas, error=None, env=None):
+    return {"version": "1.9.0", "env": env or {"present": True}, "error": error,
+            "areas": [{"check_id": c, "modules": m, "on_fail": "FAIL",
+                       "status": s, "findings": []} for c, m, s in areas]}
+
+
+class OfferTest(unittest.TestCase):
+    def setUp(self):
+        self.home = tempfile.mkdtemp(prefix="getscripts-test-home-hardening-")
+        open(os.path.join(self.home, "server_hardening.py"), "w").close()
+        self.env_path = os.path.join(self.home, gs.HARDENING_ENV_RELATIVE)
+        os.makedirs(os.path.dirname(self.env_path))
+        with open(self.env_path, "w", encoding="utf-8") as handle:
+            handle.write("SSH_PORT=22\nALLOWED_IP_1=192.0.2.10\n")
+        self.commands = []
+        self.answers = []
+        patches = [
+            mock.patch.object(gs.sys.stdin, "isatty", return_value=True),
+            mock.patch.object(gs.sys.stdout, "isatty", return_value=True),
+            mock.patch.object(gs, "run_command",
+                              side_effect=lambda c, **k: self.commands.append(c)
+                              or types.SimpleNamespace(returncode=0)),
+            mock.patch("builtins.input", side_effect=lambda _p="": self.answers.pop(0)),
+            mock.patch("builtins.print"),
+            mock.patch.object(gs, "status"),
+            mock.patch.object(gs, "_ssh_listen_ports", return_value=[22]),
+            mock.patch.object(gs, "_ssh_peers", return_value=["192.0.2.10"]),
+            mock.patch.object(gs, "_ssh_socket_active", return_value=False),
+            mock.patch.object(gs, "_running_containers", return_value=0),
+        ]
+        for patcher in patches:
+            patcher.start()
+            self.addCleanup(patcher.stop)
+
+    def offer(self, audit):
+        with mock.patch.object(gs, "_hardening_audit", return_value=audit):
+            gs.offer_security_hardening(self.home)
+
+    def applied(self):
+        return [c.split(" -m ", 1)[1] for c in self.commands if " --apply " in c]
+
+    def test_silent_without_a_terminal(self):
+        with mock.patch.object(gs.sys.stdin, "isatty", return_value=False):
+            self.offer(_audit(("hardening_firewall", ["ufw"], "fail")))
+        self.assertEqual(self.commands, [])
+
+    def test_silent_when_everything_is_ok_or_muted(self):
+        mutes = os.path.join(self.home, gs.STORAGE_DRIVER_MUTES_RELATIVE)
+        with open(mutes, "w", encoding="utf-8") as handle:
+            handle.write("hardening_firewall | 28.09.2026 | fw in front\n")
+        self.offer(_audit(("hardening_firewall", ["ufw"], "fail"),
+                          ("hardening_ssh", ["ssh"], "ok")))
+        self.assertEqual(self.commands, [])
+
+    def test_fix_now_applies_harmless_then_guarded_then_aide(self):
+        self.answers = ["1"]
+        self.offer(_audit(("hardening_integrity", ["auditd", "aide"], "fail"),
+                          ("hardening_firewall", ["ufw"], "fail"),
+                          ("hardening_kernel", ["sysctl"], "warn")))
+        self.assertEqual(self.applied(), ["auditd sysctl", "ufw", "aide"])
+
+    def test_a_blocked_gate_applies_nothing_guarded(self):
+        self.answers = ["1"]
+        with mock.patch.object(gs, "_ssh_peers", return_value=["198.51.100.7"]):
+            self.offer(_audit(("hardening_firewall", ["ufw"], "fail"),
+                              ("hardening_ssh", ["ssh"], "fail")))
+        self.assertEqual(self.applied(), [])
+
+    def test_port_change_is_never_applied(self):
+        with open(self.env_path, "w", encoding="utf-8") as handle:
+            handle.write("SSH_PORT=16667\nALLOWED_IP_1=192.0.2.10\n")
+        self.answers = ["1"]
+        self.offer(_audit(("hardening_ssh", ["ssh"], "fail")))
+        self.assertEqual(self.applied(), [])
+
+    def test_fail2ban_waits_for_a_pending_port_change(self):
+        with open(self.env_path, "w", encoding="utf-8") as handle:
+            handle.write("SSH_PORT=16667\nALLOWED_IP_1=192.0.2.10\n")
+        self.answers = ["1"]
+        self.offer(_audit(("hardening_fail2ban", ["fail2ban"], "fail"),
+                          ("hardening_kernel", ["sysctl"], "warn")))
+        self.assertEqual(self.applied(), ["sysctl"])
+
+    def test_docker_restart_only_without_containers(self):
+        self.answers = ["1"]
+        self.offer(_audit(("hardening_docker", ["docker"], "warn")))
+        self.assertIn("systemctl restart docker", self.commands)
+        self.commands.clear()
+        self.answers = ["1"]
+        with mock.patch.object(gs, "_running_containers", return_value=3):
+            self.offer(_audit(("hardening_docker", ["docker"], "warn")))
+        self.assertEqual(self.applied(), ["docker"])
+        self.assertNotIn("systemctl restart docker", self.commands)
+
+    def test_show_commands_applies_nothing(self):
+        self.answers = ["2"]
+        self.offer(_audit(("hardening_firewall", ["ufw"], "fail")))
+        self.assertEqual(self.commands, [])
+
+    def test_mute_one_area_calls_ownerp_mute(self):
+        open(os.path.join(self.home, "ownerp_mute.py"), "w").close()
+        self.answers = ["4", "1", "Firmen-Firewall davor"]
+        self.offer(_audit(("hardening_firewall", ["ufw"], "fail")))
+        self.assertEqual(len(self.commands), 1)
+        self.assertIn("hardening_firewall --reason", self.commands[0])
+
+    def test_missing_env_is_offered_with_the_session_ip(self):
+        os.unlink(self.env_path)
+        template = os.path.join(self.home, "myodoo-docker", "scripts", ".env.example")
+        os.makedirs(os.path.dirname(template))
+        with open(template, "w", encoding="utf-8") as handle:
+            handle.write("SSH_PORT=\nALLOWED_IP_1=\n")
+        # create? yes, port: default, ip 1: default, ip 2: done; then "later"
+        self.answers = ["", "", "", "", "3"]
+        self.offer(_audit(("hardening_firewall", ["ufw"], "fail")))
+        values = gs._read_env_file(self.env_path)
+        self.assertEqual(values["SSH_PORT"], "22")
+        self.assertEqual(values["ALLOWED_IP_1"], "192.0.2.10")
+
+
 if __name__ == "__main__":
     unittest.main()

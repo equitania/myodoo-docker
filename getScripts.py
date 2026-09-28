@@ -27,6 +27,8 @@ import requests
 import sys
 import logging
 import shutil
+import shlex
+import ipaddress
 from typing import Tuple, Optional, Dict, List, Any, Set
 from functools import wraps, lru_cache
 import time
@@ -137,8 +139,8 @@ if os.environ.get('GETSCRIPTS_DEBUG', '').lower() in ('1', 'true', 'yes'):
     logger.debug("Debug logging enabled")
 
 # Script version and date
-SCRIPT_VERSION = "9.25.0"
-SCRIPT_DATE = "15.09.2026"
+SCRIPT_VERSION = "9.26.0"
+SCRIPT_DATE = "28.09.2026"
 
 # Branch of myodoo-docker this server tracks - the single source of truth for
 # main() (update_repository() call) and self_update_and_reexec() (which must
@@ -4819,7 +4821,6 @@ def offer_storage_driver_mute(_myhome: str) -> None:
                 confirm = ""
                 print()
             if confirm in ("j", "ja", "y", "yes"):
-                import shlex
                 today = datetime.now().strftime("%d.%m.%Y")
                 reason = f"Storage-Driver {driver} bewusst beibehalten (ups, {today})"
                 command = (f"{shlex.quote(sys.executable)} {shlex.quote(mute_script)} "
@@ -4832,6 +4833,229 @@ def offer_storage_driver_mute(_myhome: str) -> None:
     except Exception as e:
         logger.debug(f"Storage-driver mute offer skipped: {e}")
         return
+
+
+# ---------------------------------------------------------------------------
+# Security hardening offer
+# ---------------------------------------------------------------------------
+
+HARDENING_AUDIT_TIMEOUT = 180
+HARDENING_CHECK_TITLES = {
+    "hardening_firewall": "Firewall (UFW)",
+    "hardening_fail2ban": "fail2ban",
+    "hardening_ssh": "SSH",
+    "hardening_kernel": "Kernel-Parameter und -Module",
+    "hardening_docker": "Docker-Daemon",
+    "hardening_updates": "Automatische Sicherheitsupdates",
+    "hardening_integrity": "auditd / AIDE",
+}
+# The sequence proven on 28.09.2026. Printed, never run: step 1 happens in the
+# provider's panel, which nothing on this host can see.
+PORT_CHANGE_STEPS = (
+    "1. Neuen Port in der Firewall/Security Group des Anbieters für die Admin-IPs öffnen (alten offen lassen)",
+    "2. SSH_PORT in /root/.config/myodoo-docker/.env auf den neuen Port setzen",
+    "3. python3 /root/server_hardening.py --apply -f -m ufw fail2ban ssh",
+    "4. In einem zweiten Terminal auf dem neuen Port anmelden – die alte Sitzung offen lassen",
+    "5. Alte UFW-Regeln löschen: ufw delete allow from <IP> to any port <alter Port>",
+    "6. Alten Port beim Anbieter schließen",
+)
+
+
+def _hardening_audit(script: str) -> Optional[dict]:
+    """The JSON audit of server_hardening.py, or None on any failure."""
+    try:
+        result = subprocess.run([sys.executable, script, "--json"], capture_output=True,
+                                text=True, timeout=HARDENING_AUDIT_TIMEOUT)
+        data = json.loads(result.stdout)
+    except Exception as e:
+        logger.debug(f"Hardening audit unavailable: {e}")
+        return None
+    return data if isinstance(data, dict) else None
+
+
+def _prompt(text: str, default: str = "") -> Optional[str]:
+    """input() with a default; None on EOF/Ctrl-C."""
+    try:
+        answer = input(text).strip()
+    except (EOFError, KeyboardInterrupt):
+        print()
+        return None
+    return answer or default
+
+
+def _offer_env_creation(_myhome: str, env_path: str) -> bool:
+    """Create the missing .env from the repository template, with the current
+    SSH port and the current session's address as suggestions."""
+    template_path = os.path.join(_myhome, "myodoo-docker", "scripts", ".env.example")
+    if not os.path.isfile(template_path):
+        status(f"Keine .env und keine Vorlage ({template_path}) – bitte ups erneut ausführen")
+        return False
+    listen = _ssh_listen_ports()
+    peers = _ssh_peers(listen) if listen else None
+    print(f"\nDie Härtung braucht {env_path} (SSH-Port und Admin-IPs) – die Datei fehlt.")
+    create = _prompt("Jetzt anlegen? [J/n]: ", "j")
+    if create is None or create.lower() not in ("j", "ja", "y", "yes"):
+        status(f"Später: cp {template_path} {env_path}; und mcedit {env_path}")
+        return False
+    port = _prompt(f"SSH_PORT [{listen[0] if listen else 22}]: ",
+                   str(listen[0] if listen else 22))
+    if port is None or not port.isdigit() or not 1 <= int(port) <= 65535:
+        status("Ungültiger Port – keine .env angelegt")
+        return False
+    ips: List[str] = []
+    while True:
+        suggestion = peers[0] if (not ips and peers) else ""
+        hint = f" [{suggestion}]" if suggestion else ""
+        ip = _prompt(f"ALLOWED_IP_{len(ips) + 1}{hint} (leer = fertig): ", suggestion)
+        if not ip:
+            break
+        try:
+            ipaddress.ip_address(ip)
+        except ValueError:
+            print(f"'{ip}' ist keine IP-Adresse.")
+            continue
+        ips.append(ip)
+    if not ips:
+        status("Ohne Admin-IP keine .env – UFW würde SSH für niemanden öffnen")
+        return False
+    with open(template_path, "r", encoding="utf-8") as handle:
+        text = _render_env(handle.read(), int(port), ips)
+    if not _write_env(env_path, text):
+        status(f"{env_path} existiert bereits – nichts überschrieben")
+        return False
+    status(f".env angelegt: {env_path} (nur für root lesbar)")
+    return True
+
+
+def _hardening_command(script: str, modules: List[str]) -> str:
+    return (f"{shlex.quote(sys.executable)} {shlex.quote(script)} "
+            f"--apply -f -m {' '.join(modules)}")
+
+
+def _print_hardening_commands(script: str, pending: List[dict]) -> None:
+    for area in pending:
+        title = HARDENING_CHECK_TITLES.get(area["check_id"], area["check_id"])
+        print(f"  {title}: {_hardening_command(script, area['modules'])}")
+    if any(set(a["modules"]) & {"ufw", "ssh"} for a in pending):
+        print("  Bei UFW/SSH eine zweite SSH-Sitzung offen halten.")
+
+
+def _apply_hardening(_myhome: str, script: str, pending: List[dict], env_path: str) -> None:
+    """Harmless modules first, then ufw/ssh behind the lockout gate, then
+    Docker, and AIDE last so its database records the finished state."""
+    modules = [m for area in pending for m in area["modules"]]
+    env = _read_env_file(env_path) if os.path.isfile(env_path) else {}
+    listen = _ssh_listen_ports()
+    port_change = _is_port_change(env, listen)
+    harmless = [m for m in modules if m not in GUARDED_MODULES and m != "aide"
+                # The sshd jail follows SSH_PORT: moved ahead of sshd it would
+                # watch a port nobody logs in on. It belongs to the manual
+                # port-change sequence (step 3) then.
+                and not (m == "fail2ban" and port_change)]
+    guarded = [m for m in modules if m in ("ufw", "ssh")]
+
+    if harmless:
+        run_command(_hardening_command(script, harmless), shell=True, interactive=True)
+
+    if port_change and "fail2ban" in modules and not guarded:
+        print("\nfail2ban wartet auf den Portwechsel:")
+        for step in PORT_CHANGE_STEPS:
+            print(f"  {step}")
+
+    if guarded:
+        blockers = _lockout_blockers(env, listen, _ssh_peers(listen) if listen else None,
+                                     _ssh_socket_active())
+        if blockers:
+            print("\nFirewall/SSH werden NICHT angewendet:")
+            for reason in blockers:
+                print(f"  – {reason}")
+            if port_change:
+                print("Portwechsel von Hand, in dieser Reihenfolge:")
+                for step in PORT_CHANGE_STEPS:
+                    print(f"  {step}")
+            else:
+                print(f"Von Hand: {_hardening_command(script, guarded)}")
+        else:
+            run_command(_hardening_command(script, guarded), shell=True, interactive=True)
+
+    if "docker" in modules:
+        run_command(_hardening_command(script, ["docker"]), shell=True, interactive=True)
+        if _running_containers() == 0:
+            run_command("systemctl restart docker", shell=True, interactive=True)
+        else:
+            status("daemon.json geschrieben. Docker-Neustart im Wartungsfenster: "
+                   "systemctl restart docker (startet alle Container neu)")
+
+    if "aide" in modules:
+        run_command(_hardening_command(script, ["aide"]), shell=True, interactive=True)
+
+
+def _mute_hardening_area(_myhome: str, pending: List[dict]) -> None:
+    mute_script = os.path.join(_myhome, "ownerp_mute.py")
+    if not os.path.isfile(mute_script):
+        status("ownerp_mute.py fehlt – bitte ups erneut ausführen")
+        return
+    for number, area in enumerate(pending, 1):
+        print(f"  {number}) {HARDENING_CHECK_TITLES.get(area['check_id'], area['check_id'])}")
+    choice = _prompt("Welchen Bereich stummschalten? ")
+    if not choice or not choice.isdigit() or not 1 <= int(choice) <= len(pending):
+        return
+    reason = _prompt("Begründung (Pflicht): ")
+    if not reason:
+        status("Ohne Begründung wird nichts stummgeschaltet")
+        return
+    check_id = pending[int(choice) - 1]["check_id"]
+    run_command(f"{shlex.quote(sys.executable)} {shlex.quote(mute_script)} "
+                f"{check_id} --reason {shlex.quote(reason)}", shell=True, interactive=True)
+
+
+def offer_security_hardening(_myhome: str) -> None:
+    """Ask once per interactive run to close the hardening gaps readiness reports.
+
+    Silent unless stdin and stdout are a terminal, ~/server_hardening.py
+    exists, its --json audit ran, and at least one area is off and not muted.
+    A missing .env is offered first. Any failure is "skip", never a broken ups.
+    """
+    try:
+        if not (sys.stdin.isatty() and sys.stdout.isatty()):
+            return
+        script = os.path.join(_myhome, "server_hardening.py")
+        if not os.path.isfile(script):
+            return
+        audit = _hardening_audit(script)
+        if audit is None:
+            return
+        muted = _muted_check_ids(_myhome)
+        env_path = os.path.join(_myhome, HARDENING_ENV_RELATIVE)
+        if not os.path.isfile(env_path) and "hardening_env" not in muted:
+            if _offer_env_creation(_myhome, env_path):
+                audit = _hardening_audit(script) or audit
+        if audit.get("error"):
+            status(f"Härtungs-Audit nicht möglich: {audit['error']}")
+            return
+        pending = [area for area in audit.get("areas", [])
+                   if area.get("status") != "ok" and area.get("check_id") not in muted]
+        if not pending:
+            return
+
+        print("\nSicherheits-Härtung: diese Bereiche weichen ab")
+        for area in pending:
+            print(f"  – {HARDENING_CHECK_TITLES.get(area['check_id'], area['check_id'])}")
+        print("  1) Jetzt beheben (Firewall/SSH nur nach Aussperr-Prüfung)")
+        print("  2) Befehle anzeigen")
+        print("  3) Später")
+        print("  4) Einen Bereich dauerhaft stummschalten")
+        choice = _prompt("Auswahl [3]: ", "3")
+        if choice == "1":
+            _apply_hardening(_myhome, script, pending, env_path)
+        elif choice == "2":
+            _print_hardening_commands(script, pending)
+        elif choice == "4":
+            _mute_hardening_area(_myhome, pending)
+        else:
+            status("Später: chk zeigt die offenen Bereiche, ups fragt beim nächsten Mal erneut")
+    except Exception as e:
+        logger.debug(f"Security hardening offer skipped: {e}")
 
 
 def print_cron_overview(_myhome: str) -> None:
@@ -5069,6 +5293,10 @@ def main() -> None:
         # keeps a non-overlay2 Docker storage driver. Independent of the
         # no-config offer above - both can fire in the same run.
         offer_storage_driver_mute(_myhome)
+
+        # The hardening that bootstrap deliberately leaves off. Runs before the
+        # readiness report so the report shows the state after the choice.
+        offer_security_hardening(_myhome)
 
         # Clean up legacy files ONLY on fresh Fish installation
         # This prevents running cleanup on every script execution
