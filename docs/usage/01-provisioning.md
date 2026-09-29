@@ -187,6 +187,31 @@ dieser Begründung ab. Das Befehlsfeld beim Start der Shell zeigt statt der
 Server-Befehle, die hier nicht installiert sind, eine eigene Übersicht mit
 dem, was ohne root funktioniert (`ups`, `help`, `ll`, `z`, Git-Kürzel, `ff`).
 
+**Zweite Stufe: Benutzer in der Gruppe `docker`** (ab 9.28.0). Ist der
+Benutzer in der Gruppe `docker`, liefert der eingeschränkte Modus zusätzlich
+die Odoo-Werkzeuge, die nur Docker und das eigene Home brauchen: `doup`,
+`dobk`, `edup`, `edbk`, `dostat`, `doval`, `wiz`/`wizup`/`wizbk` und die
+Docker-Übersichten `dps`/`dpsall`/`dpi`. Das Befehlsfeld zeigt sie dann mit an.
+Bei root bleiben `docron` (`/etc/cron.d`), nginx, Härtung, der
+Build-Cache in `/opt/odoo-build-cache` und die Wartungs-Crons.
+
+> ⚠️ **Die Gruppe `docker` ist gleichbedeutend mit root.** Wer Docker
+> steuert, kann einen Container starten, der das ganze Dateisystem des Hosts
+> einbindet. Das Skript fragt deshalb nie danach, sondern nennt den Befehl
+> einmal mit diesem Hinweis. Die Entscheidung liegt beim Kunden.
+
+Der Administrator erledigt dafür als root:
+
+```bash
+usermod -aG docker <benutzer>                                # danach neu anmelden
+apt-get install mc python3-yaml python3-dotenv 7zip zstd gnupg
+install -d -o <benutzer> /opt/backups                        # Ziel von dobk
+```
+
+Die Konfiguration entsteht aus den laufenden Containern mit
+`python3 ~/ownerp_migrate.py --from-docker`. Welche Pakete fehlen und ob
+`/opt/backups` beschreibbar ist, meldet `ups` selbst.
+
 > ⚠️ **Erfahrungswert (sudo su):** Wer sich mit einem persönlichen
 > Admin-Account anmeldet und per `sudo su` zu root wird, braucht
 > getScripts.py ≥ 9.7.3 — ältere Versionen installierten in diesem Fall ins
@@ -463,6 +488,31 @@ out here). Debian 12 has only Fish 3.6 and its backports carry no Fish 4 —
 the mode stops there and says so. The command panel at shell start shows,
 instead of the server commands that are not installed here, its own overview
 of what works without root (`ups`, `help`, `ll`, `z`, git shortcuts, `ff`).
+
+**Second tier: a user in the `docker` group** (since 9.28.0). When the user is
+in the `docker` group, the restricted mode also delivers the Odoo tools that
+need nothing beyond Docker and the user's own home: `doup`, `dobk`, `edup`,
+`edbk`, `dostat`, `doval`, `wiz`/`wizup`/`wizbk` and the Docker views
+`dps`/`dpsall`/`dpi`. The command panel then lists them too. `docron`
+(`/etc/cron.d`), nginx, hardening, the build cache in `/opt/odoo-build-cache`
+and the maintenance crons stay with root.
+
+> ⚠️ **The `docker` group is root in all but name.** Whoever controls Docker
+> can start a container that mounts the host's whole filesystem. The script
+> therefore never asks for it; it names the command once, with this warning.
+> The decision is the customer's.
+
+The administrator runs as root:
+
+```bash
+usermod -aG docker <user>                                    # then log in again
+apt-get install mc python3-yaml python3-dotenv 7zip zstd gnupg
+install -d -o <user> /opt/backups                            # dobk's target
+```
+
+The configuration is built from the running containers with
+`python3 ~/ownerp_migrate.py --from-docker`. `ups` itself reports which
+packages are missing and whether `/opt/backups` is writable.
 
 > ⚠️ **Lesson learned (sudo su):** Operators who log in with a personal admin
 > account and become root via `sudo su` need getScripts.py ≥ 9.7.3 — older

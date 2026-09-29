@@ -15,6 +15,7 @@ Run from the repository root:
     python3 -m unittest tests.test_getscripts_restricted -v
 """
 
+import importlib.util
 import os
 import subprocess
 import sys
@@ -136,6 +137,7 @@ class RunRestrictedTest(unittest.TestCase):
             mock.patch.object(gs, "is_starship_installed", return_value=(False, None)),
             mock.patch.object(gs, "is_fastfetch_installed", return_value=(False, None)),
             mock.patch.object(gs, "_offer_restricted_shell_change"),
+            mock.patch.object(gs, "restricted_docker_state", return_value="absent"),
             mock.patch.object(gs.os.path, "expanduser", return_value=self.tmp),
             mock.patch("builtins.print"),
             mock.patch.object(gs, "logger"),
@@ -158,6 +160,16 @@ class RunRestrictedTest(unittest.TestCase):
         self.update.assert_called_once()
         self.copy.assert_called_once()
         self.assertTrue(os.path.exists(gs.RESTRICTED_MARKER))
+
+    def test_marker_keeps_the_one_time_hints(self):
+        # The first version rewrote the marker on every run and so repeated
+        # the once-only hints on every ups.
+        self._run()
+        gs._restricted_marker_add(gs.RESTRICTED_DOCKER_HINT_LINE)
+        self._run(missing=([], [("starship", "x")]))
+        self._run()
+        self.assertTrue(gs._restricted_marker_has(gs.RESTRICTED_DOCKER_HINT_LINE))
+        self.assertTrue(gs._restricted_marker_has(gs.RESTRICTED_OPTIONAL_HINT_LINE))
 
     def test_missing_required_package_stops_before_the_repository(self):
         self.assertEqual(self._run(missing=(["git"], [])), 1)
@@ -209,15 +221,127 @@ class WiringTest(unittest.TestCase):
         self.assertNotIn("sudo", branch)
 
     def test_restricted_mode_gets_its_own_panel(self):
-        # The overview stays (the Captain missed it when it was switched off),
-        # but it must not advertise server commands this user cannot run.
+        # The overview stays (the first test run showed it was missed), but it
+        # must not advertise commands this user cannot run.
         prompt = read("fish", "conf.d", "50-prompt.fish")
         self.assertNotIn(".getscripts_restricted", prompt)
         help_fish = read("fish", "functions", "linux", "ownerp-help.fish")
         self.assertIn("test -e $HOME/.getscripts_restricted", help_fish)
         restricted = help_fish[help_fish.index("function __ownerp_help_restricted"):]
-        for server_only in ("doup", "dobk", "konsole", "syspatch", "ngxset", "dps"):
-            self.assertNotRegex(restricted, rf"__ownerp_help_row .*\b{server_only}\b")
+        for root_only in ("konsole", "docron", "syspatch", "ngxset", "chk", "cleandlog", "ct"):
+            self.assertNotRegex(restricted, rf"__ownerp_help_row .*\b{root_only}\b")
+
+    def test_docker_tools_appear_only_when_delivered(self):
+        help_fish = read("fish", "functions", "linux", "ownerp-help.fish")
+        restricted = help_fish[help_fish.index("function __ownerp_help_restricted"):]
+        block = restricted[restricted.index("if test -x $HOME/update_docker_odoo.py"):]
+        block = block[:block.index("    end")]
+        outside = restricted.replace(block, "")
+        for tool in ("doup", "dobk", "edup", "edbk", "dostat", "dps"):
+            self.assertRegex(block, rf"\b{tool}\b")
+            self.assertNotRegex(outside, rf"__ownerp_help_row .*\b{tool}\b")
+
+
+class StateHintTest(unittest.TestCase):
+    """dostat must not tell a restricted user to run ups for a root-only tool."""
+
+    def _state(self):
+        spec = importlib.util.spec_from_file_location(
+            "ownerp_state_under_test", os.path.join(REPO, "scripts", "ownerp_state.py"))
+        module = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(module)
+        return module
+
+    def test_restricted_user_gets_the_reason(self):
+        state = self._state()
+        home = tempfile.mkdtemp()
+        open(os.path.join(home, ".getscripts_restricted"), "w").close()
+        with mock.patch.object(state, "HOME", home), \
+             mock.patch.object(state.os, "geteuid", return_value=1000):
+            self.assertIn("needs root", state._missing_hint("ownerp_cron.py"))
+
+    def test_root_still_gets_run_ups(self):
+        state = self._state()
+        with mock.patch.object(state.os, "geteuid", return_value=0):
+            self.assertIn("run ups", state._missing_hint("ownerp_cron.py"))
+
+
+class DockerTierTest(unittest.TestCase):
+    """Second tier: a user in the docker group gets the Odoo tools."""
+
+    def setUp(self):
+        self.home = tempfile.mkdtemp()
+        self.repo = tempfile.mkdtemp()
+        os.makedirs(os.path.join(self.repo, "scripts"))
+        for name in gs.RESTRICTED_DOCKER_SCRIPTS:
+            with open(os.path.join(self.repo, "scripts", name), "w") as handle:
+                handle.write("#!/usr/bin/python3\n")
+        patches = [
+            mock.patch.object(gs, "RESTRICTED_MARKER", os.path.join(self.home, ".getscripts_restricted")),
+            mock.patch("builtins.print"),
+            mock.patch.object(gs, "logger"),
+        ]
+        for patch in patches:
+            patch.start()
+            self.addCleanup(patch.stop)
+
+    def test_only_tools_that_need_no_root_are_delivered(self):
+        for root_only in ("ownerp_cron.py", "server_hardening.py", "odoo_build_cache.py",
+                          "ownerp_console.py", "nginx-cert-guard.py", "setup-maintenance-cron.sh"):
+            self.assertNotIn(root_only, gs.RESTRICTED_DOCKER_SCRIPTS)
+
+    def test_active_group_delivers_the_tools(self):
+        with mock.patch.object(gs, "_restricted_probe", return_value=True):
+            lines = gs.restricted_docker_tier(self.home, self.repo, "active")
+        self.assertEqual(len(lines), 1)
+        for name in gs.RESTRICTED_DOCKER_SCRIPTS:
+            self.assertTrue(os.access(os.path.join(self.home, name), os.X_OK), name)
+
+    def test_missing_packages_are_named(self):
+        with mock.patch.object(gs, "_restricted_probe", side_effect=lambda p: p != "7zz"), \
+             mock.patch("builtins.print") as printed:
+            gs.restricted_docker_tier(self.home, self.repo, "active")
+        output = "\n".join(str(c.args[0]) for c in printed.call_args_list if c.args)
+        self.assertIn("apt-get install 7zip", output)
+
+    def test_pending_membership_delivers_nothing(self):
+        self.assertEqual(gs.restricted_docker_tier(self.home, self.repo, "pending"), [])
+        self.assertFalse(os.path.exists(os.path.join(self.home, "update_docker_odoo.py")))
+
+    def test_group_hint_is_shown_once_and_names_the_risk(self):
+        with mock.patch("builtins.print") as first:
+            gs.restricted_docker_tier(self.home, self.repo, "none")
+        text = "\n".join(str(c.args[0]) for c in first.call_args_list if c.args)
+        self.assertIn("usermod -aG docker", text)
+        self.assertIn("root", text)
+        with mock.patch("builtins.print") as second:
+            gs.restricted_docker_tier(self.home, self.repo, "none")
+        second.assert_not_called()
+
+    def test_no_docker_says_nothing(self):
+        with mock.patch("builtins.print") as printed:
+            self.assertEqual(gs.restricted_docker_tier(self.home, self.repo, "absent"), [])
+        printed.assert_not_called()
+
+    def test_state_detection(self):
+        ok = mock.Mock(returncode=0)
+        fail = mock.Mock(returncode=1)
+        with mock.patch.object(gs.shutil, "which", return_value=None):
+            self.assertEqual(gs.restricted_docker_state(), "absent")
+        with mock.patch.object(gs.shutil, "which", return_value="/usr/bin/docker"), \
+             mock.patch.object(gs.subprocess, "run", return_value=ok):
+            self.assertEqual(gs.restricted_docker_state(), "active")
+        import grp
+        import pwd
+        me = pwd.getpwuid(os.getuid()).pw_name
+        with mock.patch.object(gs.shutil, "which", return_value="/usr/bin/docker"), \
+             mock.patch.object(gs.subprocess, "run", return_value=fail), \
+             mock.patch.object(grp, "getgrnam", return_value=mock.Mock(gr_mem=[me])):
+            self.assertEqual(gs.restricted_docker_state(), "pending")
+        with mock.patch.object(gs.shutil, "which", return_value="/usr/bin/docker"), \
+             mock.patch.object(gs.subprocess, "run", return_value=fail), \
+             mock.patch.object(grp, "getgrnam", side_effect=KeyError("docker")):
+            self.assertEqual(gs.restricted_docker_state(), "none")
 
 if __name__ == "__main__":
     unittest.main()

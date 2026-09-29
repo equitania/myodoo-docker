@@ -1,5 +1,5 @@
 # ownERP command overview
-# Version 1.6.0 | 29.09.2026
+# Version 1.7.0 | 29.09.2026
 #
 # Printed once per LOGIN (see conf.d/50-prompt.fish); `help` shows it again.
 #
@@ -68,6 +68,16 @@ function __ownerp_help_restricted --description "Command overview for getScripts
     __ownerp_help_row "Files"       ll     "list files"         hg        "search history"
     if command -q zoxide
         __ownerp_help_row "Navigation" z   "jump to a dir"      zi        "pick a dir"
+    end
+    # Second tier: a user in the docker group gets the Odoo tools that need
+    # nothing beyond Docker and their own home (getScripts delivers them).
+    if test -x $HOME/update_docker_odoo.py
+        __ownerp_help_row "Odoo update" doup "update containers"  wizup     "add an instance"
+        __ownerp_help_row ""            edup   "edit config"        doval     "check configs"
+        __ownerp_help_row "Backup"      dobk   "back up now"        wizbk     "add a database"
+        __ownerp_help_row ""            edbk   "edit config"        llbk      "list archives"
+        __ownerp_help_row "Docker"      dostat "server state"       dps       "containers"
+        __ownerp_help_row ""            dpsall "with details"       dpi       "images"
     end
     __ownerp_help_row "Git"         gst    "status"             glog      "history graph"
     __ownerp_help_row ""            gl     "pull"               gd        "diff"

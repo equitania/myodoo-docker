@@ -170,6 +170,12 @@ python3 ~/getScripts.py --restricted   # as the ordinary user; no sudo anywhere
 Missing packages → prints `apt-get update` / `apt-get upgrade` / `apt-get install fish git` (+ optional
 `starship zoxide fastfetch`) for the admin and exits 1; installs nothing itself. Then copies Fish/Starship/
 fastfetch config into the user's home and offers `chsh`. `ups` for that user runs without sudo.
+Second tier (≥ 9.28.0): if `docker info` works for the user (member of `docker`), it also copies
+`update_docker_odoo.py`, `container2backup.py`, `ownerp_validate/wizard/state/migrate.py`, `docker_table.py`
+to `$HOME` → `doup`, `dobk`, `edup`, `edbk`, `dostat`, `doval`, `wiz`, `dps` work; names missing
+`mc python3-yaml python3-dotenv 7zip zstd gnupg` and an unwritable `/opt/backups`. Never recommend
+`usermod -aG docker` without saying the group is root-equivalent. `docron`, nginx, hardening, build
+cache stay root-only.
 
 ### Configure a server behind an HTTP proxy
 ```bash

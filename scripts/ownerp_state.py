@@ -4,8 +4,8 @@
 # Title:            ownerp_state.py
 # Description:      What state is this server in? Collected once, rendered as
 #                   text (dostat) or handed to the console.
-# Version:          1.1.0
-# Date:             15.09.2026
+# Version:          1.1.1
+# Date:             29.09.2026
 # Author:           Equitania Software GmbH
 # ==============================================================================
 # Why this exists:
@@ -80,8 +80,8 @@ import time
 from dataclasses import dataclass, field
 from typing import Dict, List, Optional
 
-SCRIPT_VERSION = "1.1.0"
-SCRIPT_DATE = "15.09.2026"
+SCRIPT_VERSION = "1.1.1"
+SCRIPT_DATE = "29.09.2026"
 
 HOME = os.path.expanduser("~")
 UPDATE_YAML = "docker2update.yaml"
@@ -509,12 +509,21 @@ def disk_usage(path: str) -> Optional[Disk]:
     return Disk(path, usage.total, usage.used, usage.free)
 
 
+def _missing_hint(script: str) -> str:
+    """Why a sibling script is absent. In getScripts' restricted mode (a user
+    without root) `ups` never delivers the root-only tools, so "run ups" would
+    send that user in a circle."""
+    if os.geteuid() != 0 and os.path.exists(os.path.join(HOME, ".getscripts_restricted")):
+        return f"{script} needs root — not part of the restricted mode"
+    return f"{script} is not installed — run ups"
+
+
 def collect_maintenance(cron_path: Optional[str] = None) -> Maintenance:
     """The maintenance cron, read through ownerp_cron.py."""
     module = _load_module(os.path.join(_here(), "ownerp_cron.py"), "ownerp_cron")
     if module is None:
         return Maintenance("maintenance",
-                           error="ownerp_cron.py is not installed — run ups")
+                           error=_missing_hint("ownerp_cron.py"))
     try:
         cron = module.load(cron_path) if cron_path else module.load()
     except Exception as exc:                      # CronError and OSError
@@ -534,7 +543,7 @@ def collect_health(root: str = "/", home: str = HOME,
                           "server_readiness")
     if module is None:
         return Health("health",
-                      error="server-readiness.py is not installed — run ups")
+                      error=_missing_hint("server-readiness.py"))
     try:
         context = module.HealthContext(
             root=root, home=home,

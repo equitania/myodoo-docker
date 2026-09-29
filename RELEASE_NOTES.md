@@ -1,5 +1,41 @@
 # Release Notes
 
+## Restricted Mode, Second Tier: the Docker Group (29.09.2026)
+
+*getScripts.py v9.28.0 · ownerp_state.py v1.1.1 · fish/functions/linux/ownerp-help.fish
+v1.7.0 · tests/test_getscripts_restricted.py · docs/usage/01-provisioning.md ·
+docs/usage/09-reference.md · docs/COMPONENTS.md · usage/AGENT.md*
+
+### Added
+
+- **A restricted user in the `docker` group gets the Odoo tools.** When
+  `docker info` works for the user, the restricted mode also copies
+  `update_docker_odoo.py`, `container2backup.py`, `ownerp_validate.py`,
+  `ownerp_wizard.py`, `ownerp_state.py`, `ownerp_migrate.py` and
+  `docker_table.py` into the home directory, so `doup`, `dobk`, `edup`,
+  `edbk`, `dostat`, `doval`, `wiz` and `dps` work. It names the Debian
+  packages they need (`mc python3-yaml python3-dotenv 7zip zstd gnupg`),
+  points to `ownerp_migrate.py --from-docker` while the YAMLs are missing and
+  gives the command that makes `/opt/backups` writable. `docron`, nginx,
+  hardening, the build cache and the maintenance crons stay with root.
+  Membership that is configured but not active in the session asks for a new
+  login. The command panel lists the tools only when they are delivered.
+- **Without the group, the mode names `usermod -aG docker` once — with the
+  warning that the group is root in all but name.** Whoever controls Docker
+  can mount the host's filesystem into a container; the choice stays with
+  the customer. Verified on Debian 13 with Docker and a user in the group.
+
+### Fixed
+
+- **One-time hints repeated on every `ups`.** The marker
+  `~/.getscripts_restricted` was rewritten on every run, which lost the
+  record of what had been shown; it is now created once and only appended
+  to. The recommended packages are named once as well; a missing required
+  package still appears on every run.
+- `dostat` told a restricted user to "run ups" for `ownerp_cron.py` and
+  `server-readiness.py`, which `ups` never delivers in that mode. It now
+  says that they need root.
+
 ## restore-zip.sh Withdrawn (29.09.2026)
 
 *getScripts.py v9.27.1 · server-readiness.py v1.11.2 · scripts/README_BackUp.md ·

@@ -11,7 +11,7 @@ in this repository, stay in `CLAUDE.md`.
 
 ### Key Components
 
-#### 1. getScripts.py (v9.27.1)
+#### 1. getScripts.py (v9.28.0)
 - **Purpose**: Main installation and update script
 - **Features**:
   - Restricted mode (v9.27.0, 29.09.2026): for a customer who will not run
@@ -35,6 +35,14 @@ in this repository, stay in `CLAUDE.md`.
     shell start like the server panel.
     The old "continue without sudo? (y/N)" prompt, which ran the full setup
     half-way, is gone.
+    Second tier (v9.28.0): `restricted_docker_state()` (`docker info` works →
+    active; listed in the group but not in this session → pending) and
+    `restricted_docker_tier()` deliver `RESTRICTED_DOCKER_SCRIPTS` (doup,
+    dobk, validator, wizard, state, migrate, docker_table — nothing that
+    writes system files) and name `RESTRICTED_DOCKER_PACKAGES`. Without the
+    group it names `usermod -aG docker` once, with the warning that the group
+    is root-equivalent. One-time hints are recorded as lines in
+    `~/.getscripts_restricted`, which is created once and never rewritten.
   - `offer_security_hardening()` (v9.26.0, 28.09.2026): the hardening
     `bootstrap.sh` deliberately leaves off (UFW installed but inactive) had
     nothing on the host reminding an operator of it after the bootstrap's

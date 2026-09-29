@@ -147,7 +147,7 @@ if os.environ.get('GETSCRIPTS_DEBUG', '').lower() in ('1', 'true', 'yes'):
     logger.debug("Debug logging enabled")
 
 # Script version and date
-SCRIPT_VERSION = "9.27.1"
+SCRIPT_VERSION = "9.28.0"
 SCRIPT_DATE = "29.09.2026"
 
 # Branch of myodoo-docker this server tracks - the single source of truth for
@@ -5549,6 +5549,143 @@ def _offer_restricted_shell_change() -> None:
         print(f"chsh ist fehlgeschlagen. Von Hand: chsh -s {fish_path}")
 
 
+# ── Restricted mode, second tier: a user in the `docker` group (v9.28.0) ──────
+#
+# Membership of `docker` lets a user drive the Docker daemon, and whoever can
+# start a container can mount the host's whole filesystem into it - the group
+# is root in all but name. The restricted mode therefore never asks for it; it
+# only says what the group would add and what it means. When the user already
+# has it, the Odoo tools that need nothing beyond Docker and their own home are
+# delivered: doup, dobk, the configuration editors and read-only views.
+# Everything that writes system files stays with root: docron (/etc/cron.d),
+# nginx, hardening, the build cache in /opt/odoo-build-cache.
+
+RESTRICTED_DOCKER_SCRIPTS = (
+    "update_docker_odoo.py",   # doup
+    "container2backup.py",     # dobk
+    "ownerp_validate.py",      # doval, and the write check of the wizard
+    "ownerp_wizard.py",        # wiz / wizup / wizbk
+    "ownerp_state.py",         # dostat
+    "ownerp_migrate.py",       # --from-docker: YAMLs from the running containers
+    "docker_table.py",         # dps / dpsall / dpi
+)
+# (Debian package, probe). "py:<module>" probes a Python module.
+RESTRICTED_DOCKER_PACKAGES = (
+    ("mc", "mcedit"),                 # edup / edbk
+    ("python3-yaml", "py:yaml"),      # every YAML-reading tool
+    ("python3-dotenv", "py:dotenv"),  # container2backup.py (.env credentials)
+    ("7zip", "7zz"),                  # dobk: default archive format
+    ("zstd", "zstd"),                 # dobk: .tar.zst / streaming
+    ("gnupg", "gpg"),                 # dobk: encrypted archives
+)
+RESTRICTED_DOCKER_HINT_LINE = "docker-group-hint-shown"
+RESTRICTED_OPTIONAL_HINT_LINE = "optional-packages-hint-shown"
+
+
+def _restricted_probe(probe: str) -> bool:
+    if probe.startswith("py:"):
+        import importlib.util
+        return importlib.util.find_spec(probe[3:]) is not None
+    return _restricted_package_present(probe)
+
+
+def restricted_docker_state() -> str:
+    """'active' (Docker usable now), 'pending' (in the group, not in this
+    session), 'none' (not in the group) or 'absent' (no Docker on the host)."""
+    if not shutil.which("docker"):
+        return "absent"
+    try:
+        if subprocess.run(["docker", "info"], capture_output=True, timeout=15).returncode == 0:
+            return "active"
+    except (OSError, subprocess.SubprocessError):
+        pass
+    try:
+        import grp
+        import pwd
+        user = pwd.getpwuid(os.getuid()).pw_name
+        if user in grp.getgrnam("docker").gr_mem:
+            return "pending"
+    except (KeyError, ImportError):
+        pass
+    return "none"
+
+
+def _restricted_marker_has(line: str) -> bool:
+    try:
+        with open(RESTRICTED_MARKER, encoding="utf-8") as handle:
+            return line in handle.read().split("\n")
+    except OSError:
+        return False
+
+
+def _restricted_marker_add(line: str) -> None:
+    try:
+        with open(RESTRICTED_MARKER, "a", encoding="utf-8") as handle:
+            handle.write(line + "\n")
+    except OSError as e:
+        logger.warning(f"Could not write {RESTRICTED_MARKER}: {e}")
+
+
+def restricted_docker_tier(home: str, myodoo_docker: str, state: str) -> List[str]:
+    """Deliver the Docker-group tools or explain the group. Returns the
+    lines for the summary."""
+    user = os.environ.get("USER") or os.path.basename(home)
+    if state == "pending":
+        print("Sie sind in der Gruppe docker, aber nicht in dieser Sitzung.")
+        print("Neu anmelden, dann ups - danach kommen doup, dobk und die Editoren dazu.")
+        return []
+    if state == "none":
+        # Once: it is a standing option, not news, and a line repeated on
+        # every ups is a line nobody reads when it finally matters.
+        if not _restricted_marker_has(RESTRICTED_DOCKER_HINT_LINE):
+            print("Odoo-Werkzeuge (doup, dobk, edup, edbk) brauchen die Gruppe docker.")
+            print(f"Der Administrator nimmt Sie auf mit: usermod -aG docker {user}")
+            print("Achtung: Die Gruppe docker ist gleichbedeutend mit root - wer Docker")
+            print("steuert, kann einen Container mit dem ganzen Dateisystem des Hosts starten.")
+            print()
+            _restricted_marker_add(RESTRICTED_DOCKER_HINT_LINE)
+        return []
+    if state != "active":
+        return []
+
+    missing = [pkg for pkg, probe in RESTRICTED_DOCKER_PACKAGES if not _restricted_probe(probe)]
+    if missing:
+        print("Für die Odoo-Werkzeuge fehlen diese Debian-Pakete. Der Administrator")
+        print("installiert sie als root mit:")
+        print()
+        print("  apt-get install " + " ".join(missing))
+        print()
+
+    delivered = []
+    for script in RESTRICTED_DOCKER_SCRIPTS:
+        source = os.path.join(myodoo_docker, "scripts", script)
+        target = os.path.join(home, script)
+        if not os.path.exists(source):
+            continue
+        try:
+            shutil.copyfile(source, target)
+            _ensure_executable(target)
+            delivered.append(script)
+        except OSError as e:
+            logger.warning(f"Could not deliver {script}: {e}")
+
+    notes = []
+    if not os.path.exists(os.path.join(home, "docker2update.yaml")) or \
+            not os.path.exists(os.path.join(home, "container2backup.yaml")):
+        notes.append("Konfiguration aus den laufenden Containern: python3 ~/ownerp_migrate.py --from-docker")
+    backup_root = "/opt/backups"
+    if not (os.path.isdir(backup_root) and os.access(backup_root, os.W_OK)):
+        notes.append(f"dobk schreibt nach {backup_root}; der Administrator gibt es frei mit: "
+                     f"install -d -o {user} {backup_root}")
+    for note in notes:
+        print(note)
+    if notes:
+        print()
+    if not delivered:
+        return []
+    return ["Odoo-Werkzeuge (Gruppe docker): doup, dobk, edup, edbk, dostat, doval, wiz, dps"]
+
+
 def run_restricted_mode() -> int:
     """The whole restricted run; returns the exit code."""
     print_header()
@@ -5564,13 +5701,18 @@ def run_restricted_mode() -> int:
         print("oder neuer. Alternativ richtet root den Server vollständig ein.")
         return 1
 
-    try:
-        with open(RESTRICTED_MARKER, "w", encoding="utf-8") as handle:
-            handle.write(f"Restricted mode chosen on {datetime.now().isoformat()}\n")
-    except OSError as e:
-        logger.warning(f"Could not write {RESTRICTED_MARKER}: {e}")
+    # Created once, never rewritten: later lines record which one-time hints
+    # were already shown (see _restricted_marker_add()).
+    if not os.path.exists(RESTRICTED_MARKER):
+        _restricted_marker_add(f"Restricted mode chosen on {datetime.now().isoformat()}")
 
     required, optional = restricted_missing_packages()
+    # Recommended packages are named once; a missing required one every run.
+    if optional and not required:
+        if _restricted_marker_has(RESTRICTED_OPTIONAL_HINT_LINE):
+            optional = []
+        else:
+            _restricted_marker_add(RESTRICTED_OPTIONAL_HINT_LINE)
     print_restricted_package_advice(required, optional)
     if required:
         print("Danach dieses Skript erneut starten.")
@@ -5614,13 +5756,15 @@ def run_restricted_mode() -> int:
             os.path.join(config_directory, "config.jsonc"))
         done.append("fastfetch-Konfiguration")
 
+    done += restricted_docker_tier(home, myodoo_docker, restricted_docker_state())
+
     print()
     for item in done:
         print(f"  ✓ {item}")
     print()
     _offer_restricted_shell_change()
     print()
-    print("Nicht eingerichtet (braucht root): Server-Werkzeuge, Härtung, Proxy, DNS.")
+    print("Nicht eingerichtet (braucht root): docron, nginx, Härtung, Proxy, DNS.")
     print("Aktualisieren: ups   ·   Fish sofort starten: fish")
     return 0
 
