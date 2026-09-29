@@ -1,5 +1,28 @@
 # Release Notes
 
+## syspatch No Longer Waits for AIDE (29.09.2026)
+
+*fish/functions/linux/syspatch.fish v1.4.0 · scripts/hardening_config.yaml ·
+docs/usage/09-reference.md*
+
+### Changed
+
+- **The AIDE baseline rebuild runs in the background.** `aide --update`
+  hashes the whole filesystem and kept `syspatch` busy for more than half an
+  hour on Docker hosts. It now starts as the transient systemd unit
+  `aide-rebaseline` at idle CPU and I/O priority, and `syspatch` carries on
+  straight away. Progress and result: `journalctl -u aide-rebaseline -f`. A
+  second `syspatch` while a rebuild is still running skips the step.
+- **`/var/lib/containerd` is excluded from AIDE.** With the containerd image
+  store (the default since Docker 29) the image layers live there instead of
+  under `/var/lib/docker`. The next `server_hardening.py --apply` writes the
+  new exclude and rebuilds the database once.
+
+### Fixed
+
+- A stale `aide.db.new` left behind by an aborted run could be promoted to
+  the baseline. It is now removed before every rebuild.
+
 ## Restricted Mode, Second Tier: the Docker Group (29.09.2026)
 
 *getScripts.py v9.28.0 · ownerp_state.py v1.1.1 · fish/functions/linux/ownerp-help.fish

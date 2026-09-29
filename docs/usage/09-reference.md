@@ -103,7 +103,7 @@ Die wichtigsten Aliase/Funktionen nach Kategorie:
 
 | Funktion | Zweck |
 |---|---|
-| `syspatch` | Komplettes Systemupdate: journalctl-Vacuum → apt dist-upgrade → AIDE-Baseline → `docker image prune -f` |
+| `syspatch` | Komplettes Systemupdate: journalctl-Vacuum → apt dist-upgrade → AIDE-Baseline (im Hintergrund, `journalctl -u aide-rebaseline`) → `docker image prune -f` |
 | `ups` | ownERP-Skripte aktualisieren (getScripts.py neu ausführen; im eingeschränkten Modus ohne sudo) |
 | `chk` | Readiness-Report: ist der Server auf Stand, was fehlt noch? (rein lesend) |
 | `dkrm` / `dkrmi` / `dkrmv` | Alle Container/Images/Volumes löschen — mit Sicherheitsabfrage, `dkrmv` verlangt wörtlich `DELETE` |
@@ -210,7 +210,7 @@ The most important aliases/functions by category:
 
 | Function | Purpose |
 |---|---|
-| `syspatch` | Full system update: journalctl vacuum → apt dist-upgrade → AIDE baseline → `docker image prune -f` |
+| `syspatch` | Full system update: journalctl vacuum → apt dist-upgrade → AIDE baseline (in the background, `journalctl -u aide-rebaseline`) → `docker image prune -f` |
 | `ups` | Update the ownERP scripts (re-run getScripts.py; without sudo in restricted mode) |
 | `chk` | Readiness report: is the server up to date, what is missing? (read-only) |
 | `dkrm` / `dkrmi` / `dkrmv` | Delete all containers/images/volumes — confirmation-gated, `dkrmv` requires typing `DELETE` |

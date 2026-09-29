@@ -259,8 +259,11 @@ aide:
   # layers + container volumes) is huge and ephemeral on a Docker host — hashing
   # it makes init take 30+ min and floods the daily check with noise. Backup
   # dirs change daily and are equally pointless to hash. Adjust per host.
+  # /var/lib/containerd holds the image layers when Docker uses the containerd
+  # image store (default since Docker 29) — same reasoning as /var/lib/docker.
   exclude:
     - /var/lib/docker
+    - /var/lib/containerd
     - /var/lib/aide
     - /home/backup
     - /opt/backups
