@@ -1,5 +1,22 @@
 # Release Notes
 
+## Restricted Mode Keeps Its Command Overview (29.09.2026)
+
+*fish/functions/linux/ownerp-help.fish v1.6.0 · fish/conf.d/50-prompt.fish
+v1.4.0 · tests/test_fish_help.py · tests/test_getscripts_restricted.py ·
+docs/usage/01-provisioning.md · docs/COMPONENTS.md*
+
+### Changed
+
+- **The command overview is back in restricted mode, cut down to what
+  works.** The first version switched the panel off at shell start, because
+  every server command on it (`doup`, `dobk`, `konsole`, …) is missing for a
+  user without root. The first test run on Debian showed that the overview
+  itself was missed. `ownerp-help` now shows its own variant in that mode:
+  `ups`, `help`, `ll`, `hg`, `z`/`zi` (when zoxide is installed), the git
+  shortcuts `gst`/`glog`/`gl`/`gd` and `ff` (when fastfetch is installed),
+  plus a line saying that system updates are the administrator's job.
+
 ## Restricted Mode: Fish Without Root (29.09.2026)
 
 *getScripts.py v9.27.0 · fish/functions/linux/ups.fish v1.4.0 ·

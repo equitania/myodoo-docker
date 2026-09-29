@@ -183,8 +183,9 @@ Rückfrage und ohne sudo in diesen Modus. Voraussetzung ist Debian 13: es
 bringt Fish 4.0 mit (die volle Einrichtung installiert 4.5+ aus dem
 Fish-Projekt-Repository, was hier ausgeschlossen ist). Debian 12 hat nur
 Fish 3.6, und die Backports enthalten kein Fish 4 — dort bricht der Modus mit
-dieser Begründung ab. Das Befehlsfeld beim Start der Shell entfällt, weil
-keiner der Server-Befehle installiert ist; `help` zeigt es trotzdem.
+dieser Begründung ab. Das Befehlsfeld beim Start der Shell zeigt statt der
+Server-Befehle, die hier nicht installiert sind, eine eigene Übersicht mit
+dem, was ohne root funktioniert (`ups`, `help`, `ll`, `z`, Git-Kürzel, `ff`).
 
 > ⚠️ **Erfahrungswert (sudo su):** Wer sich mit einem persönlichen
 > Admin-Account anmeldet und per `sudo su` zu root wird, braucht
@@ -459,8 +460,9 @@ Then run `python3 getScripts.py` again. The choice is remembered in
 asking and without sudo. It requires Debian 13, which ships Fish 4.0 (the
 full setup installs 4.5+ from the Fish project's repository, which is ruled
 out here). Debian 12 has only Fish 3.6 and its backports carry no Fish 4 —
-the mode stops there and says so. The command panel at shell start is left
-out, since none of the server commands is installed; `help` still shows it.
+the mode stops there and says so. The command panel at shell start shows,
+instead of the server commands that are not installed here, its own overview
+of what works without root (`ups`, `help`, `ll`, `z`, git shortcuts, `ff`).
 
 > ⚠️ **Lesson learned (sudo su):** Operators who log in with a personal admin
 > account and become root via `sudo su` need getScripts.py ≥ 9.7.3 — older

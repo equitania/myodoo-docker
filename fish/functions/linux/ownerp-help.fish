@@ -1,5 +1,5 @@
 # ownERP command overview
-# Version 1.5.0 | 14.08.2026
+# Version 1.6.0 | 29.09.2026
 #
 # Printed once per LOGIN (see conf.d/50-prompt.fish); `help` shows it again.
 #
@@ -23,6 +23,14 @@ function ownerp-help --description "Show the ownERP command overview"
     set -l n (set_color normal)
     set -l rule " ──────────────────────────────────────────────────────────────────────"
 
+    # getScripts' restricted mode (no root, no sudo): none of the server
+    # commands below is installed for this user, so the panel names only what
+    # works in their own account.
+    if test -e $HOME/.getscripts_restricted
+        __ownerp_help_restricted
+        return
+    end
+
     echo ""
     printf " %sownERP · command overview%s%s%44s%s\n" \
         (set_color --bold) $n $d "help" $n
@@ -43,6 +51,31 @@ function ownerp-help --description "Show the ownERP command overview"
     echo "$d$rule$n"
     # No odoodev line: that CLI belongs to workstation development, and this
     # panel is what an operator needs on a server at 3am.
+    echo "$d every alias: alias$n"
+    echo ""
+end
+
+function __ownerp_help_restricted --description "Command overview for getScripts' restricted mode"
+    set -l d (set_color brblack)
+    set -l n (set_color normal)
+    set -l rule " ──────────────────────────────────────────────────────────────────────"
+
+    echo ""
+    printf " %sownERP · restricted mode%s%s%45s%s\n" \
+        (set_color --bold) $n $d "help" $n
+    echo "$d$rule$n"
+    __ownerp_help_row "Shell"       ups    "update config"      help      "this overview"
+    __ownerp_help_row "Files"       ll     "list files"         hg        "search history"
+    if command -q zoxide
+        __ownerp_help_row "Navigation" z   "jump to a dir"      zi        "pick a dir"
+    end
+    __ownerp_help_row "Git"         gst    "status"             glog      "history graph"
+    __ownerp_help_row ""            gl     "pull"               gd        "diff"
+    if command -q fastfetch
+        __ownerp_help_row "System"  ff     "system info"        ""        ""
+    end
+    echo "$d$rule$n"
+    echo "$d system updates: your administrator (apt-get update, apt-get upgrade)$n"
     echo "$d every alias: alias$n"
     echo ""
 end

@@ -1,5 +1,5 @@
 # Prompt and Startup
-# Version 1.3.0 | 29.09.2026
+# Version 1.4.0 | 29.09.2026
 
 # Run fastfetch on interactive shell start
 if status is-interactive
@@ -23,11 +23,10 @@ end
 # Everything started from this shell inherits it — tmux panes, subshells, `su` —
 # and stays quiet. A fresh ssh session starts without it, and so does `sudo`,
 # which resets the environment: arriving as root is a new session and gets the
-# panel. `help` shows it again on demand.
-#
-# Not for a user in getScripts' restricted mode: none of the server commands
-# on the panel are installed for them.
-if status is-interactive; and not set -q OWNERP_HELP_SHOWN; and not test -e $HOME/.getscripts_restricted
+# panel. `help` shows it again on demand. A user in getScripts' restricted
+# mode gets the same panel, cut down to what works without root (ownerp-help
+# chooses the variant).
+if status is-interactive; and not set -q OWNERP_HELP_SHOWN
     if functions -q ownerp-help
         set -gx OWNERP_HELP_SHOWN 1
         ownerp-help

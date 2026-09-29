@@ -208,10 +208,16 @@ class WiringTest(unittest.TestCase):
         self.assertIn("--restricted", branch)
         self.assertNotIn("sudo", branch)
 
-    def test_server_panel_is_not_shown_in_restricted_mode(self):
+    def test_restricted_mode_gets_its_own_panel(self):
+        # The overview stays (the Captain missed it when it was switched off),
+        # but it must not advertise server commands this user cannot run.
         prompt = read("fish", "conf.d", "50-prompt.fish")
-        self.assertIn("not test -e $HOME/.getscripts_restricted", prompt)
-
+        self.assertNotIn(".getscripts_restricted", prompt)
+        help_fish = read("fish", "functions", "linux", "ownerp-help.fish")
+        self.assertIn("test -e $HOME/.getscripts_restricted", help_fish)
+        restricted = help_fish[help_fish.index("function __ownerp_help_restricted"):]
+        for server_only in ("doup", "dobk", "konsole", "syspatch", "ngxset", "dps"):
+            self.assertNotRegex(restricted, rf"__ownerp_help_row .*\b{server_only}\b")
 
 if __name__ == "__main__":
     unittest.main()

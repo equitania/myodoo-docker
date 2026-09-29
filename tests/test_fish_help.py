@@ -24,7 +24,7 @@ PROMPT = os.path.join(FISH, "conf.d", "50-prompt.fish")
 # Commands that are not aliases or functions of this repository: external tools
 # delivered by other packages. Naming them here is the point — an unexplained
 # gap in the check would be indistinguishable from a typo.
-EXTERNAL = {"odoodev"}
+EXTERNAL = {"odoodev", "z", "zi"}  # z/zi: zoxide, restricted-mode panel
 
 
 def read(path):
