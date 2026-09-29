@@ -21,7 +21,7 @@ Alle Skripte des Repos (`scripts/`, Stand 28.09.2026):
 | `server_hardening.py` (1.9.0) | Audit + Härtung (UFW, fail2ban, SSH, sysctl, auditd, AIDE); `--json` liefert das Audit als ein JSON-Dokument für `server-readiness.py`/`ups`, schreibt nichts, Admin-IPs erscheinen nur als Kommentar; Module laufen immer in fester Reihenfolge (ufw, fail2ban, ssh) | `sudo python3 server_hardening.py [--apply] [-m MODUL …] [--json]` |
 | `deploy-nginx-base.sh` (1.3.0) | nginx-Basis: Includes, Wartungsseite, nginx.conf (mit Rollback) | `./deploy-nginx-base.sh [--dry-run] [--no-main-conf]` |
 | `ngx-conf-wizard.sh` (1.1.0) | Interaktiver YAML-Assistent für nginx-set-conf | `./ngx-conf-wizard.sh` |
-| `pg-local-deploy.sh` (1.2.2) | PostgreSQL-Container interaktiv deployen (Profile, optional SSL) | `./pg-local-deploy.sh` |
+| `pg-local-deploy.sh` (1.3.0) | PostgreSQL-Container interaktiv deployen (Profile, optional SSL, optional pgvector) | `./pg-local-deploy.sh` |
 | `fr-local-deploy.sh` | FastReport-API-Container deployen (Default `/opt/fast-report`) | `./fr-local-deploy.sh` |
 | `update_docker_odoo.py` (5.21.0) | Odoo-Container-Updates per YAML | `doup` bzw. `python3 update_docker_odoo.py [-s NAME] [--validate]` |
 | `ownerp_console.py` (1.2.0) | Die Konsole: Serverzustand und Konfiguration bearbeiten, Vollbild. Startet nichts | `konsole` bzw. `python3 ownerp_console.py [--check]` |
@@ -129,7 +129,7 @@ All scripts in this repository (`scripts/`, as of 28.09.2026):
 | `server_hardening.py` (1.9.0) | Audit + hardening (UFW, fail2ban, SSH, sysctl, auditd, AIDE); `--json` prints the audit as one JSON document for `server-readiness.py`/`ups`, writes nothing, admin IPs appear only as their comment; modules always run in a fixed order (ufw, fail2ban, ssh) | `sudo python3 server_hardening.py [--apply] [-m MODULE …] [--json]` |
 | `deploy-nginx-base.sh` (1.3.0) | nginx base: includes, maintenance page, nginx.conf (with rollback) | `./deploy-nginx-base.sh [--dry-run] [--no-main-conf]` |
 | `ngx-conf-wizard.sh` (1.1.0) | Interactive YAML wizard for nginx-set-conf | `./ngx-conf-wizard.sh` |
-| `pg-local-deploy.sh` (1.2.2) | Deploy a PostgreSQL container interactively (profiles, optional SSL) | `./pg-local-deploy.sh` |
+| `pg-local-deploy.sh` (1.3.0) | Deploy a PostgreSQL container interactively (profiles, optional SSL, optional pgvector) | `./pg-local-deploy.sh` |
 | `fr-local-deploy.sh` | Deploy the FastReport API container (default `/opt/fast-report`) | `./fr-local-deploy.sh` |
 | `update_docker_odoo.py` (5.21.0) | Odoo container updates via YAML | `doup` or `python3 update_docker_odoo.py [-s NAME] [--validate]` |
 | `ownerp_console.py` (1.2.0) | The console: server state and configuration editing, full screen. Starts nothing | `konsole` or `python3 ownerp_console.py [--check]` |

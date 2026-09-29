@@ -45,6 +45,7 @@ Das Skript fragt interaktiv ab:
 | Conf-Profil | `2cpu8gb` | Hardware-Profil (siehe oben) |
 | Host-Port | keiner | Optionales Publish auf `127.0.0.1` |
 | SSL | `nein` | Self-Signed-SSL aktivieren (y/N) |
+| pgvector | `nein` | pgvector installieren (y/N) → Image `postgres-pgvector:<Version>`, siehe unten |
 
 ### Volume-Layout
 
@@ -67,6 +68,32 @@ Bei Aktivierung (`y` bei der SSL-Abfrage):
 - Odoo-Container mit `db_sslmode = prefer` verschlüsseln die Verbindung automatisch, sobald der Server SSL anbietet — keine Odoo-Änderung nötig.
 - Das Zertifikat ist self-signed: Client-Modi mit Zertifikatsprüfung (`verify-ca`/`verify-full`) funktionieren damit nicht.
 - Zertifikat manuell erneuern: `server.crt`/`server.key` in PGDATA löschen und das Deploy-Skript erneut ausführen.
+
+## pgvector (optional, ab 1.3.0)
+
+Standard ist **aus**, und das mit Absicht. Odoo 19 Enterprise bringt das Modul
+`ai_auto_install` mit: Es wird bei jeder Datenbank automatisch installiert,
+prüft, ob der Datenbankserver die Erweiterung `vector` (pgvector) anbietet, und
+installiert dann ohne Rückfrage das KI-Modul `ai`. Das Modul kann Texte an
+einen externen KI-Anbieter senden. Ohne pgvector passiert nichts davon.
+
+Bei `y` auf „pgvector installieren?“:
+
+- Es wird kein fremdes Image verwendet. Das Skript baut auf `postgres:<Version>`
+  das Image `postgres-pgvector:<Version>` und installiert darin
+  `postgresql-<Hauptversion>-pgvector` aus dem PostgreSQL-Paketarchiv, das im
+  offiziellen Image schon eingetragen ist. Die genaue Version (z.B. 16.14)
+  bleibt so erhalten. Der Dockerfile liegt unter `{base}/{name}-deploy/pgvector/`,
+  das Compose-File baut damit neu, falls das Image fehlt.
+- Der Build braucht Internetzugang zu apt.postgresql.org; gesetzte
+  Proxy-Variablen werden durchgereicht.
+- Die Verifikation prüft, dass `vector` angeboten wird.
+
+Umgekehrt bricht ein Re-Deploy **ohne** pgvector ab, wenn eine vorhandene
+Datenbank die Erweiterung schon nutzt — deren KI-Tabellen wären sonst nicht
+mehr lesbar. Das Ansible-Playbook `pb_pg_docker_start.yaml` macht dasselbe mit
+`pg_vector=true`; Update und Rollback übernehmen die Einstellung vom laufenden
+Server.
 
 ## Betrieb
 
@@ -133,6 +160,7 @@ The script prompts interactively:
 | Conf profile | `2cpu8gb` | Hardware profile (see above) |
 | Host port | none | Optional publish on `127.0.0.1` |
 | SSL | `no` | Enable self-signed SSL (y/N) |
+| pgvector | `no` | Install pgvector (y/N) → image `postgres-pgvector:<version>`, see below |
 
 ### Volume Layout
 
@@ -155,6 +183,31 @@ When enabled (`y` at the SSL prompt):
 - Odoo containers with `db_sslmode = prefer` encrypt the connection automatically as soon as the server offers SSL — no Odoo change required.
 - The certificate is self-signed: client modes with certificate verification (`verify-ca`/`verify-full`) will not work with it.
 - To renew the certificate manually: delete `server.crt`/`server.key` in PGDATA and re-run the deploy script.
+
+## pgvector (optional, since 1.3.0)
+
+The default is **off**, on purpose. Odoo 19 Enterprise ships the module
+`ai_auto_install`: it is installed with every database, checks whether the
+database server offers the `vector` extension (pgvector) and then installs the
+AI module `ai` without asking. That module can send texts to an external AI
+provider. Without pgvector none of this happens.
+
+With `y` at "pgvector installieren?":
+
+- No third-party image is used. The script builds `postgres-pgvector:<version>`
+  on top of `postgres:<version>` and installs `postgresql-<major>-pgvector` from
+  the PostgreSQL package archive the official image already carries. The exact
+  version (e.g. 16.14) is kept. The Dockerfile lives in
+  `{base}/{name}-deploy/pgvector/`; the compose file rebuilds from it if the
+  image is missing.
+- The build needs internet access to apt.postgresql.org; proxy variables that
+  are set are passed through.
+- Verification checks that `vector` is offered.
+
+Conversely, a re-deploy **without** pgvector stops when an existing database
+already uses the extension — its AI tables would no longer be readable. The
+Ansible playbook `pb_pg_docker_start.yaml` does the same with `pg_vector=true`;
+update and rollback inherit the setting from the running server.
 
 ## Operations
 

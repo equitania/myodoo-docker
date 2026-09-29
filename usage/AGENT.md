@@ -44,7 +44,7 @@ All commands run as **root** on the target server. The interactive login shell i
 | `deploy-nginx-base.sh` | — | Roll out shared nginx includes + maintenance page + nginx.conf (backup/validate/rollback) | `--no-main-conf` · `--dry-run` · `--src DIR` · `--dest DIR` · `--help` |
 | `ngx-conf-wizard.sh` | — | Interactive builder for the `nginx-set-conf` YAML (`$HOME/docker-builds/ngx-conf/`) | interactive only (template, domain, cert, ports, "one more?" loop, optional deploy) |
 | `nginx-set-conf` | `ngxset` | Generate + deploy vhosts from the wizard YAML (PyPI tool) | `--config_path=$HOME/docker-builds/ngx-conf/` (alias preset) |
-| `pg-local-deploy.sh` | — | Deploy a PostgreSQL container (compose file, network, profile, optional SSL) | interactive only (container name, base dir, db user/name, password, PG version, profile `2cpu4gb|2cpu8gb|4cpu16gb|8cpu32gb`, optional host port, optional self-signed SSL) |
+| `pg-local-deploy.sh` | — | Deploy a PostgreSQL container (compose file, network, profile, optional SSL) | interactive only (container name, base dir, db user/name, password, PG version, profile `2cpu4gb|2cpu8gb|4cpu16gb|8cpu32gb`, optional host port, optional self-signed SSL, optional pgvector — default off, `y` builds `postgres-pgvector:<version>` from `postgres:<version>` + `postgresql-<major>-pgvector`; a re-deploy without pgvector exits 1 when a database already uses `vector`) |
 | `fr-local-deploy.sh` | — | Deploy the FastReport API container (`/opt/fast-report/<name>/…`) | interactive only (container name, port, image tag, registry token, optional secrets) |
 | `update_docker_odoo.py` | `doup` (config: `edup`) | Update Odoo containers from `~/docker2update.yaml` (rebuild image, update DB, restart). Writes a full run log per container to `<build folder>/update_<YYYYMMDD>_<HHMMSS>.log` regardless of `-v`; the paths are listed at exit. Logs older than `log_retention_days` (YAML `defaults` or per container, 90 days default, `0` = keep forever) are removed on that instance's next run. Each container run also appends one line to `~/update-history.jsonl` (`defaults.history_retention_days`, 365 default, `0` = forever) | `-c/--config CONFIG` · `-v/--verbose` · `-s/--specific-container NAME` (repeatable, also comma-separated; **overrides `active: false`**) · `--type {M,F,N}` (runtime mode override, never written to the YAML) · `--comment TEXT` (into the run log header and the history) · `--validate` · `--dns-optimize` |
 | `ownerp_tui.py` | `tui` | curses selection screen for ad-hoc updates: lists every system from `docker2update.yaml` with its mode and its last run, then hands the selection to `update_docker_odoo.py` — one invocation per mode group, sequential, worst exit code wins. **Never writes to the YAML.** Keys: Space select · `a` all/none · `m` mode M→F→N · `c` comment · `Enter` start · `v` validate · `w` add an instance / change a field (runs `ownerp_wizard.py`, then reloads the list) · `d` make it `doup`'s default · `?` help · `q`/`Esc` quit | `-c/--config CONFIG` · `--make-default` · `--no-default` |
@@ -191,6 +191,12 @@ outside the search list — a domain suffix never matches an IP, and only `reque
 CIDR (wget/apt/urllib do not). Full walkthrough: `docs/usage/07-proxy.md`.
 
 ## Guardrails & gotchas
+
+- **pgvector is a decision, not a default.** Odoo 19 Enterprise's `ai_auto_install` installs the AI
+  module `ai` in every new database whenever the server offers the `vector` extension. Never swap
+  a customer's DB image for `pgvector/pgvector` "to be safe"; deploy with `pg-local-deploy.sh`
+  (`y` at pgvector) or Ansible `pg_vector=true` only when the customer wants AI or a restored DB
+  already uses `vector`. Ansible update/rollback inherit it from the running server.
 - **Destructive:** `doup` (type `F`) **stops, removes and re-creates** the target container and
   removes its image before rebuilding — a failed run leaves the system down until re-run.
   `restore-zip.sh` with `drop_db=Y` drops the target DB. Fish aliases `dkprfa`/`dkrmv` wipe

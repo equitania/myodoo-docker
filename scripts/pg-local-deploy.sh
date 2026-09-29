@@ -2,7 +2,7 @@
 #
 # pg-local-deploy.sh — interaktives On-Premise-Deploy für PostgreSQL-Docker.
 #
-# Version: 1.2.2 — 12.08.2026
+# Version: 1.3.0 — 29.09.2026
 #
 # Spiegelt das Ansible-Playbook
 #   semaphore/playbooks/odoo/pg/pb_pg_docker_start.yaml
@@ -11,7 +11,18 @@
 #
 # Eingaben (interaktiv): Container-Name, Basis-Verzeichnis, DB-User/-Name,
 # Passwort (Pflicht), PostgreSQL-Version, Conf-Profil (2cpu4gb/2cpu8gb/
-# 4cpu16gb/8cpu32gb), optionaler Host-Port, optionales Self-Signed-SSL.
+# 4cpu16gb/8cpu32gb), optionaler Host-Port, optionales Self-Signed-SSL,
+# optionales pgvector (Standard: aus).
+#
+# pgvector (1.3.0): Odoo 19 Enterprise bringt das Modul ai_auto_install mit
+# (auto_install, hängt nur von mail ab). Bietet der Datenbankserver die
+# Erweiterung 'vector' an, legt es sie an und installiert das KI-Modul 'ai'
+# in JEDER neuen Datenbank — ohne Rückfrage. Deshalb ist pgvector hier eine
+# bewusste Entscheidung und kein Standard. Bei "ja" wird kein fremdes Image
+# verwendet, sondern postgres:<Version> um das Paket
+# postgresql-<Hauptversion>-pgvector aus dem PostgreSQL-Paketarchiv ergänzt,
+# das im offiziellen Image bereits eingetragen ist. So bleibt die genaue
+# Version (z.B. 16.14) erhalten.
 #
 # Sicherheits-Hygiene: KEINE Secrets im Skript hinterlegt — das DB-Passwort
 # wird zwingend interaktiv (silent, mit Wiederholung) abgefragt.
@@ -218,10 +229,30 @@ case "$ssl_choice" in
 esac
 _ok "SSL: $pg_ssl"
 
+echo
+echo "  Optional — pgvector (Vektorsuche für die KI-Module von Odoo 19 Enterprise)."
+echo "  Achtung: Mit pgvector installiert Odoo 19 Enterprise das KI-Modul 'ai' in"
+echo "  jeder neuen Datenbank automatisch. Das Modul kann Texte an einen externen"
+echo "  KI-Anbieter senden. Nur wählen, wenn der Kunde die KI-Funktionen nutzen will"
+echo "  oder eine Datenbank einspielt, die pgvector bereits verwendet."
+read -rp "  pgvector installieren? (y/N) " vector_choice
+case "$vector_choice" in
+    [yYjJ]) pg_vector="yes" ;;
+    *)      pg_vector="no"  ;;
+esac
+_ok "pgvector: $pg_vector"
+
 docker_network="${pg_name}-net"
 host_pgdata="$pg_basedir/$pg_name"
 deploy_dir="$pg_basedir/${pg_name}-deploy"
-image="postgres:$pg_version"
+base_image="postgres:$pg_version"
+if [ "$pg_vector" = "yes" ]; then
+    # Lokal gebautes Image, gleicher Name wie im Ansible-Playbook
+    # (semaphore/playbooks/odoo/pg/pb_pg_docker_start.yaml, pg_vector: true).
+    image="postgres-pgvector:$pg_version"
+else
+    image="$base_image"
+fi
 
 # ── Step 3: Verzeichnisse ────────────────────────────────────────────────────
 _hr
@@ -290,19 +321,62 @@ fi
 
 # ── Step 5: Image-Pull ───────────────────────────────────────────────────────
 _hr
-_info "Step 5: Image-Pull ($image)"
-if ! docker pull "$image"; then
-    _err "Image-Pull fehlgeschlagen: $image"
+_info "Step 5: Image-Pull ($base_image)"
+if ! docker pull "$base_image"; then
+    _err "Image-Pull fehlgeschlagen: $base_image"
     echo "    Existiert der Tag? Verfügbare Tags: https://hub.docker.com/_/postgres/tags"
     echo "    Offline/Air-Gapped: Image vorab laden mit 'docker load -i postgres_$pg_version.tar'"
     exit 1
 fi
-_ok "Image vorhanden: $image"
+_ok "Image vorhanden: $base_image"
+
+# pgvector: postgres:<Version> + Paket aus apt.postgresql.org (im offiziellen
+# Image eingetragen). PG_MAJOR setzt das offizielle Image selbst. Der
+# Dockerfile bleibt im Deploy-Verzeichnis, damit Compose neu bauen kann.
+if [ "$pg_vector" = "yes" ]; then
+    _info "pgvector-Image bauen ($image)"
+    vector_dir="$deploy_dir/pgvector"
+    mkdir -p "$vector_dir"
+    cat > "$vector_dir/Dockerfile" <<'EOF_PGVECTOR'
+# Generiert von pg-local-deploy.sh — postgres:<Version> mit pgvector.
+# Identisch mit semaphore/playbooks/odoo/pg/pb_pg_docker_start.yaml (pg_vector).
+ARG PG_VERSION
+FROM postgres:${PG_VERSION}
+RUN apt-get update \
+ && apt-get install -y --no-install-recommends "postgresql-${PG_MAJOR}-pgvector" \
+ && rm -rf /var/lib/apt/lists/*
+EOF_PGVECTOR
+    # Proxy-Hosts: RUN apt-get läuft im Build-Container und sieht den
+    # Proxy des Docker-Daemons nicht — gesetzte Variablen durchreichen.
+    proxy_args=()
+    for var in http_proxy https_proxy no_proxy HTTP_PROXY HTTPS_PROXY NO_PROXY; do
+        [ -n "${!var:-}" ] && proxy_args+=(--build-arg "$var")
+    done
+    if ! docker build --build-arg "PG_VERSION=$pg_version" "${proxy_args[@]}" \
+            -t "$image" "$vector_dir"; then
+        _err "pgvector-Image konnte nicht gebaut werden: $image"
+        echo "    Der Build braucht Internetzugang zu apt.postgresql.org."
+        echo "    Ohne pgvector erneut starten, oder Netzwerk/Proxy prüfen."
+        exit 1
+    fi
+    _ok "pgvector-Image gebaut: $image"
+fi
 
 # ── Step 6: docker-compose.yml generieren ────────────────────────────────────
 _hr
 _info "Step 6: docker-compose.yml generieren"
 compose_file="$deploy_dir/docker-compose.yml"
+
+# Optionaler build-Block (nur mit pgvector): 'compose up' baut das Image neu,
+# falls es auf dem Host fehlt — der Dockerfile liegt im Deploy-Verzeichnis.
+build_block=""
+if [ "$pg_vector" = "yes" ]; then
+    build_block="    build:
+      context: \"$deploy_dir/pgvector\"
+      args:
+        PG_VERSION: \"$pg_version\"
+"
+fi
 
 # Optionaler ports-Block (nur bei gewähltem Host-Port)
 ports_block=""
@@ -333,7 +407,7 @@ fi
 services:
   postgres:
     image: "$image"
-    container_name: "$pg_name"
+${build_block}    container_name: "$pg_name"
     restart: always
     shm_size: 1g
     environment:
@@ -520,6 +594,35 @@ _ok "Smoke-Test: $server_version"
 shared_buffers="$(docker exec "$pg_name" psql -U "$pg_user" -d "$pg_db" -tAc 'SHOW shared_buffers;' 2>/dev/null)"
 [ -n "$shared_buffers" ] && _ok "Conf aktiv: shared_buffers = $shared_buffers"
 
+# pgvector: angeboten, wenn gewählt — und umgekehrt darf ein Re-Deploy ohne
+# pgvector keine Datenbank übernehmen, die die Erweiterung schon angelegt
+# hat: deren Tabellen mit Vektor-Spalten wären dann nicht mehr lesbar.
+vector_offered="$(docker exec "$pg_name" psql -U "$pg_user" -d postgres -tAc \
+    "SELECT 1 FROM pg_available_extensions WHERE name = 'vector';" 2>/dev/null)"
+if [ "$pg_vector" = "yes" ]; then
+    if [ "$vector_offered" = "1" ]; then
+        _ok "pgvector: angeboten"
+    else
+        _err "pgvector gewählt, aber vom Server nicht angeboten — Image prüfen: $image"
+        exit 1
+    fi
+else
+    vector_dbs=""
+    for db in $(docker exec "$pg_name" psql -U "$pg_user" -d postgres -tAc \
+            "SELECT datname FROM pg_database WHERE datallowconn AND NOT datistemplate;" 2>/dev/null); do
+        if [ "$(docker exec "$pg_name" psql -U "$pg_user" -d "$db" -tAc \
+                "SELECT 1 FROM pg_extension WHERE extname = 'vector';" 2>/dev/null)" = "1" ]; then
+            vector_dbs="$vector_dbs $db"
+        fi
+    done
+    if [ -n "$vector_dbs" ]; then
+        _err "Diese Datenbanken nutzen pgvector, das Image bietet es nicht an:$vector_dbs"
+        echo "    Erneut deployen und bei 'pgvector installieren?' mit y antworten."
+        exit 1
+    fi
+    _ok "pgvector: aus (keine Datenbank nutzt es)"
+fi
+
 if [ "$pg_ssl" = "yes" ]; then
     ssl_active="$(docker exec "$pg_name" psql -U "$pg_user" -d "$pg_db" -tAc 'SHOW ssl;' 2>/dev/null)"
     if [ "$ssl_active" = "on" ]; then
@@ -539,6 +642,7 @@ echo "  Image:       $image"
 echo "  Netzwerk:    $docker_network"
 echo "  PGDATA:      $host_pgdata"
 echo "  Conf-Profil: $pg_conf_version"
+echo "  pgvector:    $pg_vector"
 if [ "$pg_ssl" = "yes" ]; then
     echo "  SSL:         aktiv (self-signed, PGDATA/server.crt)"
 else

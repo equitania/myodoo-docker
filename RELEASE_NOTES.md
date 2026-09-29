@@ -1,5 +1,35 @@
 # Release Notes
 
+## pgvector Becomes an Explicit Choice (29.09.2026)
+
+*pg-local-deploy.sh v1.3.0 · scripts/README_pg-local-deploy.md ·
+docs/usage/03-postgres-odoo.md · docs/usage/09-reference.md · usage/AGENT.md*
+
+Odoo 19 Enterprise ships `ai_auto_install`: installed with every database,
+it checks whether the database server offers the `vector` extension
+(pgvector) and, if so, installs the AI module `ai` without asking. A
+customer's server with a pgvector image therefore got the AI module in its
+database; our own images never had pgvector, so it only surfaced when that
+backup could not be restored here.
+
+### Added
+
+- **`pg-local-deploy.sh` asks about pgvector, default no.** The prompt says
+  what the choice means (the AI module in every new Odoo 19 Enterprise
+  database, texts to an external AI provider). With `y` no third-party
+  image is used: `postgres-pgvector:<version>` is built from
+  `postgres:<version>` plus `postgresql-<major>-pgvector` from the
+  PostgreSQL package archive already configured in the official image, so
+  the exact version (e.g. 16.14) is kept. The Dockerfile stays in
+  `{base}/{name}-deploy/pgvector/` and the compose file can rebuild from it;
+  proxy variables are passed to the build. Verified on 16.14, 17 and 18
+  (pgvector 0.8.6).
+- **A re-deploy without pgvector stops when a database already uses it.**
+  Those tables (Odoo's `ai_embedding`) would otherwise be unreadable.
+
+The Ansible playbooks (`semaphore/playbooks/odoo/pg/`) follow the same logic
+with `pg_vector`; see the commit there.
+
 ## Restricted Mode Keeps Its Command Overview (29.09.2026)
 
 *fish/functions/linux/ownerp-help.fish v1.6.0 · fish/conf.d/50-prompt.fish

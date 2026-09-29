@@ -22,7 +22,9 @@ Pro System ein eigener PostgreSQL-Container — interaktiv per:
 Abgefragt werden u.a. Container-Name (`live-db`), Basis-Verzeichnis,
 DB-User/-Passwort, PostgreSQL-Version (aktuelle Tags:
 <https://hub.docker.com/_/postgres/tags?name=16.>), Performance-Profil
-(2cpu4gb … 8cpu32gb) und optional **Self-Signed-SSL**. Das Skript erzeugt
+(2cpu4gb … 8cpu32gb), optional **Self-Signed-SSL** und optional **pgvector**
+(Standard: aus — mit pgvector installiert Odoo 19 Enterprise das KI-Modul `ai`
+in jeder neuen Datenbank von selbst). Das Skript erzeugt
 Netzwerk (`live-db-net`), Compose-File (`<basis>/live-db-deploy/docker-compose.yml`)
 und startet den Container. Details: [scripts/README_pg-local-deploy.md](../../scripts/README_pg-local-deploy.md).
 
@@ -113,7 +115,9 @@ One dedicated PostgreSQL container per system — interactively via:
 Prompts include container name (`live-db`), base directory, DB user/password,
 PostgreSQL version (current tags:
 <https://hub.docker.com/_/postgres/tags?name=16.>), performance profile
-(2cpu4gb … 8cpu32gb) and optional **self-signed SSL**. The script creates the
+(2cpu4gb … 8cpu32gb), optional **self-signed SSL** and optional **pgvector**
+(default: off — with pgvector, Odoo 19 Enterprise installs the AI module `ai`
+in every new database by itself). The script creates the
 network (`live-db-net`), a compose file
 (`<base>/live-db-deploy/docker-compose.yml`) and starts the container.
 Details: [scripts/README_pg-local-deploy.md](../../scripts/README_pg-local-deploy.md).
