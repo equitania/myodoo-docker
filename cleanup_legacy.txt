@@ -56,9 +56,10 @@ update_docker_myodoo.py
 .selected_editor
 .wget-hsts
 
-# restore-zip.sh was listed here and must not be: copy_scripts() DELIVERS it,
-# and this cleanup runs afterwards on a fresh Fish installation — so the very
-# run that set up the server deleted its restore tool again. Same shape as the
+# restore-zip.sh was listed here and must not be: copy_scripts() DELIVERED it
+# (until 29.09.2026), and this cleanup runs afterwards on a fresh Fish
+# installation — so the very run that set up the server deleted its restore
+# tool again. Same shape as the
 # CSV loss above: a list that deletes what the same run just produced.
 #
 # A script this project delivers and then withdraws belongs in

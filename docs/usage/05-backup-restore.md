@@ -127,17 +127,12 @@ lädt die Maske die Liste neu, damit die neue Instanz sofort auswählbar ist.
 <a id="de-13-restore--notfall"></a>
 ## Restore & Notfall
 
-Backup zurückspielen (Archiv aus `container2backup.py`, erkennt
-`.zip/.7z/.7z.gpg/.tar.gz/.tar.zst` automatisch):
-
-```bash
-env PGPASSWORD='<pg_password>' ~/myodoo-docker/scripts/restore-zip.sh \
-  <backup_kind 1|2> <run_sql> <orig_dbname> <new_dbname> <drop_db Y/n> \
-  <archiv> <odoo_volume> <pg_container>
-```
-
-Das Passwort per `PGPASSWORD`-Umgebungsvariable übergeben — als 9. Argument
-wäre es in `ps aux` und der Shell-History sichtbar (das Skript warnt dann).
+Die Wiederherstellung wird neu aufgesetzt; `restore-zip.sh` ist seit
+29.09.2026 nicht mehr Teil des Repositorys und wird nicht mehr ausgeliefert.
+Bereits verteilte Kopien in `/root` bleiben bis zum Ersatz liegen. Bis dahin
+gelten die manuellen Schritte in
+[scripts/README_BackUp.md](../../scripts/README_BackUp.md) (Abschnitt
+„Wiederherstellung von Odoo-Datenbank Backups“).
 
 Typischer Anwendungsfall: Live-Backup als Test-DB einspielen, danach im
 Container `neutralize` ausführen (Mails/Cron deaktivieren). Für manuelle
@@ -265,18 +260,11 @@ away.
 <a id="en-13-restore--emergency"></a>
 ## Restore & Emergency
 
-Restore a backup (archive produced by `container2backup.py`; detects
-`.zip/.7z/.7z.gpg/.tar.gz/.tar.zst` automatically):
-
-```bash
-env PGPASSWORD='<pg_password>' ~/myodoo-docker/scripts/restore-zip.sh \
-  <backup_kind 1|2> <run_sql> <orig_dbname> <new_dbname> <drop_db Y/n> \
-  <archive> <odoo_volume> <pg_container>
-```
-
-Pass the password via the `PGPASSWORD` environment variable — as the 9th
-positional argument it would be visible in `ps aux` and shell history (the
-script warns in that case).
+The restore is being redone; `restore-zip.sh` has not been part of the
+repository or delivered since 29.09.2026. Copies already in `/root` stay
+until the replacement exists. Until then, follow the manual steps in
+[scripts/README_BackUp.md](../../scripts/README_BackUp.md) (section
+"Restoring Odoo Database Backups").
 
 Typical use case: restore the live backup as the test DB, then run
 `neutralize` in the container (disables mails/cron). For manual container

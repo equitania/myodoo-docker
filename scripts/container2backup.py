@@ -560,7 +560,7 @@ def stream_full_backup(temp_dir, output_file_base, host_filestore_path,
     Pre-condition: ``temp_dir/dump.sql`` already exists (plain-text dump).
     A symlink ``temp_dir/filestore`` -> ``host_filestore_path`` is created so a
     single ``tar -h`` run archives the dump plus the filestore (dereferenced)
-    as ``filestore/...`` - the exact layout restore-zip.sh expects. The tar
+    as ``filestore/...`` - the layout Odoo's own backups use. The tar
     stream is piped through zstd straight to the target; the filestore is never
     copied to disk.
 

@@ -1,5 +1,20 @@
 # Release Notes
 
+## restore-zip.sh Withdrawn (29.09.2026)
+
+*getScripts.py v9.27.1 · server-readiness.py v1.11.2 · scripts/README_BackUp.md ·
+docs/usage/05-backup-restore.md · docs/usage/09-reference.md · ReadMe.md ·
+usage/AGENT.md*
+
+### Removed
+
+- **`restore-zip.sh` is no longer part of the repository.** The restore is
+  being redone. `copy_scripts()` stops delivering it and `chk` no longer
+  compares it. It is deliberately not on `RETIRED_SCRIPTS`: copies already
+  in `/root` stay until the replacement exists, so operators keep a restore
+  tool meanwhile. The documentation points to the manual steps in
+  `scripts/README_BackUp.md` until then.
+
 ## pgvector Becomes an Explicit Choice (29.09.2026)
 
 *pg-local-deploy.sh v1.3.0 · scripts/README_pg-local-deploy.md ·

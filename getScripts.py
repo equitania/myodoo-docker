@@ -147,7 +147,7 @@ if os.environ.get('GETSCRIPTS_DEBUG', '').lower() in ('1', 'true', 'yes'):
     logger.debug("Debug logging enabled")
 
 # Script version and date
-SCRIPT_VERSION = "9.27.0"
+SCRIPT_VERSION = "9.27.1"
 SCRIPT_DATE = "29.09.2026"
 
 # Branch of myodoo-docker this server tracks - the single source of truth for
@@ -4126,7 +4126,10 @@ def copy_scripts(_myhome: str, myodoo_docker: str) -> None:
         # ownerp_tui.py was here until 13.08.2026; see RETIRED_SCRIPTS below.
         "cleanup-weblogs.py",
         "container2backup.py",
-        "restore-zip.sh",
+        # restore-zip.sh was here until 29.09.2026. Withdrawn from the
+        # repository because the restore is being redone; deliberately NOT
+        # in RETIRED_SCRIPTS - existing copies stay in $HOME until the
+        # replacement exists, so operators keep a restore tool meanwhile.
         "ssl-renew.sh",
         "nginx-cert-guard.py",
         "nightly-cleanup.sh",

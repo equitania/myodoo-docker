@@ -87,7 +87,6 @@ Die Tools sind auf einen klaren Ablauf abgestimmt:
   ```
   → Ausführliche Doku: [scripts/README_BackUp.md](scripts/README_BackUp.md)
 
-- **restore-zip.sh** (v2.x) — Wiederherstellung aus den von container2backup.py erzeugten Backups; erkennt das Format automatisch (`.zip`, `.7z`, `.7z.gpg`, `.tar.gz`, `.tar.zst`)
 - **update_docker_odoo.py** (v5.11.x) — automatisierte Aktualisierung von Docker-Containern inkl. Neustart-Management; Option `db_password_via_env: true` pro Container in `docker2update.yaml` übergibt das DB-Passwort via `PGPASSWORD`-Umgebungsvariable statt als `--db_password=...` in argv (verhindert Sichtbarkeit in `ps aux`); Standard: `false` (Legacy-Modus für ältere Images). Ohne `-v` bleibt die Ausgabe knapp; Warnungen und Fehler des gesamten Laufs stehen gesammelt im Abschlussblock. Unabhängig davon schreibt jeder Lauf ein vollständiges Protokoll in den Build-Ordner der Instanz (`update_JJJJMMTT_HHMMSS.log`) — mit allen INFO-Zeilen, die die Konsole verschweigt; die Pfade werden zum Schluss genannt, auch nach Abbruch oder Fehler
   - Auswahl für einen einzelnen Lauf, ohne die YAML anzufassen: `-s` nimmt mehrere Namen (wiederholt oder kommagetrennt), `--type M|F|N` überschreibt den Modus dieses Laufs, `--comment "…"` hält fest, warum er stattfand. **`-s` sticht `active: false`** — ein ausdrücklich benannter Container läuft, auch wenn er in der Konfiguration geparkt ist; ein unbekannter Name bricht ab, statt stillschweigend nichts zu tun
   - Jeder Container-Lauf hinterlässt eine Zeile in `~/update-history.jsonl`: wann, welches System, welcher Modus, Ergebnis, Dauer, Protokollpfad und Kommentar. Geschrieben vom Skript selbst, also auch bei klassischen und Cron-Läufen. Aufbewahrung über `defaults.history_retention_days` (Standard 365 Tage, `0` = unbegrenzt)
@@ -250,9 +249,9 @@ zweisprachig, jede für sich lesbar:
 | Backups | `edbk` (Config) / `dobk` (Lauf) / `llbk` | [Backup & Restore](docs/usage/05-backup-restore.md#de-11-schritt-9-backups-einrichten-edbkdobk) |
 | Konfiguration prüfen | `doval` (beide YAMLs, rein lesend) | [Backup & Restore](docs/usage/05-backup-restore.md#de-11-schritt-9-backups-einrichten-edbkdobk) |
 | Wartungs-Cron | `setup-maintenance-cron.sh` | [Wartung](docs/usage/06-maintenance.md#de-12-schritt-10-wartung-automatisieren) |
-| Restore | `restore-zip.sh` | [Backup & Restore](docs/usage/05-backup-restore.md#de-13-restore--notfall) |
+| Restore | wird neu aufgesetzt | [Backup & Restore](docs/usage/05-backup-restore.md#de-13-restore--notfall) |
 | Proxy-Umgebung einrichten | `./getScripts.py --proxy-check` | [Proxy](docs/usage/07-proxy.md#de-18-betrieb-hinter-http-proxy) |
-| Alle 17 Skripte + Usages | — | [Referenz](docs/usage/09-reference.md#de-14-skript-referenz) |
+| Alle Skripte + Usages | — | [Referenz](docs/usage/09-reference.md#de-14-skript-referenz) |
 
 ---
 
@@ -339,7 +338,6 @@ The tools follow a clear sequence:
   ```
   → Detailed docs: [scripts/README_BackUp.md](scripts/README_BackUp.md)
 
-- **restore-zip.sh** (v2.x) — restore from the backups produced by container2backup.py; auto-detects the format (`.zip`, `.7z`, `.7z.gpg`, `.tar.gz`, `.tar.zst`)
 - **update_docker_odoo.py** (v5.11.x) — automated Docker container updates incl. restart management; per-container option `db_password_via_env: true` in `docker2update.yaml` passes the DB password via `PGPASSWORD` environment variable instead of `--db_password=...` in argv (prevents exposure in `ps aux`); default: `false` (legacy mode for older images). Without `-v` the output stays terse; every warning and error of the whole run is collected in a closing block. Independently of that, every run writes a full log into the instance's build folder (`update_YYYYMMDD_HHMMSS.log`) — including the INFO lines the console withholds; the paths are named at the end, after an abort or a failure too
   - Picking systems for a single run without touching the YAML: `-s` takes several names (repeated or comma-separated), `--type M|F|N` overrides the mode for that run, `--comment "…"` records why it happened. **`-s` overrides `active: false`** — a container named explicitly runs even when the configuration has it parked; an unknown name aborts instead of silently doing nothing
   - Every container run appends a line to `~/update-history.jsonl`: when, which system, which mode, result, duration, log path and comment. Written by the script itself, so classic and cron runs are recorded too. Retention via `defaults.history_retention_days` (365 days by default, `0` = keep forever)
@@ -502,9 +500,9 @@ bilingual, each readable on its own:
 | Backups | `edbk` (config) / `dobk` (run) / `llbk` | [Backup & restore](docs/usage/05-backup-restore.md#en-11-step-9-set-up-backups-edbkdobk) |
 | Validate configuration | `doval` (both YAMLs, read-only) | [Backup & restore](docs/usage/05-backup-restore.md#en-11-step-9-set-up-backups-edbkdobk) |
 | Maintenance cron | `setup-maintenance-cron.sh` | [Maintenance](docs/usage/06-maintenance.md#en-12-step-10-automate-maintenance) |
-| Restore | `restore-zip.sh` | [Backup & restore](docs/usage/05-backup-restore.md#en-13-restore--emergency) |
+| Restore | being redone | [Backup & restore](docs/usage/05-backup-restore.md#en-13-restore--emergency) |
 | Set up a proxy environment | `./getScripts.py --proxy-check` | [Proxy](docs/usage/07-proxy.md#en-18-operation-behind-an-http-proxy) |
-| All 17 scripts + usages | — | [Reference](docs/usage/09-reference.md#en-14-script-reference) |
+| All scripts + usages | — | [Reference](docs/usage/09-reference.md#en-14-script-reference) |
 
 ---
 

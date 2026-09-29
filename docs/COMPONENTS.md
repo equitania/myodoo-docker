@@ -11,7 +11,7 @@ in this repository, stay in `CLAUDE.md`.
 
 ### Key Components
 
-#### 1. getScripts.py (v9.27.0)
+#### 1. getScripts.py (v9.27.1)
 - **Purpose**: Main installation and update script
 - **Features**:
   - Restricted mode (v9.27.0, 29.09.2026): for a customer who will not run

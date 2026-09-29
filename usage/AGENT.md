@@ -51,7 +51,6 @@ All commands run as **root** on the target server. The interactive login shell i
 | `ownerp_wizard.py` | `wiz` | Guided editing of `docker2update.yaml`: add an instance, or change one scalar field of an existing entry. Suggests from the file itself — next free host port across both port fields of every entry, unanimous `db_user`/`db_host`, shared build-folder pattern and image prefix; Enter takes the value in brackets. **The only tool here that writes to a customer configuration**: backup → temp file in the same directory → `ownerp_validate.py` against it → error means temp file *and* backup removed and the original left byte-identical; clean means `os.replace()`. Warnings never block. **Refuses without a TTY**, without `ownerp_validate.py`, or on an unparseable config. Scalars only; **never removes an entry**; `db_password` never echoed or shown | `--update [PATH]` (default `~/docker2update.yaml`) · `--version` (no flag = menu) |
 | `container2backup.py` | `dobk` (config: `edbk`) | Back up Odoo DBs (SQL + filestore) + service dirs per `~/container2backup.yaml` | `--sql-only` · `--validate` |
 | `ownerp_validate.py` | `doval` | Read-only schema validation of `docker2update.yaml` and/or `container2backup.yaml` — structure, required fields, types, enums, port form, duplicate container/database names and host ports (active entries only), path existence (warning), unknown keys with a suggestion (warning). Findings name the file and line number; never prints a `*password` value; never writes | `--update [PATH]` (default `~/docker2update.yaml`) · `--backup [PATH]` (default `~/container2backup.yaml`) · `--version` (no flag = both, at default paths) |
-| `restore-zip.sh` | — | Restore a backup archive (auto-detects `.zip/.7z/.7z.gpg/.tar.gz/.tar.zst`) | positional: `backup_kind(1\|2)` `runsql(v10…v16)` `orig_dbname` `new_dbname` `drop_db(Y/n)` `zip_file` `odoo_volume` `pg_container` `pg_password` |
 | `ssl-renew.sh` | — | `certbot renew`; nginx bounced only when a cert is actually due | no flags (daily cron) |
 | `nginx-cert-guard.py` | — | Keep nginx up when one vhost breaks; DNS-drift early warning | mode (required): `--reconcile` \| `--check` \| `--list` \| `--restore DOMAIN` · `--start` (with --reconcile) · `--apply` (with --check) · `--dry-run` · `--nginx-conf-dir DIR` · `--state-file FILE` |
 | `cleanup-weblogs.py` | — | Rotate nginx logs, GDPR purge > 7 days | `--clear-cache` (also wipe proxy/FastCGI caches — off by default) |
@@ -154,12 +153,9 @@ ls -lah /opt/backups/docker                      # or: llbk
 ```
 
 ### Restore a live backup as a test database
-```bash
-env PGPASSWORD='<pg-password>' ~/myodoo-docker/scripts/restore-zip.sh 2 v16 \
-  live_odoo test_odoo Y /opt/backups/docker/live_odoo-….tar.zst vol-odoo-test test-db
-docker exec test-odoo /app/bin/boot neutralize   # disable mails/cron on the copy
-```
-Prefer `PGPASSWORD` env over the 9th positional arg — the latter is visible in `ps aux`/history.
+`restore-zip.sh` was withdrawn on 29.09.2026 (restore is being redone; copies already in `/root`
+stay). Until the replacement exists, follow the manual steps in `scripts/README_BackUp.md`, then
+neutralize the copy: `docker exec test-odoo /app/bin/boot neutralize`.
 
 ### Enable unattended maintenance (after backup YAML is configured)
 ```bash
@@ -199,7 +195,7 @@ CIDR (wget/apt/urllib do not). Full walkthrough: `docs/usage/07-proxy.md`.
   already uses `vector`. Ansible update/rollback inherit it from the running server.
 - **Destructive:** `doup` (type `F`) **stops, removes and re-creates** the target container and
   removes its image before rebuilding — a failed run leaves the system down until re-run.
-  `restore-zip.sh` with `drop_db=Y` drops the target DB. Fish aliases `dkprfa`/`dkrmv` wipe
+  Fish aliases `dkprfa`/`dkrmv` wipe
   Docker volumes (data loss) — never use them for cleanup.
 - **`--type N` on the command line asks nothing.** Neutralizing rewrites the database's mail
   servers, cron jobs and outgoing interfaces; on a live system that is an outage of everything

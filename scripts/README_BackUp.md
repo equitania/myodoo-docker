@@ -131,7 +131,7 @@ databases:
     stream: true         # für diese DB Streaming aktivieren
 ```
 
-- **Restore-kompatibel:** Ausgabe ist `.tar.zst`, das `restore-zip.sh` direkt verarbeitet.
+- **Restore-kompatibel:** Ausgabe ist `.tar.zst` mit `dump.sql` und `filestore/`, wie bei Odoos eigenen Backups.
 - **Fallback:** Ist `zstd` nicht installiert, Verschlüsselung aktiv oder der Filestore-Host-Pfad
   nicht auflösbar, fällt der Lauf automatisch auf den klassischen Staging-Pfad zurück.
 - **Disk-Preflight:** Vor jedem Voll-Backup wird geprüft, ob Temp- und Ziel-Mount genug Platz
@@ -429,7 +429,7 @@ Bei der Wiederherstellung einer Odoo-Datenbank müssen Sie beachten:
 
 Beispiel (für GPG-verschlüsseltes 7z-Format — empfohlener Weg seit v4.6.0):
 ```bash
-# 0. GPG-Entschlüsselung (bei .7z.gpg — restore-zip.sh (v2.x) erkennt das Format automatisch)
+# 0. GPG-Entschlüsselung (nur bei .7z.gpg)
 gpg -d /opt/backups/docker/datenbank_container_dockerbackup_timestamp.7z.gpg \
     > /tmp/backup_decrypted.7z
 
@@ -448,8 +448,8 @@ rm -f /tmp/backup_decrypted.7z
 rm -rf /tmp/odoo_restore
 ```
 
-> **Hinweis:** `restore-zip.sh` (v2.x) erkennt das Backup-Format automatisch (`.zip`, `.7z`,
-> `.7z.gpg`, `.tar.gz`, `.tar.zst`) und führt den passenden Restore-Ablauf aus.
+> **Hinweis:** `restore-zip.sh` ist seit 29.09.2026 nicht mehr Teil des Repositorys; die
+> Wiederherstellung wird neu aufgesetzt. Bis dahin gelten die Schritte oben.
 
 ## Aufräumen alter Backups
 
@@ -934,7 +934,7 @@ When restoring an Odoo database backup, you need to:
 
 Example (for GPG-encrypted 7z format — recommended since v4.6.0):
 ```bash
-# 0. GPG decryption (for .7z.gpg — restore-zip.sh (v2.x) detects the format automatically)
+# 0. GPG decryption (only for .7z.gpg)
 gpg -d /opt/backups/docker/database_container_dockerbackup_timestamp.7z.gpg \
     > /tmp/backup_decrypted.7z
 
@@ -953,8 +953,8 @@ rm -f /tmp/backup_decrypted.7z
 rm -rf /tmp/odoo_restore
 ```
 
-> **Note:** `restore-zip.sh` (v2.x) detects the backup format automatically (`.zip`, `.7z`,
-> `.7z.gpg`, `.tar.gz`, `.tar.zst`) and runs the appropriate restore procedure.
+> **Note:** `restore-zip.sh` has not been part of the repository since 29.09.2026; the restore
+> is being redone. Until then, follow the steps above.
 
 ## Cleaning up Old Backups
 

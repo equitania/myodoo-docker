@@ -4,7 +4,7 @@
 # Title:            server-readiness.py
 # Description:      Report whether this server matches the state myodoo-docker
 #                   expects, and name the exact command that closes each gap.
-# Version:          1.11.1
+# Version:          1.11.2
 # Date:             29.09.2026
 # Author:           Equitania Software GmbH
 # ==============================================================================
@@ -73,7 +73,7 @@ from dataclasses import dataclass
 from enum import Enum
 from typing import Callable, List, Optional, Tuple
 
-SCRIPT_VERSION = "1.11.1"
+SCRIPT_VERSION = "1.11.2"
 SCRIPT_DATE = "29.09.2026"
 
 # Where nginx keeps its customer vhosts (mirrors nginx-cert-guard.py).
@@ -97,7 +97,6 @@ DELIVERED_SCRIPTS = (
     "update_docker_odoo.py",
     "cleanup-weblogs.py",
     "container2backup.py",
-    "restore-zip.sh",
     "ssl-renew.sh",
     "nginx-cert-guard.py",
     "nightly-cleanup.sh",
