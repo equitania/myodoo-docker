@@ -699,6 +699,30 @@ class HardeningChecksTest(unittest.TestCase):
         self.assertIn("Invalid IP address", finding.detail)
         self.assertIn("mcedit", finding.fix)
 
+    def test_missing_dotenv_names_the_package_not_the_env(self):
+        # Without python3-dotenv SSH_PORT stays unresolved and validation
+        # fails with "ssh.port invalid: ''" - editing the .env fixes nothing.
+        self.audit(env=dict(GOOD_ENV, loaded=False, ssh_port=None),
+                   error="ssh.port invalid: '' (must be 1-65535)")
+        finding = self.check("hardening_env")
+        self.assertEqual(finding.severity, sr.Severity.FAIL)
+        self.assertIn("python3-dotenv", finding.detail)
+        self.assertIn("apt install -y python3-dotenv", finding.fix)
+
+    def test_an_error_outside_the_env_does_not_send_the_operator_to_it(self):
+        self.audit(env=dict(GOOD_ENV),
+                   error="audit failed: KeyError: 'jails'")
+        finding = self.check("hardening_env")
+        self.assertEqual(finding.severity, sr.Severity.FAIL)
+        self.assertIn("hardening audit not run", finding.detail)
+        self.assertIn("server_hardening.py", finding.fix)
+        self.assertNotIn("mcedit", finding.fix)
+
+    def test_an_out_of_range_port_is_an_env_value_error(self):
+        self.audit(env=dict(GOOD_ENV),
+                   error="ssh.port invalid: 70000 (must be 1-65535)")
+        self.assertIn("mcedit", self.check("hardening_env").fix)
+
     def test_an_error_unrelated_to_the_env_skips_instead_of_no_env(self):
         # "root required" fires before load_env() runs - env is {} (present
         # unknown), and this must not be read as "no .env" (env.present is

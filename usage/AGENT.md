@@ -73,7 +73,8 @@ curl -fsSL https://raw.githubusercontent.com/equitania/myodoo-docker/2026/script
 ups   # on a terminal: offers to create .env (SSH_PORT, ALLOWED_IP_1..n), then the hardening menu
 ```
 `ups` fixes the harmless modules directly (fail2ban included, unless a port change is pending
-or sshd's port is unreadable) and applies UFW/SSH only after a lockout check (every established
+or sshd's port is unreadable; auto-updates only after a separate `[j/N]` prompt naming the reboot
+time when `hardening_config.yaml` has `auto_reboot: true`) and applies UFW/SSH only after a lockout check (every established
 SSH session must be on the allowlist, sshd must listen on `SSH_PORT` alone, `ssh.socket` must be
 inactive); when that check fails it prints the commands instead. `docker` is not subject to this
 check — its `daemon.json` is applied unconditionally, but the daemon restart needs that apply to

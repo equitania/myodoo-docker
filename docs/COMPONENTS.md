@@ -34,7 +34,11 @@ in this repository, stay in `CLAUDE.md`.
     --reason "..."`, argument mandatory). "Fix now" applies the harmless
     modules (`sysctl sysctl_persist kernel_modules auto_updates auditd aide`)
     directly with `-f`, AIDE last so its database does not immediately
-    report the other changes. `fail2ban` is *not* unconditionally harmless:
+    report the other changes. `auto_updates` asks first when
+    `hardening_config.yaml` has `auto_reboot: true`: a separate prompt names
+    the nightly reboot time (the backup cron starts at 02:00 and a large run
+    can still be going), default No — on No it is left out and its command
+    printed. `fail2ban` is *not* unconditionally harmless:
     its sshd jail follows `SSH_PORT`, so it is held back — printing the
     port-change steps, or a wait note when sshd's port cannot be read —
     whenever a port change is pending or `sshd -T`'s port is unreadable;
@@ -837,7 +841,7 @@ in this repository, stay in `CLAUDE.md`.
   risk an expiry would guard against — a mute nobody remembers — is already
   covered by the visible `[MUTED]` line and the count in every summary
 
-#### 16. server-readiness.py (v1.11.0)
+#### 16. server-readiness.py (v1.11.1)
 - **Purpose**: Reports whether this server matches the state myodoo-docker
   expects — 27 read-only checks (cron, logrotate, backup and update
   configuration, Docker storage driver, virus-scanner exclusion for
@@ -850,7 +854,7 @@ in this repository, stay in `CLAUDE.md`.
   `hardening_firewall`, `hardening_fail2ban`, `hardening_ssh` (FAIL when off)
   and `hardening_kernel`, `hardening_docker`, `hardening_updates`,
   `hardening_integrity`, `root_login_locked` (WARN when off) — one audit run
-  (`server_hardening.py --json`, subprocess, 180 s timeout) shared and cached
+  (`server_hardening.py --json`, subprocess, 120 s timeout) shared and cached
   on the context, so nine checks cost one process, not nine. Each id is
   mutable on its own — `ownerp_mute.py hardening_firewall --reason "..."`
   mutes only the firewall on a host that deviates on purpose (a corporate
@@ -867,6 +871,14 @@ in this repository, stay in `CLAUDE.md`.
   `check_backup_config`/`check_update_config` point at `wizup` (add the
   first instance) instead of `ownerp_migrate.py --from-docker`, which has
   nothing to rebuild from there
+- **`hardening_env` names the fix that works** (v1.11.1, 29.09.2026). A
+  `.env` that exists but was not loaded (no `python3-dotenv`) is reported as
+  exactly that, before any audit error — otherwise the operator saw
+  `ssh.port invalid: ''` and was sent to edit a file with nothing wrong in it.
+  An audit error points at the `.env` only when it names a value the `.env`
+  supplies (`ENV_VALUE_ERROR`: `port invalid`, `Invalid IP`, `IP must be`);
+  anything else is `hardening audit not run: …` with the text-mode run of
+  `server_hardening.py` as the fix
 - **Never writes.** No `/etc` change, no service restart, no network call —
   safe to run on a live server at any time
 - **`MUTED`**: a finding that is true and simply does not apply on this host

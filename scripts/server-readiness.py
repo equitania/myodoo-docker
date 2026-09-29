@@ -4,8 +4,8 @@
 # Title:            server-readiness.py
 # Description:      Report whether this server matches the state myodoo-docker
 #                   expects, and name the exact command that closes each gap.
-# Version:          1.11.0
-# Date:             28.09.2026
+# Version:          1.11.1
+# Date:             29.09.2026
 # Author:           Equitania Software GmbH
 # ==============================================================================
 # Why this exists:
@@ -73,8 +73,8 @@ from dataclasses import dataclass
 from enum import Enum
 from typing import Callable, List, Optional, Tuple
 
-SCRIPT_VERSION = "1.11.0"
-SCRIPT_DATE = "28.09.2026"
+SCRIPT_VERSION = "1.11.1"
+SCRIPT_DATE = "29.09.2026"
 
 # Where nginx keeps its customer vhosts (mirrors nginx-cert-guard.py).
 NGINX_CONF_D = "etc/nginx/conf.d"
@@ -1319,6 +1319,11 @@ def _hardening_audit(ctx: HealthContext) -> Tuple[Optional[dict], Optional[str]]
     return result
 
 
+# validate_config() messages that name a value taken from the .env: the ports
+# come from SSH_PORT, the IPs from ALLOWED_IP_<n>.
+ENV_VALUE_ERROR = re.compile(r"port invalid|Invalid IP|IP must be")
+
+
 def check_hardening_env(ctx: HealthContext) -> Finding:
     title = "Hardening .env"
     data, error = _hardening_audit(ctx)
@@ -1332,12 +1337,25 @@ def check_hardening_env(ctx: HealthContext) -> Finding:
     # out-of-range SSH_PORT made this check report OK (env present, loaded,
     # ssh_port set) while every hardening_* area SKIPped behind the same
     # error - a report that looked clean and mailed nothing with --quiet.
+    if env.get("present") is True and env.get("loaded") is False:
+        # Checked before the error: without python3-dotenv SSH_PORT stays
+        # unresolved and the audit fails with "ssh.port invalid: ''" — an
+        # operator sent to the .env would find nothing wrong in it.
+        return Finding("hardening_env", Severity.FAIL, title,
+                       ".env present but python3-dotenv is missing, so it is ignored",
+                       "apt install -y python3-dotenv")
     if data.get("error"):
         if env.get("present") is True:
-            # .env exists and was read; the error is a real config problem
-            # in it (bad IP, port out of range, ...).
+            if ENV_VALUE_ERROR.search(data["error"]):
+                # A value from the .env (bad IP, port out of range, ...).
+                return Finding("hardening_env", Severity.FAIL, title,
+                               data["error"], f"mcedit {path}")
+            # Anything else — a broken hardening_config.yaml, a module that
+            # crashed — is not fixed in the .env; the text-mode run shows it
+            # in full.
             return Finding("hardening_env", Severity.FAIL, title,
-                           data["error"], f"mcedit {path}")
+                           f"hardening audit not run: {data['error']}",
+                           f"python3 {ctx.home}/{HARDENING_SCRIPT}   # shows the full error")
         if env.get("present") is False:
             # Explicitly absent - the plain "no .env" case below, unchanged.
             pass

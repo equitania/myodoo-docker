@@ -1,5 +1,33 @@
 # Release Notes
 
+## Readiness `.env` Check Names the Right Fix (29.09.2026)
+
+*server-readiness.py v1.11.1 · tests/test_server_readiness.py ·
+docs/usage/01-provisioning.md · docs/COMPONENTS.md · usage/AGENT.md*
+
+### Fixed
+
+- **`hardening_env` sent the operator to the wrong place.** Without
+  `python3-dotenv` the `.env` is never loaded, `SSH_PORT` stays unresolved and
+  the audit fails with `ssh.port invalid: ''`. The check reported that raw
+  error with `mcedit <.env>` — editing the file fixes nothing. It now checks
+  for the missing package first and names `apt install -y python3-dotenv`.
+- **Errors outside the `.env` are no longer blamed on it.** A broken
+  `hardening_config.yaml` or a crashed audit module used to show up as a
+  `.env` FAIL with `mcedit <.env>`. Only validation messages about values the
+  `.env` supplies (`… port invalid`, `Invalid IP …`, `IP must be …`) point
+  there now; anything else reads `hardening audit not run: …` with
+  `python3 /root/server_hardening.py`, whose text mode shows the full error.
+
+### Documentation
+
+- The lockout gate in `01-provisioning.md` (DE/EN) now says what the code
+  does since 28.09.2026: sshd must listen on `SSH_PORT` **only**; a second
+  listening port counts as a port change.
+- The separate confirmation for auto-updates when `hardening_config.yaml` has
+  `auto_reboot: true` is now documented in `01-provisioning.md`,
+  `COMPONENTS.md` and `AGENT.md`, not only in the release notes.
+
 ## `ups` Checks and Offers the Security Hardening (28.09.2026)
 
 *getScripts.py v9.26.0 · server-readiness.py v1.11.0 · server_hardening.py v1.9.0 ·

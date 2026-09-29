@@ -171,14 +171,20 @@ passiert:
    beheben `2)` Befehle anzeigen `3)` später `4)` einen Bereich dauerhaft
    stummschalten (`ownerp_mute.py <check_id> --reason "…"`).
 3. **„Jetzt beheben“ wendet die unkritischen Module direkt an**
-   (sysctl, Kernel-Module, Auto-Updates, auditd, AIDE). `fail2ban` gehört
+   (sysctl, Kernel-Module, Auto-Updates, auditd, AIDE). Steht in
+   `hardening_config.yaml` `auto_reboot: true`, fragen die Auto-Updates
+   vorher gesondert nach und nennen die Uhrzeit des nächtlichen Neustarts;
+   ohne ausdrückliches „j“ bleiben sie weg, und `ups` druckt den Befehl für
+   später. `fail2ban` gehört
    nicht dazu, wenn ein Portwechsel ansteht oder `sshd -T` den Port nicht
    lesen kann — seine sshd-Jail folgt `SSH_PORT`, deshalb wartet sie dann
    ebenfalls (Portwechsel-Schritte bzw. Hinweis auf den unbekannten Port);
    sonst läuft sie mit den unkritischen Modulen mit. **Firewall
    und SSH nur nach einer Aussperr-Prüfung**: jede bestehende SSH-Verbindung
-   muss von einer erlaubten IP kommen, `SSH_PORT` muss dem Port entsprechen,
-   auf dem sshd tatsächlich lauscht, und `ssh.socket` darf nicht aktiv sein.
+   muss von einer erlaubten IP kommen, sshd muss **ausschließlich** auf
+   `SSH_PORT` lauschen (lauscht er zusätzlich auf einem zweiten Port, zählt
+   das als Portwechsel — das SSH-Modul würde den anderen Port streichen),
+   und `ssh.socket` darf nicht aktiv sein.
    Schlägt die Prüfung fehl, druckt `ups` die Befehle statt sie auszuführen —
    bei einem Port-Unterschied die sechs Schritte aus
    *SSH-Port wechseln* unten. Das `docker`-Modul unterliegt dieser
@@ -405,14 +411,18 @@ already ran this along the way; this is what happens under the hood:
    `2)` show the commands `3)` later `4)` permanently mute one area
    (`ownerp_mute.py <check_id> --reason "…"`).
 3. **"Fix now" applies the harmless modules directly** (sysctl, kernel
-   modules, auto-updates, auditd, AIDE). `fail2ban` is not among them when a
+   modules, auto-updates, auditd, AIDE). If `hardening_config.yaml` sets
+   `auto_reboot: true`, the auto-updates ask separately first and name the
+   time of the nightly reboot; without an explicit "j" they are left out and
+   `ups` prints the command for later. `fail2ban` is not among them when a
    port change is pending or `sshd -T` cannot read the port — its sshd jail
    follows `SSH_PORT`, so it waits too (printing the port-change steps, or a
    note about the unreadable port); otherwise it applies along with the
    harmless group. **Firewall and SSH only after a lockout check**: every
-   established SSH connection must come from an allowlisted IP, `SSH_PORT`
-   must match the port sshd actually listens on, and `ssh.socket` must not
-   be active. When that check fails, `ups` prints the commands instead of
+   established SSH connection must come from an allowlisted IP, sshd must
+   listen on `SSH_PORT` **only** (a second listening port counts as a port
+   change — the SSH module would drop the other port), and `ssh.socket`
+   must not be active. When that check fails, `ups` prints the commands instead of
    running them — on a port mismatch, the six steps from *Changing the SSH
    port* below. The `docker` module is not subject to this lockout check —
    its only gate is the container check in the next point.
