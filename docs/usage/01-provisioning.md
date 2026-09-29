@@ -149,6 +149,43 @@ aktualisieren mit `ups`. Ab `getScripts.py` 9.25.0 genügt dafür ein einziges
 Skript mittendrin selbst und startet sofort neu — eine neue Funktion oder ein
 Fix ist damit noch im selben Lauf aktiv, nicht erst beim nächsten `ups`.
 
+### Ohne root: eingeschränkter Modus
+
+Für Kunden, die getScripts.py weder als root noch mit sudo ausführen wollen
+(ab 9.27.0). Das Skript installiert dann nichts systemweit, sondern richtet
+nur die eigene Umgebung des Benutzers ein: Fish-Konfiguration,
+Starship-Prompt, fastfetch-Konfiguration und — mit dem eigenen Passwort — die
+Login-Shell. Server-Werkzeuge, Härtung, Proxy und DNS bleiben root
+vorbehalten.
+
+Als normaler Benutzer (funktioniert in bash und fish, braucht nur python3):
+
+```bash
+python3 -c "import urllib.request; urllib.request.urlretrieve('https://raw.githubusercontent.com/equitania/myodoo-docker/2026/getScripts.py', 'getScripts.py')"
+python3 getScripts.py
+```
+
+Ohne root-Rechte und ohne sudo ohne Passwort fragt das Skript, ob es im
+eingeschränkten Modus weiterlaufen soll (ohne Terminal: `--restricted`
+angeben). Fehlen Pakete, nennt es die Befehle, die der Administrator als root
+ausführt — ausschließlich Pakete aus dem Debian-Archiv:
+
+```bash
+apt-get update
+apt-get upgrade
+apt-get install fish git                      # nötig (ca-certificates, falls es fehlt)
+apt-get install starship zoxide fastfetch     # empfohlen
+```
+
+Danach `python3 getScripts.py` erneut starten. Die Wahl wird in
+`~/.getscripts_restricted` gemerkt; spätere Läufe und `ups` gehen ohne
+Rückfrage und ohne sudo in diesen Modus. Voraussetzung ist Debian 13: es
+bringt Fish 4.0 mit (die volle Einrichtung installiert 4.5+ aus dem
+Fish-Projekt-Repository, was hier ausgeschlossen ist). Debian 12 hat nur
+Fish 3.6, und die Backports enthalten kein Fish 4 — dort bricht der Modus mit
+dieser Begründung ab. Das Befehlsfeld beim Start der Shell entfällt, weil
+keiner der Server-Befehle installiert ist; `help` zeigt es trotzdem.
+
 > ⚠️ **Erfahrungswert (sudo su):** Wer sich mit einem persönlichen
 > Admin-Account anmeldet und per `sudo su` zu root wird, braucht
 > getScripts.py ≥ 9.7.3 — ältere Versionen installierten in diesem Fall ins
@@ -389,6 +426,41 @@ with `ups`. As of `getScripts.py` 9.25.0, one `ups` is enough: if the
 repository pull brings in a newer version, the script replaces itself
 mid-run and restarts immediately, so a new feature or fix is already active
 in that same run instead of only the next `ups`.
+
+### Without root: restricted mode
+
+For customers who will run getScripts.py neither as root nor through sudo
+(since 9.27.0). The script then installs nothing system-wide and sets up only
+the user's own environment: the Fish configuration, the Starship prompt,
+fastfetch's configuration and — with the user's own password — the login
+shell. Server tools, hardening, proxy and DNS stay with root.
+
+As an ordinary user (works in bash and fish, needs only python3):
+
+```bash
+python3 -c "import urllib.request; urllib.request.urlretrieve('https://raw.githubusercontent.com/equitania/myodoo-docker/2026/getScripts.py', 'getScripts.py')"
+python3 getScripts.py
+```
+
+Without root and without passwordless sudo the script asks whether to
+continue in restricted mode (with no terminal, pass `--restricted`). When
+packages are missing it prints the commands the administrator runs as root —
+packages from the Debian archive only:
+
+```bash
+apt-get update
+apt-get upgrade
+apt-get install fish git                      # required (ca-certificates if missing)
+apt-get install starship zoxide fastfetch     # recommended
+```
+
+Then run `python3 getScripts.py` again. The choice is remembered in
+`~/.getscripts_restricted`; later runs and `ups` enter this mode without
+asking and without sudo. It requires Debian 13, which ships Fish 4.0 (the
+full setup installs 4.5+ from the Fish project's repository, which is ruled
+out here). Debian 12 has only Fish 3.6 and its backports carry no Fish 4 —
+the mode stops there and says so. The command panel at shell start is left
+out, since none of the server commands is installed; `help` still shows it.
 
 > ⚠️ **Lesson learned (sudo su):** Operators who log in with a personal admin
 > account and become root via `sudo su` need getScripts.py ≥ 9.7.3 — older

@@ -1,9 +1,20 @@
 # Update ownERP Scripts Function
-# Version 1.3.0 | 15.09.2026
+# Version 1.4.0 | 29.09.2026
 
 function ups --description "Update ownERP scripts from repository (-v for full output)"
     echo "🔄 Updating ownERP scripts..."
     echo ""
+
+    # Restricted mode (getScripts.py >= 9.27.0): an ordinary user without sudo
+    # who chose it once. No sudo here - it would only ask for a password this
+    # user does not have. getScripts.py updates itself in that mode as well.
+    if test (id -u) -ne 0; and test -e $HOME/.getscripts_restricted
+        python3 $HOME/getScripts.py --restricted $argv
+        echo ""
+        echo "🐟 Reloading Fish configuration..."
+        source ~/.config/fish/config.fish
+        return
+    end
 
     # Run getScripts.py - arguments are forwarded, so `ups -v` reaches the
     # script's verbose mode instead of being swallowed here.

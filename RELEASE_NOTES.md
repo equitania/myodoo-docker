@@ -1,5 +1,44 @@
 # Release Notes
 
+## Restricted Mode: Fish Without Root (29.09.2026)
+
+*getScripts.py v9.27.0 · fish/functions/linux/ups.fish v1.4.0 ·
+fish/conf.d/50-prompt.fish v1.3.0 · tests/test_getscripts_restricted.py ·
+docs/usage/01-provisioning.md · docs/usage/09-reference.md ·
+docs/COMPONENTS.md · usage/AGENT.md*
+
+### Added
+
+- **Restricted mode for users without root or sudo.** A customer wants the
+  Fish environment on Debian without ever granting the script root rights.
+  When neither root nor passwordless sudo is available, getScripts.py now
+  asks whether to continue in restricted mode (`--restricted` skips the
+  question; the choice is remembered in `~/.getscripts_restricted`). The
+  mode installs nothing system-wide. It names the Debian packages the
+  administrator must install — from the Debian archive only: `fish git`
+  (plus `ca-certificates` if absent), optionally `starship zoxide
+  fastfetch` — together with `apt-get update` / `apt-get upgrade`, and then
+  sets up only what lives in the user's home: the repository checkout and
+  the Fish, Starship and fastfetch configuration, and offers `chsh` with
+  the user's own password. Hardening, proxy, DNS and the server tools are
+  not touched; they stay with root.
+- Debian 13 ships Fish 4.0, which is enough for the delivered
+  configuration. Debian 12 has Fish 3.6 and no Fish 4 in its backports, so
+  the mode stops there with that reason instead of half-configuring a shell.
+- `ups` runs the script without sudo for such a user, and the server
+  command panel is no longer printed at shell start there (`help` still
+  shows it).
+
+### Changed
+
+- `requests` is no longer required at import time. On a minimal Debian
+  without `python3-requests` the script used to die with a traceback before
+  it could name a package; the full run now stops with the package name.
+- The old "Do you want to continue without sudo? (y/N)" prompt is gone. It
+  ran the full setup half-way and failed step by step; a run without root
+  now either enters the restricted mode or stops with the sudo command.
+  Without a terminal it exits 1 and names both options.
+
 ## Readiness `.env` Check Names the Right Fix (29.09.2026)
 
 *server-readiness.py v1.11.1 · tests/test_server_readiness.py ·

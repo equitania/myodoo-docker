@@ -11,9 +11,28 @@ in this repository, stay in `CLAUDE.md`.
 
 ### Key Components
 
-#### 1. getScripts.py (v9.26.0)
+#### 1. getScripts.py (v9.27.0)
 - **Purpose**: Main installation and update script
 - **Features**:
+  - Restricted mode (v9.27.0, 29.09.2026): for a customer who will not run
+    the script as root or through sudo. Without root and without
+    passwordless sudo, `choose_restricted_mode()` asks once (remembered in
+    `~/.getscripts_restricted`; `--restricted` for runs without a terminal)
+    and `run_restricted_mode()` takes over before anything that writes
+    system files — first-run setup, DNS and proxy never run. It installs
+    nothing itself: missing packages are named as `apt-get` lines for the
+    administrator (Debian archive only — `fish git`, plus `ca-certificates`
+    if absent; optional `starship zoxide fastfetch`), then it exits 1. With
+    the packages present it clones/pulls the repository into the user's
+    home, copies the Fish, Starship and fastfetch configuration and offers
+    `chsh`. Requires Debian 13 (Fish 4.0); Debian 12 has Fish 3.6 and no
+    backport of 4.x and is refused with that reason. `import requests` is
+    now optional so the mode can speak on a system without
+    python3-requests; the full run stops with the package name instead.
+    `ups` (1.4.0) runs `getScripts.py --restricted` without sudo for such a
+    user; `50-prompt.fish` (1.3.0) skips the server command panel there.
+    The old "continue without sudo? (y/N)" prompt, which ran the full setup
+    half-way, is gone.
   - `offer_security_hardening()` (v9.26.0, 28.09.2026): the hardening
     `bootstrap.sh` deliberately leaves off (UFW installed but inactive) had
     nothing on the host reminding an operator of it after the bootstrap's

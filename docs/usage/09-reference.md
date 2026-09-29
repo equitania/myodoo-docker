@@ -17,7 +17,7 @@ Alle Skripte des Repos (`scripts/`, Stand 28.09.2026):
 | Skript | Zweck | Aufruf |
 |---|---|---|
 | `bootstrap.sh` (1.15.3) | Grundausstattung frischer Server (Docker, nginx, certbot, UFW, fail2ban) | `curl … bootstrap.sh -o /opt/… && /opt/myodoo-bootstrap.sh` |
-| `getScripts.py` (9.26.0) | fish-Shell, Aliase, Verwaltungsskripte nach `/root` (jetzt inkl. `server_hardening.py` + `hardening_config.yaml`); aktualisiert sich bei einem `ups` selbst und startet sofort neu, sobald das gerade geholte Repository eine neuere Version mitbringt; bietet auf einem Server ohne Konfiguration Wiederherstellen oder Abschalten der Jobs an, und fragt bei einem bewusst abweichenden Docker-Storage-Driver einmal je Lauf nach. Auf einem Terminal prüft es außerdem die Sicherheits-Härtung (`server_hardening.py --json`), bietet fehlende `.env` und offene Bereiche an und wendet Firewall/SSH nur nach einer Aussperr-Prüfung an — nie den SSH-Port, nie einen Docker-Neustart bei laufenden Containern | `./getScripts.py [--dns-check\|--proxy-check\|--reconfigure]` |
+| `getScripts.py` (9.27.0) | fish-Shell, Aliase, Verwaltungsskripte nach `/root` (jetzt inkl. `server_hardening.py` + `hardening_config.yaml`); aktualisiert sich bei einem `ups` selbst und startet sofort neu, sobald das gerade geholte Repository eine neuere Version mitbringt; bietet auf einem Server ohne Konfiguration Wiederherstellen oder Abschalten der Jobs an, und fragt bei einem bewusst abweichenden Docker-Storage-Driver einmal je Lauf nach. Auf einem Terminal prüft es außerdem die Sicherheits-Härtung (`server_hardening.py --json`), bietet fehlende `.env` und offene Bereiche an und wendet Firewall/SSH nur nach einer Aussperr-Prüfung an — nie den SSH-Port, nie einen Docker-Neustart bei laufenden Containern. Ohne root und ohne sudo ohne Passwort bietet es den eingeschränkten Modus an: nur die eigene Fish-Umgebung, dazu die Debian-Pakete, die der Administrator installieren muss | `./getScripts.py [--dns-check\|--proxy-check\|--reconfigure\|--restricted]` |
 | `server_hardening.py` (1.9.0) | Audit + Härtung (UFW, fail2ban, SSH, sysctl, auditd, AIDE); `--json` liefert das Audit als ein JSON-Dokument für `server-readiness.py`/`ups`, schreibt nichts, Admin-IPs erscheinen nur als Kommentar; Module laufen immer in fester Reihenfolge (ufw, fail2ban, ssh) | `sudo python3 server_hardening.py [--apply] [-m MODUL …] [--json]` |
 | `deploy-nginx-base.sh` (1.3.0) | nginx-Basis: Includes, Wartungsseite, nginx.conf (mit Rollback) | `./deploy-nginx-base.sh [--dry-run] [--no-main-conf]` |
 | `ngx-conf-wizard.sh` (1.1.0) | Interaktiver YAML-Assistent für nginx-set-conf | `./ngx-conf-wizard.sh` |
@@ -105,7 +105,7 @@ Die wichtigsten Aliase/Funktionen nach Kategorie:
 | Funktion | Zweck |
 |---|---|
 | `syspatch` | Komplettes Systemupdate: journalctl-Vacuum → apt dist-upgrade → AIDE-Baseline → `docker image prune -f` |
-| `ups` | ownERP-Skripte aktualisieren (getScripts.py neu ausführen) |
+| `ups` | ownERP-Skripte aktualisieren (getScripts.py neu ausführen; im eingeschränkten Modus ohne sudo) |
 | `chk` | Readiness-Report: ist der Server auf Stand, was fehlt noch? (rein lesend) |
 | `dkrm` / `dkrmi` / `dkrmv` | Alle Container/Images/Volumes löschen — mit Sicherheitsabfrage, `dkrmv` verlangt wörtlich `DELETE` |
 
@@ -125,7 +125,7 @@ All scripts in this repository (`scripts/`, as of 28.09.2026):
 | Script | Purpose | Invocation |
 |---|---|---|
 | `bootstrap.sh` (1.15.3) | Baseline for fresh servers (Docker, nginx, certbot, UFW, fail2ban) | `curl … bootstrap.sh -o /opt/… && /opt/myodoo-bootstrap.sh` |
-| `getScripts.py` (9.26.0) | fish shell, aliases, management scripts into `/root` (now including `server_hardening.py` + `hardening_config.yaml`); self-updates and restarts mid-`ups` as soon as the repository it just pulled carries a newer version; offers restore or switching the jobs off on a server without configuration, and asks once per run about a deliberately non-overlay2 Docker storage driver. On a terminal it also checks the security hardening (`server_hardening.py --json`), offers a missing `.env` and any open area, and applies firewall/SSH only after a lockout check — never the SSH port, never a Docker restart with containers running | `./getScripts.py [--dns-check\|--proxy-check\|--reconfigure]` |
+| `getScripts.py` (9.27.0) | fish shell, aliases, management scripts into `/root` (now including `server_hardening.py` + `hardening_config.yaml`); self-updates and restarts mid-`ups` as soon as the repository it just pulled carries a newer version; offers restore or switching the jobs off on a server without configuration, and asks once per run about a deliberately non-overlay2 Docker storage driver. On a terminal it also checks the security hardening (`server_hardening.py --json`), offers a missing `.env` and any open area, and applies firewall/SSH only after a lockout check — never the SSH port, never a Docker restart with containers running. Without root and without passwordless sudo it offers the restricted mode: only the user's own Fish environment, plus the Debian packages the administrator must install | `./getScripts.py [--dns-check\|--proxy-check\|--reconfigure\|--restricted]` |
 | `server_hardening.py` (1.9.0) | Audit + hardening (UFW, fail2ban, SSH, sysctl, auditd, AIDE); `--json` prints the audit as one JSON document for `server-readiness.py`/`ups`, writes nothing, admin IPs appear only as their comment; modules always run in a fixed order (ufw, fail2ban, ssh) | `sudo python3 server_hardening.py [--apply] [-m MODULE …] [--json]` |
 | `deploy-nginx-base.sh` (1.3.0) | nginx base: includes, maintenance page, nginx.conf (with rollback) | `./deploy-nginx-base.sh [--dry-run] [--no-main-conf]` |
 | `ngx-conf-wizard.sh` (1.1.0) | Interactive YAML wizard for nginx-set-conf | `./ngx-conf-wizard.sh` |
@@ -213,7 +213,7 @@ The most important aliases/functions by category:
 | Function | Purpose |
 |---|---|
 | `syspatch` | Full system update: journalctl vacuum → apt dist-upgrade → AIDE baseline → `docker image prune -f` |
-| `ups` | Update the ownERP scripts (re-run getScripts.py) |
+| `ups` | Update the ownERP scripts (re-run getScripts.py; without sudo in restricted mode) |
 | `chk` | Readiness report: is the server up to date, what is missing? (read-only) |
 | `dkrm` / `dkrmi` / `dkrmv` | Delete all containers/images/volumes — confirmation-gated, `dkrmv` requires typing `DELETE` |
 

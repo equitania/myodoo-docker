@@ -23,7 +23,15 @@
 ##############################################################################
 import os
 import subprocess
-import requests
+# Optional at import time: the restricted mode (run as an ordinary user, see
+# run_restricted_mode()) never downloads anything itself, and on a minimal
+# Debian python3-requests may be missing. Without this guard the script died
+# with a traceback before it could name the package. The full run checks for
+# it at the start of main().
+try:
+    import requests
+except ImportError:
+    requests = None  # type: ignore[assignment]
 import sys
 import logging
 import shutil
@@ -139,8 +147,8 @@ if os.environ.get('GETSCRIPTS_DEBUG', '').lower() in ('1', 'true', 'yes'):
     logger.debug("Debug logging enabled")
 
 # Script version and date
-SCRIPT_VERSION = "9.26.0"
-SCRIPT_DATE = "28.09.2026"
+SCRIPT_VERSION = "9.27.0"
+SCRIPT_DATE = "29.09.2026"
 
 # Branch of myodoo-docker this server tracks - the single source of truth for
 # main() (update_repository() call) and self_update_and_reexec() (which must
@@ -3723,20 +3731,10 @@ def setup_environment() -> Tuple[str, str]:
         logger.error("This script is only supported on Debian and Ubuntu systems")
         sys.exit(1)
 
-    # Check for sudo privileges
-    if not is_root_or_has_sudo():
-        logger.warning("⚠️  This script requires sudo privileges for system package installation.")
-        logger.warning("⚠️  Some features (system packages, 7-Zip, bat, zstd) will be skipped.")
-        logger.warning("⚠️  User-level installations (uv tools, pip packages) will still work.")
-        logger.warning("")
-        try:
-            response = input("Do you want to continue without sudo? (y/N): ").strip().lower()
-            if response != 'y':
-                logger.info("Exiting. Please run with sudo or configure passwordless sudo.")
-                sys.exit(0)
-        except KeyboardInterrupt:
-            logger.info("\nExiting.")
-            sys.exit(0)
+    # No privilege prompt here any more: without root or passwordless sudo the
+    # run never reaches main() - choose_restricted_mode() either switches to
+    # the restricted mode or stops with the sudo command. The old "continue
+    # without sudo?" path ran the full setup half-way and failed step by step.
 
     # Get appropriate home directory based on execution context.
     # Priority: SUDO_USER (direct 'sudo ./getScripts.py') > current user home.
@@ -5357,9 +5355,280 @@ def install_packages(package_info: Dict[str, Any]) -> None:
     install_or_update_ctop()
     install_or_update_mcedit()
 
+# =============================================================================
+# RESTRICTED MODE (New in v9.27.0)
+#
+# For a customer who will not run this script as root or through sudo. Such a
+# user only wants to keep Debian current and work in Fish: no server tools, no
+# hardening, no proxy, no DNS - those stay with root. The script therefore
+# installs nothing system-wide. It names the Debian packages the
+# administrator has to install - from the Debian archive only, never from a
+# third-party repository - and sets up what an ordinary user may set up in
+# their own home: the repository checkout, the Fish and Starship configuration,
+# fastfetch's config and, with his own password, his login shell.
+#
+# Debian 13 ships Fish 4.0; the full run installs 4.5+ from the Fish project's
+# repository, which is exactly what this mode must not do. 4.0 is enough for
+# the configuration delivered here. Debian 12 has Fish 3.6 and no backport of
+# 4.x, so it is refused with that reason rather than half set up.
+# =============================================================================
+
+# Written on the first restricted run; later runs of the same user (and `ups`)
+# go straight into the restricted mode instead of asking again.
+RESTRICTED_MARKER = os.path.expanduser("~/.getscripts_restricted")
+
+# Oldest Fish major version the delivered configuration is written for.
+RESTRICTED_MIN_FISH_MAJOR = 4
+
+# (Debian package, how to tell it is there). Only packages from the Debian
+# archive. python3 is not listed: whoever reads this output already runs it.
+RESTRICTED_REQUIRED_PACKAGES = (
+    ("fish", "fish"),
+    ("git", "git"),
+    ("ca-certificates", "/etc/ssl/certs/ca-certificates.crt"),
+)
+# Optional, each one only improves the shell; all three are in Debian 13.
+RESTRICTED_OPTIONAL_PACKAGES = (
+    ("starship", "starship", "Prompt mit Git-Status"),
+    ("zoxide", "zoxide", "schneller Verzeichniswechsel mit z"),
+    ("fastfetch", "fastfetch", "Systemübersicht beim Anmelden"),
+)
+
+
+def _restricted_package_present(probe: str) -> bool:
+    """A probe is either an absolute file path or a command name."""
+    if probe.startswith("/"):
+        return os.path.exists(probe)
+    return shutil.which(probe) is not None
+
+
+def restricted_missing_packages() -> Tuple[List[str], List[Tuple[str, str]]]:
+    """(missing required packages, missing optional (package, purpose))."""
+    required = [pkg for pkg, probe in RESTRICTED_REQUIRED_PACKAGES
+                if not _restricted_package_present(probe)]
+    optional = [(pkg, purpose) for pkg, probe, purpose in RESTRICTED_OPTIONAL_PACKAGES
+                if not _restricted_package_present(probe)]
+    return required, optional
+
+
+def _debian_major_version() -> Optional[int]:
+    """Debian's major version from /etc/os-release, None when not Debian or
+    unknown (testing/sid carry no VERSION_ID)."""
+    os_id, version_id = get_os_info()
+    if os_id != "debian":
+        return None
+    try:
+        return int(version_id.split(".")[0])
+    except (ValueError, IndexError):
+        return None
+
+
+def restricted_admin_commands(required: List[str], optional: List[Tuple[str, str]]) -> List[str]:
+    """The lines the administrator runs as root. One package list per line,
+    so a missing optional package can never make the required install fail."""
+    lines = ["apt-get update", "apt-get upgrade"]
+    if required:
+        lines.append("apt-get install " + " ".join(required))
+    if optional:
+        lines.append("apt-get install " + " ".join(pkg for pkg, _ in optional))
+    return lines
+
+
+def print_restricted_package_advice(required: List[str], optional: List[Tuple[str, str]]) -> None:
+    """Tell the user what his administrator has to install. Silent when
+    nothing is missing - a notice on every run trains people to skip it."""
+    if not required and not optional:
+        return
+    print()
+    if required:
+        print("Diese Debian-Pakete fehlen und werden benötigt:")
+        for pkg in required:
+            print(f"  - {pkg}")
+    if optional:
+        print("Empfohlen, aber nicht nötig:")
+        for pkg, purpose in optional:
+            print(f"  - {pkg:<10} {purpose}")
+    print()
+    print("Bitte den Administrator, als root auszuführen")
+    print("(nur Pakete aus dem Debian-Archiv, keine fremden Quellen):")
+    print()
+    for line in restricted_admin_commands(required, optional):
+        print(f"  {line}")
+    print()
+
+
+def _fish_major(version: Optional[str]) -> Optional[int]:
+    try:
+        return int((version or "").split(".")[0])
+    except ValueError:
+        return None
+
+
+def choose_restricted_mode(explicit: bool) -> bool:
+    """Decide whether this run is a restricted one.
+
+    Root and passwordless sudo run the full setup; --restricted is then
+    ignored with a note, because a run that could install everything should
+    not quietly do less. Without either, the user is asked once (the answer
+    is remembered in RESTRICTED_MARKER); a run that cannot ask stops with the
+    two ways forward instead of guessing.
+    """
+    if os.geteuid() == 0 or is_root_or_has_sudo():
+        if explicit:
+            print("Hinweis: --restricted ignoriert - dieser Lauf hat root-Rechte "
+                  "und richtet den Server vollständig ein.")
+        return False
+
+    if explicit or os.path.exists(RESTRICTED_MARKER):
+        return True
+
+    print()
+    print("Dieses Skript läuft ohne root-Rechte und ohne sudo.")
+    print("Die vollständige Einrichtung (Pakete, Server-Werkzeuge, Härtung, Proxy,")
+    print("DNS) ist so nicht möglich.")
+    print()
+    print("Im eingeschränkten Modus wird nur Ihre eigene Umgebung eingerichtet:")
+    print("Fish-Konfiguration, Prompt und Systemübersicht. Welche Debian-Pakete")
+    print("der Administrator dafür installieren muss, wird Ihnen angezeigt.")
+    print()
+
+    if not sys.stdin.isatty():
+        print("Kein Terminal für die Rückfrage. Entweder")
+        print("  python3 ~/getScripts.py --restricted   (eingeschränkter Modus)")
+        print("oder als root / mit sudo ausführen       (vollständige Einrichtung)")
+        sys.exit(1)
+
+    try:
+        answer = input("Im eingeschränkten Modus fortfahren? (J/n): ").strip().lower()
+    except (EOFError, KeyboardInterrupt):
+        print()
+        sys.exit(0)
+    if answer in ("", "j", "ja", "y", "yes"):
+        return True
+    print("Abgebrochen. Vollständige Einrichtung: als root oder mit sudo ausführen.")
+    sys.exit(0)
+
+
+def _offer_restricted_shell_change() -> None:
+    """Offer Fish as login shell. chsh on one's own account asks for one's own
+    password - no root needed, as long as Fish is listed in /etc/shells
+    (Debian's fish package registers itself there)."""
+    if "fish" in os.environ.get("SHELL", ""):
+        return
+    fish_path = shutil.which("fish")
+    if not fish_path:
+        return
+    try:
+        with open("/etc/shells", encoding="utf-8") as handle:
+            registered = fish_path in handle.read().split()
+    except OSError:
+        registered = False
+    if not registered:
+        print(f"Fish ({fish_path}) steht nicht in /etc/shells - der Administrator")
+        print(f"trägt es ein mit: echo {fish_path} >> /etc/shells")
+        return
+    if not sys.stdin.isatty():
+        print(f"Fish als Login-Shell setzen: chsh -s {fish_path}")
+        return
+    try:
+        answer = input("Fish als Login-Shell setzen? (J/n): ").strip().lower()
+    except (EOFError, KeyboardInterrupt):
+        print()
+        return
+    if answer not in ("", "j", "ja", "y", "yes"):
+        print(f"Später möglich mit: chsh -s {fish_path}")
+        return
+    # interactive: chsh asks for the user's password on the terminal.
+    result = run_command(f"chsh -s {fish_path}", interactive=True)
+    if result.returncode == 0:
+        print("Login-Shell ist jetzt Fish - wirksam ab der nächsten Anmeldung.")
+    else:
+        print(f"chsh ist fehlgeschlagen. Von Hand: chsh -s {fish_path}")
+
+
+def run_restricted_mode() -> int:
+    """The whole restricted run; returns the exit code."""
+    print_header()
+    print("  Eingeschränkter Modus: keine root-Rechte, nur die eigene Umgebung\n")
+
+    debian_major = _debian_major_version()
+    if debian_major is None and get_os_info()[0] != "debian":
+        print("Der eingeschränkte Modus ist für Debian gedacht; die Paketnamen")
+        print("unten gelten nur dort.")
+    if debian_major is not None and debian_major < 13:
+        print(f"Debian {debian_major} bringt Fish 3.x mit, und die Debian-Backports")
+        print("enthalten kein Fish 4. Der eingeschränkte Modus braucht Debian 13")
+        print("oder neuer. Alternativ richtet root den Server vollständig ein.")
+        return 1
+
+    try:
+        with open(RESTRICTED_MARKER, "w", encoding="utf-8") as handle:
+            handle.write(f"Restricted mode chosen on {datetime.now().isoformat()}\n")
+    except OSError as e:
+        logger.warning(f"Could not write {RESTRICTED_MARKER}: {e}")
+
+    required, optional = restricted_missing_packages()
+    print_restricted_package_advice(required, optional)
+    if required:
+        print("Danach dieses Skript erneut starten.")
+        return 1
+
+    _, fish_version = is_fish_installed()
+    fish_major = _fish_major(fish_version)
+    if fish_major is not None and fish_major < RESTRICTED_MIN_FISH_MAJOR:
+        print(f"Fish {fish_version} ist zu alt; die Konfiguration braucht Fish "
+              f"{RESTRICTED_MIN_FISH_MAJOR}.0 oder neuer (Debian 13).")
+        return 1
+
+    # The same repository update as the full run. Comes after the package
+    # check because it needs git, and a newer getScripts.py restarts here.
+    ensure_proxy_environment()
+    self_update_and_reexec()
+
+    home = os.path.expanduser("~")
+    myodoo_docker = os.path.join(home, "myodoo-docker")
+    try:
+        update_repository(myodoo_docker, SERVER_BRANCH)
+    except Exception as e:
+        logger.error(f"Repository konnte nicht geholt werden: {e}")
+        print("Netzwerk prüfen (Zugriff auf github.com über HTTPS) und erneut starten.")
+        return 1
+    finally:
+        os.chdir(home)
+
+    done = []
+    if copy_fish_configuration(home, myodoo_docker):
+        done.append(f"Fish-Konfiguration (Fish {fish_version})")
+    else:
+        print("Fish-Konfiguration konnte nicht kopiert werden - Details in ~/getscripts.log")
+    if is_starship_installed()[0] and copy_starship_configuration(home, myodoo_docker):
+        done.append("Starship-Prompt")
+    if is_fastfetch_installed()[0]:
+        config_directory = os.path.join(home, ".config", "fastfetch")
+        ensure_directory_exists(config_directory)
+        deploy_fastfetch_config(
+            os.path.join(myodoo_docker, "scripts", "fastfetch", "config.jsonc"),
+            os.path.join(config_directory, "config.jsonc"))
+        done.append("fastfetch-Konfiguration")
+
+    print()
+    for item in done:
+        print(f"  ✓ {item}")
+    print()
+    _offer_restricted_shell_change()
+    print()
+    print("Nicht eingerichtet (braucht root): Server-Werkzeuge, Härtung, Proxy, DNS.")
+    print("Aktualisieren: ups   ·   Fish sofort starten: fish")
+    return 0
+
+
 def main() -> None:
     """Main function to execute the script."""
     original_dir = os.getcwd()
+
+    if requests is None:
+        logger.error("Python-Modul 'requests' fehlt. Installieren mit: apt-get install python3-requests")
+        sys.exit(1)
 
     try:
         # Must run before any network call this script makes (pip/uv/apt/
@@ -6156,6 +6425,11 @@ if __name__ == "__main__":
                        help="Force first-run setup (DNS + proxy)")
     parser.add_argument("--reconfigure", action="store_true",
                        help="Reset and reconfigure DNS + proxy settings")
+    parser.add_argument("--restricted", action="store_true",
+                       help="Run without root: set up only your own Fish "
+                            "environment and list the Debian packages the "
+                            "administrator must install (asked automatically "
+                            "when neither root nor passwordless sudo is available)")
 
     args = parser.parse_args()
 
@@ -6174,6 +6448,15 @@ if __name__ == "__main__":
         # Disable cache by setting a flag on the function
         get_cached_version.disabled = True  # type: ignore[attr-defined]
         logger.info("Cache disabled for this run")
+
+    # Before everything that needs root: DNS, proxy and the first-run setup
+    # write system files, so a restricted run must never reach them.
+    if choose_restricted_mode(args.restricted):
+        if args.reconfigure or args.first_run or args.dns_check or args.proxy_check:
+            print("DNS- und Proxy-Einrichtung brauchen root - im eingeschränkten "
+                  "Modus nicht verfügbar.")
+            sys.exit(1)
+        sys.exit(run_restricted_mode())
 
     if args.reconfigure:
         # Reset configuration and run first-time setup
