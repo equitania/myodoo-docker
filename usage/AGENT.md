@@ -108,6 +108,11 @@ Behind NAT: bind the **local** IP (wizard lists them), never the public DNS IP.
 python3 ~/update_docker_odoo.py --validate       # config sanity check, no changes
 python3 ~/update_docker_odoo.py                  # or: doup — rebuilds image, updates DB, restarts
 python3 ~/update_docker_odoo.py -s live-odoo -v  # single container, verbose
+# Exit 1 = at least one container failed. Since 5.22.0 that includes an Odoo run that exits 0
+# but logs "Failed to initialize database"/"Failed to load registry" (entrypoint before
+# bin/boot 2.5.0/2.8.0 dropped Odoo's status). After a failed update the container is NOT running.
+# Since 5.23.0 a container also fails - BEFORE anything is stopped - when odoo_version in
+# docker2update.yaml names another Odoo version than the release (kernel archive in release.file).
 ```
 Per-container `type`: `F` full update · `M` modules only · `N` neutralize then update.
 

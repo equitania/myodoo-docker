@@ -977,3 +977,133 @@ class BuilderCachePruneTest(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class OdooLoadFailureTest(unittest.TestCase):
+    """Exit status 0 is not proof that Odoo loaded the database.
+
+    On 30.09.2026 a customer server reported 'update odoo ... ok' and
+    'successful updates 1' while the update run had logged 'Failed to
+    initialize database': the image's entrypoint dropped Odoo's exit status.
+    The entrypoint is fixed (bin/boot 2.5.0 / 2.8.0), but an image built with
+    an older one is still out there, so the runner reads the output as well.
+    """
+
+    FAILED = ("echo '2026-09-30 13:45:50,149 15 CRITICAL prod odoo.service.server: "
+              "Failed to initialize database `prod`.' 1>&2")
+
+    def run_quiet(self, command, **kwargs):
+        import contextlib
+        import io
+        with contextlib.redirect_stdout(io.StringIO()):
+            return udo.run_command(command, show_output=False, filter_output=True, **kwargs)
+
+    def test_a_load_failure_fails_the_step_despite_exit_zero(self):
+        result = self.run_quiet(self.FAILED, fail_markers=udo.ODOO_LOAD_FAILURE_MARKERS)
+        self.assertFalse(result[0])
+        self.assertGreaterEqual(result[4], 1)
+
+    def test_the_registry_message_counts_too(self):
+        command = "echo '13:45:50 15 ERROR prod odoo.registry: Failed to load registry'"
+        self.assertFalse(self.run_quiet(command, fail_markers=udo.ODOO_LOAD_FAILURE_MARKERS)[0])
+
+    def test_a_clean_run_stays_successful(self):
+        command = "echo '13:45:50 15 INFO prod odoo.modules.loading: Modules loaded.'"
+        self.assertTrue(self.run_quiet(command, fail_markers=udo.ODOO_LOAD_FAILURE_MARKERS)[0])
+
+    def test_steps_that_did_not_ask_are_not_affected(self):
+        # docker build output may quote such a line from a test log; only the
+        # Odoo runs are judged by it.
+        self.assertTrue(self.run_quiet(self.FAILED)[0])
+
+    def test_a_real_failure_keeps_its_own_path(self):
+        result = self.run_quiet("exit 3", fail_markers=udo.ODOO_LOAD_FAILURE_MARKERS)
+        self.assertFalse(result[0])
+
+    def test_every_odoo_run_is_judged_by_its_output(self):
+        # Two update runs (types F and N) and the neutralize run.
+        with open(udo.__file__, encoding="utf8") as handle:
+            source = handle.read()
+        self.assertEqual(source.count("fail_markers=ODOO_LOAD_FAILURE_MARKERS"), 3)
+
+
+class ReleaseVersionTest(unittest.TestCase):
+    """odoo_version in docker2update.yaml must match the release it builds.
+
+    The value picks the folder the build scripts are copied from. A v19
+    release configured as "18" built with the scripts of version 18, and
+    nothing said so (30.09.2026).
+    """
+
+    RELEASE_19 = (
+        "https://rm.example.com/19.0\n"
+        "registry.example.com/odoo-base:19\n"
+        "odoo-kernel-19.0.-26.09.29.zip\n"
+        "web_19.0.1.8.38.zip\n"
+    )
+
+    def setUp(self):
+        self.build = tempfile.mkdtemp()
+        self.sources = tempfile.mkdtemp()
+        for name in ("v16-odoo", "v18-odoo", "v19-odoo"):
+            os.makedirs(os.path.join(self.sources, name))
+
+    def release(self, content):
+        with open(os.path.join(self.build, "release.file"), "w", encoding="utf8") as handle:
+            handle.write(content)
+
+    def problem(self, configured):
+        return udo.release_version_problem(configured, self.build, self.sources, "live-odoo")
+
+    def test_the_kernel_archive_names_the_version(self):
+        self.release(self.RELEASE_19)
+        self.assertEqual(udo.release_odoo_version(self.build), "19")
+
+    def test_the_url_is_the_fallback(self):
+        self.release("https://rm.example.com/18.0/\nimage\ncustom-kernel.zip\n")
+        self.assertEqual(udo.release_odoo_version(self.build), "18")
+
+    def test_blank_lines_and_spaces_are_tolerated(self):
+        self.release("\nhttps://rm.example.com/x , y\n\nimage\n odoo-kernel-16.0.-26.01.02.zip \n")
+        self.assertEqual(udo.release_odoo_version(self.build), "16")
+
+    def test_no_statement_without_a_readable_release(self):
+        self.assertEqual(udo.release_odoo_version(self.build), "")
+        self.release("")
+        self.assertEqual(udo.release_odoo_version(self.build), "")
+        self.release("False\nimage\nFalse\n")
+        self.assertEqual(udo.release_odoo_version(self.build), "")
+        self.assertIsNone(self.problem("18"))
+
+    def test_the_wrong_version_is_an_error_when_the_right_scripts_exist(self):
+        self.release(self.RELEASE_19)
+        level, message = self.problem("18")
+        self.assertEqual(level, "ERROR")
+        self.assertIn('odoo_version "18"', message)
+        self.assertIn("Odoo 19", message)
+        self.assertIn("live-odoo", message)
+
+    def test_matching_versions_are_fine_in_every_spelling(self):
+        self.release(self.RELEASE_19)
+        for configured in ("19", 19, "19.0", " 19 "):
+            self.assertIsNone(self.problem(configured), configured)
+
+    def test_a_version_without_its_own_scripts_is_only_a_warning(self):
+        # There is no v17-odoo folder: such an instance has to borrow the
+        # scripts of a neighbouring version, so a difference is no proof of a mistake.
+        self.release("https://rm.example.com/17.0\nimage\nodoo-kernel-17.0.-26.09.29.zip\n")
+        level, message = self.problem("16")
+        self.assertEqual(level, "WARNING")
+        self.assertIn("Odoo 17", message)
+
+    def test_an_unset_version_is_left_alone(self):
+        self.release(self.RELEASE_19)
+        self.assertIsNone(self.problem(""))
+        self.assertIsNone(self.problem(None))
+
+    def test_the_check_runs_before_anything_is_stopped_or_removed(self):
+        with open(udo.__file__, encoding="utf8") as handle:
+            source = handle.read()
+        check = source.index("mismatch = release_version_problem(")
+        self.assertLess(source.index('"release manager", f"python3 {check_script_name}"'), check)
+        self.assertLess(check, source.index('(f"stop {container_name}", f"docker stop {container_name}")'))

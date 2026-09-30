@@ -23,7 +23,7 @@ Alle Skripte des Repos (`scripts/`, Stand 28.09.2026):
 | `ngx-conf-wizard.sh` (1.1.0) | Interaktiver YAML-Assistent für nginx-set-conf | `./ngx-conf-wizard.sh` |
 | `pg-local-deploy.sh` (1.3.0) | PostgreSQL-Container interaktiv deployen (Profile, optional SSL, optional pgvector) | `./pg-local-deploy.sh` |
 | `fr-local-deploy.sh` | FastReport-API-Container deployen (Default `/opt/fast-report`) | `./fr-local-deploy.sh` |
-| `update_docker_odoo.py` (5.21.0) | Odoo-Container-Updates per YAML | `doup` bzw. `python3 update_docker_odoo.py [-s NAME] [--validate]` |
+| `update_docker_odoo.py` (5.23.0) | Odoo-Container-Updates per YAML | `doup` bzw. `python3 update_docker_odoo.py [-s NAME] [--validate]` |
 | `ownerp_console.py` (1.2.0) | Die Konsole: Serverzustand und Konfiguration bearbeiten, Vollbild. Startet nichts | `konsole` bzw. `python3 ownerp_console.py [--check]` |
 | `ownerp_state.py` (1.1.0) | Derselbe Zustand als Text, rein lesend; Exit `0`/`1`/`2` | `dostat` bzw. `python3 ownerp_state.py [--json]` |
 | `docker_table.py` (1.2.0) | `docker ps`/`docker images` als Tabelle, sortiert, Ports gekürzt | `dps` / `dpsall` / `dpi` bzw. `python3 docker_table.py [--details\|--images]` |
@@ -130,7 +130,7 @@ All scripts in this repository (`scripts/`, as of 28.09.2026):
 | `ngx-conf-wizard.sh` (1.1.0) | Interactive YAML wizard for nginx-set-conf | `./ngx-conf-wizard.sh` |
 | `pg-local-deploy.sh` (1.3.0) | Deploy a PostgreSQL container interactively (profiles, optional SSL, optional pgvector) | `./pg-local-deploy.sh` |
 | `fr-local-deploy.sh` | Deploy the FastReport API container (default `/opt/fast-report`) | `./fr-local-deploy.sh` |
-| `update_docker_odoo.py` (5.21.0) | Odoo container updates via YAML | `doup` or `python3 update_docker_odoo.py [-s NAME] [--validate]` |
+| `update_docker_odoo.py` (5.23.0) | Odoo container updates via YAML | `doup` or `python3 update_docker_odoo.py [-s NAME] [--validate]` |
 | `ownerp_console.py` (1.2.0) | The console: server state and configuration editing, full screen. Starts nothing | `konsole` or `python3 ownerp_console.py [--check]` |
 | `ownerp_state.py` (1.1.0) | The same state as text, read-only; exit `0`/`1`/`2` | `dostat` or `python3 ownerp_state.py [--json]` |
 | `docker_table.py` (1.2.0) | `docker ps`/`docker images` as a table, sorted, ports shortened | `dps` / `dpsall` / `dpi` or `python3 docker_table.py [--details\|--images]` |

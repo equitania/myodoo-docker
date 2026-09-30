@@ -333,3 +333,59 @@ class BootProxyEnvironmentTest(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+def run_boot_with_status(version, odoo_status, *arguments):
+    """Run a boot script whose odoo-bin exits with ``odoo_status``; return the script's own status."""
+    with tempfile.TemporaryDirectory() as tmp:
+        fake_bin = os.path.join(tmp, "bin")
+        os.makedirs(fake_bin)
+        write_executable(os.path.join(fake_bin, "whoami"), "#!/bin/sh\necho odoo\n")
+        write_executable(os.path.join(fake_bin, "python3"), f"#!/bin/sh\nexit {odoo_status}\n")
+
+        environment = dict(os.environ)
+        environment["PATH"] = fake_bin + os.pathsep + environment.get("PATH", "")
+        result = subprocess.run(
+            ["bash", boot_path(version)] + list(arguments),
+            env=environment,
+            capture_output=True,
+            text=True,
+            timeout=60,
+        )
+        return result.returncode
+
+
+class BootExitStatusTest(unittest.TestCase):
+    """A failed update must not look like a successful one.
+
+    Odoo exits non-zero when it cannot load the database ('Failed to initialize
+    database'). The update function ran under 'set +e' and threw that status
+    away, so the container exited 0, 'docker run' reported success, and
+    update_docker_odoo.py printed 'update odoo ... ok' for an instance that
+    answered every request with HTTP 500 (a customer server, 30.09.2026).
+    """
+
+    VERSIONS = ("v16-odoo", "v18-odoo", "v19-odoo")
+
+    def test_a_failed_update_fails_the_container(self):
+        for version in self.VERSIONS:
+            with self.subTest(version=version):
+                self.assertEqual(run_boot_with_status(version, 255, "update", "--database=x"), 255)
+
+    def test_a_failed_neutralize_fails_the_container(self):
+        for version in self.VERSIONS:
+            with self.subTest(version=version):
+                self.assertEqual(run_boot_with_status(version, 3, "neutralize", "--database=x"), 3)
+
+    def test_a_successful_update_still_exits_zero(self):
+        for version in self.VERSIONS:
+            with self.subTest(version=version):
+                self.assertEqual(run_boot_with_status(version, 0, "update", "--database=x"), 0)
+                self.assertEqual(run_boot_with_status(version, 0, "neutralize", "--database=x"), 0)
+
+    def test_start_keeps_its_behaviour(self):
+        # 'start' is the long-running server under --restart=always; what its exit
+        # status should be is a separate question and deliberately left alone.
+        for version in self.VERSIONS:
+            with self.subTest(version=version):
+                self.assertEqual(run_boot_with_status(version, 0, "start"), 0)

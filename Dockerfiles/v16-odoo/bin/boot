@@ -1,8 +1,8 @@
 #!/bin/bash
 ##############################################################################
 # This script is designed to be run inside the container
-# Version 2.4.0
-# Date 14.09.2026
+# Version 2.5.0
+# Date 30.09.2026
 ##############################################################################
 #
 #    Shell Script for Odoo Docker Container
@@ -96,9 +96,15 @@ function update {
         # Use su instead of sudo for user switching
         su - odoo --whitelist-environment=$kept_environment -c "python3 /opt/odoo/odoo-server/odoo-bin --update=all --workers=0 --no-xmlrpc --stop-after-init $data_dir_argument $*"
     fi
+    # Odoo's own exit status - non-zero when the database could not be loaded
+    # ("Failed to initialize database"). It used to be dropped: 'set +e' above,
+    # then the script ran on to its final 'wait' and exited 0, so the container
+    # reported success and update_docker_odoo.py printed "ok" for a failed run.
+    local status=$?
 
     SERVICE_PID=$!
     set -e
+    return $status
 }
 
 # Function: neutralize
@@ -118,9 +124,15 @@ function neutralize {
         # Use su instead of sudo for user switching
         su - odoo --whitelist-environment=$kept_environment -c "python3 /opt/odoo/odoo-server/odoo-bin neutralize --workers=0 --no-xmlrpc --stop-after-init $data_dir_argument $*"
     fi
+    # Odoo's own exit status - non-zero when the database could not be loaded
+    # ("Failed to initialize database"). It used to be dropped: 'set +e' above,
+    # then the script ran on to its final 'wait' and exited 0, so the container
+    # reported success and update_docker_odoo.py printed "ok" for a failed run.
+    local status=$?
 
     SERVICE_PID=$!
     set -e
+    return $status
 }
 
 # Function: on_exit

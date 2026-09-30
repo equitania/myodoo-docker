@@ -1,8 +1,8 @@
 #!/usr/bin/python3
 # -*- coding: utf-8 -*-
 # This script performs an update of an Odoo database in a Docker container
-# Version 5.21.0
-# Date 15.09.2026
+# Version 5.23.0
+# Date 30.09.2026
 ##############################################################################
 #
 #    Shell Script for Odoo, Open Source Management Solution
@@ -77,7 +77,7 @@ logger = logging.getLogger(__name__)
 # Kept in sync with the header comment above. Printed at the start of every run
 # so a pasted log says which version produced it — the single most common
 # question when a report comes back from a server.
-SCRIPT_VERSION = "5.21.0"
+SCRIPT_VERSION = "5.23.0"
 SCRIPT_DATE = "15.09.2026"
 
 # Set by --no-cache. A module-level flag rather than another parameter through
@@ -845,8 +845,31 @@ Note: Container DNS is inherited from the host - Docker copies /etc/resolv.conf
     
     return parser.parse_args()
 
+# What Odoo logs when it cannot bring a database up on the image's code. Each of
+# these means the instance will not serve, whatever the exit status says: an
+# entrypoint before bin/boot 2.5.0 / 2.8.0 dropped Odoo's status and exited 0,
+# and on 30.09.2026 a run with 'Failed to initialize database' in its output
+# was reported as 'update odoo ... ok' and counted as a successful update.
+ODOO_LOAD_FAILURE_MARKERS = (
+    "Failed to initialize database",
+    "Failed to load registry",
+)
+
+
+# Printed under a failed update. The old container and image are already gone
+# at that point (they are removed before the build), so nothing serves until
+# the next successful run - which the operator has to know without reading the
+# code.
+UPDATE_FAILED_ADVICE = (
+    "    '{container}' is NOT running: the update of its database failed, so the\n"
+    "    container was not started. Fix the cause named above (full log below),\n"
+    "    then run the update again."
+)
+
+
 def run_command(command, show_output=True, filter_output=False, show_progress=False,
-                progress_msg=None, timeout=None, env=None, output_indent="    "):
+                progress_msg=None, timeout=None, env=None, output_indent="    ",
+                fail_markers=None):
     """Run a shell command with proper error handling and output filtering.
 
     Child output is passed through verbatim (only reformatted by
@@ -858,6 +881,8 @@ def run_command(command, show_output=True, filter_output=False, show_progress=Fa
              e.g. proxy settings for commands that need internet access.
         output_indent: Prefix for passed-through child lines, so they sit
              visually underneath the step that produced them.
+        fail_markers: Optional texts that fail the command when one appears in
+             its output, even if it exits 0 - see ODOO_LOAD_FAILURE_MARKERS.
     """
     try:
         # Debug only - under -v this echoed the command in front of every
@@ -878,6 +903,8 @@ def run_command(command, show_output=True, filter_output=False, show_progress=Fa
         
         # Collected for the failure recap (warnings are printed live only)
         all_errors = []
+        # Lines that carry one of fail_markers
+        fatal_lines = []
         # Line bookkeeping, so the recap can tell whether the last error is
         # still on screen or has scrolled away in a long build log
         emitted_lines = 0
@@ -970,6 +997,8 @@ def run_command(command, show_output=True, filter_output=False, show_progress=Fa
                 # Level detection and display formatting live in classify_line();
                 # see there for why substring matching on the raw line is wrong.
                 level, display = classify_line(line)
+                if fail_markers and any(marker in stripped_line for marker in fail_markers):
+                    fatal_lines.append(display)
 
                 # Before any filtering: the console drops INFO without -v, the
                 # file keeps everything. Reconstructing a build from a log that
@@ -1052,6 +1081,17 @@ def run_command(command, show_output=True, filter_output=False, show_progress=Fa
                     emit(msg)
             return False, stderr_output, info_count, warnings_count, errors_count
         
+        if fatal_lines:
+            # Exit status 0, and still not a success. Said in so many words,
+            # because the lines themselves have already scrolled past as
+            # ordinary errors of a step that was about to be called "ok".
+            verdict = ("exit status 0, but Odoo could not load the database: "
+                       + fatal_lines[0])
+            logger.error(verdict)
+            note_issue('ERROR', verdict)
+            emit(verdict)
+            return False, stdout_output + stderr_output, info_count, warnings_count, errors_count + 1
+
         # No success message here - the step line already reports 'ok'. Under
         # -v this used to print 'Command completed successfully with no
         # warnings or errors' in front of every single step.
@@ -1647,6 +1687,65 @@ def sync_build_scripts(version, path, source_base):
         logger.info("Build scripts are up to date (local Dockerfiles source)")
     return True, info_count, warning_count, 0
 
+RELEASE_FILE = "release.file"
+_KERNEL_VERSION_RE = re.compile(r"odoo-kernel-(\d+)\.")
+_URL_VERSION_RE = re.compile(r"/(\d+)\.\d+/?$")
+
+
+def release_odoo_version(build_dir):
+    """Major Odoo version of the release in the build folder, '' when it cannot be told.
+
+    release.file is what the release manager hands out for the access code: the
+    download URL, the base image, the kernel archive, then the modules. The
+    kernel archive carries the version in its name (odoo-kernel-19.0.-...zip);
+    the URL ends in the version folder and serves as the fallback.
+    """
+    try:
+        with open(join(build_dir, RELEASE_FILE), encoding="utf8") as handle:
+            rows = [line.split(",")[0].replace(" ", "").strip()
+                    for line in handle if line.strip()]
+    except (OSError, UnicodeDecodeError):
+        return ""
+    if len(rows) >= 3:
+        match = _KERNEL_VERSION_RE.search(rows[2])
+        if match:
+            return match.group(1)
+    if rows:
+        match = _URL_VERSION_RE.search(rows[0])
+        if match:
+            return match.group(1)
+    return ""
+
+
+def release_version_problem(configured, build_dir, source_base, container_name):
+    """Compare odoo_version with the release that is about to be built.
+
+    odoo_version picks the folder the build scripts are synced from. When it
+    names another version than the release, the image is built with the wrong
+    build script and entrypoint - and until 5.23.0 nothing said so.
+
+    Returns None when both agree or no statement is possible, otherwise
+    (level, message). ERROR when the scripts of the release's own version
+    exist, so the configuration is simply pointing at the wrong ones; WARNING
+    when they do not (no v17-odoo folder: such an instance has to borrow a
+    neighbouring version's scripts, and a difference proves nothing).
+    """
+    configured = str(configured if configured is not None else "").strip().split(".")[0]
+    released = release_odoo_version(build_dir)
+    if not configured or not released or configured == released:
+        return None
+    if isdir(join(source_base, f"v{released}-odoo")):
+        return "ERROR", (
+            f'{container_name}: docker2update.yaml has odoo_version "{configured}", but the release '
+            f"for this instance is Odoo {released}. The image would be built with the build "
+            f"scripts of version {configured}. Set odoo_version to \"{released}\" (wizup) and run "
+            f"the update again - nothing was stopped or removed.")
+    return "WARNING", (
+        f'{container_name}: docker2update.yaml has odoo_version "{configured}", the release for '
+        f"this instance is Odoo {released}. There are no build scripts for version {released}, "
+        f"so the ones of version {configured} are used.")
+
+
 def validate_container_config(container):
     """Validate container configuration."""
     required_fields = [
@@ -1952,6 +2051,30 @@ def _process_container(container, proxy_settings=None, dockerfiles_source=None,
         logger.warning(f"Skipping release manager check - files not found: {check_script_name} or {access_file_name}")
         total_warnings += 1
 
+    # The release file is fresh now - the one moment at which it says for
+    # certain which Odoo version this instance gets. Checked before anything is
+    # stopped or removed, so a wrong odoo_version costs a message, not an outage.
+    # (Not earlier: before the download the file is the previous run's, and
+    # after a real version upgrade that would be the old version.)
+    if version:
+        mismatch = release_version_problem(
+            version, path, dockerfiles_source or DEFAULT_DOCKERFILES_SOURCE, container_name)
+        if mismatch:
+            level, problem = mismatch
+            note_issue(level, problem)
+            if level == "ERROR":
+                total_errors += 1
+                logger.error(problem)
+                print_step("release matches odoo_version", "FAILED")
+                print(f"{CR}    {problem}")
+                try:
+                    os.chdir(original_dir)  # Change back to original directory
+                except:
+                    pass
+                return False, total_info, total_warnings, total_errors
+            total_warnings += 1
+            logger.warning(problem)
+
     # Pre-fetch the release archives on the host so the build only downloads
     # what actually changed. Never fatal: whatever is missing from the cache,
     # build_odoo.py fetches itself, exactly as it did before the cache existed.
@@ -2115,13 +2238,15 @@ def _process_container(container, proxy_settings=None, dockerfiles_source=None,
             filter_output=should_filter,
             show_progress=True,
             progress_msg=f"Updating database {db_name}",
-            timeout=1800  # 30 minute timeout
+            timeout=1800,  # 30 minute timeout
+            fail_markers=ODOO_LOAD_FAILURE_MARKERS
         )
         total_info += info
         total_warnings += warn
         total_errors += err
         if not success:
             logger.error("Update failed")
+            print(f"{CR}{UPDATE_FAILED_ADVICE.format(container=container_name)}")
             try:
                 os.chdir(original_dir)  # Change back to original directory
             except:
@@ -2144,7 +2269,8 @@ def _process_container(container, proxy_settings=None, dockerfiles_source=None,
             filter_output=should_filter,
             show_progress=True,
             progress_msg=f"Neutralizing database {db_name}",
-            timeout=900  # 15 minute timeout
+            timeout=900,  # 15 minute timeout
+            fail_markers=ODOO_LOAD_FAILURE_MARKERS
         )
         total_info += info
         total_warnings += warn
@@ -2171,13 +2297,15 @@ def _process_container(container, proxy_settings=None, dockerfiles_source=None,
             filter_output=should_filter,
             show_progress=True,
             progress_msg=f"Updating database {db_name}",
-            timeout=1800  # 30 minute timeout
+            timeout=1800,  # 30 minute timeout
+            fail_markers=ODOO_LOAD_FAILURE_MARKERS
         )
         total_info += info
         total_warnings += warn
         total_errors += err
         if not success:
             logger.error("Update failed")
+            print(f"{CR}{UPDATE_FAILED_ADVICE.format(container=container_name)}")
             try:
                 os.chdir(original_dir)  # Change back to original directory
             except:

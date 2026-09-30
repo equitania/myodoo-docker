@@ -1,5 +1,55 @@
 # Release Notes
 
+## A Failed Odoo Update No Longer Reports "ok" (30.09.2026)
+
+*Dockerfiles/v16-odoo/bin/boot v2.5.0 · Dockerfiles/v18-odoo/bin/boot v2.5.0 ·
+Dockerfiles/v19-odoo/bin/boot v2.8.0 · scripts/update_docker_odoo.py v5.23.0 ·
+tests/test_boot_script.py · tests/test_update_docker_odoo.py · docs/COMPONENTS.md ·
+docs/usage/09-reference.md · usage/AGENT.md*
+
+On a customer server `doup` printed `update odoo ... ok` and `successful updates 1`
+for a run whose output said `Failed to initialize database`. The container was
+started afterwards and answered every request with HTTP 500. The release had
+combined a kernel from March with modules from September, so the first module
+import failed - but nothing in the summary said that the update had not happened.
+
+### Fixed
+
+- **The container's entrypoint passes on Odoo's exit status.** Odoo exits
+  non-zero when it cannot load the database. `bin/boot` ran `update` and
+  `neutralize` under `set +e`, dropped that status, ran on to its final `wait`
+  and exited 0 - so `docker run` reported success. Both functions now return
+  what `odoo-bin` returned. `start` is unchanged. The new entrypoint reaches an
+  installation with the next `doup`, which copies it into the build folder
+  before the image is built.
+- **`update_docker_odoo.py` reads the output as well.** An image built with an
+  older entrypoint still exits 0. The update and neutralize runs therefore fail
+  when their output carries `Failed to initialize database` or `Failed to load
+  registry`, and say so in one line: "exit status 0, but Odoo could not load
+  the database". The run counts as a failed update and the script exits 1.
+
+### Added
+
+- **`odoo_version` is checked against the release** (`update_docker_odoo.py`
+  5.23.0). On the same server `docker2update.yaml` said `odoo_version: "18"`
+  for an Odoo 19 release. The value picks the folder the build scripts and the
+  entrypoint are copied from, so the image was assembled with the wrong ones,
+  and the run header even printed "odoo 18". The update now reads the release's
+  version from the kernel archive named in `release.file`, right after the
+  release manager step and before anything is stopped or removed. A different
+  `odoo_version` fails that container with the value to set; the running
+  container stays up. Where no build scripts exist for the release's version
+  (there is no `v17-odoo` folder) the difference is reported as a warning only.
+
+### Changed
+
+- **A failed update says what state it leaves behind.** The old container and
+  image are removed before the build, and after a failed update the container
+  is not started. That was already so for every update that failed with a
+  non-zero status; it now also applies to the case above, where the script used
+  to start a container that could not serve. The message names it:
+  "'<container>' is NOT running ... fix the cause, then run the update again."
+
 ## syspatch No Longer Waits for AIDE (29.09.2026)
 
 *fish/functions/linux/syspatch.fish v1.4.0 · scripts/hardening_config.yaml ·

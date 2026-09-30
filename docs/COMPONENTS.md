@@ -203,11 +203,23 @@ in this repository, stay in `CLAUDE.md`.
   - Automated restart management
   - Module updates for Odoo
 
-#### 4. update_docker_odoo.py (v5.21.0)
+#### 4. update_docker_odoo.py (v5.23.0)
 - **Purpose**: Automated Docker container updates for v16+ Odoo instances
   (image rebuild, container re-creation, module update), driven by
   `docker2update.yaml`
 - **Features**:
+  - **`odoo_version` is checked against the release** (v5.23.0, 30.09.2026):
+    right after the release file is fetched and before anything is stopped or
+    removed. The kernel archive in `release.file` names the release's Odoo
+    version; a different `odoo_version` stops that container with an error when
+    the build scripts of the release's version exist (`v<N>-odoo`), and is a
+    warning when they do not (a v17 instance has to borrow a neighbour's)
+  - **A failed Odoo update is a failed update** (v5.22.0, 30.09.2026): the update
+    and neutralize runs fail when their output carries `Failed to initialize
+    database` or `Failed to load registry`, even at exit status 0 — an image
+    built with `bin/boot` before 2.5.0 (v16/v18) / 2.8.0 (v19) drops Odoo's
+    status. The newer entrypoint returns it. After a failed update the
+    container is not started, and the run says so
   - Full run log per container in the build folder, with configurable
     retention (`log_retention_days`, default 90 days)
   - Run history in `~/update-history.jsonl` (one line per container run,
