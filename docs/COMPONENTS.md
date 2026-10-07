@@ -11,9 +11,15 @@ in this repository, stay in `CLAUDE.md`.
 
 ### Key Components
 
-#### 1. getScripts.py (v9.28.0)
+#### 1. getScripts.py (v9.29.0)
 - **Purpose**: Main installation and update script
 - **Features**:
+  - Host user `odoo` with UID/GID 8069 (v9.29.0, 07.10.2026):
+    `ensure_odoo_host_user()` runs as root on every pass and creates the
+    account that matches the images' odoo user (no home, `nologin`, locked),
+    so `ls -l` on a data volume shows `odoo` instead of a bare number. It only
+    creates: an `odoo` with another UID (a native Odoo installation) or another
+    owner of 8069 is reported in the install summary and left alone
   - Restricted mode (v9.27.0, 29.09.2026): for a customer who will not run
     the script as root or through sudo. Without root and without
     passwordless sudo, `choose_restricted_mode()` asks once (remembered in
@@ -203,11 +209,21 @@ in this repository, stay in `CLAUDE.md`.
   - Automated restart management
   - Module updates for Odoo
 
-#### 4. update_docker_odoo.py (v5.23.0)
+#### 4. update_docker_odoo.py (v5.24.0)
 - **Purpose**: Automated Docker container updates for v16+ Odoo instances
   (image rebuild, container re-creation, module update), driven by
   `docker2update.yaml`
 - **Features**:
+  - **Data volume follows the image's odoo UID** (v5.24.0, 07.10.2026): the
+    odoo user is pinned to UID/GID 8069 in the Dockerfiles; before, it was the
+    base image's first free UID (mostly 1000, on the host the cloud image's
+    `debian`/`ubuntu` user). After the build and before the new image first
+    starts, `align_data_ownership()` runs a short probe inside the new image
+    with the instance's `volume` flags (bind mount or named volume alike) and,
+    when `/opt/odoo/data` or one of its direct entries belongs to another UID,
+    a one-time `chown -R` to the image's odoo user. `bin/boot` cannot do this:
+    it changes ownership only on an empty data directory. A failed chown is an
+    error with the manual command, not an abort - the old image is gone by then
   - **`odoo_version` is checked against the release** (v5.23.0, 30.09.2026):
     right after the release file is fetched and before anything is stopped or
     removed. The kernel archive in `release.file` names the release's Odoo
@@ -357,7 +373,7 @@ in this repository, stay in `CLAUDE.md`.
   installation is patched by hand when it needs them — together with the
   directory, because the `COPY` fails without it
 
-#### 5. odoo_build_cache.py (v1.6.0)
+#### 5. odoo_build_cache.py (v1.7.0)
 - **Purpose**: Host-side cache of Odoo release archives, shared by every instance
 - **Why**: `build_odoo.py` runs inside the build container and re-downloads all
   several hundred archives on every build; the Docker layer holding them is
@@ -389,6 +405,17 @@ in this repository, stay in `CLAUDE.md`.
   either), or an unknown flag — **and** the reference carries exactly that
   `COPY`. The rewrite must be announced to `_dockerfile_regression()`, which
   accepts only that exact pair
+- **The second content rewrite: the odoo UID pin** (v1.7.0, 07.10.2026). The
+  repository's own unpinned `RUN adduser --home=/opt/odoo ... odoo`
+  (`UNPINNED_USER_LINES`) is swapped for the pinned `addgroup --gid 8069` /
+  `adduser --uid 8069 --gid 8069` line the reference carries. Unlike ADD→COPY
+  this changes the image — its files belong to 8069 afterwards — which is
+  safe only because `update_docker_odoo.py` hands the data volume over before
+  the image starts. A customer's own adduser variant is reported, never
+  touched. v1.7.0 also stops `_find_directive()` from taking a continuation
+  line (HEALTHCHECK's `    CMD wget ...`) for a directive of its own: in a
+  Dockerfile without `ENTRYPOINT` a missing `EXPOSE` was inserted between the
+  two halves of the HEALTHCHECK, and the guard then refused the whole patch
 - **Also maintains the build folder's `odoo.conf`** (v1.5.0), which is never
   distributed either — it holds `admin_passwd` and `db_password`. Only
   `MANAGED_CONF_KEYS` are filled in, only from the repository template beside

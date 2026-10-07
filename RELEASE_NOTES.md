@@ -1,5 +1,56 @@
 # Release Notes
 
+## The odoo User Has the Same UID on Every Server (07.10.2026)
+
+*Dockerfiles/v16-odoo/Dockerfile · Dockerfiles/v18-odoo/Dockerfile ·
+Dockerfiles/v19-odoo/Dockerfile · scripts/update_docker_odoo.py v5.24.0 ·
+scripts/odoo_build_cache.py v1.7.0 · getScripts.py v9.29.0 ·
+tests/test_update_docker_odoo.py · tests/test_odoo_build_cache.py ·
+tests/test_getscripts_odoo_user.py · docs/COMPONENTS.md · docs/usage/09-reference.md ·
+usage/AGENT.md*
+
+On a server built from a Debian cloud image, `ls -l` showed the Odoo data
+directory as owned by `debian`. The Dockerfiles created the odoo user without a
+UID, so it got the base image's first free one - 1000 on most images - and on
+the host that number belongs to whoever has it there: `debian`, `ubuntu`, or an
+administrator's account. The owner shown therefore differed from server to
+server.
+
+### Changed
+
+- **The odoo user is UID/GID 8069 in every image.** The Dockerfiles now run
+  `addgroup --gid 8069 odoo && adduser --uid 8069 --gid 8069 ...`. `adduser`
+  hands out login UIDs upwards from 1000, so 8069 does not collide with the
+  cloud image's default user or the accounts created after it.
+- **Existing installations get the pin with their next `doup`.** A build
+  folder's Dockerfile is the customer's file and is never redistributed.
+  `odoo_build_cache.py` therefore swaps the repository's own unpinned adduser
+  line for the pinned one, with the usual `.bak_<timestamp>` backup. A
+  customer's own adduser variant is reported, not touched.
+- **`doup` hands the data volume to the new UID before the image starts.**
+  `bin/boot` changes ownership only on an empty data directory, so the rebuilt
+  image could otherwise no longer write its filestore and sessions. After the
+  build, `update_docker_odoo.py` checks `/opt/odoo/data` inside the new image
+  with the instance's own volume flags and, if it belongs to another UID, runs
+  `chown -R` once. The step shows as `data owner uid 1000 -> 8069`; on a large
+  filestore it takes minutes. Afterwards the check finds nothing and costs one
+  short `docker run` per update. If the chown fails, the run reports an error
+  with the command to run by hand and still starts the container.
+- **`ups` creates the matching host user.** Run as root, `getScripts.py` adds
+  the account `odoo` with UID/GID 8069 - no home, no login shell, locked - so
+  `ls -l` on a data volume shows `odoo odoo` instead of a bare number. It only
+  creates: an existing `odoo` with another UID, as a native Odoo installation
+  has, or another account holding 8069 is named in the install summary and
+  left alone.
+
+### Fixed
+
+- **`odoo_build_cache.py` no longer splits a multi-line HEALTHCHECK.** It took
+  HEALTHCHECK's continuation line `CMD wget ...` for a `CMD` instruction of its
+  own. In a Dockerfile without `ENTRYPOINT` a missing `EXPOSE` was then
+  inserted between the two halves, and the safety check refused the whole
+  patch. Installations with an `ENTRYPOINT` - all of ours - were not affected.
+
 ## A Failed Odoo Update No Longer Reports "ok" (30.09.2026)
 
 *Dockerfiles/v16-odoo/bin/boot v2.5.0 · Dockerfiles/v18-odoo/bin/boot v2.5.0 ·

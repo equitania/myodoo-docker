@@ -1,8 +1,8 @@
 #!/usr/bin/python3
 # -*- coding: utf-8 -*-
 # This script performs an update of an Odoo database in a Docker container
-# Version 5.23.0
-# Date 30.09.2026
+# Version 5.24.0
+# Date 07.10.2026
 ##############################################################################
 #
 #    Shell Script for Odoo, Open Source Management Solution
@@ -77,8 +77,8 @@ logger = logging.getLogger(__name__)
 # Kept in sync with the header comment above. Printed at the start of every run
 # so a pasted log says which version produced it — the single most common
 # question when a report comes back from a server.
-SCRIPT_VERSION = "5.23.0"
-SCRIPT_DATE = "15.09.2026"
+SCRIPT_VERSION = "5.24.0"
+SCRIPT_DATE = "07.10.2026"
 
 # Set by --no-cache. A module-level flag rather than another parameter through
 # process_container(): the build is six call levels below the argument parser,
@@ -1542,6 +1542,83 @@ def verify_built_image(image):
             "<this script>", os.path.basename(sys.argv[0])))
 
 
+# Run inside the new image as root, with the instance's own volume flags, so it
+# sees /opt/odoo/data exactly as Odoo will - bind mount or named volume alike,
+# without parsing the raw 'volume' string. Prints one line only when the data
+# directory or one of its direct entries belongs to someone other than the
+# image's odoo user; a deeper check would walk the whole filestore on every run.
+DATA_OWNERSHIP_PROBE = (
+    'd=/opt/odoo/data; [ -d "$d" ] || exit 0; '
+    'u=$(id -u odoo 2>/dev/null) || exit 0; g=$(id -g odoo); '
+    'f=$(find "$d" -maxdepth 1 ! -uid "$u" -print -quit); '
+    '[ -z "$f" ] || echo "ownership-mismatch $u:$g $(stat -c %u "$f")"')
+
+
+def align_data_ownership(image, volume):
+    """Hand the data volume to the odoo user of the freshly built image.
+
+    The odoo user's UID became fixed on 07.10.2026 (8069, see the Dockerfiles).
+    Before, it was the first free UID of the base image - 1000 on most - so an
+    existing data volume belongs to the old number, and the rebuilt image's
+    Odoo could no longer write its filestore or sessions. bin/boot cannot fix
+    this: it changes ownership only on an EMPTY data directory.
+
+    Runs after the build and before the first start of the new image; the old
+    container is already removed, so nothing writes to the data meanwhile. Once
+    the volume matches, the probe finds nothing and this costs one short
+    'docker run' per update.
+
+    A failed chown is reported as an error but does not abort the update: the
+    old image is gone at this point, and a running container with a write
+    problem beats no container at all.
+
+    Args:
+        image: Image name without a tag (the build tags it as-is)
+        volume: The instance's raw docker run volume flags ('' for none)
+
+    Returns:
+        tuple: (info_count, warning_count, error_count)
+    """
+    if not (volume or "").strip():
+        return 0, 0, 0              # no volume: the data lives in the container
+    run_prefix = f"docker run --rm --user 0 --entrypoint /bin/sh {volume} {image} -c"
+    success, output, *_ = run_command(
+        f"{run_prefix} '{DATA_OWNERSHIP_PROBE}'",
+        show_output=False, filter_output=True, timeout=300)
+    if not success:
+        message = (f"Could not check the owner of /opt/odoo/data for {image} - "
+                   "if Odoo cannot write its filestore after this update, run: "
+                   f"docker run --rm --user 0 --entrypoint chown {volume} {image} "
+                   "-R odoo:odoo /opt/odoo/data")
+        logger.warning(message)
+        note_issue("WARNING", message)
+        return 0, 1, 0
+
+    match = re.search(r"ownership-mismatch (\d+):(\d+) (\d+)", output or "")
+    if not match:
+        logger.debug("Data volume already belongs to the image's odoo user")
+        return 0, 0, 0
+
+    uid, gid, old_uid = match.groups()
+    logger.info(f"Data volume belongs to UID {old_uid}, the image's odoo user is "
+                f"{uid} - changing owner (one-time migration)")
+    success, *_ = run_stream(
+        f"data owner uid {old_uid} -> {uid}",
+        f"{run_prefix} 'chown -R {uid}:{gid} /opt/odoo/data'",
+        show_output=False, filter_output=True, show_progress=True,
+        progress_msg="  changing owner of /opt/odoo/data",
+        timeout=7200)       # a filestore of 100+ GB takes a while
+    if success:
+        return 1, 0, 0
+    message = (f"Changing the owner of /opt/odoo/data to {uid}:{gid} failed - "
+               "Odoo will not be able to write its filestore. Run by hand: "
+               f"docker run --rm --user 0 --entrypoint chown {volume} {image} "
+               f"-R {uid}:{gid} /opt/odoo/data")
+    logger.error(message)
+    note_issue("ERROR", message)
+    return 0, 0, 1
+
+
 def copy_pre_build_files(container, path):
     """Copy customer-specific files/directories into the build folder before docker build.
 
@@ -2217,6 +2294,14 @@ def _process_container(container, proxy_settings=None, dockerfiles_source=None,
         except:
             pass
         return False, total_info, total_warnings, total_errors
+
+    # The new image's odoo user may carry another UID than the one the data
+    # volume was written with (UID pinned to 8069 on 07.10.2026) - fix that
+    # before the image's first run, whichever update type follows.
+    info, warn, err = align_data_ownership(image, volume)
+    total_info += info
+    total_warnings += warn
+    total_errors += err
 
     # Set translation parameter
     load_translation = " --i18n-overwrite --load-language=all" if translation.upper() == "Y" else ""

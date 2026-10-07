@@ -5,8 +5,8 @@
 # Description:      Share one host-side cache of Odoo release archives across
 #                   every instance on the server, so a build downloads only
 #                   what actually changed.
-# Version:          1.6.0
-# Date:             17.08.2026
+# Version:          1.7.0
+# Date:             07.10.2026
 # Author:           Equitania Software GmbH
 # ==============================================================================
 # Why this exists:
@@ -37,7 +37,8 @@
 # created — HEALTHCHECK, March 2026 — therefore never arrives. `sync
 # --reference <repo Dockerfile>` inserts the image directives that are missing,
 # aligns an ADD with the COPY the reference carries where the two are the same
-# operation, and reports everything else it finds instead of touching it.
+# operation, pins the odoo user's UID where the line is still the repository's
+# own unpinned one, and reports everything else it finds instead of touching it.
 #
 # The odoo.conf beside that reference is treated the same way and for the same
 # reason: it is never distributed either — it holds the customer's passwords —
@@ -81,8 +82,8 @@ import urllib.request
 import zipfile
 from urllib.parse import urlsplit
 
-SCRIPT_VERSION = "1.6.0"
-SCRIPT_DATE = "17.08.2026"
+SCRIPT_VERSION = "1.7.0"
+SCRIPT_DATE = "07.10.2026"
 
 CACHE_ROOT_DEFAULT = "/opt/odoo-build-cache"
 ZIP_DIR = "zips"
@@ -149,6 +150,21 @@ ADD_REMOTE_PREFIXES = ("http://", "https://", "git://", "git@", "ssh://")
 # line carrying one of them is not a plain file copy any more.
 ADD_KEPT_FLAGS = ("--chown=", "--chmod=", "--link")
 ADD_GLOB_CHARACTERS = "*?["
+
+# The odoo user got a fixed UID/GID (8069) on 07.10.2026. Unpinned, adduser took
+# the first free UID — 1000 on most base images, which on the host belongs to
+# the cloud image's "debian" or "ubuntu" user — so the data volume's owner was a
+# stranger's name and differed between servers. These are the lines the
+# repository itself wrote; only they are swapped for the pinned form the
+# reference carries. A customer's own variant is reported, never touched.
+#
+# Unlike ADD→COPY this rewrite DOES change the image: its files belong to 8069
+# afterwards. update_docker_odoo.py hands the data volume to the image's odoo
+# user before the rebuilt image first starts (align_data_ownership), which is
+# what makes the swap safe to apply automatically.
+UNPINNED_USER_LINES = (
+    'RUN adduser --home=/opt/odoo --disabled-password --gecos "" --shell=/bin/bash odoo',
+)
 
 # odoo.conf is the customer's file — it carries their admin and database
 # passwords, their worker count, their dbfilter — so update_docker_odoo.py never
@@ -385,10 +401,17 @@ def _keyword(line):
 
 
 def _find_directive(lines, keyword):
-    """Index of the first line starting `keyword`, or -1."""
+    """Index of the first line starting `keyword`, or -1.
+
+    A continuation line is part of the instruction above it, not one of its
+    own: HEALTHCHECK's `    CMD wget ...` is not a CMD, and taking it for one
+    put the next inserted directive between the two halves of the HEALTHCHECK.
+    """
+    continued = False
     for index, line in enumerate(lines):
-        if _keyword(line) == keyword:
+        if not continued and _keyword(line) == keyword:
             return index
+        continued = line.rstrip().endswith("\\")
     return -1
 
 
@@ -516,6 +539,30 @@ def _apply_add_to_copy(lines, reference_lines):
     return rewrites
 
 
+def _apply_pinned_user(lines, reference_lines):
+    """Swap the repository's unpinned adduser for the pinned one. Returns the
+    rewrites.
+
+    Only a line that is exactly one of UNPINNED_USER_LINES qualifies, and only
+    when the reference carries a pinned adduser (one with --uid) to replace it
+    with — so this stays a no-op against an older repository checkout.
+    """
+    pinned = [line.strip() for line in reference_lines
+              if _keyword(line) == "RUN" and "adduser" in line and "--uid" in line
+              and not line.rstrip().endswith("\\")]
+    if not pinned:
+        return []
+    unpinned = {_normalise(line) for line in UNPINNED_USER_LINES}
+    rewrites = []
+    for index, line in enumerate(lines):
+        if line.rstrip().endswith("\\") or _normalise(line) not in unpinned:
+            continue
+        indent = line[:len(line) - len(line.lstrip())]
+        rewrites.append((line.strip(), pinned[0]))
+        lines[index] = indent + pinned[0]
+    return rewrites
+
+
 def _apply_reference(lines, reference_lines):
     """Fill in image directives the reference has and this file lacks.
 
@@ -568,6 +615,8 @@ def ensure_dockerfile_current(path, reference=None):
       * every image directive the reference Dockerfile carries must be present
       * an ADD the reference carries as COPY is aligned where the two do the
         same thing
+      * the repository's own unpinned adduser is swapped for the pinned one
+        (see UNPINNED_USER_LINES)
 
     The second job exists because sync_build_scripts() in update_docker_odoo.py
     distributes build_odoo.py, check_dockerimage_odoo.py and bin/ but never the
@@ -580,9 +629,11 @@ def ensure_dockerfile_current(path, reference=None):
     This file belongs to the customer, so every change here is one whose effect
     on the build is provably nil: the `RUN ` keyword is replaced by the mount
     and the rest of the line is carried over verbatim, only entirely absent
-    image directives are inserted, and the sole rewrite of a line's content is
-    ADD→COPY where the two are the same operation and the reference already
-    carries exactly that COPY. The result is compared instruction by
+    image directives are inserted, and a line's content is rewritten in two
+    cases only: ADD→COPY where the two are the same operation and the reference
+    already carries exactly that COPY, and the UID pin of the odoo user, whose
+    one consequence — the data volume's owner — update_docker_odoo.py handles
+    before the image starts. The result is compared instruction by
     instruction against the original before it is written. Whatever cannot be
     changed safely is reported instead.
     """
@@ -604,6 +655,7 @@ def ensure_dockerfile_current(path, reference=None):
         # Before the comparison, so an ADD that only needs its keyword aligned
         # is corrected instead of reported for the rest of time.
         rewrites = _apply_add_to_copy(lines, reference_lines)
+        rewrites += _apply_pinned_user(lines, reference_lines)
         added, missing = _apply_reference(lines, reference_lines)
         if added or rewrites:
             changed = True

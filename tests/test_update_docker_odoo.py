@@ -443,6 +443,74 @@ class VerifyBuiltImageTest(unittest.TestCase):
         self.assertTrue(usable)
 
 
+class AlignDataOwnershipTest(unittest.TestCase):
+    """The odoo user's UID is pinned to 8069 since 07.10.2026. An existing data
+    volume still belongs to the old UID (mostly 1000), and bin/boot changes
+    ownership only on an empty data directory - so doup hands the volume over
+    before the rebuilt image first starts."""
+
+    VOLUME = "--network net -v /opt/odoo/inst:/opt/odoo/data"
+
+    def setUp(self):
+        self.commands = []
+        self.originals = (udo.run_command, udo.run_stream)
+        udo.RUN_ISSUES.clear()
+
+    def tearDown(self):
+        udo.run_command, udo.run_stream = self.originals
+        udo.RUN_ISSUES.clear()
+
+    def fake_docker(self, probe_output="", probe_ok=True, chown_ok=True):
+        def run_command(command, *_args, **_kwargs):
+            self.commands.append(command)
+            return (probe_ok, probe_output, 0, 0, 0)
+
+        def run_stream(_label, command, **_kwargs):
+            self.commands.append(command)
+            return (chown_ok, "", 0, 0, 0)
+        udo.run_command = run_command
+        udo.run_stream = run_stream
+
+    def test_no_volume_means_nothing_to_do(self):
+        self.fake_docker()
+        self.assertEqual(udo.align_data_ownership("odoo/inst", ""), (0, 0, 0))
+        self.assertEqual(self.commands, [])
+
+    def test_a_matching_volume_is_left_alone(self):
+        self.fake_docker(probe_output="")
+        self.assertEqual(udo.align_data_ownership("odoo/inst", self.VOLUME), (0, 0, 0))
+        self.assertEqual(len(self.commands), 1, "only the probe should have run")
+
+    def test_the_probe_runs_in_the_new_image_with_the_instance_volume(self):
+        self.fake_docker()
+        udo.align_data_ownership("odoo/inst", self.VOLUME)
+        probe = self.commands[0]
+        self.assertIn("--user 0", probe)
+        self.assertIn(self.VOLUME, probe)
+        self.assertIn("odoo/inst -c", probe)
+        self.assertIn("id -u odoo", probe)
+
+    def test_a_mismatch_is_migrated_to_the_image_uid(self):
+        self.fake_docker(probe_output="ownership-mismatch 8069:8069 1000\n")
+        self.assertEqual(udo.align_data_ownership("odoo/inst", self.VOLUME), (1, 0, 0))
+        self.assertEqual(len(self.commands), 2)
+        self.assertIn("chown -R 8069:8069 /opt/odoo/data", self.commands[1])
+        self.assertIn(self.VOLUME, self.commands[1])
+
+    def test_a_failed_chown_is_an_error_with_the_manual_command(self):
+        self.fake_docker(probe_output="ownership-mismatch 8069:8069 1000\n",
+                         chown_ok=False)
+        self.assertEqual(udo.align_data_ownership("odoo/inst", self.VOLUME), (0, 0, 1))
+        _context, level, text = udo.RUN_ISSUES[-1]
+        self.assertEqual(level, "ERROR")
+        self.assertIn("--entrypoint chown", text)
+
+    def test_a_failed_probe_is_a_warning_not_an_abort(self):
+        self.fake_docker(probe_ok=False)
+        self.assertEqual(udo.align_data_ownership("odoo/inst", self.VOLUME), (0, 1, 0))
+        self.assertEqual(len(self.commands), 1)
+
+
 class BuildLooksHollowTest(unittest.TestCase):
     """The retry after a failed build hangs off this predicate, so it has to
     separate the sporadic Docker defect from a real build failure. Retrying a

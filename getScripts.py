@@ -147,8 +147,8 @@ if os.environ.get('GETSCRIPTS_DEBUG', '').lower() in ('1', 'true', 'yes'):
     logger.debug("Debug logging enabled")
 
 # Script version and date
-SCRIPT_VERSION = "9.28.0"
-SCRIPT_DATE = "29.09.2026"
+SCRIPT_VERSION = "9.29.0"
+SCRIPT_DATE = "07.10.2026"
 
 # Branch of myodoo-docker this server tracks - the single source of truth for
 # main() (update_repository() call) and self_update_and_reexec() (which must
@@ -4176,6 +4176,82 @@ RETIRED_SCRIPTS = {
 }
 
 
+# The Odoo images create their odoo user with this UID/GID (pinned 07.10.2026,
+# see Dockerfiles/v*-odoo/Dockerfile). A host account with the same number makes
+# `ls -l` on a data volume show "odoo" instead of a bare 8069 - or, before the
+# pin, the name of whichever host user happened to own UID 1000.
+ODOO_HOST_USER = "odoo"
+ODOO_HOST_UID = 8069
+
+
+def ensure_odoo_host_user() -> None:
+    """Create the host account that matches the image's odoo user. Never fatal.
+
+    Only creates, never changes: an existing 'odoo' with another number may
+    belong to a native Odoo installation, and another account holding 8069 is
+    someone else's. Both are reported and left alone. The account has no home
+    and no login shell - it exists so the number has a name, nothing more.
+    """
+    import grp
+    import pwd
+
+    label = f"host user {ODOO_HOST_USER} ({ODOO_HOST_UID})"
+    if os.geteuid() != 0:
+        record_install(label, "skipped", "needs root")
+        return
+
+    def error_text(result):
+        text = result.stderr or b""
+        return (text.decode(errors="replace") if isinstance(text, bytes) else text).strip()
+
+    def lookup(function, key):
+        try:
+            return function(key)
+        except KeyError:
+            return None
+
+    by_uid = lookup(pwd.getpwuid, ODOO_HOST_UID)
+    by_name = lookup(pwd.getpwnam, ODOO_HOST_USER)
+    group_by_gid = lookup(grp.getgrgid, ODOO_HOST_UID)
+    group_by_name = lookup(grp.getgrnam, ODOO_HOST_USER)
+
+    if by_uid and by_uid.pw_name == ODOO_HOST_USER:
+        record_install(label, "ok")
+        return
+    conflict = None
+    if by_uid:
+        conflict = f"UID {ODOO_HOST_UID} belongs to '{by_uid.pw_name}'"
+    elif by_name:
+        conflict = f"'{ODOO_HOST_USER}' exists with UID {by_name.pw_uid}"
+    elif group_by_gid and group_by_gid.gr_name != ODOO_HOST_USER:
+        conflict = f"GID {ODOO_HOST_UID} belongs to group '{group_by_gid.gr_name}'"
+    elif group_by_name and group_by_name.gr_gid != ODOO_HOST_UID:
+        conflict = f"group '{ODOO_HOST_USER}' exists with GID {group_by_name.gr_gid}"
+    if conflict:
+        logger.warning(f"Not creating the host user {ODOO_HOST_USER}: {conflict} - "
+                       f"the Odoo data volumes show up as UID {ODOO_HOST_UID} in ls -l")
+        record_install(label, "skipped", conflict)
+        return
+
+    if not group_by_gid:
+        result = run_command(f"groupadd -g {ODOO_HOST_UID} {ODOO_HOST_USER}",
+                             shell=True, capture_output=True, timeout=60)
+        if result.returncode != 0:
+            logger.warning(f"groupadd {ODOO_HOST_USER} failed: {error_text(result)}")
+            record_install(label, "failed", "groupadd failed")
+            return
+    result = run_command(
+        f"useradd -u {ODOO_HOST_UID} -g {ODOO_HOST_UID} -M -d /nonexistent "
+        f"-s /usr/sbin/nologin -c 'Odoo container user' {ODOO_HOST_USER}",
+        shell=True, capture_output=True, timeout=60)
+    if result.returncode != 0:
+        logger.warning(f"useradd {ODOO_HOST_USER} failed: {error_text(result)}")
+        record_install(label, "failed", "useradd failed")
+        return
+    logger.info(f"Created host user {ODOO_HOST_USER} with UID/GID {ODOO_HOST_UID}")
+    record_install(label, "installed")
+
+
 def remove_retired_scripts(_myhome: str) -> None:
     """Delete the scripts this project has withdrawn. Never fatal."""
     for name, reason in RETIRED_SCRIPTS.items():
@@ -5853,6 +5929,9 @@ def main() -> None:
         # Fish installation - a retired script would otherwise outlive its
         # replacement on every server that already had Fish.
         remove_retired_scripts(_myhome)
+
+        # Give the image's odoo UID a name on the host (see ODOO_HOST_UID).
+        ensure_odoo_host_user()
 
         # Convert leftover CSV configurations to YAML. Must run AFTER
         # copy_scripts (which delivers ownerp_migrate.py) and BEFORE the legacy

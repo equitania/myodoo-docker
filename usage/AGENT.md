@@ -113,6 +113,11 @@ python3 ~/update_docker_odoo.py -s live-odoo -v  # single container, verbose
 # bin/boot 2.5.0/2.8.0 dropped Odoo's status). After a failed update the container is NOT running.
 # Since 5.23.0 a container also fails - BEFORE anything is stopped - when odoo_version in
 # docker2update.yaml names another Odoo version than the release (kernel archive in release.file).
+# Since 5.24.0 the image's odoo user is UID/GID 8069 (was the base image's first free UID, mostly
+# 1000). The first doup after that change chowns /opt/odoo/data to 8069 once, before the new image
+# starts ("data owner uid 1000 -> 8069"); a 100+ GB filestore takes minutes. Do not chown back.
+# getScripts >= 9.29.0 (ups, as root) creates the matching host user odoo:8069 (nologin, locked);
+# an existing odoo with another UID or another owner of 8069 is left alone (install summary).
 ```
 Per-container `type`: `F` full update · `M` modules only · `N` neutralize then update.
 

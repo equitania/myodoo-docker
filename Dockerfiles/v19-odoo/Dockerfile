@@ -5,9 +5,12 @@ LABEL maintainer=info@ownerp.com
 # Date 14.07.2026 - Replaced ADD with COPY for bin/ (security hardening, avoid unintended tar auto-extraction)
 # Date 12.08.2026 - Base image carries geoip-refresh, which bin/boot calls; Python 3.13.15
 # Date 17.08.2026 - ca-certificates/ carries an installation's internal CA (LDAP over STARTTLS)
+# Date 07.10.2026 - odoo user pinned to UID/GID 8069
 
-# create the odoo user
-RUN adduser --home=/opt/odoo --disabled-password --gecos "" --shell=/bin/bash odoo
+# create the odoo user with a fixed UID/GID: 8069 on every server, so the
+# data volume carries the same owner everywhere. Unpinned, adduser took the
+# first free UID (typically 1000), which belongs to "debian" or "ubuntu" on cloud images.
+RUN addgroup --gid 8069 odoo && adduser --uid 8069 --gid 8069 --home=/opt/odoo --disabled-password --gecos "" --shell=/bin/bash odoo
 RUN chown -R odoo:odoo /opt/odoo/
 
 # changing user is required by odoo which won't start with root

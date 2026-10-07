@@ -679,6 +679,79 @@ COPY *custom_modules.zip /opt/odoo/
         self.assertTrue(content.startswith("FROM registry.invalid/prepare:1.0"))
 
 
+class PinnedUserTest(unittest.TestCase):
+    """The odoo user's UID is pinned to 8069 since 07.10.2026. A build folder's
+    Dockerfile is the customer's and never redistributed, so without this
+    rewrite the pin would never reach an existing installation."""
+
+    UNPINNED_LINE = obc.UNPINNED_USER_LINES[0]
+    REPO_DOCKERFILE = os.path.join(os.path.dirname(__file__), "..",
+                                   "Dockerfiles", "v19-odoo", "Dockerfile")
+
+    def setUp(self):
+        self.tmp = tempfile.mkdtemp()
+
+    def _run(self, user_line, reference=None):
+        path = write(os.path.join(self.tmp, "Dockerfile"),
+                     "FROM registry.invalid/prepare:1.0\n"
+                     f"{user_line}\n"
+                     "RUN chown -R odoo:odoo /opt/odoo/\n"
+                     "USER odoo\n"
+                     "RUN cd /opt/odoo/ && python3 build_odoo.py\n")
+        changed = obc.ensure_dockerfile_current(path, reference or self.REPO_DOCKERFILE)
+        return changed, open(path, encoding="utf8").read()
+
+    def test_the_repository_dockerfiles_are_pinned(self):
+        for version in ("16", "18", "19"):
+            path = os.path.join(os.path.dirname(__file__), "..", "Dockerfiles",
+                                f"v{version}-odoo", "Dockerfile")
+            content = open(path, encoding="utf8").read()
+            self.assertIn("adduser --uid 8069 --gid 8069", content, path)
+            self.assertIn("addgroup --gid 8069 odoo", content, path)
+            self.assertNotIn(self.UNPINNED_LINE, content, path)
+
+    def test_the_unpinned_line_is_swapped_for_the_pinned_one(self):
+        changed, content = self._run(self.UNPINNED_LINE)
+        self.assertTrue(changed)
+        self.assertIn("RUN addgroup --gid 8069 odoo && adduser --uid 8069", content)
+        self.assertNotIn(self.UNPINNED_LINE, content)
+
+    def test_the_rest_of_the_file_is_untouched(self):
+        _, content = self._run(self.UNPINNED_LINE)
+        self.assertIn("RUN chown -R odoo:odoo /opt/odoo/\nUSER odoo\n", content)
+        self.assertTrue(content.startswith("FROM registry.invalid/prepare:1.0"))
+
+    def test_a_backup_is_written(self):
+        self._run(self.UNPINNED_LINE)
+        self.assertTrue(any(name.startswith("Dockerfile.bak_")
+                            for name in os.listdir(self.tmp)))
+
+    def test_is_idempotent(self):
+        self._run(self.UNPINNED_LINE)
+        path = os.path.join(self.tmp, "Dockerfile")
+        self.assertFalse(obc.ensure_dockerfile_current(path, self.REPO_DOCKERFILE))
+
+    def test_a_customer_variant_is_left_alone(self):
+        line = 'RUN adduser --uid 2000 --home=/opt/odoo --disabled-password --gecos "" odoo'
+        _, content = self._run(line)
+        self.assertIn(line, content)
+
+    def test_directives_go_around_a_multiline_healthcheck(self):
+        """Without ENTRYPOINT the insertion point used to be HEALTHCHECK's
+        continuation line `CMD wget ...`, splitting it - the guard then refused
+        the whole patch. Found while writing these tests."""
+        _, content = self._run(self.UNPINNED_LINE)
+        self.assertIn("--retries=3 \\\n    CMD wget", content)
+        self.assertIn("EXPOSE 8069 8072", content)
+
+    def test_nothing_happens_against_an_unpinned_reference(self):
+        """An older repository checkout has no pinned line to offer."""
+        reference = write(os.path.join(self.tmp, "OldReference"),
+                          "FROM x:1\n" + self.UNPINNED_LINE + "\n")
+        _, content = self._run(self.UNPINNED_LINE, reference)
+        self.assertIn(self.UNPINNED_LINE, content)
+
+
 class OdooConfTest(unittest.TestCase):
     """odoo.conf is never distributed — it carries the customer's passwords and
     tuning. So a setting the repository adds later never arrives either, and
