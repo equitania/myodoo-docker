@@ -10,6 +10,7 @@ Run from the repository root:
     python3 -m unittest tests.test_odoo_build_cache -v
 """
 
+import contextlib
 import http.server
 import io
 import os
@@ -735,6 +736,24 @@ class PinnedUserTest(unittest.TestCase):
         line = 'RUN adduser --uid 2000 --home=/opt/odoo --disabled-password --gecos "" odoo'
         _, content = self._run(line)
         self.assertIn(line, content)
+
+    def test_a_customer_chosen_uid_is_not_reported(self):
+        """A customer may pin another UID on purpose (documented in
+        docs/usage/04-updates.md); warning about it on every doup would teach
+        everyone to ignore these warnings."""
+        line = ('RUN addgroup --gid 1001 odoo && adduser --uid 1001 --gid 1001 '
+                '--home=/opt/odoo --disabled-password --gecos "" --shell=/bin/bash odoo')
+        output = io.StringIO()
+        with contextlib.redirect_stdout(output):
+            self._run(line)
+        self.assertNotIn("adduser", output.getvalue())
+
+    def test_an_unpinned_customer_variant_is_still_reported(self):
+        line = 'RUN adduser --home=/opt/odoo --disabled-password --gecos "" odoo'
+        output = io.StringIO()
+        with contextlib.redirect_stdout(output):
+            self._run(line)
+        self.assertIn("adduser --uid 8069", output.getvalue())
 
     def test_directives_go_around_a_multiline_healthcheck(self):
         """Without ENTRYPOINT the insertion point used to be HEALTHCHECK's

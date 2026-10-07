@@ -5,7 +5,7 @@
 # Description:      Share one host-side cache of Odoo release archives across
 #                   every instance on the server, so a build downloads only
 #                   what actually changed.
-# Version:          1.7.0
+# Version:          1.7.1
 # Date:             07.10.2026
 # Author:           Equitania Software GmbH
 # ==============================================================================
@@ -82,7 +82,7 @@ import urllib.request
 import zipfile
 from urllib.parse import urlsplit
 
-SCRIPT_VERSION = "1.7.0"
+SCRIPT_VERSION = "1.7.1"
 SCRIPT_DATE = "07.10.2026"
 
 CACHE_ROOT_DEFAULT = "/opt/odoo-build-cache"
@@ -563,6 +563,12 @@ def _apply_pinned_user(lines, reference_lines):
     return rewrites
 
 
+def _pins_odoo_uid(instruction):
+    """Whether an instruction creates the odoo user with a fixed UID."""
+    return (_keyword(instruction) == "RUN" and "adduser" in instruction
+            and "--uid" in instruction and instruction.rstrip().endswith(" odoo"))
+
+
 def _apply_reference(lines, reference_lines):
     """Fill in image directives the reference has and this file lacks.
 
@@ -590,6 +596,10 @@ def _apply_reference(lines, reference_lines):
         wanted = _normalise(instruction)
         # Opt-in instructions are not reported when absent (see the constant).
         if wanted in _OPTIONAL_NORMALISED:
+            continue
+        # A deliberately chosen UID is the customer's decision, not a defect:
+        # any adduser that pins a UID counts as the reference's pinned one.
+        if _pins_odoo_uid(wanted) and any(_pins_odoo_uid(have) for have in present):
             continue
         # An instruction the customer EXTENDED counts as present: their build
         # RUN reads `cd /opt/odoo/ && python3 build_odoo.py && pip3 install ...`

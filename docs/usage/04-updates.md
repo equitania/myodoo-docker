@@ -130,6 +130,69 @@ womit jeder Container über seinen veröffentlichten Port unerreichbar wäre. Au
 hier wird vorher eine `.bak_<Zeitstempel>` geschrieben, und der Schreibvorgang
 wird verweigert, sobald sich sonst irgendeine Einstellung ändern würde.
 
+<a id="de-odoo-uid-8069"></a>
+### Besitzer der Odoo-Daten: UID/GID 8069
+
+Seit 07.10.2026 legen die Images den Benutzer `odoo` mit der festen **UID/GID
+8069** an. Vorher bekam er die erste freie UID des Basis-Images, meist 1000. Auf
+dem Host gehört diese Nummer dem Standardbenutzer des Cloud-Images (`debian`,
+`ubuntu`) oder einem Admin-Konto, deshalb zeigte `ls -l` auf den Datenordnern je
+nach Server einen anderen, fremden Namen. Das Dateisystem speichert nur die
+Nummer, den Namen löst `ls` über die `/etc/passwd` **des Hosts** auf.
+
+**Umstellung pro Server, einmalig:** zuerst `ups`, dann `doup`.
+
+1. `ups` (getScripts ≥ 9.29.0) legt als root den Host-Benutzer `odoo` mit
+   UID/GID 8069 an: ohne Home, ohne Login-Shell, gesperrt. Ein vorhandenes
+   `odoo` mit anderer UID (etwa von einer nativen Odoo-Installation) oder ein
+   anderer Inhaber der 8069 bleibt unangetastet und steht in der
+   Install-Zusammenfassung.
+2. `doup` (update_docker_odoo ≥ 5.24.0, odoo_build_cache ≥ 1.7.0) ersetzt im
+   Dockerfile des Build-Ordners die alte `adduser`-Zeile durch die mit
+   `--uid 8069` (mit `.bak_<Zeitstempel>`). Nach dem Build und vor dem ersten
+   Start prüft es `/opt/odoo/data` im neuen Image und übergibt die Daten einmal
+   per `chown -R` an dessen odoo-Benutzer. In der Ausgabe erscheint das als
+   `data owner uid 1000 -> 8069`. Bei großen Filestores dauert das Minuten,
+   danach kostet die Prüfung pro Lauf ein kurzes `docker run`.
+
+Prüfen:
+
+```fish
+ls -ln /opt/odoo                       # Besitzer der Datenordner als Nummer
+docker exec <container> id odoo        # erwartet: uid=8069(odoo) gid=8069(odoo)
+getent passwd 8069                     # erwartet: odoo:x:8069:8069:...
+```
+
+`docker exec <container> id` ohne `odoo` zeigt immer root: Der Container startet
+als root und gibt erst beim Start von Odoo an `odoo` ab (siehe unten).
+
+**Zeigt `ls -l` nach `doup` noch den alten Namen**, zuerst die Skriptversionen
+prüfen (`grep -m1 SCRIPT_VERSION ~/update_docker_odoo.py ~/odoo_build_cache.py
+~/getScripts.py`). Beim ersten Server lag es genau daran, dass `ups` noch nicht
+gelaufen war. Liegt danach im Build-Ordner kein neues `Dockerfile.bak_…` und
+meldet `doup` „missing a repository instruction … adduser“, weicht die
+`adduser`-Zeile des Kunden von der Original-Zeile ab und muss von Hand angepasst
+werden.
+
+**Warum nicht `docker run --user`:** Die Images starten bewusst als root. Erst
+`bin/boot` setzt die Rechte auf ein leeres Datenverzeichnis und startet Odoo per
+`su - odoo`, Odoo selbst läuft also nie als root. Mit `--user` scheitert dieses
+`su`, und der Container startet nicht. Die UID gehört deshalb ins Image.
+
+**Eine andere UID wählen** (z. B. wenn ein Kunde eine eigene Benutzerverwaltung
+hat): im Dockerfile des Build-Ordners beide Nummern in der `adduser`-Zeile
+ändern, den Host-Benutzer anpassen, dann `doup`. Die Rechteanpassung der Daten
+folgt automatisch (`data owner uid 8069 -> <neu>`). Eine Zeile mit eigener
+`--uid` lässt `odoo_build_cache.py` stehen und meldet sie nicht als Abweichung
+(≥ 1.7.1). Die Nummer darf auf dem Host keinem anderen Konto gehören und sollte
+nicht unter 1000 liegen. `ups` meldet danach in der Zusammenfassung, dass es den
+Host-Benutzer 8069 nicht anlegt, weil `odoo` schon existiert. Das ist gewollt.
+
+```fish
+# Host-Benutzer von 8069 auf z. B. 1001 umstellen (als root)
+groupmod -g 1001 odoo; usermod -u 1001 -g 1001 odoo
+```
+
 ---
 
 <a id="english"></a>
@@ -252,3 +315,64 @@ warns when it is unset, and **Odoo 20 changes the default to `127.0.0.1`**, whic
 would leave every container unreachable through its published port. A
 `.bak_<timestamp>` is written first here too, and the write is refused as soon as
 any other setting would change.
+
+<a id="en-odoo-uid-8069"></a>
+### Owner of the Odoo data: UID/GID 8069
+
+Since 07.10.2026 the images create the `odoo` user with the fixed **UID/GID
+8069**. Before, it got the base image's first free UID, mostly 1000. On the host
+that number belongs to the cloud image's default user (`debian`, `ubuntu`) or an
+administrator's account, so `ls -l` on the data folders showed a different,
+foreign name depending on the server. The file system stores only the number;
+`ls` resolves the name through the **host's** `/etc/passwd`.
+
+**Switching a server over, once:** first `ups`, then `doup`.
+
+1. `ups` (getScripts ≥ 9.29.0), run as root, creates the host user `odoo` with
+   UID/GID 8069: no home, no login shell, locked. An existing `odoo` with another
+   UID (for example from a native Odoo installation) or another owner of 8069 is
+   left alone and named in the install summary.
+2. `doup` (update_docker_odoo ≥ 5.24.0, odoo_build_cache ≥ 1.7.0) replaces the
+   old `adduser` line in the build folder's Dockerfile with the one carrying
+   `--uid 8069` (with a `.bak_<timestamp>`). After the build and before the first
+   start it checks `/opt/odoo/data` inside the new image and hands the data to
+   its odoo user once with `chown -R`. The output shows this as
+   `data owner uid 1000 -> 8069`. Large filestores take minutes; afterwards the
+   check costs one short `docker run` per run.
+
+Check:
+
+```fish
+ls -ln /opt/odoo                       # owner of the data folders as a number
+docker exec <container> id odoo        # expected: uid=8069(odoo) gid=8069(odoo)
+getent passwd 8069                     # expected: odoo:x:8069:8069:...
+```
+
+`docker exec <container> id` without `odoo` always shows root: the container
+starts as root and hands over to `odoo` only when it starts Odoo (see below).
+
+**If `ls -l` still shows the old name after `doup`**, check the script versions
+first (`grep -m1 SCRIPT_VERSION ~/update_docker_odoo.py ~/odoo_build_cache.py
+~/getScripts.py`). On the first server that was exactly the cause: `ups` had not
+run yet. If the build folder then has no new `Dockerfile.bak_…` and `doup`
+reports "missing a repository instruction … adduser", the customer's `adduser`
+line differs from the original line and has to be adjusted by hand.
+
+**Why not `docker run --user`:** the images start as root on purpose. Only
+`bin/boot` sets the rights on an empty data directory and starts Odoo through
+`su - odoo`, so Odoo itself never runs as root. With `--user` that `su` fails
+and the container does not start. The UID therefore belongs in the image.
+
+**Choosing another UID** (for example when a customer has their own user
+management): change both numbers in the `adduser` line of the build folder's
+Dockerfile, adjust the host user, then `doup`. The data follows automatically
+(`data owner uid 8069 -> <new>`). `odoo_build_cache.py` leaves a line with its
+own `--uid` in place and does not report it as a deviation (≥ 1.7.1). The number
+must not belong to another account on the host and should not be below 1000.
+`ups` then reports in its summary that it does not create the host user 8069
+because `odoo` already exists. That is intended.
+
+```fish
+# Move the host user from 8069 to e.g. 1001 (as root)
+groupmod -g 1001 odoo; usermod -u 1001 -g 1001 odoo
+```

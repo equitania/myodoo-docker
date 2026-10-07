@@ -4,10 +4,10 @@
 
 *Dockerfiles/v16-odoo/Dockerfile · Dockerfiles/v18-odoo/Dockerfile ·
 Dockerfiles/v19-odoo/Dockerfile · scripts/update_docker_odoo.py v5.24.0 ·
-scripts/odoo_build_cache.py v1.7.0 · getScripts.py v9.29.0 ·
+scripts/odoo_build_cache.py v1.7.1 · getScripts.py v9.29.0 ·
 tests/test_update_docker_odoo.py · tests/test_odoo_build_cache.py ·
-tests/test_getscripts_odoo_user.py · docs/COMPONENTS.md · docs/usage/09-reference.md ·
-usage/AGENT.md*
+tests/test_getscripts_odoo_user.py · docs/COMPONENTS.md · docs/usage/04-updates.md ·
+docs/usage/08-troubleshooting.md · docs/usage/09-reference.md · usage/AGENT.md*
 
 On a server built from a Debian cloud image, `ls -l` showed the Odoo data
 directory as owned by `debian`. The Dockerfiles created the odoo user without a
@@ -26,7 +26,9 @@ server.
   folder's Dockerfile is the customer's file and is never redistributed.
   `odoo_build_cache.py` therefore swaps the repository's own unpinned adduser
   line for the pinned one, with the usual `.bak_<timestamp>` backup. A
-  customer's own adduser variant is reported, not touched.
+  customer's own adduser variant is reported, not touched - unless it pins a
+  UID of its own: a deliberately chosen UID is not a deviation (v1.7.1). The
+  procedure for choosing another UID is in `docs/usage/04-updates.md`.
 - **`doup` hands the data volume to the new UID before the image starts.**
   `bin/boot` changes ownership only on an empty data directory, so the rebuilt
   image could otherwise no longer write its filestore and sessions. After the

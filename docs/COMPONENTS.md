@@ -373,7 +373,7 @@ in this repository, stay in `CLAUDE.md`.
   installation is patched by hand when it needs them — together with the
   directory, because the `COPY` fails without it
 
-#### 5. odoo_build_cache.py (v1.7.0)
+#### 5. odoo_build_cache.py (v1.7.1)
 - **Purpose**: Host-side cache of Odoo release archives, shared by every instance
 - **Why**: `build_odoo.py` runs inside the build container and re-downloads all
   several hundred archives on every build; the Docker layer holding them is
@@ -412,7 +412,9 @@ in this repository, stay in `CLAUDE.md`.
   this changes the image — its files belong to 8069 afterwards — which is
   safe only because `update_docker_odoo.py` hands the data volume over before
   the image starts. A customer's own adduser variant is reported, never
-  touched. v1.7.0 also stops `_find_directive()` from taking a continuation
+  touched — and a customer line that pins its own `--uid` is not reported
+  as a deviation either (v1.7.1): a deliberately chosen UID is the
+  customer's decision (procedure in `docs/usage/04-updates.md`). v1.7.0 also stops `_find_directive()` from taking a continuation
   line (HEALTHCHECK's `    CMD wget ...`) for a directive of its own: in a
   Dockerfile without `ENTRYPOINT` a missing `EXPOSE` was inserted between the
   two halves of the HEALTHCHECK, and the guard then refused the whole patch

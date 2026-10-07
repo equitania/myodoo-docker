@@ -27,7 +27,7 @@ Alle Skripte des Repos (`scripts/`, Stand 28.09.2026):
 | `ownerp_console.py` (1.2.0) | Die Konsole: Serverzustand und Konfiguration bearbeiten, Vollbild. Startet nichts | `konsole` bzw. `python3 ownerp_console.py [--check]` |
 | `ownerp_state.py` (1.1.0) | Derselbe Zustand als Text, rein lesend; Exit `0`/`1`/`2` | `dostat` bzw. `python3 ownerp_state.py [--json]` |
 | `docker_table.py` (1.2.0) | `docker ps`/`docker images` als Tabelle, sortiert, Ports gekürzt | `dps` / `dpsall` / `dpi` bzw. `python3 docker_table.py [--details\|--images]` |
-| `odoo_build_cache.py` (1.7.0) | Release-Archiv-Cache aller Instanzen; pflegt zusätzlich Dockerfile und `odoo.conf` des Build-Ordners | von `doup` aufgerufen; `~/odoo_build_cache.py stats\|gc [--days 30]` |
+| `odoo_build_cache.py` (1.7.1) | Release-Archiv-Cache aller Instanzen; pflegt zusätzlich Dockerfile und `odoo.conf` des Build-Ordners | von `doup` aufgerufen; `~/odoo_build_cache.py stats\|gc [--days 30]` |
 | `container2backup.py` (4.9.1) | SQL+Filestore-Backups, Kompression/Verschlüsselung/Streaming | `dobk` bzw. `~/container2backup.py [--sql-only\|--validate]` |
 | `ownerp_validate.py` (1.1.0) | Rein lesende Schema-Prüfung von `docker2update.yaml`/`container2backup.yaml` | `doval` bzw. `~/ownerp_validate.py [--update PATH\|--backup PATH]` |
 | `ownerp_wizard.py` (1.2.0) | Geführtes Aufnehmen einer Instanz bzw. Ändern eines Feldes in `docker2update.yaml`/`container2backup.yaml`; prüft, bevor er ersetzt, und entfernt nie einen Eintrag | `wiz` bzw. `~/ownerp_wizard.py [--update PATH\|--backup PATH]` |
@@ -134,7 +134,7 @@ All scripts in this repository (`scripts/`, as of 28.09.2026):
 | `ownerp_console.py` (1.2.0) | The console: server state and configuration editing, full screen. Starts nothing | `konsole` or `python3 ownerp_console.py [--check]` |
 | `ownerp_state.py` (1.1.0) | The same state as text, read-only; exit `0`/`1`/`2` | `dostat` or `python3 ownerp_state.py [--json]` |
 | `docker_table.py` (1.2.0) | `docker ps`/`docker images` as a table, sorted, ports shortened | `dps` / `dpsall` / `dpi` or `python3 docker_table.py [--details\|--images]` |
-| `odoo_build_cache.py` (1.7.0) | Release archive cache shared by all instances; also maintains the build folder's Dockerfile and `odoo.conf` | called by `doup`; `~/odoo_build_cache.py stats\|gc [--days 30]` |
+| `odoo_build_cache.py` (1.7.1) | Release archive cache shared by all instances; also maintains the build folder's Dockerfile and `odoo.conf` | called by `doup`; `~/odoo_build_cache.py stats\|gc [--days 30]` |
 | `container2backup.py` (4.9.1) | SQL+filestore backups, compression/encryption/streaming | `dobk` or `~/container2backup.py [--sql-only\|--validate]` |
 | `ownerp_validate.py` (1.1.0) | Read-only schema validation of `docker2update.yaml`/`container2backup.yaml` | `doval` or `~/ownerp_validate.py [--update PATH\|--backup PATH]` |
 | `ownerp_wizard.py` (1.2.0) | Guided adding of an instance / changing a field in `docker2update.yaml`/`container2backup.yaml`; validates before it replaces, and never removes an entry | `wiz` or `~/ownerp_wizard.py [--update PATH\|--backup PATH]` |
