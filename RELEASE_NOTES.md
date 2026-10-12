@@ -1,5 +1,31 @@
 # Release Notes
 
+## A DNS Outage Explains Itself (12.10.2026)
+
+*getScripts.py v9.31.0 · scripts/server-readiness.py v1.13.0 ·
+tests/test_dns_diagnosis.py · docs/COMPONENTS.md ·
+docs/usage/08-troubleshooting.md · docs/usage/09-reference.md · usage/AGENT.md*
+
+The DNSSEC outage of 11.10.2026 showed two blind spots. `ups` reported
+"Could not resolve host: github.com" and suggested checking the proxy, which
+was not the cause. And `chk` only reads configuration, so it would not have
+noticed a host that resolves nothing for any other reason.
+
+### Added
+
+- **`ups` diagnoses a failed pull that could not resolve the host.** It asks
+  `1.1.1.1` directly and says which side is at fault: the local resolver
+  (with the `DNSSEC` line and the `sed` that switches it off, or the
+  `journalctl` command that shows why) or the network (outbound UDP 53 blocked,
+  or the proxy). It changes nothing. The query is built by hand, so it works
+  on servers without `dig` or `nslookup`.
+- **`chk` checks that the host can actually resolve `github.com`
+  (`dns_resolution`).** This is the first check with network traffic: one
+  lookup through the host's resolver and, only when that fails, the same direct
+  query as above. FAIL when the name does not resolve; on a host behind a
+  proxy, where external names may legitimately not resolve, a failure with no
+  direct answer either is only a WARN.
+
 ## DNS No Longer Fails When the Root Key Changes (12.10.2026)
 
 *getScripts.py v9.30.0 · scripts/server-readiness.py v1.12.0 ·

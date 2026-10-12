@@ -4,7 +4,7 @@
 # Title:            server-readiness.py
 # Description:      Report whether this server matches the state myodoo-docker
 #                   expects, and name the exact command that closes each gap.
-# Version:          1.12.0
+# Version:          1.13.0
 # Date:             12.10.2026
 # Author:           Equitania Software GmbH
 # ==============================================================================
@@ -26,7 +26,8 @@
 #   server_hardening.py areas (firewall, fail2ban, SSH, kernel, Docker, auto
 #   updates, audit/integrity) and a locked-root/PermitRootLogin mismatch.
 #   1.12.0 adds DNSSEC validation in systemd-resolved, which took every lookup
-#   down when the DNS root key changed on 11.10.2026.
+#   down when the DNS root key changed on 11.10.2026. 1.13.0 adds dns_resolution,
+#   which checks that the host can actually resolve the name `ups` needs.
 #
 #   (no flag)   Full report, including the checks that passed.
 #   --brief     Only non-OK lines plus the summary. Used by getScripts.py.
@@ -42,8 +43,10 @@
 # Exit codes: 0 when no FAIL is present, 1 otherwise. WARN and SKIP do not
 # affect the exit code.
 #
-# This script NEVER writes. It does not touch /etc, does not restart services
-# and makes no network calls, so it is safe to run on a live server at any time.
+# This script NEVER writes. It does not touch /etc and does not restart
+# services, so it is safe to run on a live server at any time. Its only network
+# traffic is dns_resolution: one lookup through the host's resolver and, only
+# when that fails, one direct DNS query to 1.1.1.1.
 # ==============================================================================
 #    Copyright (C) 2014-now Equitania Software GmbH(<http://www.equitania.de>).
 #
@@ -68,6 +71,7 @@ import json
 import os
 import re
 import shutil
+import socket
 import subprocess
 import sys
 import time
@@ -75,7 +79,7 @@ from dataclasses import dataclass
 from enum import Enum
 from typing import Callable, List, Optional, Tuple
 
-SCRIPT_VERSION = "1.12.0"
+SCRIPT_VERSION = "1.13.0"
 SCRIPT_DATE = "12.10.2026"
 
 # Where nginx keeps its customer vhosts (mirrors nginx-cert-guard.py).
@@ -1280,6 +1284,88 @@ def check_resolved_dnssec(ctx: HealthContext) -> Finding:
     )
 
 
+DNS_PROBE_NAME = "github.com"   # what `ups` must reach
+DIRECT_DNS_SERVER = "1.1.1.1"
+
+
+def _direct_dns_query(name: str, server: str = DIRECT_DNS_SERVER,
+                      timeout: float = 3.0) -> bool:
+    """Ask one DNS server for an A record of `name`, bypassing the host's
+    resolver. True when it answers with at least one record.
+
+    Same as getScripts.direct_dns_query() - kept in step by hand, because a
+    delivered script imports nothing from the repository.
+    """
+    query_id = os.urandom(2)
+    question = b"".join(bytes([len(label)]) + label.encode("ascii")
+                        for label in name.rstrip(".").split(".")) + b"\x00"
+    packet = query_id + b"\x01\x00\x00\x01\x00\x00\x00\x00\x00\x00" + question + b"\x00\x01\x00\x01"
+    try:
+        with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as sock:
+            sock.settimeout(timeout)
+            sock.sendto(packet, (server, 53))
+            reply = sock.recv(512)
+    except (OSError, UnicodeError):
+        return False
+    if len(reply) < 12 or reply[:2] != query_id:
+        return False
+    rcode = reply[3] & 0x0F
+    answers = int.from_bytes(reply[6:8], "big")
+    return rcode == 0 and answers > 0
+
+
+def _proxy_configured(ctx: HealthContext) -> bool:
+    if any(os.environ.get(n) for n in ("http_proxy", "https_proxy", "HTTP_PROXY", "HTTPS_PROXY")):
+        return True
+    text = _read(ctx.p("etc/environment")) or ""
+    return re.search(r"^\s*(export\s+)?https?_proxy\s*=\s*\S", text, re.MULTILINE | re.IGNORECASE) is not None
+
+
+def check_dns_resolution(ctx: HealthContext) -> Finding:
+    """Can this host resolve the name `ups` needs? The one check that touches
+    the network: a single lookup through the host's own resolver, and only
+    when that fails, one direct query to tell the local resolver from the
+    network.
+
+    resolved_dnssec reads a setting; this one sees the outage itself, whatever
+    caused it. Behind a proxy a host may legitimately not resolve external
+    names, so there a failure with no direct answer either is only a WARN.
+    """
+    title = "DNS resolution"
+    code, _ = _run(["getent", "ahosts", DNS_PROBE_NAME], timeout=10)
+    if code == 127:
+        return _skip("dns_resolution", title, "getent not available")
+    if code == 0:
+        return _ok("dns_resolution", title, f"{DNS_PROBE_NAME} resolves")
+
+    if _direct_dns_query(DNS_PROBE_NAME):
+        setting = _resolved_dnssec_setting(ctx)
+        if setting and setting[0].lower() not in ("no", "false", "0", ""):
+            host_path = "/" + os.path.relpath(setting[1], ctx.root).lstrip("./")
+            return Finding(
+                "dns_resolution", Severity.FAIL, title,
+                f"{DNS_PROBE_NAME} does not resolve, {DIRECT_DNS_SERVER} answers it directly - "
+                f"systemd-resolved rejects the answers (DNSSEC={setting[0]})",
+                f"sed -i 's/^DNSSEC=.*/DNSSEC=no/' {host_path}; and systemctl restart systemd-resolved",
+            )
+        return Finding(
+            "dns_resolution", Severity.FAIL, title,
+            f"{DNS_PROBE_NAME} does not resolve, {DIRECT_DNS_SERVER} answers it directly - "
+            "the local resolver is at fault",
+            "resolvectl status; journalctl -u systemd-resolved -n 30 --no-pager",
+        )
+
+    severity = Severity.WARN if _proxy_configured(ctx) else Severity.FAIL
+    return Finding(
+        "dns_resolution", severity, title,
+        f"{DNS_PROBE_NAME} does not resolve and {DIRECT_DNS_SERVER} does not answer directly - "
+        "outbound DNS (udp/53) blocked or no network"
+        + (" (proxy host: external names may legitimately not resolve)"
+           if severity is Severity.WARN else ""),
+        "ufw status verbose  # outbound udp/53, otherwise the provider's firewall",
+    )
+
+
 def check_script_versions(ctx: HealthContext) -> Finding:
     """Compare the delivered scripts in $HOME against the repository checkout.
 
@@ -1679,6 +1765,7 @@ CHECKS: Tuple[Callable[[HealthContext], Finding], ...] = (
     check_nginx_listen_targets,
     check_certbot_timer_window,
     check_resolved_dnssec,
+    check_dns_resolution,
     check_script_versions,
     check_backup_disk_space,
     check_build_cache,

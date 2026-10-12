@@ -147,7 +147,7 @@ if os.environ.get('GETSCRIPTS_DEBUG', '').lower() in ('1', 'true', 'yes'):
     logger.debug("Debug logging enabled")
 
 # Script version and date
-SCRIPT_VERSION = "9.30.0"
+SCRIPT_VERSION = "9.31.0"
 SCRIPT_DATE = "12.10.2026"
 
 # Branch of myodoo-docker this server tracks - the single source of truth for
@@ -3795,6 +3795,78 @@ _GIT_NETWORK_ENV = {"GIT_TERMINAL_PROMPT": "0"}
 _GIT_NETWORK_OPTS = "-c http.lowSpeedLimit=1000 -c http.lowSpeedTime=30"
 
 
+DIRECT_DNS_SERVER = "1.1.1.1"
+
+
+def direct_dns_query(name: str, server: str = DIRECT_DNS_SERVER,
+                     timeout: float = 3.0) -> bool:
+    """Ask one DNS server for an A record of `name`, bypassing the host's
+    resolver. True when it answers with at least one record.
+
+    Hand-built packet because dig/nslookup are not on every server. Keep it in
+    step with the copy in scripts/server-readiness.py - getScripts.py imports
+    nothing from the repository it is about to fetch.
+    """
+    query_id = os.urandom(2)
+    question = b"".join(bytes([len(label)]) + label.encode("ascii")
+                        for label in name.rstrip(".").split(".")) + b"\x00"
+    packet = query_id + b"\x01\x00\x00\x01\x00\x00\x00\x00\x00\x00" + question + b"\x00\x01\x00\x01"
+    try:
+        with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as sock:
+            sock.settimeout(timeout)
+            sock.sendto(packet, (server, 53))
+            reply = sock.recv(512)
+    except (OSError, UnicodeError):
+        return False
+    if len(reply) < 12 or reply[:2] != query_id:
+        return False
+    rcode = reply[3] & 0x0F
+    answers = int.from_bytes(reply[6:8], "big")
+    return rcode == 0 and answers > 0
+
+
+def _effective_dnssec(root: str = "/") -> Optional[Tuple[str, str]]:
+    """(value, file) of the last DNSSEC= line systemd-resolved reads from
+    /etc, or None. Enough for a hint; server-readiness.py does the full order."""
+    files = [os.path.join(root, "etc/systemd/resolved.conf")]
+    dropins = os.path.join(root, "etc/systemd/resolved.conf.d")
+    if os.path.isdir(dropins):
+        files += sorted(os.path.join(dropins, n) for n in os.listdir(dropins) if n.endswith(".conf"))
+    setting = None
+    for path in files:
+        try:
+            with open(path, "r", encoding="utf-8", errors="replace") as handle:
+                text = handle.read()
+        except OSError:
+            continue
+        for match in re.finditer(r"^[ \t]*DNSSEC[ \t]*=[ \t]*(\S*)", text, re.MULTILINE):
+            setting = (match.group(1), path)
+    return setting
+
+
+def diagnose_dns_failure(host: str, root: str = "/") -> List[str]:
+    """Explain a 'Could not resolve host' in one or two lines with a command.
+
+    Compares the host's resolver (which just failed) with a direct query, so
+    the operator learns whether the local resolver or the network is at fault.
+    Changes nothing.
+    """
+    if direct_dns_query(host):
+        setting = _effective_dnssec(root)
+        if setting and setting[0].lower() not in ("no", "false", "0", ""):
+            value, path = setting
+            return [f"DNS-Diagnose: {DIRECT_DNS_SERVER} beantwortet {host} direkt, der lokale "
+                    f"Resolver nicht — systemd-resolved prüft DNSSEC ({value} in {path}).",
+                    f"  Behebung: sed -i 's/^DNSSEC=.*/DNSSEC=no/' {path}; "
+                    f"and systemctl restart systemd-resolved"]
+        return [f"DNS-Diagnose: {DIRECT_DNS_SERVER} beantwortet {host} direkt, der lokale "
+                f"Resolver nicht — dessen Konfiguration prüfen.",
+                "  Warum: resolvectl status; journalctl -u systemd-resolved -n 30 --no-pager"]
+    return [f"DNS-Diagnose: auch {DIRECT_DNS_SERVER} antwortet nicht direkt — ausgehendes DNS "
+            f"(UDP 53) gesperrt oder kein Netz.",
+            "  Prüfen: ufw status verbose; hinter einem Proxy: env | grep -i proxy"]
+
+
 def _run_git_network(command: str, **kwargs) -> subprocess.CompletedProcess:
     """Run a git command that talks to a remote, bounded so it cannot hang.
 
@@ -3878,6 +3950,10 @@ def update_repository(myodoo_docker: str, server_version: str) -> None:
             stderr_tail = _decode_stream(pull_result.stderr).strip().splitlines()
             for line in stderr_tail[-5:]:
                 status(f"  {line}")
+            unresolved = re.search(r"Could not resolve host: (\S+)", "\n".join(stderr_tail))
+            if unresolved:
+                for line in diagnose_dns_failure(unresolved.group(1)):
+                    status(line)
             after_pull = before_pull
         else:
             after_pull = subprocess.check_output(["git", "rev-parse", "HEAD"], text=True).strip()

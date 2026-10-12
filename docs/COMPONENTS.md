@@ -11,9 +11,13 @@ in this repository, stay in `CLAUDE.md`.
 
 ### Key Components
 
-#### 1. getScripts.py (v9.30.0)
+#### 1. getScripts.py (v9.31.0)
 - **Purpose**: Main installation and update script
 - **Features**:
+  - DNS diagnosis on a failed pull (v9.31.0, 12.10.2026): when `git pull`
+    says `Could not resolve host`, `diagnose_dns_failure()` asks `1.1.1.1`
+    directly (hand-built UDP query, no dig needed) and prints whether the local
+    resolver or the network is at fault, with the command — changes nothing
   - DNSSEC off in systemd-resolved (v9.30.0, 12.10.2026): the DNS optimisation
     writes `DNSSEC=no` (constant `RESOLVED_DNSSEC`), and
     `ensure_resolved_dnssec_off()` corrects the `allow-downgrade` earlier
@@ -919,11 +923,12 @@ in this repository, stay in `CLAUDE.md`.
   risk an expiry would guard against — a mute nobody remembers — is already
   covered by the visible `[MUTED]` line and the count in every summary
 
-#### 16. server-readiness.py (v1.12.0)
+#### 16. server-readiness.py (v1.13.0)
 - **Purpose**: Reports whether this server matches the state myodoo-docker
-  expects — 28 read-only checks (cron, logrotate, backup and update
+  expects — 29 read-only checks (cron, logrotate, backup and update
   configuration, Docker storage driver, DNSSEC in systemd-resolved
-  (`resolved_dnssec`, v1.12.0), virus-scanner exclusion for
+  (`resolved_dnssec`, v1.12.0), actual DNS resolution (`dns_resolution`,
+  v1.13.0), virus-scanner exclusion for
   `/var/lib/docker/`, nginx, certbot timing, script versions, Odoo CPU/RAM
   sizing, nine security-hardening areas), each non-OK finding carrying
   exactly one copy-paste fix. `chk`, `dostat`/`konsole`, the block after
@@ -958,8 +963,12 @@ in this repository, stay in `CLAUDE.md`.
   supplies (`ENV_VALUE_ERROR`: `port invalid`, `Invalid IP`, `IP must be`);
   anything else is `hardening audit not run: …` with the text-mode run of
   `server_hardening.py` as the fix
-- **Never writes.** No `/etc` change, no service restart, no network call —
-  safe to run on a live server at any time
+- **Never writes.** No `/etc` change, no service restart — safe to run on a
+  live server at any time. The only network traffic is `dns_resolution`
+  (v1.13.0): one `getent ahosts github.com` through the host's resolver and,
+  only when that fails, one direct DNS query to `1.1.1.1` that tells a broken
+  local resolver from blocked outbound DNS. Behind a proxy, "no DNS at all" is
+  a WARN, since such hosts may legitimately not resolve external names
 - **`MUTED`**: a finding that is true and simply does not apply on this host
   (see `ownerp_mute.py` above for the write path and the derived-mute
   mechanics). Still shown in the full report with its reason; carries no
