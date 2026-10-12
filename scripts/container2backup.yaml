@@ -8,7 +8,7 @@ defaults:
   backup_path: /opt/backups
   temp_path: /tmp/odoo_backup  # Temporary path for backup operations
   compression:
-    format: "7z"     # Compression format: 7z, zip, gzip, zstd (Note: encryption requires 7z format)
+    format: "7z"     # Compression format: 7z, zip, gzip, zstd (encryption: GPG on any format, needs gnupg)
     # Compression level. For streaming (below) this maps to the zstd level.
     # Tip: an Odoo filestore is mostly already-compressed media that barely
     # shrinks - on a large streamed filestore use level 3 (≈ same size as 9,

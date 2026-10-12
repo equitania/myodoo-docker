@@ -201,7 +201,15 @@ in this repository, stay in `CLAUDE.md`.
   - Detects Hetzner DNS issues with DigitalOcean
   - Supports systemd-resolved, resolvconf, and direct DNS config
 
-#### 2. container2backup.py (v4.10.0)
+#### 2. container2backup.py (v4.11.0)
+- **Encryption works for every format** (v4.11.0, 12.10.2026): GPG encrypts the
+  finished archive, so `zip`, `gzip` and `zstd` are encrypted too and keep their
+  format (`.tar.zst.gpg`, `.sql.zst.gpg`, …). Before, encryption was dropped for
+  every format but 7z - a server with `format: zstd` and encryption switched on
+  shipped plaintext archives offsite, and the streaming fallback even promised a
+  7z. Without gnupg only 7z can still encrypt (its own AES); other formats are
+  written unencrypted with a warning. `BACKUP_SUFFIXES` (container2backup,
+  server-readiness 1.14.1, ownerp_state 1.1.3) lists every `<archive>.gpg`.
 - **A database without a new archive fails the run** (v4.10.0, 12.10.2026):
   before each database, `sql_container` and `data_container` are looked up in
   `docker ps -a`; a name that does not exist is reported with the containers the
@@ -677,7 +685,7 @@ in this repository, stay in `CLAUDE.md`.
   script can convert nothing there; `--from-docker` is the whole answer for
   those hosts, and both readiness checks now point at it
 
-#### 10. ownerp_state.py (v1.1.2)
+#### 10. ownerp_state.py (v1.1.3)
 - **Purpose**: The whole server on one page — instances, backup ages,
   maintenance jobs, readiness checks. Started with `dostat`; stage 1 of the
   console design in `docs/superpowers/specs/2026-08-13-ownerp-console-design.md`
@@ -949,7 +957,7 @@ in this repository, stay in `CLAUDE.md`.
   risk an expiry would guard against — a mute nobody remembers — is already
   covered by the visible `[MUTED]` line and the count in every summary
 
-#### 16. server-readiness.py (v1.14.0)
+#### 16. server-readiness.py (v1.14.1)
 - **v1.14.0 (12.10.2026): configured backup containers must exist.**
   `backup_config` FAILs when a `sql_container` / `data_container` is not in
   `docker ps -a` and lists the containers that are; `backup_recency` names the

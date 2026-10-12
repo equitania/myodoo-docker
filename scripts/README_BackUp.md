@@ -17,7 +17,7 @@ Dieses Backup-System sichert Odoo-Datenbanken, Docker-Container und zusätzliche
 - Backup von FastReport-Dateien pro Datenbank
 - Backup zusätzlicher Dienste (Nginx, Let's Encrypt, Docker-Builds)
 - Verschiedene Kompressionsformate mit einstellbarem Kompressionsgrad
-- Optionale AES-256 Verschlüsselung (nur mit 7z-Format)
+- Optionale AES-256-Verschlüsselung per GPG, für jedes Format (ab v4.11.0)
 - Automatische Verwaltung von alten Backups
 - Konfiguration über YAML-Datei
 
@@ -152,8 +152,8 @@ defaults:
 
 #### Unterstützte Kompressionsformate
 
-- **7z**: Beste Kompression und einziges Format mit Verschlüsselung
-  - Verschlüsselung erfolgt per **GPG** (`gpg --symmetric --cipher-algo AES256`) nach der 7z-Erstellung
+- **7z**: Beste Kompression
+  - Verschlüsselung erfolgt wie bei allen Formaten per **GPG** (`gpg --symmetric --cipher-algo AES256`) nach der Archiv-Erstellung
   - Verschlüsselte Backups erhalten die Endung `.7z.gpg`; die Passphrase wird nie in der Prozessliste sichtbar
   - Fallback auf 7z-interne AES-Verschlüsselung (Datei endet auf `.7z`), wenn `gnupg` nicht installiert ist — dabei ist das Passwort in der Prozessliste sichtbar; eine Warnung wird ausgegeben
   - Benötigt neuere 7-Zip-Version mit dem 7zz-Befehl
@@ -201,7 +201,7 @@ Datenbankbackups befinden sich im Unterverzeichnis `docker` und enthalten die fo
 
 **Dateinamensformat:** (abhängig vom Kompressionsformat)
 - 7z: `{db_name}_{container}_dockerbackup_{timestamp}.7z`
-- 7z (GPG-verschlüsselt): `{db_name}_{container}_dockerbackup_{timestamp}.7z.gpg`
+- GPG-verschlüsselt (jedes Format, ab v4.11.0): Endung + `.gpg`, z.B. `….7z.gpg`, `….tar.zst.gpg`, `….sql.zst.gpg`
 - ZIP: `{db_name}_{container}_dockerbackup_{timestamp}.zip`
 - GZIP: `{db_name}_{container}_dockerbackup_{timestamp}.tar.gz`
 - ZSTD: `{db_name}_{container}_dockerbackup_{timestamp}.tar.zst`
@@ -222,7 +222,7 @@ FastReport-Backups werden separat erstellt und im gleichen `docker`-Verzeichnis 
 
 **Dateinamensformat:** (abhängig vom Kompressionsformat)
 - 7z: `{db_name}_FastReport_{timestamp}.7z`
-- 7z (GPG-verschlüsselt): `{db_name}_FastReport_{timestamp}.7z.gpg`
+- GPG-verschlüsselt (jedes Format, ab v4.11.0): Endung + `.gpg`
 - ZIP: `{db_name}_FastReport_{timestamp}.zip`
 - GZIP: `{db_name}_FastReport_{timestamp}.tar.gz`
 - ZSTD: `{db_name}_FastReport_{timestamp}.tar.zst`
@@ -269,15 +269,16 @@ Die Verschlüsselung ist optional und kann über eine `.env`-Datei aktiviert wer
    BACKUP_PASSWORD=IhrSicheresPasswort
    ```
 
-2. **Wichtig**: Verschlüsselung wird nur mit dem 7z-Format unterstützt.
-   - Verschlüsselung wird nur angewendet, wenn das Format in der Konfiguration auf "7z" gesetzt ist
-   - Wenn ein anderes Format (zip, gzip, zstd) gewählt wurde, wird die Verschlüsselung ignoriert
-   - Das Format in der Konfiguration hat Priorität über die Verschlüsselungseinstellung
+2. **Ab v4.11.0 wird jedes Format verschlüsselt.** GPG verschlüsselt das fertige Archiv, das
+   konfigurierte Format bleibt erhalten (`<archiv>.gpg`). Bis v4.10.0 wurde die Verschlüsselung
+   bei zip, gzip und zstd stillschweigend ignoriert — solche Backups liegen unverschlüsselt vor.
+   Ohne `gnupg` kann nur 7z noch verschlüsseln (7z-internes AES, s. u.); andere Formate werden
+   dann mit deutlicher Warnung unverschlüsselt geschrieben.
 
 3. **Verschlüsselungsverfahren (ab v4.6.0):**
-   - **Primär (empfohlen):** GPG-Verschlüsselung nach der 7z-Erstellung (`gpg --symmetric --cipher-algo AES256`).
+   - **Primär (empfohlen):** GPG-Verschlüsselung nach der Archiv-Erstellung (`gpg --symmetric --cipher-algo AES256`).
      Die Passphrase wird sicher via File-Descriptor übergeben — nie in der Prozessliste sichtbar.
-     Ausgabedatei: `<name>.7z.gpg`. Voraussetzung: `gnupg` installiert (`sudo apt-get install gnupg`).
+     Ausgabedatei: `<archiv>.gpg` (z.B. `.7z.gpg`, `.tar.zst.gpg`). Voraussetzung: `gnupg` installiert (`sudo apt-get install gnupg`).
    - **Fallback:** Wenn `gnupg` nicht installiert ist, wird 7z-interne AES-Verschlüsselung verwendet
      (`7zz ... -p...`). Das Passwort ist dabei in der Prozessliste sichtbar (`ps aux`). Es wird eine
      deutliche Warnung ausgegeben. Ausgabedatei: `<name>.7z`.
@@ -323,6 +324,12 @@ Bevor Sie ein Backup extrahieren, können Sie den Inhalt anzeigen:
 # Erst entschlüsseln, dann Inhalt anzeigen
 gpg -d pfad/zur/backup.7z.gpg > /tmp/backup.7z
 7zz l /tmp/backup.7z
+```
+
+#### GPG-verschlüsseltes zstd-Archiv (.tar.zst.gpg / .sql.zst.gpg) — ab v4.11.0
+```bash
+gpg -d pfad/zur/backup.tar.zst.gpg | zstd -dc | tar -tvf -
+gpg -d pfad/zur/backup.sql.zst.gpg | zstd -dc > /tmp/dump.sql
 ```
 
 #### 7z-Format mit 7z-interner Verschlüsselung (Fallback, .7z)
@@ -429,7 +436,7 @@ Bei der Wiederherstellung einer Odoo-Datenbank müssen Sie beachten:
 
 Beispiel (für GPG-verschlüsseltes 7z-Format — empfohlener Weg seit v4.6.0):
 ```bash
-# 0. GPG-Entschlüsselung (nur bei .7z.gpg)
+# 0. GPG-Entschlüsselung (nur bei Dateien auf .gpg)
 gpg -d /opt/backups/docker/datenbank_container_dockerbackup_timestamp.7z.gpg \
     > /tmp/backup_decrypted.7z
 
@@ -551,7 +558,7 @@ This backup system secures Odoo databases, Docker containers, and additional ser
 - Backup of FastReport files per database
 - Backup of additional services (Nginx, Let's Encrypt, Docker builds)
 - Various compression formats with adjustable compression level
-- Optional AES-256 encryption (only with 7z format)
+- Optional AES-256 encryption via GPG, for every format (since v4.11.0)
 - Automatic management of old backups
 - Configuration via YAML file
 
@@ -658,8 +665,8 @@ defaults:
 
 #### Supported Compression Formats
 
-- **7z**: Best compression and the only format with encryption
-  - Encryption uses **GPG** (`gpg --symmetric --cipher-algo AES256`) applied after 7z archiving
+- **7z**: Best compression
+  - Encryption uses **GPG** (`gpg --symmetric --cipher-algo AES256`) applied after archiving, as for every format
   - Encrypted backups get the extension `.7z.gpg`; the passphrase is never visible in the process list
   - Falls back to 7z-internal AES encryption (file ends in `.7z`) when `gnupg` is not installed — passphrase is then visible in the process list; a warning is printed
   - Requires newer 7-Zip version with the 7zz command
@@ -707,7 +714,7 @@ Database backups are located in the `docker` subdirectory and contain the follow
 
 **Filename format:** (depends on compression format)
 - 7z: `{db_name}_{container}_dockerbackup_{timestamp}.7z`
-- 7z (GPG-encrypted): `{db_name}_{container}_dockerbackup_{timestamp}.7z.gpg`
+- GPG-encrypted (every format, since v4.11.0): extension + `.gpg`, e.g. `….7z.gpg`, `….tar.zst.gpg`, `….sql.zst.gpg`
 - ZIP: `{db_name}_{container}_dockerbackup_{timestamp}.zip`
 - GZIP: `{db_name}_{container}_dockerbackup_{timestamp}.tar.gz`
 - ZSTD: `{db_name}_{container}_dockerbackup_{timestamp}.tar.zst`
@@ -728,7 +735,7 @@ FastReport backups are created separately and stored in the same `docker` direct
 
 **Filename format:** (depends on compression format)
 - 7z: `{db_name}_FastReport_{timestamp}.7z`
-- 7z (GPG-encrypted): `{db_name}_FastReport_{timestamp}.7z.gpg`
+- GPG-encrypted (every format, since v4.11.0): extension + `.gpg`
 - ZIP: `{db_name}_FastReport_{timestamp}.zip`
 - GZIP: `{db_name}_FastReport_{timestamp}.tar.gz`
 - ZSTD: `{db_name}_FastReport_{timestamp}.tar.zst`
@@ -774,15 +781,15 @@ Encryption is optional and can be activated via a `.env` file:
    BACKUP_PASSWORD=YourSecurePassword
    ```
 
-2. **Important**: Encryption is only supported with the 7z format.
-   - Encryption will only be applied if the format in the configuration is set to "7z"
-   - If another format (zip, gzip, zstd) is chosen, encryption will be ignored
-   - The format in the configuration takes precedence over the encryption setting
+2. **Since v4.11.0 every format is encrypted.** GPG encrypts the finished archive and the
+   configured format is kept (`<archive>.gpg`). Up to v4.10.0 encryption was silently ignored for
+   zip, gzip and zstd - those backups are unencrypted. Without `gnupg` only 7z can still encrypt
+   (7z-internal AES, see below); other formats are then written unencrypted with a clear warning.
 
 3. **Encryption method (since v4.6.0):**
-   - **Primary (recommended):** GPG encryption after 7z archiving (`gpg --symmetric --cipher-algo AES256`).
+   - **Primary (recommended):** GPG encryption after archiving (`gpg --symmetric --cipher-algo AES256`).
      The passphrase is passed securely via file descriptor — never visible in the process list.
-     Output file: `<name>.7z.gpg`. Requires: `gnupg` installed (`sudo apt-get install gnupg`).
+     Output file: `<archive>.gpg` (e.g. `.7z.gpg`, `.tar.zst.gpg`). Requires: `gnupg` installed (`sudo apt-get install gnupg`).
    - **Fallback:** If `gnupg` is not installed, 7z-internal AES encryption is used
      (`7zz ... -p...`). The passphrase is then visible in the process list (`ps aux`). A clear
      warning is printed. Output file: `<name>.7z`.
@@ -934,7 +941,7 @@ When restoring an Odoo database backup, you need to:
 
 Example (for GPG-encrypted 7z format — recommended since v4.6.0):
 ```bash
-# 0. GPG decryption (only for .7z.gpg)
+# 0. GPG decryption (only for files ending in .gpg)
 gpg -d /opt/backups/docker/database_container_dockerbackup_timestamp.7z.gpg \
     > /tmp/backup_decrypted.7z
 

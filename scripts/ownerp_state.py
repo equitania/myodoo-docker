@@ -4,7 +4,7 @@
 # Title:            ownerp_state.py
 # Description:      What state is this server in? Collected once, rendered as
 #                   text (dostat) or handed to the console.
-# Version:          1.1.2
+# Version:          1.1.3
 # Date:             12.10.2026
 # Author:           Equitania Software GmbH
 # ==============================================================================
@@ -80,7 +80,7 @@ import time
 from dataclasses import dataclass, field
 from typing import Dict, List, Optional
 
-SCRIPT_VERSION = "1.1.2"
+SCRIPT_VERSION = "1.1.3"
 SCRIPT_DATE = "12.10.2026"
 
 HOME = os.path.expanduser("~")
@@ -93,7 +93,8 @@ DEFAULT_BACKUP_PATH = "/opt/backups"
 # container2backup.py writes database archives into <backup_path>/docker as
 # <database>_<data_container>_dockerbackup_<timestamp>.<ext>.
 DOCKER_SUBDIR = "docker"
-BACKUP_SUFFIXES = (".7z", ".7z.gpg", ".zip", ".tar.gz", ".tar.zst", ".sql.gz", ".sql.zst")
+BACKUP_SUFFIXES = (".7z", ".zip", ".tar.gz", ".tar.zst", ".sql.gz", ".sql.zst",
+                   ".7z.gpg", ".zip.gpg", ".tar.gz.gpg", ".tar.zst.gpg", ".sql.gz.gpg", ".sql.zst.gpg")
 
 # A backup older than this is worth pointing at. Matches the thresholds
 # server-readiness.py uses for the backup log, so the two never disagree.

@@ -1,5 +1,35 @@
 # Release Notes
 
+## Backup Encryption Works for Every Format (12.10.2026)
+
+*scripts/container2backup.py v4.11.0 · scripts/server-readiness.py v1.14.1 ·
+scripts/ownerp_state.py v1.1.3 · scripts/container2backup.yaml ·
+scripts/README_BackUp.md · tests/test_container2backup.py ·
+docs/COMPONENTS.md · docs/usage/09-reference.md*
+
+On a server with `format: zstd` in `container2backup.yaml` and
+`BACKUP_ENCRYPTION_ENABLED=true` in the `.env`, every archive went to the
+offsite copy unencrypted. Encryption was documented as "7z only" and silently
+dropped for every other format; the streaming fallback even announced an
+"encryptable 7z backup" and then wrote a plain `.tar.zst`.
+
+### Fixed
+
+- **GPG encrypts the finished archive, whatever its format.** The configured
+  format is kept and `.gpg` is appended: `.tar.zst.gpg`, `.sql.zst.gpg`,
+  `.tar.gz.gpg`, `.zip.gpg`, `.7z.gpg`. The unencrypted archive is removed
+  after a successful encryption; the run prints the matching `gpg -d` command.
+- **Without gnupg** only 7z can still encrypt (its own AES, password visible
+  in the process list, as before). Any other format is written unencrypted
+  with a clear warning naming the fix.
+- **Retention, `chk` and `dostat` know every encrypted ending.** The shared
+  backup suffix list now contains `<archive>.gpg` for every format.
+
+### Note
+
+Archives written before this version on such servers are unencrypted. After
+the next run, new archives need `gpg -d` before they can be unpacked.
+
 ## A Backup That Backed Up No Database No Longer Reports Success (12.10.2026)
 
 *scripts/container2backup.py v4.10.0 · scripts/server-readiness.py v1.14.0 ·

@@ -413,3 +413,55 @@ class FailedDatabaseKeepsBackupsTest(unittest.TestCase):
     def test_run_exits_non_zero(self):
         tail = self.source[self.source.index("    if failed_databases:"):]
         self.assertIn("sys.exit(1)", tail[:400])
+
+
+class EncryptionEveryFormatTest(unittest.TestCase):
+    """12.10.2026: format zstd + BACKUP_ENCRYPTION_ENABLED shipped plaintext
+    archives offsite - encryption was dropped for every format but 7z. Since
+    4.11.0 GPG encrypts the finished archive whatever its format."""
+
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(self.tmp.cleanup)
+        self.src = os.path.join(self.tmp.name, "src")
+        os.makedirs(self.src)
+        with open(os.path.join(self.src, "dump.sql"), "w") as handle:
+            handle.write("select 1;\n")
+        self.calls = []
+
+        def fake_gpg(path, password):
+            self.calls.append((path, password))
+            os.replace(path, path + ".gpg")
+            return path + ".gpg"
+
+        patches = [
+            mock.patch.object(c2b, "get_encryption_settings", return_value=(True, "pw")),
+            mock.patch.object(c2b, "encrypt_file_with_gpg", side_effect=fake_gpg),
+            mock.patch.object(c2b.shutil, "which", return_value="/usr/bin/gpg"),
+        ]
+        for patcher in patches:
+            patcher.start()
+            self.addCleanup(patcher.stop)
+
+    def compress(self, fmt, sql_only=False):
+        config = {"defaults": {"compression": {"format": fmt, "level": 1}}}
+        base = os.path.join(self.tmp.name, "out")
+        with mock.patch("sys.stdout", new=io.StringIO()):
+            return c2b.compress_directory(self.src, base, config, only_sql_dump=sql_only)
+
+    def test_gzip_archive_is_encrypted(self):
+        result = self.compress("gzip")
+        self.assertTrue(result.endswith(".tar.gz.gpg"), result)
+        self.assertEqual(len(self.calls), 1)
+
+    def test_sql_only_gzip_is_encrypted(self):
+        result = self.compress("gzip", sql_only=True)
+        self.assertTrue(result.endswith(".sql.gz.gpg"), result)
+
+    def test_every_encrypted_name_is_a_backup_suffix(self):
+        for suffix in (".tar.zst.gpg", ".sql.zst.gpg", ".tar.gz.gpg", ".zip.gpg"):
+            self.assertIn(suffix, c2b.BACKUP_SUFFIXES)
+
+    def test_no_format_drops_encryption_silently(self):
+        with open(c2b.__file__, encoding="utf-8") as handle:
+            self.assertNotIn("Encryption will be ignored", handle.read())

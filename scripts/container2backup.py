@@ -3,7 +3,7 @@
 # ==============================================================================
 # Title:            container2backup.py
 # Description:      Script to backup Odoo database including FileStore under Docker
-# Version:          4.10.0
+# Version:          4.11.0
 # Date:             12.10.2026
 # Author:           Equitania Software GmbH
 # ==============================================================================
@@ -63,7 +63,7 @@ import signal  # Decode negative subprocess returncodes (signal kills) for diagn
 # Single source of truth for the version banner printed at runtime. Keep these
 # in sync with the header comment above. The __main__ banner is derived from
 # these constants so it cannot silently drift out of date again.
-SCRIPT_VERSION = "4.10.0"
+SCRIPT_VERSION = "4.11.0"
 SCRIPT_DATE = "12.10.2026"
 
 # Every name an archive written here can end in. Retention deletes only files
@@ -72,7 +72,9 @@ SCRIPT_DATE = "12.10.2026"
 # three equal; tests/test_backup_suffixes.py checks them against every
 # output_file this script builds. Until 4.9.2 the SQL-only formats and the
 # encrypted .7z.gpg were missing here, so retention never removed them.
-BACKUP_SUFFIXES = (".7z", ".7z.gpg", ".zip", ".tar.gz", ".tar.zst", ".sql.gz", ".sql.zst")
+# Every format can be GPG-encrypted since 4.11.0 (<archive>.gpg).
+BACKUP_SUFFIXES = (".7z", ".zip", ".tar.gz", ".tar.zst", ".sql.gz", ".sql.zst",
+                   ".7z.gpg", ".zip.gpg", ".tar.gz.gpg", ".tar.zst.gpg", ".sql.gz.gpg", ".sql.zst.gpg")
 
 # Whitelist for database names and Docker container names. Both propagate
 # into filesystem paths and subprocess argv, so restrict to shell-inert chars.
@@ -721,7 +723,7 @@ def create_backup(db_name, db_user, sql_container, data_container, backup_path, 
             elif enc_enabled:
                 print("Streaming requested but encryption is enabled - "
                       "streaming .tar.zst is unencrypted, falling back to "
-                      "staged (encryptable) 7z backup.")
+                      "a staged backup that is GPG-encrypted afterwards.")
             else:
                 host_filestore = resolve_filestore_host_path(data_container, db_name)
                 if host_filestore:
@@ -1067,12 +1069,21 @@ def compress_directory(source_dir, output_file_base, config, only_sql_dump=False
     encryption_enabled, password = get_encryption_settings()
     output_file = None
     
-    # Wenn Verschlüsselung aktiviert ist, aber nicht 7z-Format, Warnung ausgeben
-    # Aber das Format NICHT ändern, sondern die Verschlüsselung ignorieren
-    if encryption_enabled and compression_format != '7z':
-        print(f"WARNING: Encryption is only supported with 7z format. Your selected format is '{compression_format}'.")
-        print("Encryption will be ignored for this backup.")
-        encryption_enabled = False
+    # Encryption is GPG on the finished archive, so it works for every format
+    # and the configured format is kept (<archive>.gpg). Before 4.11.0 any
+    # format but 7z silently dropped the encryption - a server with
+    # format zstd and encryption switched on shipped plaintext backups
+    # offsite (found 12.10.2026). Without gpg only 7z can still encrypt
+    # (its own AES); every other format is written unencrypted, loudly.
+    gpg_encrypt_pending = False
+    if encryption_enabled:
+        if shutil.which('gpg'):
+            gpg_encrypt_pending = True
+        elif compression_format != '7z':
+            print("WARNING: Encryption is enabled but gpg is not installed - "
+                  f"the {compression_format} archive will be UNENCRYPTED.")
+            print("Install gnupg (apt-get install gnupg), or use format 7z.")
+            encryption_enabled = False
     
     try:
         # SQL-only mode: determine files to include
@@ -1092,7 +1103,6 @@ def compress_directory(source_dir, output_file_base, config, only_sql_dump=False
             else:
                 print(f"Found SQL dump file: {sql_dump_file}, size: {os.path.getsize(sql_dump_file)} bytes")
                 
-        gpg_encrypt_pending = False
         if compression_format == '7z':
             # Überprüfen, ob 7zz verfügbar ist
             if not tools['7zz']:
@@ -1102,17 +1112,13 @@ def compress_directory(source_dir, output_file_base, config, only_sql_dump=False
                 
             output_file = f"{output_file_base}.7z"
             zip_args = ['7zz', 'a', f'-mx={compression_level}', '-t7z']
-            if encryption_enabled:
-                if shutil.which('gpg'):
-                    # Encrypt with GPG after archiving: 7z's -p switch exposes
-                    # the password in the process list (ps aux) for the whole
-                    # compression run - GPG takes the passphrase via fd instead.
-                    gpg_encrypt_pending = True
-                else:
-                    print("WARNING: gpg not found - falling back to 7z AES encryption.")
-                    print("WARNING: The backup password is visible in the process list while 7zz runs.")
-                    print("Install gnupg (apt-get install gnupg) for secure encryption.")
-                    zip_args.extend(['-p' + password, '-mhe=on'])
+            # GPG after archiving is preferred: 7z's -p switch exposes the
+            # password in the process list (ps aux) for the whole run.
+            if encryption_enabled and not gpg_encrypt_pending:
+                print("WARNING: gpg not found - falling back to 7z AES encryption.")
+                print("WARNING: The backup password is visible in the process list while 7zz runs.")
+                print("Install gnupg (apt-get install gnupg) for secure encryption.")
+                zip_args.extend(['-p' + password, '-mhe=on'])
                 
             # Run 7zz with cwd=source_dir and relative inputs (like the zip
             # path). The previous code passed a literal '<source_dir>/*' argument
@@ -1282,7 +1288,8 @@ def compress_directory(source_dir, output_file_base, config, only_sql_dump=False
                     return output_file
                 encrypted_size = os.path.getsize(encrypted_file)
                 print(f"Archive encrypted successfully: {encrypted_file} (size: {encrypted_size} bytes)")
-                print("Decrypt with: gpg -d <file>.7z.gpg > <file>.7z")
+                print(f"Decrypt with: gpg -d {os.path.basename(encrypted_file)} > "
+                      f"{os.path.basename(output_file)}")
                 return encrypted_file
             return output_file
         else:
