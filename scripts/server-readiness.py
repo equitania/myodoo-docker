@@ -4,7 +4,7 @@
 # Title:            server-readiness.py
 # Description:      Report whether this server matches the state myodoo-docker
 #                   expects, and name the exact command that closes each gap.
-# Version:          1.13.0
+# Version:          1.13.1
 # Date:             12.10.2026
 # Author:           Equitania Software GmbH
 # ==============================================================================
@@ -79,7 +79,7 @@ from dataclasses import dataclass
 from enum import Enum
 from typing import Callable, List, Optional, Tuple
 
-SCRIPT_VERSION = "1.13.0"
+SCRIPT_VERSION = "1.13.1"
 SCRIPT_DATE = "12.10.2026"
 
 # Where nginx keeps its customer vhosts (mirrors nginx-cert-guard.py).
@@ -170,7 +170,7 @@ DEFAULT_BACKUP_PATH = "/opt/backups"
 # Must mirror ownerp_state.DOCKER_SUBDIR / ownerp_state.BACKUP_SUFFIXES — chk
 # and dostat read the same files and must never disagree about what exists.
 DOCKER_BACKUP_SUBDIR = "docker"
-BACKUP_ARCHIVE_SUFFIXES = (".7z", ".7z.gpg", ".zip", ".tar.gz", ".tar.zst")
+BACKUP_ARCHIVE_SUFFIXES = (".7z", ".7z.gpg", ".zip", ".tar.gz", ".tar.zst", ".sql.gz", ".sql.zst")
 
 # Must mirror odoo_build_cache.py CACHE_ROOT_DEFAULT.
 BUILD_CACHE_ROOT = "opt/odoo-build-cache"

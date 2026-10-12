@@ -3,8 +3,8 @@
 # ==============================================================================
 # Title:            container2backup.py
 # Description:      Script to backup Odoo database including FileStore under Docker
-# Version:          4.9.1
-# Date:             17.09.2026
+# Version:          4.9.2
+# Date:             12.10.2026
 # Author:           Equitania Software GmbH
 # ==============================================================================
 # Feature Overview:
@@ -63,8 +63,16 @@ import signal  # Decode negative subprocess returncodes (signal kills) for diagn
 # Single source of truth for the version banner printed at runtime. Keep these
 # in sync with the header comment above. The __main__ banner is derived from
 # these constants so it cannot silently drift out of date again.
-SCRIPT_VERSION = "4.9.1"
-SCRIPT_DATE = "17.09.2026"
+SCRIPT_VERSION = "4.9.2"
+SCRIPT_DATE = "12.10.2026"
+
+# Every name an archive written here can end in. Retention deletes only files
+# with one of these, and server-readiness.py (BACKUP_ARCHIVE_SUFFIXES) and
+# ownerp_state.py (BACKUP_SUFFIXES) count only these as backups - keep all
+# three equal; tests/test_backup_suffixes.py checks them against every
+# output_file this script builds. Until 4.9.2 the SQL-only formats and the
+# encrypted .7z.gpg were missing here, so retention never removed them.
+BACKUP_SUFFIXES = (".7z", ".7z.gpg", ".zip", ".tar.gz", ".tar.zst", ".sql.gz", ".sql.zst")
 
 # Whitelist for database names and Docker container names. Both propagate
 # into filesystem paths and subprocess argv, so restrict to shell-inert chars.
@@ -150,7 +158,7 @@ def cleanup_backups(cleanup_path, cutoff_timestamp):
     print(f"Checking backups in {cleanup_path} with cutoff date: {datetime.datetime.fromtimestamp(cutoff_timestamp).strftime('%Y-%m-%d %H:%M:%S')}")
     
     # Define supported extensions to check
-    extensions = ['.7z', '.zip', '.tar.gz', '.tar.zst']
+    extensions = BACKUP_SUFFIXES
     
     files = os.listdir(cleanup_path)
     for file in files:
@@ -968,7 +976,7 @@ def cleanup_backups_by_pattern(cleanup_path, cutoff_timestamp, pattern):
     print(f"Cutoff date: {datetime.datetime.fromtimestamp(cutoff_timestamp).strftime('%Y-%m-%d %H:%M:%S')}")
     
     # Define supported extensions to check
-    extensions = ['.7z', '.zip', '.tar.gz', '.tar.zst']
+    extensions = BACKUP_SUFFIXES
     
     # Get all files in directory
     all_files = os.listdir(cleanup_path)

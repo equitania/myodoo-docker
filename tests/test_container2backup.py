@@ -339,5 +339,33 @@ class StaleTempDirsTest(unittest.TestCase):
             self.assertEqual(buf.getvalue(), "")
 
 
+class RetentionCoversEveryFormatTest(unittest.TestCase):
+    """Until 4.9.2 retention skipped .sql.zst, .sql.gz and .7z.gpg - SQL-only
+    and encrypted backups were never deleted (found 12.10.2026)."""
+
+    ENDINGS = (".sql.zst", ".sql.gz", ".7z.gpg", ".tar.zst", ".7z")
+
+    def make(self, folder, name, age_days):
+        path = os.path.join(folder, name)
+        with open(path, "w") as handle:
+            handle.write("x")
+        stamp = c2b.time.time() - age_days * 86400
+        os.utime(path, (stamp, stamp))
+        return path
+
+    def test_old_archives_of_every_format_are_removed(self):
+        with tempfile.TemporaryDirectory() as folder:
+            old = [self.make(folder, f"db_c_dockerbackup_20260901{e}", 30) for e in self.ENDINGS]
+            new = [self.make(folder, f"db_c_dockerbackup_20261012{e}", 0) for e in self.ENDINGS]
+            keep = self.make(folder, "notes.txt", 30)
+            cutoff = c2b.time.time() - 86400
+            with mock.patch("sys.stdout", new_callable=io.StringIO):
+                c2b.cleanup_backups_by_pattern(folder, cutoff, "db_c_dockerbackup_")
+                c2b.cleanup_backups(folder, cutoff)
+            self.assertEqual([p for p in old if os.path.exists(p)], [])
+            self.assertTrue(all(os.path.exists(p) for p in new))
+            self.assertTrue(os.path.exists(keep))
+
+
 if __name__ == "__main__":
     unittest.main()

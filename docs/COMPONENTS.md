@@ -201,7 +201,15 @@ in this repository, stay in `CLAUDE.md`.
   - Detects Hetzner DNS issues with DigitalOcean
   - Supports systemd-resolved, resolvconf, and direct DNS config
 
-#### 2. container2backup.py (v4.9.1)
+#### 2. container2backup.py (v4.9.2)
+- **Retention covers every format it writes** (v4.9.2, 12.10.2026): one
+  `BACKUP_SUFFIXES` list (`.7z`, `.7z.gpg`, `.zip`, `.tar.gz`, `.tar.zst`,
+  `.sql.gz`, `.sql.zst`) for both cleanup functions, mirrored by
+  `server-readiness.py` and `ownerp_state.py`. Before, SQL-only backups
+  (`.sql.zst`/`.sql.gz`) and encrypted ones (`.7z.gpg`) were never deleted
+  and never counted — one server held 24 daily dumps (49 GB) under
+  `retention_days: 1`, while `chk` reported "no archive found".
+  `tests/test_backup_suffixes.py` checks every `output_file` ending
 - **Purpose**: Automated backup system for Odoo deployments
 - **Features**:
   - SQL + Filestore backup
@@ -660,7 +668,7 @@ in this repository, stay in `CLAUDE.md`.
   script can convert nothing there; `--from-docker` is the whole answer for
   those hosts, and both readiness checks now point at it
 
-#### 10. ownerp_state.py (v1.1.0)
+#### 10. ownerp_state.py (v1.1.2)
 - **Purpose**: The whole server on one page — instances, backup ages,
   maintenance jobs, readiness checks. Started with `dostat`; stage 1 of the
   console design in `docs/superpowers/specs/2026-08-13-ownerp-console-design.md`
@@ -932,7 +940,7 @@ in this repository, stay in `CLAUDE.md`.
   risk an expiry would guard against — a mute nobody remembers — is already
   covered by the visible `[MUTED]` line and the count in every summary
 
-#### 16. server-readiness.py (v1.13.0)
+#### 16. server-readiness.py (v1.13.1)
 - **Purpose**: Reports whether this server matches the state myodoo-docker
   expects — 29 read-only checks (cron, logrotate, backup and update
   configuration, Docker storage driver, DNSSEC in systemd-resolved

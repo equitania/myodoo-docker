@@ -1,5 +1,30 @@
 # Release Notes
 
+## SQL-Only and Encrypted Backups Are Deleted and Counted Again (12.10.2026)
+
+*scripts/container2backup.py v4.9.2 · scripts/server-readiness.py v1.13.1 ·
+scripts/ownerp_state.py v1.1.2 · tests/test_backup_suffixes.py ·
+tests/test_container2backup.py · docs/COMPONENTS.md · docs/usage/09-reference.md*
+
+A server backing up SQL only with zstd reported "no archive found" in `chk`
+although a dump was written every night. Its backup volume held 24 daily
+dumps (49 GB) under `retention_days: 1`.
+
+`container2backup.py` writes SQL-only backups as `.sql.zst` or `.sql.gz` and
+encrypted ones as `.7z.gpg`. Its retention, `server-readiness.py` and
+`ownerp_state.py` only knew `.7z`, `.zip`, `.tar.gz` and `.tar.zst`, so these
+archives were never deleted and never counted as a backup.
+
+### Fixed
+
+- **Retention deletes every format the script writes.** One list of endings
+  serves both cleanup functions; `chk` and `dostat` use the same list. A test
+  checks every file name the script builds against it.
+- **Expect a large first cleanup.** The first backup run after `ups` removes
+  every SQL-only or encrypted archive older than `retention_days` at once -
+  and with `rsync --delete` in the configuration, on the remote copy as well.
+  Raise `retention_days` (`edbk`) beforehand if more history should be kept.
+
 ## The First AIDE Build No Longer Holds Up ups (12.10.2026)
 
 *scripts/server_hardening.py v1.10.0 · tests/test_server_hardening.py ·
