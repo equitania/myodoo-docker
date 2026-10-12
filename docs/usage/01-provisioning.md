@@ -226,9 +226,13 @@ Schritt 2 hat das bereits mitlaufen lassen, hier nur zur Erklärung, was dabei
 passiert:
 
 1. **Fehlt `/root/.config/myodoo-docker/.env`**, bietet `ups` an, sie
-   anzulegen: `SSH_PORT` wird aus `sshd -T` vorgeschlagen, `ALLOWED_IP_1` aus
-   der laufenden SSH-Sitzung — beides bestätigen oder überschreiben, weitere
-   IPs optional. Eine bestehende `/root/.env` (Alt-Pfad) wird unverändert
+   anzulegen. Ab getScripts 9.32.0 leitet es die Werte aus dem Server ab:
+   `SSH_PORT` aus `sshd -T`, die Admin-IPs samt Kommentar aus den UFW-Regeln,
+   die SSH auf diesem Port für eine einzelne Adresse freigeben, dazu jede
+   gerade verbundene SSH-Sitzung. Eine Rückfrage genügt; `h` führt in die
+   Eingabe von Hand. Netze (`198.51.100.0/24`) kann `ALLOWED_IP` nicht
+   aufnehmen — sie werden genannt, ihre UFW-Regeln bleiben bestehen, weil die
+   Härtung Regeln nur hinzufügt. Eine bestehende `/root/.env` (Alt-Pfad) wird unverändert
    übernommen, nie überschrieben.
 2. **Weicht danach noch ein Bereich ab**, erscheint ein Menü: `1)` jetzt
    beheben `2)` Befehle anzeigen `3)` später `4)` einen Bereich dauerhaft
@@ -527,9 +531,13 @@ packages are missing and whether `/opt/backups` is writable.
 already ran this along the way; this is what happens under the hood:
 
 1. **If `/root/.config/myodoo-docker/.env` is missing**, `ups` offers to
-   create it: `SSH_PORT` is suggested from `sshd -T`, `ALLOWED_IP_1` from the
-   current SSH session — confirm or overwrite either, further IPs are
-   optional. An existing `/root/.env` (legacy path) is used as is and never
+   create it. From getScripts 9.32.0 on it derives the values from the
+   server: `SSH_PORT` from `sshd -T`, the admin IPs with their comments from
+   the ufw rules that admit a single address to SSH on that port, plus every
+   SSH session connected right now. One confirmation is enough; `h` goes to
+   typing the values by hand. Networks (`198.51.100.0/24`) cannot go into
+   `ALLOWED_IP` — they are named, and their ufw rules stay, because the
+   hardening only adds rules. An existing `/root/.env` (legacy path) is used as is and never
    overwritten.
 2. **If any area still deviates afterwards**, a menu appears: `1)` fix now
    `2)` show the commands `3)` later `4)` permanently mute one area

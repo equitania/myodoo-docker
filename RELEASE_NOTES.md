@@ -1,5 +1,29 @@
 # Release Notes
 
+## The Hardening .env Is Taken From the Server (12.10.2026)
+
+*getScripts.py v9.32.0 · tests/test_getscripts_security_offer.py ·
+docs/COMPONENTS.md · docs/usage/01-provisioning.md · docs/usage/09-reference.md*
+
+On a server whose firewall was already set up, `ups` still asked for the SSH
+port and every admin address by hand before the hardening could run - values
+the server already knew.
+
+### Changed
+
+- **`ups` derives the `.env` from the server.** `SSH_PORT` comes from
+  `sshd -T`, the admin IPs from the ufw rules that let a single address reach
+  SSH on that port (or every port), each with its ufw comment as
+  `ALLOWED_IP_<n>_COMMENT`, plus every SSH session connected right now. The
+  values are shown once and confirmed once; `h` falls back to typing them by
+  hand. The rules are read from ufw's own rule files, whose format was checked
+  against ufw on Debian 13.
+- **Networks are named, not written.** `ALLOWED_IP` takes single addresses
+  only, so a rule like `allow from 198.51.100.0/24` is listed as not taken
+  over. Its ufw rule stays in place - the hardening only adds rules.
+- **The "create it later" hint appears once.** Declining the offer printed the
+  same `cp … ; and mcedit …` line a second time right after it.
+
 ## A DNS Outage Explains Itself (12.10.2026)
 
 *getScripts.py v9.31.0 · scripts/server-readiness.py v1.13.0 ·

@@ -136,7 +136,8 @@ class EnvCreationDeclineTest(unittest.TestCase):
             with mock.patch("builtins.input", return_value="n"), \
                  mock.patch.object(gs, "status") as status_mock, \
                  mock.patch.object(gs, "_ssh_listen_ports", return_value=[22]), \
-                 mock.patch.object(gs, "_ssh_peers", return_value=[]):
+                 mock.patch.object(gs, "_ssh_peers", return_value=[]), \
+                 mock.patch.object(gs, "UFW_RULES_DIR", os.path.join(home, "no-ufw")):
                 result = gs._offer_env_creation(home, env_path)
         self.assertFalse(result)
         message = status_mock.call_args_list[-1].args[0]
@@ -275,6 +276,7 @@ class OfferTest(unittest.TestCase):
             mock.patch.object(gs, "status"),
             mock.patch.object(gs, "_ssh_listen_ports", return_value=[22]),
             mock.patch.object(gs, "_ssh_peers", return_value=["192.0.2.10"]),
+            mock.patch.object(gs, "UFW_RULES_DIR", os.path.join(self.home, "no-ufw")),
             mock.patch.object(gs, "_ssh_socket_active", return_value=False),
             mock.patch.object(gs, "_any_containers", return_value=False),
         ]
@@ -397,9 +399,10 @@ class OfferTest(unittest.TestCase):
         os.makedirs(os.path.dirname(template))
         with open(template, "w", encoding="utf-8") as handle:
             handle.write("SSH_PORT=\nALLOWED_IP_1=\nALLOWED_IP_2=\n")
-        # create? yes, port: default, ip 1: explicit, ip 2: Ctrl-C, then "later"
+        # derived values shown -> "h" (by hand), port: default, ip 1: explicit,
+        # ip 2: Ctrl-C, then "later"
         with mock.patch("builtins.input",
-                        side_effect=["", "", "192.0.2.20", KeyboardInterrupt, "3"]):
+                        side_effect=["h", "", "192.0.2.20", KeyboardInterrupt, "3"]):
             self.offer(_audit(("hardening_firewall", ["ufw"], "fail")))
         self.assertFalse(os.path.isfile(self.env_path))
         self.assertEqual(self.commands, [])
@@ -511,6 +514,131 @@ class TimeoutRelationshipTest(unittest.TestCase):
         sr = importlib.util.module_from_spec(spec)
         spec.loader.exec_module(sr)
         self.assertLess(sr.HARDENING_TIMEOUT, gs.READINESS_REPORT_TIMEOUT)
+
+
+# Tuple lines as ufw 0.36 on Debian 13 writes them (generated with
+# `ufw --dry-run` in a container, 12.10.2026). Documentation addresses only.
+UFW_USER_RULES = """\
+*filter
+### RULES ###
+
+### tuple ### allow tcp 2222 0.0.0.0/0 any 192.0.2.5 in comment=427565726f204672656962757267
+-A ufw-user-input -p tcp --dport 2222 -s 192.0.2.5 -j ACCEPT
+
+### tuple ### allow any 2222 0.0.0.0/0 any 198.51.100.0/24 in
+### tuple ### allow any any 0.0.0.0/0 any 203.0.113.9 in
+### tuple ### limit tcp 2222 0.0.0.0/0 any 0.0.0.0/0 in
+### tuple ### allow any 2222 0.0.0.0/0 any 192.0.2.8 in_eth0
+### tuple ### allow tcp 443 0.0.0.0/0 any 192.0.2.99 in
+### tuple ### deny tcp 2222 0.0.0.0/0 any 192.0.2.66 in
+### tuple ### allow tcp 2222 0.0.0.0/0 any 192.0.2.5/32 in
+### END RULES ###
+"""
+UFW_USER6_RULES = "### tuple ### allow any 2222 ::/0 any 2001:db8::7 in\n"
+
+
+class UfwAdminSourcesTest(unittest.TestCase):
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(self.tmp.cleanup)
+        for name, text in (("user.rules", UFW_USER_RULES), ("user6.rules", UFW_USER6_RULES)):
+            with open(os.path.join(self.tmp.name, name), "w", encoding="utf-8") as handle:
+                handle.write(text)
+
+    def sources(self, port=2222):
+        return gs._ufw_admin_sources(port, self.tmp.name)
+
+    def test_single_admin_addresses_with_their_comments(self):
+        found, _ = self.sources()
+        self.assertEqual(found, [("192.0.2.5", "Buero Freiburg"), ("203.0.113.9", ""),
+                                 ("192.0.2.8", ""), ("2001:db8::7", "")])
+
+    def test_networks_are_reported_not_taken(self):
+        _, networks = self.sources()
+        self.assertEqual(networks, ["198.51.100.0/24"])
+
+    def test_other_ports_deny_and_anywhere_do_not_count(self):
+        found, _ = self.sources()
+        ips = [ip for ip, _ in found]
+        self.assertNotIn("192.0.2.99", ips)   # port 443 only
+        self.assertNotIn("192.0.2.66", ips)   # deny
+        self.assertNotIn("0.0.0.0", ips)      # limit from anywhere
+
+    def test_a_different_ssh_port_only_keeps_the_blanket_rule(self):
+        found, _ = self.sources(port=22)
+        self.assertEqual([ip for ip, _ in found], ["203.0.113.9"])
+
+    def test_no_ufw_at_all_is_empty(self):
+        self.assertEqual(gs._ufw_admin_sources(22, os.path.join(self.tmp.name, "missing")), ([], []))
+
+    def test_port_lists_and_ranges(self):
+        self.assertTrue(gs._port_matches("22,2222", 2222))
+        self.assertTrue(gs._port_matches("2000:3000", 2222))
+        self.assertFalse(gs._port_matches("80,443", 2222))
+
+
+class EnvFromExistingSettingsTest(unittest.TestCase):
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(self.tmp.cleanup)
+        self.home = self.tmp.name
+        template_dir = os.path.join(self.home, "myodoo-docker", "scripts")
+        os.makedirs(template_dir)
+        with open(os.path.join(template_dir, ".env.example"), "w", encoding="utf-8") as handle:
+            handle.write("SSH_PORT=\nALLOWED_IP_1=\nALLOWED_IP_1_COMMENT=\nBACKUP_PASSWORD=secret\n")
+        ufw_dir = os.path.join(self.home, "ufw")
+        os.makedirs(ufw_dir)
+        with open(os.path.join(ufw_dir, "user.rules"), "w", encoding="utf-8") as handle:
+            handle.write(UFW_USER_RULES)
+        self.env_path = os.path.join(self.home, gs.HARDENING_ENV_RELATIVE)
+        for patcher in (mock.patch.object(gs, "_ssh_listen_ports", return_value=[2222]),
+                        mock.patch.object(gs, "_ssh_peers", return_value=["192.0.2.5", "192.0.2.77"]),
+                        mock.patch.object(gs, "UFW_RULES_DIR", ufw_dir),
+                        mock.patch.object(gs, "status"),
+                        mock.patch("builtins.print")):
+            patcher.start()
+            self.addCleanup(patcher.stop)
+
+    def offer(self, *answers):
+        with mock.patch("builtins.input", side_effect=list(answers)) as prompt:
+            result = gs._offer_env_creation(self.home, self.env_path)
+        return result, prompt
+
+    def env(self):
+        with open(self.env_path, encoding="utf-8") as handle:
+            return handle.read()
+
+    def test_one_confirmation_writes_port_ips_and_comments(self):
+        result, prompt = self.offer("")
+        self.assertTrue(result)
+        self.assertEqual(prompt.call_count, 1)
+        text = self.env()
+        self.assertIn("SSH_PORT=2222\n", text)
+        self.assertIn("ALLOWED_IP_1=192.0.2.5\n", text)
+        self.assertIn('ALLOWED_IP_1_COMMENT="Buero Freiburg"\n', text)
+        self.assertIn("ALLOWED_IP_2=203.0.113.9\n", text)
+        # the connected session that no ufw rule names comes last
+        self.assertIn("ALLOWED_IP_4=192.0.2.77\n", text)
+        self.assertEqual(text.count("192.0.2.5\n"), 1)
+        self.assertNotIn("198.51.100", text)
+        self.assertIn("# BACKUP_PASSWORD=secret", text)
+
+    def test_declining_writes_nothing(self):
+        result, _ = self.offer("n")
+        self.assertFalse(result)
+        self.assertFalse(os.path.exists(self.env_path))
+
+    def test_by_hand_falls_back_to_the_typed_dialog(self):
+        result, _ = self.offer("h", "2222", "192.0.2.200", "")
+        self.assertTrue(result)
+        text = self.env()
+        self.assertIn("ALLOWED_IP_1=192.0.2.200\n", text)
+        self.assertNotIn("203.0.113.9", text)
+
+    def test_a_comment_cannot_break_out_of_its_value(self):
+        text = gs._render_env("ALLOWED_IP_1=\nALLOWED_IP_1_COMMENT=\n", 22, ["192.0.2.1"],
+                              ['x" \n$(reboot) # y'])
+        self.assertIn('ALLOWED_IP_1_COMMENT="x (reboot)  y"\n', text)
 
 
 if __name__ == "__main__":

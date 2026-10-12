@@ -11,9 +11,18 @@ in this repository, stay in `CLAUDE.md`.
 
 ### Key Components
 
-#### 1. getScripts.py (v9.31.0)
+#### 1. getScripts.py (v9.32.0)
 - **Purpose**: Main installation and update script
 - **Features**:
+  - Hardening `.env` derived from the server (v9.32.0, 12.10.2026):
+    `_offer_env_creation()` takes `SSH_PORT` from `sshd -T` and the admin IPs
+    from `_ufw_admin_sources()`, which reads ufw's own `user.rules`/`user6.rules`
+    (`### tuple ###` lines: allow/limit, incoming, tcp or any, the SSH port or
+    every port, one source address; the hex `comment=` becomes
+    `ALLOWED_IP_<n>_COMMENT`), plus the connected SSH peers. One confirmation;
+    `h` falls back to the typed dialog. Networks are named, not written —
+    `ALLOWED_IP` takes single addresses only. Comments are stripped of quotes,
+    `#`, `$`, backticks and newlines before they go into the file
   - DNS diagnosis on a failed pull (v9.31.0, 12.10.2026): when `git pull`
     says `Could not resolve host`, `diagnose_dns_failure()` asks `1.1.1.1`
     directly (hand-built UDP query, no dig needed) and prints whether the local

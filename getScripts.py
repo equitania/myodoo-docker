@@ -147,7 +147,7 @@ if os.environ.get('GETSCRIPTS_DEBUG', '').lower() in ('1', 'true', 'yes'):
     logger.debug("Debug logging enabled")
 
 # Script version and date
-SCRIPT_VERSION = "9.31.0"
+SCRIPT_VERSION = "9.32.0"
 SCRIPT_DATE = "12.10.2026"
 
 # Branch of myodoo-docker this server tracks - the single source of truth for
@@ -4793,7 +4793,81 @@ _ENV_ACTIVE_KEY_RE = re.compile(r"^(SSH_PORT|ALLOWED_IP_(\d+)(_COMMENT)?)=")
 _ENV_KEY_LINE_RE = re.compile(r"^\s*(export\s+)?[A-Za-z_][A-Za-z0-9_]*=")
 
 
-def _render_env(template: str, ssh_port: int, ips: List[str]) -> str:
+UFW_RULES_DIR = "/etc/ufw"
+
+
+def _port_matches(dport: str, port: int) -> bool:
+    """A ufw tuple's dport ('any', '22', '22,80', '2000:3000') covers `port`."""
+    if dport == "any":
+        return True
+    for part in dport.split(","):
+        low, _, high = part.partition(":")
+        if low.isdigit() and int(low) <= port <= int(high if high.isdigit() else low):
+            return True
+    return False
+
+
+def _ufw_admin_sources(port: int, rules_dir: Optional[str] = None
+                       ) -> Tuple[List[Tuple[str, str]], List[str]]:
+    """Single addresses ufw already lets reach sshd, with their rule comment.
+
+    Read from ufw's own rule files (`### tuple ###` lines, format verified
+    against ufw on Debian 13): action proto dport dst sport src direction
+    [comment=<hex>]. Only allow/limit rules for incoming tcp to the SSH port
+    (or to every port) from one specific source count. Networks cannot go into
+    ALLOWED_IP_<n> - they come back as the second list so the operator is told;
+    the hardening only adds rules, so they keep working either way.
+    """
+    rules_dir = rules_dir or UFW_RULES_DIR
+    found: List[Tuple[str, str]] = []
+    networks: List[str] = []
+    for name in ("user.rules", "user6.rules"):
+        try:
+            with open(os.path.join(rules_dir, name), "r", encoding="utf-8", errors="replace") as handle:
+                lines = handle.read().splitlines()
+        except OSError:
+            continue
+        for line in lines:
+            if not line.startswith("### tuple ###"):
+                continue
+            fields = line.split()[3:]
+            if len(fields) < 7:
+                continue
+            action, proto, dport, _dst, _sport, src, direction = fields[:7]
+            if action not in ("allow", "limit") or not direction.startswith("in"):
+                continue
+            if proto not in ("tcp", "any") or not _port_matches(dport, port):
+                continue
+            try:
+                network = ipaddress.ip_network(src, strict=False)
+            except ValueError:
+                continue
+            if network.prefixlen == 0:
+                continue  # from anywhere: nothing to name
+            if network.num_addresses > 1:
+                networks.append(str(network))
+                continue
+            comment = ""
+            for extra in fields[7:]:
+                if extra.startswith("comment="):
+                    try:
+                        comment = bytes.fromhex(extra[8:]).decode("utf-8", errors="replace")
+                    except ValueError:
+                        comment = ""
+            address = str(network.network_address)
+            if address not in (ip for ip, _ in found):
+                found.append((address, comment))
+    return found, sorted(set(networks))
+
+
+def _env_comment(text: str) -> str:
+    """A comment safe to put in a .env value: one line, no quotes or #."""
+    cleaned = re.sub(r"[\"'#\\`$\r\n]", "", text).strip()
+    return f'"{cleaned}"' if cleaned else ""
+
+
+def _render_env(template: str, ssh_port: int, ips: List[str],
+                comments: Optional[List[str]] = None) -> str:
     """The template with SSH_PORT and the admin IPs filled in.
 
     Every other KEY=value line is written commented out - BACKUP_PASSWORD
@@ -4808,7 +4882,14 @@ def _render_env(template: str, ssh_port: int, ips: List[str]) -> str:
 
     Every ALLOWED_IP_<n> slot not given here is blanked, comments included: a
     template example address left in place would be an open SSH port for it.
+    `comments` (same order as `ips`, e.g. from the ufw rules) fill the
+    matching ALLOWED_IP_<n>_COMMENT.
     """
+    comments = [_env_comment(c) for c in (comments or [])]
+
+    def comment_for(slot: int) -> str:
+        return comments[slot - 1] if slot <= len(comments) else ""
+
     lines, seen = [], set()
     for line in template.splitlines():
         match = _ENV_ACTIVE_KEY_RE.match(line)
@@ -4820,7 +4901,8 @@ def _render_env(template: str, ssh_port: int, ips: List[str]) -> str:
         if key == "SSH_PORT":
             lines.append(f"SSH_PORT={ssh_port}")
         elif match.group(3):
-            lines.append(f"{key}=")
+            slot = int(match.group(2))
+            lines.append(f"{key}={comment_for(slot) if slot <= len(ips) else ''}")
         else:
             slot = int(match.group(2))
             lines.append(f"{key}={ips[slot - 1] if slot <= len(ips) else ''}")
@@ -4829,6 +4911,8 @@ def _render_env(template: str, ssh_port: int, ips: List[str]) -> str:
     for slot, ip in enumerate(ips, 1):
         if f"ALLOWED_IP_{slot}" not in seen:
             lines.append(f"ALLOWED_IP_{slot}={ip}")
+        if comment_for(slot) and f"ALLOWED_IP_{slot}_COMMENT" not in seen:
+            lines.append(f"ALLOWED_IP_{slot}_COMMENT={comment_for(slot)}")
     return "\n".join(lines) + "\n"
 
 
@@ -5152,19 +5236,60 @@ def _prompt(text: str, default: str = "") -> Optional[str]:
 
 
 def _offer_env_creation(_myhome: str, env_path: str) -> bool:
-    """Create the missing .env from the repository template, with the current
-    SSH port and the current session's address as suggestions."""
+    """Create the missing .env from the repository template.
+
+    Derived first: SSH_PORT from `sshd -T`, ALLOWED_IP_<n> (with comments)
+    from the ufw rules that already admit someone to sshd, plus the addresses
+    connected right now. Shown once, confirmed once; "h" falls back to typing
+    the values by hand, with the same suggestions."""
     template_path = os.path.join(_myhome, "myodoo-docker", "scripts", ".env.example")
     if not os.path.isfile(template_path):
         status(f"Keine .env und keine Vorlage ({template_path}) – bitte ups erneut ausführen")
         return False
     listen = _ssh_listen_ports()
     peers = _ssh_peers(listen) if listen else None
+    later = f"Später: cp {template_path} {env_path}; and mcedit {env_path}"
     print(f"\nDie Härtung braucht {env_path} (SSH-Port und Admin-IPs) – die Datei fehlt.")
-    create = _prompt("Jetzt anlegen? [J/n]: ", "j")
-    if create is None or create.lower() not in ("j", "ja", "y", "yes"):
-        status(f"Später: cp {template_path} {env_path}; and mcedit {env_path}")
-        return False
+
+    # What this server already says: the port from sshd, the admins from the
+    # ufw rules, plus whoever is connected right now. One confirmation instead
+    # of typing each address again.
+    derived: List[Tuple[str, str]] = []
+    networks: List[str] = []
+    if listen:
+        ufw_sources, networks = _ufw_admin_sources(listen[0])
+        derived = [(ip, comment) for ip, comment in ufw_sources]
+        for peer in peers or []:
+            if peer not in (ip for ip, _ in derived):
+                derived.append((peer, ""))
+    if derived:
+        ufw_ips = {ip for ip, _ in ufw_sources}
+        print("\nAus den bestehenden Einstellungen abgeleitet:")
+        print(f"  SSH_PORT={listen[0]}  (sshd -T)")
+        for slot, (ip, comment) in enumerate(derived, 1):
+            origin = "UFW" if ip in ufw_ips else "aktuelle SSH-Sitzung"
+            print(f"  ALLOWED_IP_{slot}={ip}  ({origin}{': ' + comment if comment else ''})")
+        if networks:
+            print(f"  Nicht übernommen (Netze, ALLOWED_IP erlaubt nur einzelne Adressen; "
+                  f"die UFW-Regeln bleiben bestehen): {', '.join(networks)}")
+        answer = _prompt("Mit diesen Werten anlegen? [J/n/h = von Hand]: ", "j")
+        if answer is None or answer.lower() in ("n", "nein", "no"):
+            status(later)
+            return False
+        if answer.lower() not in ("h", "hand"):
+            with open(template_path, "r", encoding="utf-8") as handle:
+                text = _render_env(handle.read(), listen[0], [ip for ip, _ in derived],
+                                   [comment for _, comment in derived])
+            if not _write_env(env_path, text):
+                status(f"{env_path} existiert bereits – nichts überschrieben")
+                return False
+            status(f".env angelegt: {env_path} (nur für root lesbar)")
+            return True
+    else:
+        create = _prompt("Jetzt anlegen? [J/n]: ", "j")
+        if create is None or create.lower() not in ("j", "ja", "y", "yes"):
+            status(later)
+            return False
     port = _prompt(f"SSH_PORT [{listen[0] if listen else 22}]: ",
                    str(listen[0] if listen else 22))
     if port is None or not port.isdigit() or not 1 <= int(port) <= 65535:
@@ -5383,18 +5508,26 @@ def offer_security_hardening(_myhome: str) -> None:
         muted = _muted_check_ids(_myhome)
         env_path = os.path.join(_myhome, HARDENING_ENV_RELATIVE)
         legacy_env_path = os.path.join(_myhome, ".env")
+        offered = False
         if not os.path.isfile(env_path) and "hardening_env" not in muted:
             if os.path.isfile(legacy_env_path):
                 status(f"Verwende die bestehende .env: {legacy_env_path}")
-            elif _offer_env_creation(_myhome, env_path):
-                audit = _hardening_audit(script) or audit
+            else:
+                # Without a template the offer only says so; the hint below
+                # is then still the one that tells the operator what to do.
+                offered = os.path.isfile(os.path.join(
+                    _myhome, "myodoo-docker", "scripts", ".env.example"))
+                if _offer_env_creation(_myhome, env_path):
+                    audit = _hardening_audit(script) or audit
         if audit.get("error"):
             # A raw validation error ("ssh.port invalid: ''") is what
             # server_hardening.py sees with no SSH_PORT to substitute -
             # correct, but meaningless to an operator who never got asked to
             # create the .env at all (creation declined, or hardening_env
             # muted). Name the real cause instead.
-            if not (os.path.isfile(env_path) or os.path.isfile(legacy_env_path)):
+            if offered and not os.path.isfile(env_path):
+                pass  # the offer just printed how to create it later
+            elif not (os.path.isfile(env_path) or os.path.isfile(legacy_env_path)):
                 template = os.path.join(_myhome, "myodoo-docker", "scripts", ".env.example")
                 status(f"Härtung braucht {env_path} (SSH-Port und Admin-IPs) – "
                       f"anlegen mit: cp {template} {env_path}; and mcedit {env_path}")
