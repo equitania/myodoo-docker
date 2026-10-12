@@ -1,5 +1,33 @@
 # Release Notes
 
+## A Backup That Backed Up No Database No Longer Reports Success (12.10.2026)
+
+*scripts/container2backup.py v4.10.0 · scripts/server-readiness.py v1.14.0 ·
+tests/test_container2backup.py · tests/test_server_readiness.py ·
+docs/COMPONENTS.md · docs/usage/09-reference.md ·
+docs/usage/08-troubleshooting.md · usage/AGENT.md*
+
+On a server, `container2backup.yaml` named a database container that did not
+exist. Twice a day the cron run failed with `pg_dump error: … No such
+container`, backed up nginx and the build folders, and ended with `Backup
+completed!` and exit 0. The readiness report said only `no archive found` and
+suggested `dobk` - which failed the same way and said the same.
+
+### Fixed
+
+- **`dobk` checks the configured container names first.** A `sql_container` or
+  `data_container` the host does not have is reported by name, together with
+  the containers it does have, and the fix (`edbk`).
+- **A database without a new archive keeps its old ones.** Its retention
+  cleanup is skipped. With `retention_days: 1`, a failing dump would otherwise
+  have deleted the last good backup - and `rsync --delete` the remote copy.
+- **The run fails when any database got no archive.** Services and rsync still
+  run; the run ends with `Backup FAILED for N database(s)`, the list, and
+  exit 1.
+- **`chk` names the cause.** `Backup config` fails on a container name that does
+  not exist and lists the existing ones; `Backup recency` repeats the cause and
+  points to `edbk` instead of `dobk`.
+
 ## PostgreSQL and FastReport Deploys: Fixed Users, Newest Version Suggested (12.10.2026)
 
 *scripts/pg-local-deploy.sh v1.4.0 · scripts/fr-local-deploy.sh ·

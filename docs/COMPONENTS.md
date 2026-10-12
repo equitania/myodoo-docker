@@ -201,7 +201,16 @@ in this repository, stay in `CLAUDE.md`.
   - Detects Hetzner DNS issues with DigitalOcean
   - Supports systemd-resolved, resolvconf, and direct DNS config
 
-#### 2. container2backup.py (v4.9.2)
+#### 2. container2backup.py (v4.10.0)
+- **A database without a new archive fails the run** (v4.10.0, 12.10.2026):
+  before each database, `sql_container` and `data_container` are looked up in
+  `docker ps -a`; a name that does not exist is reported with the containers the
+  host does have. A failed pre-check or a failed dump keeps **all** existing
+  archives of that database (retention is skipped - with `retention_days: 1` a
+  failing dump would otherwise delete the last good backup, and `rsync --delete`
+  the remote copy), the services and rsync still run, and the run ends with
+  `Backup FAILED for N database(s)` and exit 1. Before, a run whose every dump
+  failed printed `Backup completed!` and exited 0.
 - **Retention covers every format it writes** (v4.9.2, 12.10.2026): one
   `BACKUP_SUFFIXES` list (`.7z`, `.7z.gpg`, `.zip`, `.tar.gz`, `.tar.zst`,
   `.sql.gz`, `.sql.zst`) for both cleanup functions, mirrored by
@@ -940,7 +949,12 @@ in this repository, stay in `CLAUDE.md`.
   risk an expiry would guard against — a mute nobody remembers — is already
   covered by the visible `[MUTED]` line and the count in every summary
 
-#### 16. server-readiness.py (v1.13.1)
+#### 16. server-readiness.py (v1.14.0)
+- **v1.14.0 (12.10.2026): configured backup containers must exist.**
+  `backup_config` FAILs when a `sql_container` / `data_container` is not in
+  `docker ps -a` and lists the containers that are; `backup_recency` names the
+  same cause and points to `edbk` instead of `dobk`, which cannot help then.
+  Unknown Docker state is not a finding.
 - **Purpose**: Reports whether this server matches the state myodoo-docker
   expects — 29 read-only checks (cron, logrotate, backup and update
   configuration, Docker storage driver, DNSSEC in systemd-resolved

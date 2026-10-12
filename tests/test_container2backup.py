@@ -369,3 +369,47 @@ class RetentionCoversEveryFormatTest(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class ContainerPreCheckTest(unittest.TestCase):
+    """12.10.2026: sql_container named a container the host did not have;
+    every run printed "Backup completed!" and exited 0 while no database
+    archive was ever written."""
+
+    def test_missing_names_in_config_order(self):
+        self.assertEqual(
+            c2b.missing_containers(["it-db", "it-odoo"], {"it-odoo", "other"}),
+            ["it-db"])
+
+    def test_unknown_docker_state_reports_nothing(self):
+        self.assertEqual(c2b.missing_containers(["it-db"], None), [])
+
+    def test_docker_failure_is_none_not_empty(self):
+        import subprocess
+        failed = subprocess.CompletedProcess([], 1, b"", b"Cannot connect")
+        with mock.patch.object(c2b.subprocess, "run", return_value=failed):
+            self.assertIsNone(c2b.existing_container_names())
+
+    def test_names_are_parsed(self):
+        import subprocess
+        ok = subprocess.CompletedProcess([], 0, b"live-db\nlive-odoo\n", b"")
+        with mock.patch.object(c2b.subprocess, "run", return_value=ok):
+            self.assertEqual(c2b.existing_container_names(), {"live-db", "live-odoo"})
+
+
+class FailedDatabaseKeepsBackupsTest(unittest.TestCase):
+    """A database without a new archive must keep its old ones and fail the run."""
+
+    def setUp(self):
+        with open(c2b.__file__, encoding="utf-8") as handle:
+            self.source = handle.read()
+
+    def test_failed_backup_skips_retention_cleanup(self):
+        failed = self.source.index('failed_databases.append(f"{db_name} (backup failed')
+        cleanup = self.source.index("cleanup_backups_by_pattern(docker_backup_path")
+        between = self.source[failed:cleanup]
+        self.assertIn("continue", between)
+
+    def test_run_exits_non_zero(self):
+        tail = self.source[self.source.index("    if failed_databases:"):]
+        self.assertIn("sys.exit(1)", tail[:400])

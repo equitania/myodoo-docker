@@ -3,7 +3,7 @@
 # ==============================================================================
 # Title:            container2backup.py
 # Description:      Script to backup Odoo database including FileStore under Docker
-# Version:          4.9.2
+# Version:          4.10.0
 # Date:             12.10.2026
 # Author:           Equitania Software GmbH
 # ==============================================================================
@@ -63,7 +63,7 @@ import signal  # Decode negative subprocess returncodes (signal kills) for diagn
 # Single source of truth for the version banner printed at runtime. Keep these
 # in sync with the header comment above. The __main__ banner is derived from
 # these constants so it cannot silently drift out of date again.
-SCRIPT_VERSION = "4.9.2"
+SCRIPT_VERSION = "4.10.0"
 SCRIPT_DATE = "12.10.2026"
 
 # Every name an archive written here can end in. Retention deletes only files
@@ -79,6 +79,30 @@ BACKUP_SUFFIXES = (".7z", ".7z.gpg", ".zip", ".tar.gz", ".tar.zst", ".sql.gz", "
 # Rationale: db_name flows into docker exec paths; container names flow into
 # docker CLI arguments. PostgreSQL identifiers and Docker names both match.
 _IDENT_RE = re.compile(r'^[A-Za-z0-9_.\-]+$')
+
+
+def existing_container_names():
+    """Names of all containers on this host, running or not.
+
+    None when Docker cannot be asked (daemon down, no permission) - the caller
+    then skips its pre-check and lets the dump report the error itself.
+    """
+    try:
+        proc = subprocess.run(["docker", "ps", "-a", "--format", "{{.Names}}"],
+                              capture_output=True, timeout=30)
+    except (OSError, subprocess.SubprocessError):
+        return None
+    if proc.returncode != 0:
+        return None
+    return {line.strip() for line in proc.stdout.decode(errors="replace").splitlines()
+            if line.strip()}
+
+
+def missing_containers(wanted, existing):
+    """The configured container names this host does not have, in order."""
+    if existing is None:
+        return []
+    return [name for name in wanted if name and name not in existing]
 
 
 def _validate_identifier(value, field_name):
@@ -1410,7 +1434,12 @@ if __name__ == "__main__":
         # Get default additional paths
         default_additional_paths = defaults.get('additional_paths', {})
         
-        # Process each database
+        # Process each database. A database that produced no archive is
+        # collected here: its old archives are kept (with retention_days 1 a
+        # failing dump would otherwise delete the last good backup, and
+        # rsync --delete the remote copy too), and the run exits 1.
+        failed_databases = []
+        host_containers = existing_container_names()
         for db in config.get('databases', []):
             # Validate identifiers before any subprocess/filesystem use.
             # Invalid config entries are skipped rather than aborting the run.
@@ -1426,7 +1455,22 @@ if __name__ == "__main__":
                     db['data_container'], 'data_container'
                 )
             except ValueError as exc:
-                print(f"Skipping invalid database entry: {exc}")
+                print(f"ERROR: Skipping invalid database entry: {exc}")
+                failed_databases.append(f"{db.get('name', '?')} (invalid entry: {exc})")
+                continue
+
+            # A container name that does not exist on this host is a config
+            # error, not a dump error - say so before pg_dump hides it behind
+            # "Error response from daemon".
+            absent = missing_containers([sql_container, data_container], host_containers)
+            if absent:
+                print(f"\nERROR: {db_name}: container not found: {', '.join(absent)}")
+                candidates = sorted(host_containers or [])
+                if candidates:
+                    print(f"Containers on this host: {', '.join(candidates)}")
+                print("Fix sql_container / data_container in container2backup.yaml (edbk).")
+                print(f"Keeping all existing backups of {db_name}.")
+                failed_databases.append(f"{db_name} (container not found: {', '.join(absent)})")
                 continue
             retention_days = db.get('retention_days', default_retention)
             
@@ -1461,7 +1505,7 @@ if __name__ == "__main__":
             timestamp = datetime.datetime.fromtimestamp(ts).strftime('%Y-%m-%d_%H-%M-%S')
             
             # Create database backup
-            create_backup(
+            backup_ok = create_backup(
                 db_name,
                 db_user,
                 sql_container,
@@ -1477,6 +1521,12 @@ if __name__ == "__main__":
             fast_report = db.get('fast_report', {})
             if fast_report:
                 backup_fast_report(db_name, fast_report, backup_path, timestamp)
+
+            if not backup_ok:
+                print(f"\nERROR: No backup was created for {db_name}. "
+                      f"Keeping all existing backups of {db_name}.")
+                failed_databases.append(f"{db_name} (backup failed, see above)")
+                continue
             
             # Clean up old backups for this database
             docker_backup_path = os.path.join(backup_path, 'docker')
@@ -1533,6 +1583,12 @@ if __name__ == "__main__":
     except KeyError as e:
         print(f"Missing required configuration field: {str(e)}")
         exit(1)
+
+    if failed_databases:
+        print(f"Backup FAILED for {len(failed_databases)} database(s):")
+        for entry in failed_databases:
+            print(f"- {entry}")
+        sys.exit(1)
 
     if fastreport_warnings:
         # No non-zero exit for this: a skipped optional FastReport part is a

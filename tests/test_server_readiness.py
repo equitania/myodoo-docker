@@ -906,3 +906,54 @@ class ResolvedDnssecTest(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class BackupContainerNamesTest(unittest.TestCase):
+    """A configured container that does not exist is named as the cause.
+
+    12.10.2026: sql_container named a container the host did not have. The
+    report said only "no archive found" and sent the operator to `dobk`,
+    which failed with "No such container" - and still printed "Backup
+    completed!".
+    """
+
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(self.tmp.cleanup)
+        self.ctx = sr.HealthContext(root=self.tmp.name, home=self.tmp.name,
+                                    repo=self.tmp.name)
+        with open(os.path.join(self.tmp.name, sr.BACKUP_CONFIG), "w",
+                  encoding="utf-8") as handle:
+            handle.write(BACKUP_ENTRY)
+
+    def names(self, value):
+        return unittest.mock.patch.object(sr, "_container_names", return_value=value)
+
+    @unittest.skipUnless(HAVE_YAML, "PyYAML not installed")
+    def test_config_fails_on_a_missing_sql_container(self):
+        with self.names({"live-odoo", "test-db", "test-odoo", "live-postgres"}):
+            finding = sr.check_backup_config(self.ctx)
+        self.assertEqual(finding.severity, sr.Severity.FAIL)
+        self.assertIn("sql_container 'live-db' does not exist", finding.detail)
+        self.assertIn("live-postgres", finding.detail)
+        self.assertIn("edbk", finding.fix)
+
+    @unittest.skipUnless(HAVE_YAML, "PyYAML not installed")
+    def test_config_ok_when_every_container_exists(self):
+        with self.names({"live-db", "live-odoo", "test-db", "test-odoo"}):
+            finding = sr.check_backup_config(self.ctx)
+        self.assertEqual(finding.severity, sr.Severity.OK)
+
+    @unittest.skipUnless(HAVE_YAML, "PyYAML not installed")
+    def test_unknown_docker_state_is_not_a_finding(self):
+        with self.names(None):
+            finding = sr.check_backup_config(self.ctx)
+        self.assertEqual(finding.severity, sr.Severity.OK)
+
+    @unittest.skipUnless(HAVE_YAML, "PyYAML not installed")
+    def test_recency_names_the_cause_instead_of_dobk(self):
+        with self.names({"live-odoo", "test-db", "test-odoo"}):
+            finding = sr.check_backup_recency(self.ctx)
+        self.assertEqual(finding.severity, sr.Severity.FAIL)
+        self.assertIn("sql_container 'live-db' does not exist", finding.detail)
+        self.assertTrue(finding.fix.startswith("edbk"))

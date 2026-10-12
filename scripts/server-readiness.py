@@ -4,7 +4,7 @@
 # Title:            server-readiness.py
 # Description:      Report whether this server matches the state myodoo-docker
 #                   expects, and name the exact command that closes each gap.
-# Version:          1.13.1
+# Version:          1.14.0
 # Date:             12.10.2026
 # Author:           Equitania Software GmbH
 # ==============================================================================
@@ -79,7 +79,7 @@ from dataclasses import dataclass
 from enum import Enum
 from typing import Callable, List, Optional, Tuple
 
-SCRIPT_VERSION = "1.13.1"
+SCRIPT_VERSION = "1.14.0"
 SCRIPT_DATE = "12.10.2026"
 
 # Where nginx keeps its customer vhosts (mirrors nginx-cert-guard.py).
@@ -293,6 +293,40 @@ def _container_count() -> Optional[int]:
     if code != 0:
         return None
     return len([line for line in output.splitlines() if line.strip()])
+
+
+def _container_names() -> Optional[set]:
+    """Names of all containers (running or not); None when Docker cannot be asked."""
+    if not shutil.which("docker"):
+        return None
+    code, output = _run(["docker", "ps", "-a", "--format", "{{.Names}}"])
+    if code != 0:
+        return None
+    return {line.strip() for line in output.splitlines() if line.strip()}
+
+
+def _backup_container_problems(config: dict) -> List[str]:
+    """Configured sql_container / data_container names that do not exist.
+
+    A wrong name is the one backup fault no other check sees: the config
+    parses, the cron fires twice a day, container2backup prints "Backup
+    completed!" (before 4.10.0) - and pg_dump answers "No such container"
+    every time. Found 12.10.2026 on a server whose report only said "no
+    archive found" and sent the operator to `dobk`, which failed the same way.
+    """
+    existing = _container_names()
+    if existing is None:
+        return []
+    problems = []
+    for entry in config.get("databases") or []:
+        if not isinstance(entry, dict):
+            continue
+        name = str(entry.get("name") or "?")
+        for key in ("sql_container", "data_container"):
+            container = str(entry.get(key) or "").strip()
+            if container and container not in existing:
+                problems.append(f"{name}: {key} '{container}' does not exist")
+    return problems
 
 
 def _human(num_bytes: float) -> str:
@@ -805,6 +839,15 @@ def check_backup_recency(ctx: HealthContext) -> Finding:
     else:
         detail = f"stalest: {stalest_name} ({_age(stalest_age)} old){note}"
 
+    # Running dobk cannot help while the config names a container that is not
+    # there - point at the cause, which check_backup_config spells out.
+    container_problems = _backup_container_problems(config)
+    if container_problems:
+        return Finding(
+            "backup_recency", worst, "Backup recency",
+            f"{detail} — {'; '.join(container_problems)}",
+            "edbk   # set sql_container / data_container to names from: docker ps -a",
+        )
     return Finding(
         "backup_recency", worst, "Backup recency", detail,
         "dobk   # run a backup now, then check the cron schedule",
@@ -866,6 +909,15 @@ def check_backup_config(ctx: HealthContext) -> Finding:
             "backup_config", Severity.WARN, "Backup config",
             "no databases defined — the backup would do nothing",
             "edbk",
+        )
+    container_problems = _backup_container_problems(config)
+    if container_problems:
+        existing = sorted(_container_names() or [])
+        hint = f" — containers here: {', '.join(existing)}" if existing else ""
+        return Finding(
+            "backup_config", Severity.FAIL, "Backup config",
+            "; ".join(container_problems) + hint,
+            "edbk   # set sql_container / data_container to existing container names",
         )
     return _ok("backup_config", "Backup config",
                f"{len(databases)} database(s) configured")
