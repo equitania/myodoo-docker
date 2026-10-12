@@ -80,10 +80,13 @@ fail2ban:
       logpath: "/var/log/nginx/error.log"
       maxretry: 3
 
+    # nginx.conf switches the global access.log off; nginx-set-conf vhosts
+    # write /var/log/nginx/<domain>-access.log. fail2ban expands the glob when
+    # it starts, so a vhost added later is watched after the next restart.
     nginx-bad-request:
       enabled: true
       port: "http,https"
-      logpath: "/var/log/nginx/access.log"
+      logpath: "/var/log/nginx/*-access.log"
       maxretry: 3
 
   recidive:

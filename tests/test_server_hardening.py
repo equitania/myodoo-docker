@@ -397,6 +397,7 @@ class Fail2banJournalBackendTest(unittest.TestCase):
              mock.patch.object(sh.shutil, "move") as move, \
              mock.patch.object(sh.shutil, "copy2") as copy2, \
              mock.patch.object(sh.os.path, "exists", side_effect=exists), \
+             mock.patch.object(sh, "logpath_present", return_value=True), \
              mock.patch.object(sh.time, "sleep"), \
              mock.patch.object(sh.Path, "write_text", write_text):
             sh.audit_fail2ban(self.CONFIG, apply=True)
@@ -432,6 +433,43 @@ class Fail2banJournalBackendTest(unittest.TestCase):
         _, _, _, move, copy2 = self.apply(journal=(True, True), jails_after=("2",))
         move.assert_not_called()
         copy2.assert_not_called()
+
+
+class Fail2banLogpathTest(unittest.TestCase):
+    """nginx.conf switches the global access.log off; vhosts write
+    <domain>-access.log. The nginx-bad-request jail pointed at access.log, was
+    disabled by --apply and then reported as FAIL on every run (12.10.2026)."""
+
+    def test_globs_and_several_paths_are_understood(self):
+        import tempfile
+        with tempfile.TemporaryDirectory() as folder:
+            open(os.path.join(folder, "erp.example.com-access.log"), "w").close()
+            self.assertTrue(sh.logpath_present(os.path.join(folder, "*-access.log")))
+            self.assertFalse(sh.logpath_present(os.path.join(folder, "access.log")))
+            self.assertTrue(sh.logpath_present(
+                f"{os.path.join(folder, 'missing.log')} {os.path.join(folder, '*-access.log')}"))
+
+    def test_shipped_config_watches_the_vhost_logs(self):
+        config = (Path(_PATH).parent / "hardening_config.yaml").read_text(encoding="utf-8")
+        block = config.split("nginx-bad-request:")[1].split("\n\n")[0]
+        self.assertIn('logpath: "/var/log/nginx/*-access.log"', block)
+
+    def test_a_jail_without_any_log_is_not_a_failure(self):
+        config = {"fail2ban": {"enabled": True, "banaction": "ufw", "jails": {
+            "nginx-bad-request": {"enabled": True, "logpath": "/nonexistent/*-access.log"}}}}
+
+        def run(cmd, check=False, timeout=30):
+            if cmd.startswith("fail2ban-client status"):
+                return "Status\n|- Number of jail:\t1\n`- Jail list:\tsshd"
+            if "jail.local" in cmd:
+                return "banaction = ufw"
+            return ""
+
+        before = sh.Stats.fail_count
+        with mock.patch.object(sh, "run", run), \
+             mock.patch.object(sh.shutil, "which", return_value="/usr/bin/fail2ban-client"):
+            sh.audit_fail2ban(config, apply=False)
+        self.assertEqual(sh.Stats.fail_count, before)
 
 
 if __name__ == "__main__":

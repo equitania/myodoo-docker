@@ -1040,7 +1040,15 @@ in this repository, stay in `CLAUDE.md`.
   job that in fact never ran. See `ownerp_cron.py` above, which fixes the
   backup's location for the same reason
 
-#### 17. server_hardening.py (v1.11.0)
+#### 17. server_hardening.py (v1.11.1)
+- **nginx-bad-request watches the vhost logs** (v1.11.1, 12.10.2026):
+  `nginx.conf` switches the global `access.log` off and nginx-set-conf vhosts
+  write `/var/log/nginx/<domain>-access.log`, so the jail now reads
+  `/var/log/nginx/*-access.log` (fail2ban expands the glob at start — a new
+  vhost is watched after the next fail2ban restart). `logpath_present()`
+  understands globs and several paths. A jail left off because no log exists
+  is an info line in the audit, no longer a FAIL that `ups` offered to "fix"
+  on every run
 - **fail2ban cannot be left without jails** (v1.11.0, 12.10.2026): a jail with
   `backend = systemd` needs `python3-systemd`, which came only with a fresh
   fail2ban install. On a host where fail2ban already existed (Ubuntu 22.04,

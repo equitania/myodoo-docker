@@ -2,7 +2,7 @@
 """
 Server-Härtungs-Skript
 =======================
-Version: 1.11.0 / Date: 12.10.2026
+Version: 1.11.1 / Date: 12.10.2026
 
 Prüft und härtet: UFW, Fail2Ban, SSH, Kernel, Kernel-Module, Docker,
 Auto-Updates, auditd, AIDE, Nginx
@@ -19,7 +19,8 @@ import subprocess
 import sys
 import os
 
-SCRIPT_VERSION = "1.11.0"
+SCRIPT_VERSION = "1.11.1"
+import glob
 import re
 import time
 import json
@@ -526,6 +527,12 @@ def audit_ufw(config, apply=False, force=False):
 
 
 # ─── MODUL: Fail2Ban ─────────────────────────────────────────
+def logpath_present(logpath):
+    """Whether a jail's logpath (globs and several paths allowed, as in
+    fail2ban) currently matches at least one file."""
+    return any(glob.glob(part) for part in str(logpath).split())
+
+
 def systemd_journal_available():
     """Whether fail2ban's interpreter can import the journal reader."""
     return run('python3 -c "import systemd.journal" 2>/dev/null && echo yes') == "yes"
@@ -581,10 +588,15 @@ def audit_fail2ban(config, apply=False, force=False):
     else:
         active_jails = []
 
-    for jail_name in expected_jails:
+    for jail_name, jail_cfg in expected_jails.items():
         if jail_name in active_jails:
             ok(f"Jail '{jail_name}' aktiv")
             Stats.ok_count += 1
+        elif jail_cfg.get("logpath") and not logpath_present(jail_cfg["logpath"]):
+            # --apply writes such a jail disabled on purpose (fail2ban would
+            # refuse to start otherwise). Not a deviation it could fix, so not
+            # a FAIL - that made `ups` offer the same no-op fix on every run.
+            info(f"Jail '{jail_name}' aus: kein Log unter {jail_cfg['logpath']}")
         else:
             fail(f"Jail '{jail_name}' NICHT aktiv")
             Stats.fail_count += 1
@@ -672,7 +684,7 @@ def audit_fail2ban(config, apply=False, force=False):
             # nginx log pipeline exists) instead of breaking the whole service.
             jail_enabled = jail_cfg.get("enabled", True)
             logpath = jail_cfg.get("logpath")
-            if jail_enabled and logpath and not os.path.exists(logpath):
+            if jail_enabled and logpath and not logpath_present(logpath):
                 warn(f"Jail '{jail_name}': Logpath {logpath} fehlt — wird deaktiviert")
                 Stats.warn_count += 1
                 jail_enabled = False

@@ -1,5 +1,25 @@
 # Release Notes
 
+## The nginx-bad-request Jail Reads the Real Access Logs (12.10.2026)
+
+*scripts/server_hardening.py v1.11.1 · scripts/hardening_config.yaml ·
+tests/test_server_hardening.py · docs/COMPONENTS.md*
+
+The `nginx-bad-request` jail pointed at `/var/log/nginx/access.log`, which no
+ownERP server has: `nginx.conf` switches the global access log off and every
+vhost writes its own `/var/log/nginx/<domain>-access.log`. The hardening then
+disabled the jail - correctly - but the audit still reported it as an error,
+so `ups` offered the same fix on every run and `chk` kept a permanent FAIL.
+
+### Fixed
+
+- **The jail reads `/var/log/nginx/*-access.log`.** fail2ban expands the
+  pattern when it starts; a vhost added later is watched after the next
+  fail2ban restart.
+- **A jail without any log file is no longer an error.** The audit lists it as
+  switched off and why, and `ups` stops offering a fix that cannot change
+  anything.
+
 ## fail2ban Is No Longer Left Without Jails (12.10.2026)
 
 *scripts/server_hardening.py v1.11.0 · tests/test_server_hardening.py ·
