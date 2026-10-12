@@ -9,7 +9,7 @@
 # auf der lokalen Maschine, damit Deployment-Probleme reproduzierbar gemacht
 # werden können, ohne Semaphore + Vault-Setup zu involvieren.
 #
-# Eingaben (interaktiv): Container-Name, Port, Image-Tag, Registry-Token,
+# Eingaben (interaktiv): Container-Name, Port, Registry-Token, Image-Tag,
 # optional neue Admin-/Superuser-/JWT-Secrets.
 #
 # Volume-Layout identisch zur Produktion: /opt/fast-report/{name}/{Reports,
@@ -18,6 +18,16 @@
 # Sicherheits-Hygiene: Passwort-/Token-Eingaben silent, bcrypt-Hash über stdin,
 # Image-Inhalts-Audit nach Pull (siehe Step 9 — fängt versehentlich ins Image
 # gewanderte appsettings.Development.json ab).
+#
+# Versionsvorschlag: Nach dem Registry-Token listet das Skript die Tags der
+# Registry und schlägt den neuesten vor; Enter übernimmt ihn.
+#
+# Fester Benutzer: Das Image legt frapi mit UID/GID 10000 fest an (Build-ARG
+# APP_UID), startet als root, übergibt die Volumes an frapi und wechselt per
+# gosu zu ihm. Die UID ist damit auf jedem Server dieselbe; ein 'user:' im
+# Compose-File würde diesen Start brechen. Das Skript legt deshalb nur den
+# passenden Host-Benutzer frapi:10000 an (nur anlegen, nie ändern), damit
+# ls -l die Volumes unter einem Namen statt als 10000 zeigt.
 #
 # Hinweis: erwartet GNU-Tools (md5sum, stat -c). Auf Linux-Deploy-Hosts gegeben;
 # auf macOS sind 'md5sum'/'stat -c' nicht nativ vorhanden.
@@ -31,6 +41,9 @@ IMAGE_REPO="ci-myodoo/fr-api"
 IMAGE_BASE="$REGISTRY_URL/$IMAGE_REPO"
 GITLAB_JWT_AUTH="https://gitlab.ownerp.io/jwt/auth"
 CONTAINER_PORT=5001
+# Benutzer im Image (fr-api Dockerfile: ARG APP_UID=10000, useradd frapi).
+FR_HOST_USER="frapi"
+FR_UID=10000
 
 # Keine Baked-Default-Secrets im Skript (Security): fixe, über alle Deployments
 # geteilte Hashes/Keys wären bei Repo-Zugriff kompromittiert. Fehlen Override
@@ -247,6 +260,88 @@ print(json.dumps(cur, separators=(',', ':'), ensure_ascii=False))
 PY
 }
 
+# Tags des Images aus der Registry (Docker Registry V2 API, GitLab-JWT).
+# stdout: Tags, sortiert (sort -V, neuester zuletzt). Exit 1 = kein JWT
+# (Token falsch / ohne read_registry), 2 = Tag-Liste nicht lesbar.
+_registry_tags() {  # token
+    local token="$1" jwt_resp jwt tags_json tags
+    jwt_resp="$(_http_get_basic \
+        "$GITLAB_JWT_AUTH?service=container_registry&scope=repository:$IMAGE_REPO:pull&client_id=docker" \
+        "$REGISTRY_USER" "$token")"
+    jwt="$(printf '%s' "$jwt_resp" | python3 -c 'import sys, json
+try:
+    sys.stdout.write(json.load(sys.stdin).get("token") or "")
+except Exception:
+    pass' 2>/dev/null)"
+    [ -z "$jwt" ] && return 1
+    tags_json="$(_http_get_bearer "https://$REGISTRY_URL/v2/$IMAGE_REPO/tags/list" "$jwt")"
+    tags="$(printf '%s' "$tags_json" | python3 -c 'import sys, json
+try:
+    for t in (json.load(sys.stdin).get("tags") or []):
+        print(t)
+except Exception:
+    pass' 2>/dev/null | sort -V)"
+    [ -z "$tags" ] && return 2
+    printf '%s\n' "$tags"
+}
+
+# Neuester Release-Tag (beginnt mit einer Ziffer — 'latest', Branch- oder
+# Test-Tags zählen nicht). Leer, wenn es keinen gibt.
+_newest_release_tag() {  # tags on stdin (sort -V order)
+    grep -E '^[0-9][0-9A-Za-z_.-]*$' | sort -V | tail -n1
+}
+
+_jwt_hint() {
+    _err "Konnte JWT für Registry-Auth nicht beziehen ($GITLAB_JWT_AUTH)."
+    echo "  Token korrekt? Hat das PAT 'read_registry' Scope?"
+    echo "  Manuell prüfbar:"
+    echo "    curl -u $REGISTRY_USER:\$TOKEN '$GITLAB_JWT_AUTH?service=container_registry&scope=repository:$IMAGE_REPO:pull&client_id=docker'"
+}
+
+# Host-Benutzer zur festen Container-UID anlegen — nur anlegen, nie ändern.
+# Ein bestehender Name mit anderer UID oder eine fremd vergebene UID/GID
+# bleiben unangetastet; dann zeigt ls -l eben die Zahl. Nie fatal.
+_ensure_host_user() {  # name uid comment
+    local name="$1" uid="$2" comment="$3" owner
+    if [ "$(id -u)" -ne 0 ]; then
+        _info "Host-Benutzer $name ($uid) nicht angelegt — braucht root."
+        return 0
+    fi
+    owner="$(getent passwd "$uid" | cut -d: -f1)"
+    if [ "$owner" = "$name" ]; then
+        return 0
+    fi
+    if [ -n "$owner" ]; then
+        _info "Host-Benutzer $name nicht angelegt: UID $uid gehört '$owner'."
+        return 0
+    fi
+    if getent passwd "$name" >/dev/null; then
+        _info "Host-Benutzer $name nicht angelegt: existiert mit UID $(id -u "$name")."
+        return 0
+    fi
+    owner="$(getent group "$uid" | cut -d: -f1)"
+    if [ -n "$owner" ] && [ "$owner" != "$name" ]; then
+        _info "Host-Benutzer $name nicht angelegt: GID $uid gehört Gruppe '$owner'."
+        return 0
+    fi
+    if [ -z "$owner" ]; then
+        if getent group "$name" >/dev/null; then
+            _info "Host-Benutzer $name nicht angelegt: Gruppe $name hat eine andere GID."
+            return 0
+        fi
+        groupadd -g "$uid" "$name" || { _err "groupadd $name fehlgeschlagen"; return 0; }
+    fi
+    if useradd -u "$uid" -g "$uid" -M -d /nonexistent -s /usr/sbin/nologin \
+            -c "$comment" "$name"; then
+        _ok "Host-Benutzer $name ($uid) angelegt"
+    else
+        _err "useradd $name fehlgeschlagen"
+    fi
+}
+
+# Tests sourcen das Skript nur für die Hilfsfunktionen.
+[ -n "${FR_DEPLOY_NO_MAIN:-}" ] && return 0
+
 # ── Step 1: Pre-Flight Checks ────────────────────────────────────────────────
 _info "Step 1: Pre-Flight Checks"
 for cmd in docker python3 md5sum awk; do
@@ -309,7 +404,32 @@ if ! [[ "$fr_port" =~ ^[0-9]+$ ]]; then
     exit 1
 fi
 
-read -rp "  Image-Tag (z.B. 2026.2.3-3.2.7): " fr_version
+registry_token="$(_read_masked "  GitLab Registry Token (User: $REGISTRY_USER): ")"
+if [ -z "$registry_token" ]; then
+    _err "Token ist Pflicht"
+    exit 1
+fi
+
+# Mit dem Token die Tags lesen und den neuesten vorschlagen. Schlägt das fehl,
+# bleibt die Eingabe von Hand — der Login in Step 7 sagt dann, ob der Token taugt.
+fr_suggest=""
+if fr_tags="$(_registry_tags "$registry_token")"; then
+    fr_suggest="$(printf '%s\n' "$fr_tags" | _newest_release_tag)"
+    if [ -n "$fr_suggest" ]; then
+        echo "  Neueste Tags in $IMAGE_BASE:"
+        printf '%s\n' "$fr_tags" | grep -E '^[0-9]' | tail -n5 | tac | while IFS= read -r t; do
+            echo "    • $t"
+        done
+    fi
+else
+    _info "Tag-Liste nicht abrufbar — Image-Tag bitte von Hand eingeben."
+fi
+if [ -n "$fr_suggest" ]; then
+    read -rp "  Image-Tag [$fr_suggest]: " fr_version
+    [ -z "$fr_version" ] && fr_version="$fr_suggest"
+else
+    read -rp "  Image-Tag (z.B. 2026.2.3-3.2.7): " fr_version
+fi
 if [ -z "$fr_version" ]; then
     _err "Image-Tag ist Pflicht"
     exit 1
@@ -318,12 +438,6 @@ fi
 # der Registry-URL. Docker-Tag-Grammatik: [a-zA-Z0-9_][a-zA-Z0-9_.-]*.
 if ! [[ "$fr_version" =~ ^[a-zA-Z0-9_][a-zA-Z0-9_.-]*$ ]]; then
     _err "Ungültiger Image-Tag: $fr_version"
-    exit 1
-fi
-
-registry_token="$(_read_masked "  GitLab Registry Token (User: $REGISTRY_USER): ")"
-if [ -z "$registry_token" ]; then
-    _err "Token ist Pflicht"
     exit 1
 fi
 
@@ -420,6 +534,7 @@ fi
 if ! chmod 0700 "$host_base/dp-keys" 2>/dev/null; then
     _info "dp-keys: chmod übersprungen (gehört anderem User, z.B. Container-UID 10000)"
 fi
+_ensure_host_user "$FR_HOST_USER" "$FR_UID" "FastReport container user"
 _ok "Verzeichnisse unter $host_base bereit"
 
 # ── Step 5: Secret-Cascade ───────────────────────────────────────────────────
@@ -681,28 +796,9 @@ if ! docker manifest inspect "$image" >/dev/null 2>&1; then
     _err "Image '$image' existiert nicht (oder ist nicht zugänglich)."
 
     _info "Versuche, verfügbare Tags aus der Registry zu listen …"
-
-    # Docker Registry V2 API mit GitLab JWT-Auth
-    jwt_resp="$(_http_get_basic \
-        "$GITLAB_JWT_AUTH?service=container_registry&scope=repository:$IMAGE_REPO:pull&client_id=docker" \
-        "$REGISTRY_USER" "$registry_token")"
-    jwt="$(printf '%s' "$jwt_resp" | python3 -c 'import sys, json
-try:
-    sys.stdout.write(json.load(sys.stdin).get("token") or "")
-except Exception:
-    pass' 2>/dev/null)"
-
-    if [ -n "$jwt" ]; then
-        tags_json="$(_http_get_bearer \
-            "https://$REGISTRY_URL/v2/$IMAGE_REPO/tags/list" "$jwt")"
-        tags="$(printf '%s' "$tags_json" | python3 -c 'import sys, json
-try:
-    for t in (json.load(sys.stdin).get("tags") or []):
-        print(t)
-except Exception:
-    pass' 2>/dev/null | sort -V)"
-
-        if [ -n "$tags" ]; then
+    tags="$(_registry_tags "$registry_token")"
+    case $? in
+        0)
             echo
             echo "  Verfügbare Tags in $IMAGE_BASE:"
             while IFS= read -r t; do
@@ -710,16 +806,10 @@ except Exception:
             done <<< "$tags"
             echo
             echo "  Erneut ausführen und passenden Tag angeben."
-        else
-            _err "Konnte Tags-Liste nicht parsen. Rohausgabe:"
-            echo "$tags_json"
-        fi
-    else
-        _err "Konnte JWT für Registry-Auth nicht beziehen ($GITLAB_JWT_AUTH)."
-        echo "  Token korrekt? Hat das PAT 'read_registry' Scope?"
-        echo "  Manuell prüfbar:"
-        echo "    curl -u $REGISTRY_USER:\$TOKEN '$GITLAB_JWT_AUTH?service=container_registry&scope=repository:$IMAGE_REPO:pull&client_id=docker'"
-    fi
+            ;;
+        1) _jwt_hint ;;
+        *) _err "Konnte Tags-Liste nicht lesen ($REGISTRY_URL/v2/$IMAGE_REPO/tags/list)." ;;
+    esac
     exit 1
 fi
 _ok "Image '$image' existiert in Registry"

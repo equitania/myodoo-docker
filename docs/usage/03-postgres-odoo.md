@@ -20,13 +20,14 @@ Pro System ein eigener PostgreSQL-Container — interaktiv per:
 ```
 
 Abgefragt werden u.a. Container-Name (`live-db`), Basis-Verzeichnis,
-DB-User/-Passwort, PostgreSQL-Version (aktuelle Tags:
-<https://hub.docker.com/_/postgres/tags?name=16.>), Performance-Profil
+DB-User/-Passwort, PostgreSQL-Version (das Skript zeigt die neuesten Stände
+vom Docker Hub, Enter übernimmt den neuesten), Performance-Profil
 (2cpu4gb … 8cpu32gb), optional **Self-Signed-SSL** und optional **pgvector**
 (Standard: aus — mit pgvector installiert Odoo 19 Enterprise das KI-Modul `ai`
 in jeder neuen Datenbank von selbst). Das Skript erzeugt
 Netzwerk (`live-db-net`), Compose-File (`<basis>/live-db-deploy/docker-compose.yml`)
-und startet den Container. Details: [scripts/README_pg-local-deploy.md](../../scripts/README_pg-local-deploy.md).
+und startet den Container. Eine neue Instanz läuft als Benutzer `postgres`
+mit UID 5432; das Skript legt ihn auch auf dem Host an. Details: [scripts/README_pg-local-deploy.md](../../scripts/README_pg-local-deploy.md).
 
 > ⚠️ **Erfahrungswert (db_sslmode):** In der `odoo.conf` des Odoo-Images muss
 > `db_sslmode = prefer` stehen. Mit `require` verweigert Odoo die Verbindung
@@ -113,13 +114,15 @@ One dedicated PostgreSQL container per system — interactively via:
 ```
 
 Prompts include container name (`live-db`), base directory, DB user/password,
-PostgreSQL version (current tags:
-<https://hub.docker.com/_/postgres/tags?name=16.>), performance profile
+PostgreSQL version (the script shows the newest releases from Docker Hub,
+Enter takes the newest), performance profile
 (2cpu4gb … 8cpu32gb), optional **self-signed SSL** and optional **pgvector**
 (default: off — with pgvector, Odoo 19 Enterprise installs the AI module `ai`
 in every new database by itself). The script creates the
 network (`live-db-net`), a compose file
-(`<base>/live-db-deploy/docker-compose.yml`) and starts the container.
+(`<base>/live-db-deploy/docker-compose.yml`) and starts the container. A new
+instance runs as user `postgres` with UID 5432; the script creates that user on
+the host as well.
 Details: [scripts/README_pg-local-deploy.md](../../scripts/README_pg-local-deploy.md).
 
 > ⚠️ **Lesson learned (db_sslmode):** The `odoo.conf` inside the Odoo image

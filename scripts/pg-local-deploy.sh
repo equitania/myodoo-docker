@@ -2,7 +2,7 @@
 #
 # pg-local-deploy.sh — interaktives On-Premise-Deploy für PostgreSQL-Docker.
 #
-# Version: 1.3.0 — 29.09.2026
+# Version: 1.4.0 — 12.10.2026
 #
 # Spiegelt das Ansible-Playbook
 #   semaphore/playbooks/odoo/pg/pb_pg_docker_start.yaml
@@ -24,11 +24,25 @@
 # das im offiziellen Image bereits eingetragen ist. So bleibt die genaue
 # Version (z.B. 16.14) erhalten.
 #
+# Fester Benutzer (1.4.0): Eine NEUE Instanz läuft als postgres:5432 (Compose
+# 'user:'), nicht als die 999 des offiziellen Images. 999 gehört auf dem Host
+# meist einem Systemkonto (systemd-coredump, systemd-journal …), ls -l zeigte
+# PGDATA deshalb je Server unter einem anderen, fremden Namen. Das Skript legt
+# den Host-Benutzer postgres:5432 an (nur anlegen, nie ändern — wie odoo:8069
+# in getScripts.py). Ein Re-Deploy auf bestehendes PGDATA behält dessen Besitzer;
+# bestehende Instanzen werden NICHT umgestellt.
+#
+# Versionsvorschlag (1.4.0): Die neuesten Patch-Stände je Hauptversion kommen
+# vom Docker Hub; Enter übernimmt den neuesten. Ohne Netz wie bisher von Hand.
+# PGDATA wird ausdrücklich gesetzt: Ab postgres:18 liegt der Standard unter
+# /var/lib/postgresql/18/docker, und das Image verweigert den Start, wenn
+# /var/lib/postgresql/data ein Mount ist, den es nicht benutzt.
+#
 # Sicherheits-Hygiene: KEINE Secrets im Skript hinterlegt — das DB-Passwort
 # wird zwingend interaktiv (silent, mit Wiederholung) abgefragt.
 #
 # Volume-Layout identisch zur Ansible-Produktion:
-#   {base}/{name}          → PGDATA (999:999, 0700)
+#   {base}/{name}          → PGDATA (5432:5432, 0700; Altinstanzen 999:999)
 #   {base}/{name}-deploy/  → docker-compose.yml + postgresql.conf.src
 #
 # Die vier PostgreSQL-Conf-Profile sind 1:1 als Heredocs eingebettet
@@ -44,6 +58,12 @@ set -o pipefail
 CONTAINER_PORT=5432
 DEFAULT_PG_USER="ownerp"
 DEFAULT_PG_DB="postgres"
+# Fester Container-/Host-Benutzer neuer Instanzen (UID = GID, Muster odoo:8069).
+PG_HOST_USER="postgres"
+PG_UID=5432
+# UID des postgres-Benutzers im offiziellen Image (Altinstanzen).
+PG_IMAGE_UID=999
+DOCKER_HUB_TAGS="https://hub.docker.com/v2/repositories/library/postgres/tags?page_size=100&ordering=last_updated"
 
 # ── Farben (nur bei Terminal) ────────────────────────────────────────────────
 if [ -t 1 ]; then
@@ -104,6 +124,83 @@ _read_pwd_twice() {
         _err "Eingaben verschieden — bitte erneut."
     done
 }
+
+# Body auf stdout, exit != 0 bei Fehler. Ohne Credentials — nur öffentliche
+# Quellen (Docker Hub). Proxy-Variablen aus der Umgebung gelten für beide Tools.
+_http_get() {  # url
+    if command -v curl >/dev/null 2>&1; then
+        curl -fsS --max-time 15 "$1" 2>/dev/null
+    elif command -v wget >/dev/null 2>&1; then
+        wget -q -T 15 -O - "$1" 2>/dev/null
+    else
+        return 1
+    fi
+}
+
+# Docker-Hub-Tag-Liste (JSON, stdin) → "Hauptversion Neueste" je Zeile, neueste
+# Hauptversion zuerst. Nur reine Versions-Tags (16.14), keine Varianten
+# (16.14-alpine, 16-bookworm) und keine Betas.
+_pg_latest_per_major() {
+    python3 -c '
+import json, re, sys
+try:
+    results = json.load(sys.stdin).get("results") or []
+except ValueError:
+    sys.exit(1)
+newest = {}
+for tag in results:
+    name = tag.get("name") or ""
+    if re.fullmatch(r"\d+\.\d+", name):
+        major, minor = (int(x) for x in name.split("."))
+        newest[major] = max(newest.get(major, -1), minor)
+for major in sorted(newest, reverse=True):
+    print(f"{major} {major}.{newest[major]}")
+'
+}
+
+# Host-Benutzer zur festen Container-UID anlegen — nur anlegen, nie ändern.
+# Ein bestehender Name mit anderer UID oder eine fremd vergebene UID/GID
+# bleiben unangetastet; dann zeigt ls -l eben die Zahl. Nie fatal.
+_ensure_host_user() {  # name uid comment
+    local name="$1" uid="$2" comment="$3" owner
+    if [ "$(id -u)" -ne 0 ]; then
+        _info "Host-Benutzer $name ($uid) nicht angelegt — braucht root."
+        return 0
+    fi
+    owner="$(getent passwd "$uid" | cut -d: -f1)"
+    if [ "$owner" = "$name" ]; then
+        return 0
+    fi
+    if [ -n "$owner" ]; then
+        _info "Host-Benutzer $name nicht angelegt: UID $uid gehört '$owner'."
+        return 0
+    fi
+    if getent passwd "$name" >/dev/null; then
+        _info "Host-Benutzer $name nicht angelegt: existiert mit UID $(id -u "$name")."
+        return 0
+    fi
+    owner="$(getent group "$uid" | cut -d: -f1)"
+    if [ -n "$owner" ] && [ "$owner" != "$name" ]; then
+        _info "Host-Benutzer $name nicht angelegt: GID $uid gehört Gruppe '$owner'."
+        return 0
+    fi
+    if [ -z "$owner" ]; then
+        if getent group "$name" >/dev/null; then
+            _info "Host-Benutzer $name nicht angelegt: Gruppe $name hat eine andere GID."
+            return 0
+        fi
+        groupadd -g "$uid" "$name" || { _err "groupadd $name fehlgeschlagen"; return 0; }
+    fi
+    if useradd -u "$uid" -g "$uid" -M -d /nonexistent -s /usr/sbin/nologin \
+            -c "$comment" "$name"; then
+        _ok "Host-Benutzer $name ($uid) angelegt"
+    else
+        _err "useradd $name fehlgeschlagen"
+    fi
+}
+
+# Tests sourcen das Skript nur für die Hilfsfunktionen.
+[ -n "${PG_DEPLOY_NO_MAIN:-}" ] && return 0
 
 main() {
 
@@ -179,8 +276,22 @@ echo "  Bei bestehendem Datenverzeichnis wird die Eingabe von PostgreSQL ignorie
 pg_pass="$(_read_pwd_twice "DB-Passwort")"
 
 echo
-echo "  Verfügbare Tags: https://hub.docker.com/_/postgres/tags?name=16."
-read -rp "  PostgreSQL-Version (z.B. 16.14): " pg_version
+pg_suggest=""
+pg_latest="$(_http_get "$DOCKER_HUB_TAGS" | _pg_latest_per_major)"
+if [ -n "$pg_latest" ]; then
+    echo "  Neueste Versionen auf Docker Hub:"
+    while read -r major newest; do
+        echo "    PostgreSQL $major: $newest"
+    done <<< "$pg_latest"
+    pg_suggest="$(head -n1 <<< "$pg_latest" | cut -d' ' -f2)"
+    echo "  Vor der Wahl einer neuen Hauptversion prüfen, ob die Odoo-Version sie unterstützt."
+    read -rp "  PostgreSQL-Version [$pg_suggest]: " pg_version
+    [ -z "$pg_version" ] && pg_version="$pg_suggest"
+else
+    _info "Docker Hub nicht erreichbar — Version bitte von Hand eingeben."
+    echo "  Verfügbare Tags: https://hub.docker.com/_/postgres/tags"
+    read -rp "  PostgreSQL-Version (z.B. 16.14): " pg_version
+fi
 if [ -z "$pg_version" ]; then
     _err "PostgreSQL-Version ist Pflicht"
     exit 1
@@ -284,16 +395,43 @@ if [ -f "$host_pgdata/PG_VERSION" ] || [ -n "$(ls -A "$host_pgdata" 2>/dev/null)
     echo "    POSTGRES_USER/PASSWORD/DB werden von PostgreSQL ignoriert (kein initdb)."
 fi
 
-# Ownership/Mode wie Ansible (owner 999, group 999, mode 0700). chown braucht
-# i.d.R. root — bei Fehlschlag nur Hinweis: der offizielle postgres-Entrypoint
-# (läuft als root) korrigiert die Ownership beim Container-Start selbst.
-if $SUDO chown 999:999 "$host_pgdata" 2>/dev/null || sudo -n chown 999:999 "$host_pgdata" 2>/dev/null; then
-    $SUDO chmod 0700 "$host_pgdata" 2>/dev/null || sudo -n chmod 0700 "$host_pgdata" 2>/dev/null
-    _ok "PGDATA vorbereitet: $host_pgdata (999:999, 0700)"
+# Besitzer von PGDATA = Benutzer, als der der Container läuft.
+#   Neue Instanz:  postgres:5432 (fest, Host-Benutzer gleichen Namens).
+#   Re-Deploy:     der bisherige Besitzer bleibt — eine Altinstanz mit 999
+#                  läuft weiter ohne 'user:' wie bisher; umgestellt wird nichts.
+#   Kein chown möglich (kein root/sudo): wie bisher 999 über den Entrypoint
+#                  des Images, das läuft dann als root und übernimmt den chown.
+if [ "$existing_data" -eq 1 ]; then
+    pg_uid="$(stat -c %u "$host_pgdata" 2>/dev/null)"
+    pg_gid="$(stat -c %g "$host_pgdata" 2>/dev/null)"
+    # root als Besitzer (von Hand kopierte Daten): PostgreSQL läuft nie als
+    # root — dann wie bisher über den Entrypoint, der auf 999 umstellt.
+    if [ -z "$pg_uid" ] || [ "$pg_uid" = "0" ]; then
+        pg_uid="$PG_IMAGE_UID"; pg_gid="$PG_IMAGE_UID"
+    fi
+    _ok "PGDATA behält seinen Besitzer: $pg_uid:$pg_gid"
+elif $SUDO chown "$PG_UID:$PG_UID" "$host_pgdata" 2>/dev/null || sudo -n chown "$PG_UID:$PG_UID" "$host_pgdata" 2>/dev/null; then
+    pg_uid="$PG_UID"; pg_gid="$PG_UID"
+    if [ -n "$SUDO" ]; then
+        _info "Host-Benutzer $PG_HOST_USER ($PG_UID) wird nur als root angelegt — hier übersprungen."
+    else
+        _ensure_host_user "$PG_HOST_USER" "$PG_UID" "PostgreSQL container user"
+    fi
 else
-    chmod 0700 "$host_pgdata" 2>/dev/null
-    _info "chown 999:999 nicht möglich (kein root/sudo) — der postgres-Entrypoint übernimmt das beim Start."
-    _ok "PGDATA vorbereitet: $host_pgdata"
+    pg_uid="$PG_IMAGE_UID"; pg_gid="$PG_IMAGE_UID"
+    _info "chown $PG_UID:$PG_UID nicht möglich (kein root/sudo) — der Container läuft als $PG_IMAGE_UID, der postgres-Entrypoint übernimmt den Besitz beim Start."
+fi
+$SUDO chmod 0700 "$host_pgdata" 2>/dev/null || sudo -n chmod 0700 "$host_pgdata" 2>/dev/null
+_ok "PGDATA vorbereitet: $host_pgdata (0700)"
+
+# 'user:' nur, wenn der Container nicht als die 999 des Images laufen soll.
+if [ "$pg_uid" = "$PG_IMAGE_UID" ]; then
+    user_block=""
+    user_args=()
+else
+    user_block="    user: \"$pg_uid:$pg_gid\"
+"
+    user_args=(--user "$pg_uid:$pg_gid")
 fi
 _ok "Deploy-Verzeichnis bereit: $deploy_dir"
 
@@ -408,9 +546,10 @@ services:
   postgres:
     image: "$image"
 ${build_block}    container_name: "$pg_name"
-    restart: always
+${user_block}    restart: always
     shm_size: 1g
     environment:
+      PGDATA: "/var/lib/postgresql/data"
       POSTGRES_USER: "$pg_user"
       POSTGRES_PASSWORD: "$pg_pass"
       POSTGRES_DB: "$pg_db"
@@ -476,6 +615,8 @@ else
         --shm-size 1g \
         --network "$docker_network" \
         --env-file "$run_env_file" \
+        -e PGDATA=/var/lib/postgresql/data \
+        "${user_args[@]}" \
         -v "$host_pgdata:/var/lib/postgresql/data/" \
         "${port_args[@]}" \
         --health-cmd "pg_isready -U $pg_user -d postgres" \
@@ -521,7 +662,7 @@ fi
 _ok "Container gestoppt"
 
 # Copy via Docker-root-Container — funktioniert ohne sudo, da PGDATA dem
-# Container-User 999 gehört. Backup der bisherigen Conf wie Ansible (backup: yes).
+# Container-User ($pg_uid) gehört. Backup der bisherigen Conf wie Ansible (backup: yes).
 # Bei SSL: Self-Signed-Zertifikat idempotent im selben Container erzeugen
 # (openssl ist im postgres-Image enthalten; vorhandenes Zertifikat bleibt).
 ssl_cmd=""
@@ -532,7 +673,7 @@ if [ "$pg_ssl" = "yes" ]; then
                 -keyout /data/server.key -out /data/server.crt \
                 -subj '/CN=$pg_name'
         fi &&
-        chown 999:999 /data/server.key /data/server.crt &&
+        chown $pg_uid:$pg_gid /data/server.key /data/server.crt &&
         chmod 600 /data/server.key &&
         chmod 644 /data/server.crt"
 fi
@@ -545,7 +686,7 @@ if ! docker run --rm \
             cp -a /data/postgresql.conf /data/postgresql.conf.bak-$ts
         fi
         cp /src/postgresql.conf.src /data/postgresql.conf &&
-        chown 999:999 /data/postgresql.conf &&
+        chown $pg_uid:$pg_gid /data/postgresql.conf &&
         chmod 600 /data/postgresql.conf$ssl_cmd
     "; then
     _err "Conf-Copy/SSL-Setup fehlgeschlagen — Container wird ohne neues Profil wieder gestartet."
@@ -641,6 +782,7 @@ echo "  Container:   $pg_name"
 echo "  Image:       $image"
 echo "  Netzwerk:    $docker_network"
 echo "  PGDATA:      $host_pgdata"
+echo "  Benutzer:    $pg_uid:$pg_gid"
 echo "  Conf-Profil: $pg_conf_version"
 echo "  pgvector:    $pg_vector"
 if [ "$pg_ssl" = "yes" ]; then

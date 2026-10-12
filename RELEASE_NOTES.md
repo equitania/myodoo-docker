@@ -1,5 +1,44 @@
 # Release Notes
 
+## PostgreSQL and FastReport Deploys: Fixed Users, Newest Version Suggested (12.10.2026)
+
+*scripts/pg-local-deploy.sh v1.4.0 · scripts/fr-local-deploy.sh ·
+scripts/README_pg-local-deploy.md · tests/test_deploy_scripts.py ·
+docs/usage/03-postgres-odoo.md · docs/usage/09-reference.md · usage/AGENT.md*
+
+The Odoo images got a fixed user (odoo, UID 8069) on 07.10.2026. The two
+deploy scripts for the database and FastReport containers now follow the same
+idea for new instances, and both suggest the newest version instead of asking
+for one blind.
+
+### Changed
+
+- **A new PostgreSQL instance runs as `postgres` with UID/GID 5432.** The
+  official image uses 999, which on the host usually belongs to a system
+  account such as `systemd-coredump`, so `ls -l` showed the data directory under
+  a different, unrelated name on every server. The compose file now carries
+  `user: "5432:5432"`, and the script creates the host user `postgres:5432`
+  without a login. An existing name or UID is left alone, as with `odoo:8069`.
+- **Existing PostgreSQL instances are not migrated.** A re-deploy onto an
+  existing data directory keeps its owner; instances created earlier keep
+  running as 999. Without root or sudo the script cannot set an owner and also
+  stays with 999.
+- **`PGDATA` is set explicitly.** From `postgres:18` the image keeps its data
+  under `/var/lib/postgresql/18/docker` and refuses to start when a directory it
+  does not use is mounted at `/var/lib/postgresql/data` - which is where these
+  deployments mount it. Setting `PGDATA` keeps versions 14 to 18 on one layout.
+- **The PostgreSQL version is suggested from Docker Hub.** The script lists the
+  newest patch release of every major version and Enter takes the newest. Before
+  choosing a new major version, check that the Odoo version supports it. Without
+  a connection the version is typed by hand, as before.
+- **FastReport asks for the registry token first and then suggests the newest
+  image tag** from the registry's tag list. Tags that do not start with a digit
+  (`latest`, branch builds) are never suggested.
+- **FastReport gets a host user `frapi:10000`.** The image already creates
+  `frapi` with the fixed UID 10000, starts as root, hands its volumes to that
+  user and drops privileges with gosu - a `user:` entry would break that start.
+  The only thing missing was a name for 10000 on the host.
+
 ## The nginx-bad-request Jail Reads the Real Access Logs (12.10.2026)
 
 *scripts/server_hardening.py v1.11.1 · scripts/hardening_config.yaml ·

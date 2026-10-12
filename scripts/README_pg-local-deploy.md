@@ -41,7 +41,7 @@ Das Skript fragt interaktiv ab:
 | DB-User | `ownerp` | PostgreSQL-Superuser (initdb) |
 | DB-Name | `postgres` | Initiale Datenbank |
 | Passwort | — (Pflicht) | Silent-Eingabe mit Wiederholung |
-| PostgreSQL-Version | — (Pflicht) | z.B. `16.14` → Image `postgres:16.14` ([verfügbare Tags](https://hub.docker.com/_/postgres/tags?name=16.)) |
+| PostgreSQL-Version | neueste vom Docker Hub | Das Skript zeigt den neuesten Patch-Stand jeder Hauptversion, Enter übernimmt den neuesten (z.B. `18.6` → Image `postgres:18.6`). Ohne Verbindung zum Docker Hub wird die Version von Hand eingegeben ([verfügbare Tags](https://hub.docker.com/_/postgres/tags)). Vor einer neuen Hauptversion prüfen, ob die Odoo-Version sie unterstützt. |
 | Conf-Profil | `2cpu8gb` | Hardware-Profil (siehe oben) |
 | Host-Port | keiner | Optionales Publish auf `127.0.0.1` |
 | SSL | `nein` | Self-Signed-SSL aktivieren (y/N) |
@@ -50,16 +50,34 @@ Das Skript fragt interaktiv ab:
 ### Volume-Layout
 
 ```
-{base}/{name}          → PGDATA (999:999, 0700)
+{base}/{name}          → PGDATA (5432:5432, 0700; vor 1.4.0 angelegte Instanzen 999:999)
 {base}/{name}-deploy/  → docker-compose.yml + postgresql.conf.src
 ```
+
+### Fester Benutzer (ab 1.4.0)
+
+Eine **neue** Instanz läuft als Benutzer `postgres` mit UID/GID 5432 (`user:` im
+Compose-File), nicht mehr als die 999 des offiziellen Images. Die 999 gehört auf
+dem Host meist einem Systemkonto, etwa `systemd-coredump`; `ls -l` zeigte PGDATA
+deshalb auf jedem Server unter einem anderen, fremden Namen. Das Skript legt den
+Host-Benutzer `postgres:5432` ohne Login an, wie `ups` es für `odoo:8069` tut.
+Existiert der Name schon mit einer anderen UID, oder gehört die 5432 schon einem
+anderen Konto, bleibt beides unverändert; `ls -l` zeigt dann die Zahl.
+
+Ein Re-Deploy auf ein bestehendes PGDATA behält dessen Besitzer. Bestehende
+Instanzen werden nicht umgestellt. Ohne root oder sudo kann das Skript den
+Besitzer nicht setzen; der Container läuft dann wie bisher als 999.
+
+`PGDATA` wird ausdrücklich auf `/var/lib/postgresql/data` gesetzt. Ab
+`postgres:18` liegt der Standard woanders, und das Image startet nicht, wenn
+unter dem alten Pfad ein Verzeichnis eingehängt ist, das es nicht benutzt.
 
 ## Self-Signed-SSL (optional)
 
 Bei Aktivierung (`y` bei der SSL-Abfrage):
 
 - An die extrahierte `postgresql.conf.src` wird ein markierter Override-Block angehängt (`ssl = on`); die eingebetteten Ansible-Profile bleiben unverändert.
-- Beim Conf-Einspielen wird im Postgres-Container per `openssl` ein Self-Signed-Zertifikat erzeugt: RSA 4096, 10 Jahre gültig, `CN = <Container-Name>`, abgelegt als `server.crt`/`server.key` in PGDATA (PostgreSQL-Standardpfade, Key 0600 / 999:999).
+- Beim Conf-Einspielen wird im Postgres-Container per `openssl` ein Self-Signed-Zertifikat erzeugt: RSA 4096, 10 Jahre gültig, `CN = <Container-Name>`, abgelegt als `server.crt`/`server.key` in PGDATA (PostgreSQL-Standardpfade, Key 0600, Besitzer = Benutzer des Containers).
 - Idempotent: Ein vorhandenes Zertifikat wird bei Re-Runs nicht überschrieben.
 - Die Verifikation prüft `SHOW ssl;` = `on`.
 
@@ -113,7 +131,7 @@ docker network connect {name}-net <odoo-container>
 ## Fehlerbehebung
 
 - **Container startet nach Conf-Update nicht:** `docker logs <name>` prüfen; Rollback durch Zurückkopieren von `postgresql.conf.bak-<timestamp>` in PGDATA.
-- **`SHOW ssl` liefert nicht `on`:** Logs prüfen — meist fehlen `server.crt`/`server.key` in PGDATA oder die Rechte stimmen nicht (Key muss 0600, Owner 999:999 sein).
+- **`SHOW ssl` liefert nicht `on`:** Logs prüfen — meist fehlen `server.crt`/`server.key` in PGDATA oder die Rechte stimmen nicht (Key muss 0600 sein und dem Benutzer des Containers gehören, 5432 bzw. bei Altinstanzen 999).
 - **Passwort greift nicht:** `POSTGRES_PASSWORD` wirkt nur beim ersten Start (initdb). Bei bestehendem PGDATA das Passwort in der Datenbank ändern.
 - **Log füllt sich alle 10 s mit `FATAL: database "<db-user>" does not exist`, Container ist trotzdem `healthy`:** Healthcheck von Containern, die mit < 1.2.2 deployt wurden. Dort fehlte `-d`, also nahm libpq den Benutzernamen als Datenbanknamen; `PQping` wertet die FATAL-Antwort als „Server nimmt Verbindungen an“, der Check blieb grün. Behebung: im Compose-File `pg_isready -U <user>` → `pg_isready -U <user> -d postgres`, dann `docker compose -f … up -d`. Der Healthcheck ist bei der Container-Erstellung eingefroren und lässt sich nicht per `docker container update` ändern — der Container muss neu erzeugt werden (PGDATA bleibt). Ein erneuter Skript-Lauf schreibt das Compose-File selbst neu.
 
@@ -156,7 +174,7 @@ The script prompts interactively:
 | DB user | `ownerp` | PostgreSQL superuser (initdb) |
 | DB name | `postgres` | Initial database |
 | Password | — (required) | Silent input with confirmation |
-| PostgreSQL version | — (required) | e.g. `16.14` → image `postgres:16.14` ([available tags](https://hub.docker.com/_/postgres/tags?name=16.)) |
+| PostgreSQL version | newest on Docker Hub | The script shows the newest patch release of every major version; Enter takes the newest (e.g. `18.6` → image `postgres:18.6`). Without a connection to Docker Hub the version is typed by hand ([available tags](https://hub.docker.com/_/postgres/tags)). Before choosing a new major version, check that the Odoo version supports it. |
 | Conf profile | `2cpu8gb` | Hardware profile (see above) |
 | Host port | none | Optional publish on `127.0.0.1` |
 | SSL | `no` | Enable self-signed SSL (y/N) |
@@ -165,16 +183,34 @@ The script prompts interactively:
 ### Volume Layout
 
 ```
-{base}/{name}          → PGDATA (999:999, 0700)
+{base}/{name}          → PGDATA (5432:5432, 0700; instances created before 1.4.0: 999:999)
 {base}/{name}-deploy/  → docker-compose.yml + postgresql.conf.src
 ```
+
+### Fixed User (since 1.4.0)
+
+A **new** instance runs as user `postgres` with UID/GID 5432 (`user:` in the
+compose file) instead of the official image's 999. On the host, 999 usually
+belongs to a system account such as `systemd-coredump`, so `ls -l` showed PGDATA
+under a different, unrelated name on every server. The script creates the host
+user `postgres:5432` without a login, as `ups` does for `odoo:8069`. If the name
+already exists with another UID, or 5432 belongs to another account, both are
+left alone and `ls -l` shows the number.
+
+A re-deploy onto an existing PGDATA keeps its owner. Existing instances are not
+migrated. Without root or sudo the script cannot set the owner; the container
+then runs as 999, as before.
+
+`PGDATA` is set explicitly to `/var/lib/postgresql/data`. From `postgres:18` the
+default lives elsewhere, and the image refuses to start when a directory it does
+not use is mounted at the old path.
 
 ## Self-Signed SSL (optional)
 
 When enabled (`y` at the SSL prompt):
 
 - A marked override block (`ssl = on`) is appended to the extracted `postgresql.conf.src`; the embedded Ansible profiles remain untouched.
-- During conf installation a self-signed certificate is generated inside the postgres container via `openssl`: RSA 4096, valid 10 years, `CN = <container name>`, stored as `server.crt`/`server.key` in PGDATA (PostgreSQL default paths, key 0600 / 999:999).
+- During conf installation a self-signed certificate is generated inside the postgres container via `openssl`: RSA 4096, valid 10 years, `CN = <container name>`, stored as `server.crt`/`server.key` in PGDATA (PostgreSQL default paths, key 0600, owned by the container's user).
 - Idempotent: an existing certificate is kept on re-runs.
 - Verification checks `SHOW ssl;` = `on`.
 
@@ -227,7 +263,7 @@ docker network connect {name}-net <odoo-container>
 ## Troubleshooting
 
 - **Container does not start after conf update:** check `docker logs <name>`; roll back by copying `postgresql.conf.bak-<timestamp>` back into PGDATA.
-- **`SHOW ssl` does not return `on`:** check the logs — usually `server.crt`/`server.key` are missing in PGDATA or permissions are wrong (key must be 0600, owner 999:999).
+- **`SHOW ssl` does not return `on`:** check the logs — usually `server.crt`/`server.key` are missing in PGDATA or permissions are wrong (key must be 0600 and owned by the container's user, 5432 or 999 on older instances).
 - **Password not accepted:** `POSTGRES_PASSWORD` only applies on first start (initdb). With existing PGDATA, change the password inside the database.
 - **Log fills with `FATAL: database "<db-user>" does not exist` every 10 s while the container reports `healthy`:** healthcheck of containers deployed with < 1.2.2. It lacked `-d`, so libpq fell back to the database named after the user; `PQping` treats the FATAL reply as "server accepts connections", so the check stayed green. Fix: in the compose file change `pg_isready -U <user>` → `pg_isready -U <user> -d postgres`, then `docker compose -f … up -d`. The healthcheck is frozen into the container at creation time and cannot be changed via `docker container update` — the container has to be recreated (PGDATA survives). Re-running the script rewrites the compose file by itself.
 
