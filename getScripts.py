@@ -147,8 +147,8 @@ if os.environ.get('GETSCRIPTS_DEBUG', '').lower() in ('1', 'true', 'yes'):
     logger.debug("Debug logging enabled")
 
 # Script version and date
-SCRIPT_VERSION = "9.29.0"
-SCRIPT_DATE = "07.10.2026"
+SCRIPT_VERSION = "9.30.0"
+SCRIPT_DATE = "12.10.2026"
 
 # Branch of myodoo-docker this server tracks - the single source of truth for
 # main() (update_repository() call) and self_update_and_reexec() (which must
@@ -3435,7 +3435,7 @@ def optimize_dns_configuration(explicit_request: bool = False) -> bool:
 DNS={dns_list}
 FallbackDNS={fallback_dns}
 DNSOverTLS=opportunistic
-DNSSEC=allow-downgrade
+DNSSEC={RESOLVED_DNSSEC}
 Cache=yes
 CacheFromLocalhost=yes
 EOF''',
@@ -4250,6 +4250,69 @@ def ensure_odoo_host_user() -> None:
         return
     logger.info(f"Created host user {ODOO_HOST_USER} with UID/GID {ODOO_HOST_UID}")
     record_install(label, "installed")
+
+
+# The systemd-resolved drop-in the DNS optimisation writes. Ours by name, so a
+# later pass may correct it; any other file in resolved.conf.d is not.
+RESOLVED_DROPIN = "/etc/systemd/resolved.conf.d/dns-optimization.conf"
+
+# DNSSEC validation in systemd-resolved checks every answer against a root
+# trust anchor compiled into systemd. When the root key changed on 11.10.2026
+# (KSK-2017 -> KSK-2024), systemd 249 (Ubuntu 22.04) knew only the old key,
+# and every host carrying our former 'allow-downgrade' answered SERVFAIL for
+# every name - github.com included, so not even `ups` could fetch a fix.
+# 'allow-downgrade' never protected anything (an attacker can force the
+# downgrade), so the distribution default is the honest setting.
+RESOLVED_DNSSEC = "no"
+
+
+def ensure_resolved_dnssec_off(path: str = RESOLVED_DROPIN) -> None:
+    """Switch DNSSEC off in our own resolved drop-in. Never fatal.
+
+    Earlier versions wrote "allow-downgrade"; the setting survives every
+    update of the writer, so it is corrected here on every pass. Silent when
+    there is nothing to do - only a change or a failure reaches the report.
+    """
+    label = "DNSSEC in systemd-resolved"
+    try:
+        with open(path, "r", encoding="utf-8") as handle:
+            content = handle.read()
+    except FileNotFoundError:
+        return
+    except OSError as exc:
+        record_install(label, "failed", f"cannot read {path}: {exc}")
+        return
+
+    pattern = re.compile(r"^[ \t]*DNSSEC[ \t]*=[ \t]*(\S*)[ \t]*$", re.MULTILINE)
+    match = pattern.search(content)
+    if not match or match.group(1).lower() in ("no", "false", "0"):
+        return
+    if os.geteuid() != 0:
+        record_install(label, "skipped", f"DNSSEC={match.group(1)} in {path}; needs root")
+        return
+
+    updated = pattern.sub(f"DNSSEC={RESOLVED_DNSSEC}", content)
+    backup = f"{path}.bak_{datetime.now().strftime('%Y%m%d_%H%M%S')}"
+    try:
+        shutil.copy2(path, backup)
+        tmp = f"{path}.tmp"
+        with open(tmp, "w", encoding="utf-8") as handle:
+            handle.write(updated)
+        os.chmod(tmp, 0o644)
+        os.replace(tmp, path)
+    except OSError as exc:
+        record_install(label, "failed", f"cannot write {path}: {exc}")
+        return
+
+    result = run_command("systemctl restart systemd-resolved", shell=True,
+                         capture_output=True, timeout=60)
+    if result.returncode != 0:
+        record_install(label, "failed",
+                       f"{path} now says DNSSEC=no, but the restart failed - "
+                       "run: systemctl restart systemd-resolved")
+        return
+    logger.info(f"DNSSEC={match.group(1)} -> {RESOLVED_DNSSEC} in {path} (backup {backup})")
+    record_install(label, "updated", f"DNSSEC={match.group(1)} -> {RESOLVED_DNSSEC}")
 
 
 def remove_retired_scripts(_myhome: str) -> None:
@@ -5933,6 +5996,9 @@ def main() -> None:
         # Give the image's odoo UID a name on the host (see ODOO_HOST_UID).
         ensure_odoo_host_user()
 
+        # Correct the DNSSEC line earlier versions wrote (see RESOLVED_DNSSEC).
+        ensure_resolved_dnssec_off()
+
         # Convert leftover CSV configurations to YAML. Must run AFTER
         # copy_scripts (which delivers ownerp_migrate.py) and BEFORE the legacy
         # cleanup below, which is where the CSVs used to be destroyed.
@@ -6545,7 +6611,7 @@ def apply_dns_servers(dns_servers: List[str]) -> bool:
 DNS={dns_list}
 FallbackDNS=8.8.4.4 1.0.0.1
 DNSOverTLS=opportunistic
-DNSSEC=allow-downgrade
+DNSSEC={RESOLVED_DNSSEC}
 Cache=yes
 CacheFromLocalhost=yes
 """

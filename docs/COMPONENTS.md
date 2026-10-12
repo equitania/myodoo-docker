@@ -11,9 +11,17 @@ in this repository, stay in `CLAUDE.md`.
 
 ### Key Components
 
-#### 1. getScripts.py (v9.29.0)
+#### 1. getScripts.py (v9.30.0)
 - **Purpose**: Main installation and update script
 - **Features**:
+  - DNSSEC off in systemd-resolved (v9.30.0, 12.10.2026): the DNS optimisation
+    writes `DNSSEC=no` (constant `RESOLVED_DNSSEC`), and
+    `ensure_resolved_dnssec_off()` corrects the `allow-downgrade` earlier
+    versions left in `dns-optimization.conf` on every root pass (backup
+    `.bak_<timestamp>`, then `systemctl restart systemd-resolved`; silent when
+    there is nothing to do). On 11.10.2026 the DNS root key changed; systemd 249
+    knew only the old one, so every host with that line answered SERVFAIL for
+    every name, `ups` included
   - Host user `odoo` with UID/GID 8069 (v9.29.0, 07.10.2026):
     `ensure_odoo_host_user()` runs as root on every pass and creates the
     account that matches the images' odoo user (no home, `nologin`, locked),
@@ -911,10 +919,11 @@ in this repository, stay in `CLAUDE.md`.
   risk an expiry would guard against — a mute nobody remembers — is already
   covered by the visible `[MUTED]` line and the count in every summary
 
-#### 16. server-readiness.py (v1.11.1)
+#### 16. server-readiness.py (v1.12.0)
 - **Purpose**: Reports whether this server matches the state myodoo-docker
-  expects — 27 read-only checks (cron, logrotate, backup and update
-  configuration, Docker storage driver, virus-scanner exclusion for
+  expects — 28 read-only checks (cron, logrotate, backup and update
+  configuration, Docker storage driver, DNSSEC in systemd-resolved
+  (`resolved_dnssec`, v1.12.0), virus-scanner exclusion for
   `/var/lib/docker/`, nginx, certbot timing, script versions, Odoo CPU/RAM
   sizing, nine security-hardening areas), each non-OK finding carrying
   exactly one copy-paste fix. `chk`, `dostat`/`konsole`, the block after

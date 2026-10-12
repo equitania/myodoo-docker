@@ -1,5 +1,44 @@
 # Release Notes
 
+## DNS No Longer Fails When the Root Key Changes (12.10.2026)
+
+*getScripts.py v9.30.0 · scripts/server-readiness.py v1.12.0 ·
+tests/test_getscripts_dnssec.py · tests/test_server_readiness.py ·
+docs/COMPONENTS.md · docs/usage/08-troubleshooting.md ·
+docs/usage/09-reference.md · usage/AGENT.md*
+
+Since 11.10.2026 several servers could not resolve any name at all - not
+`github.com`, not their own domains - so `ups` could not even fetch a fix.
+`nslookup` showed `SERVFAIL` from `127.0.0.53`, `resolvectl query` said
+`DNSSEC validation failed: missing-key`, while asking `1.1.1.1` directly worked.
+
+On that day the DNS root zone switched to a new signing key (KSK-2024).
+systemd-resolved checks DNSSEC against a root key compiled into systemd, and
+systemd 249 in Ubuntu 22.04 only knows the old one. The DNS optimisation in
+`getScripts.py` had written `DNSSEC=allow-downgrade` into
+`/etc/systemd/resolved.conf.d/dns-optimization.conf`, so those hosts validated
+and failed every answer. Ubuntu's own default is `DNSSEC=no`, and
+`allow-downgrade` never protected anything: an attacker can force the
+downgrade.
+
+### Changed
+
+- **The DNS optimisation writes `DNSSEC=no`.** Both places that write the
+  drop-in use one constant now.
+- **`ups` corrects the line earlier versions left behind.** On every pass as
+  root, `getScripts.py` sets `DNSSEC=no` in its own `dns-optimization.conf`
+  (backup `.bak_<timestamp>` next to it), restarts systemd-resolved and says so
+  in the install summary. Other files in `resolved.conf.d` are not touched.
+  A server that is already broken cannot pull this version - fix it by hand
+  once (see `docs/usage/08-troubleshooting.md`), then run `ups`.
+
+### Added
+
+- **`chk` checks DNSSEC in systemd-resolved (`resolved_dnssec`).** It reads
+  `resolved.conf` and its drop-ins in systemd's own order and FAILs when
+  validation is on, naming the file and the command that switches it off.
+  Hosts whose `resolv.conf` does not go through systemd-resolved are skipped.
+
 ## The odoo User Has the Same UID on Every Server (07.10.2026)
 
 *Dockerfiles/v16-odoo/Dockerfile · Dockerfiles/v18-odoo/Dockerfile ·

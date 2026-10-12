@@ -835,5 +835,74 @@ class FreshHostHintTest(unittest.TestCase):
         self.assertNotIn("--from-docker", finding.fix)
 
 
+class ResolvedDnssecTest(unittest.TestCase):
+    """check_resolved_dnssec() - on 11.10.2026 the DNS root key changed and
+    every host with DNSSEC=allow-downgrade on systemd 249 answered SERVFAIL for
+    every name."""
+
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(self.tmp.cleanup)
+        self.ctx = sr.HealthContext(root=self.tmp.name, home=self.tmp.name,
+                                    repo=self.tmp.name)
+
+    def write(self, relative, content):
+        path = self.ctx.p(relative)
+        os.makedirs(os.path.dirname(path), exist_ok=True)
+        with open(path, "w", encoding="utf-8") as handle:
+            handle.write(content)
+
+    def use_resolved(self):
+        self.write("run/systemd/resolve/stub-resolv.conf", "nameserver 127.0.0.53\n")
+        os.makedirs(self.ctx.p("etc"), exist_ok=True)
+        os.symlink("../run/systemd/resolve/stub-resolv.conf", self.ctx.p("etc/resolv.conf"))
+
+    def test_it_is_registered(self):
+        self.assertIn(sr.check_resolved_dnssec, sr.CHECKS)
+
+    def test_a_static_resolv_conf_is_skipped(self):
+        self.write("etc/resolv.conf", "nameserver 192.0.2.53\n")
+        self.write("etc/systemd/resolved.conf.d/dns-optimization.conf",
+                   "[Resolve]\nDNSSEC=allow-downgrade\n")
+        self.assertEqual(sr.check_resolved_dnssec(self.ctx).severity, sr.Severity.SKIP)
+
+    def test_no_setting_anywhere_is_ok(self):
+        self.use_resolved()
+        self.write("etc/systemd/resolved.conf", "[Resolve]\n#DNSSEC=no\n")
+        self.assertEqual(sr.check_resolved_dnssec(self.ctx).severity, sr.Severity.OK)
+
+    def test_our_old_dropin_fails_and_names_the_file(self):
+        self.use_resolved()
+        self.write("etc/systemd/resolved.conf.d/dns-optimization.conf",
+                   "[Resolve]\nDNS=1.1.1.1\nDNSSEC=allow-downgrade\n")
+        finding = sr.check_resolved_dnssec(self.ctx)
+        self.assertEqual(finding.severity, sr.Severity.FAIL)
+        self.assertIn("DNSSEC=allow-downgrade", finding.detail)
+        self.assertIn("/etc/systemd/resolved.conf.d/dns-optimization.conf", finding.fix)
+        self.assertNotIn(self.tmp.name, finding.fix)
+        self.assertIn("systemctl restart systemd-resolved", finding.fix)
+
+    def test_a_later_dropin_overrides_the_main_file(self):
+        self.use_resolved()
+        self.write("etc/systemd/resolved.conf", "[Resolve]\nDNSSEC=yes\n")
+        self.write("etc/systemd/resolved.conf.d/dns-optimization.conf",
+                   "[Resolve]\nDNSSEC=no\n")
+        self.assertEqual(sr.check_resolved_dnssec(self.ctx).severity, sr.Severity.OK)
+
+    def test_dropins_apply_in_name_order(self):
+        self.use_resolved()
+        self.write("etc/systemd/resolved.conf.d/10-a.conf", "[Resolve]\nDNSSEC=no\n")
+        self.write("run/systemd/resolved.conf.d/20-b.conf", "[Resolve]\nDNSSEC=yes\n")
+        finding = sr.check_resolved_dnssec(self.ctx)
+        self.assertEqual(finding.severity, sr.Severity.FAIL)
+        self.assertIn("/run/systemd/resolved.conf.d/20-b.conf", finding.detail)
+
+    def test_etc_hides_the_same_name_in_usr_lib(self):
+        self.use_resolved()
+        self.write("usr/lib/systemd/resolved.conf.d/x.conf", "[Resolve]\nDNSSEC=yes\n")
+        self.write("etc/systemd/resolved.conf.d/x.conf", "[Resolve]\nDNSSEC=no\n")
+        self.assertEqual(sr.check_resolved_dnssec(self.ctx).severity, sr.Severity.OK)
+
+
 if __name__ == "__main__":
     unittest.main()

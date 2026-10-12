@@ -4,8 +4,8 @@
 # Title:            server-readiness.py
 # Description:      Report whether this server matches the state myodoo-docker
 #                   expects, and name the exact command that closes each gap.
-# Version:          1.11.2
-# Date:             29.09.2026
+# Version:          1.12.0
+# Date:             12.10.2026
 # Author:           Equitania Software GmbH
 # ==============================================================================
 # Why this exists:
@@ -25,6 +25,8 @@
 #   1.11.0 the registry also covers the hardening .env, the seven
 #   server_hardening.py areas (firewall, fail2ban, SSH, kernel, Docker, auto
 #   updates, audit/integrity) and a locked-root/PermitRootLogin mismatch.
+#   1.12.0 adds DNSSEC validation in systemd-resolved, which took every lookup
+#   down when the DNS root key changed on 11.10.2026.
 #
 #   (no flag)   Full report, including the checks that passed.
 #   --brief     Only non-OK lines plus the summary. Used by getScripts.py.
@@ -73,8 +75,8 @@ from dataclasses import dataclass
 from enum import Enum
 from typing import Callable, List, Optional, Tuple
 
-SCRIPT_VERSION = "1.11.2"
-SCRIPT_DATE = "29.09.2026"
+SCRIPT_VERSION = "1.12.0"
+SCRIPT_DATE = "12.10.2026"
 
 # Where nginx keeps its customer vhosts (mirrors nginx-cert-guard.py).
 NGINX_CONF_D = "etc/nginx/conf.d"
@@ -1221,6 +1223,63 @@ def check_certbot_timer_window(ctx: HealthContext) -> Finding:
     )
 
 
+RESOLVED_CONF = "etc/systemd/resolved.conf"
+# systemd's own search order for drop-ins; a name in an earlier directory hides
+# the same name in a later one, and all of them are applied sorted by name.
+RESOLVED_DROPIN_DIRS = ("etc/systemd/resolved.conf.d",
+                        "run/systemd/resolved.conf.d",
+                        "usr/lib/systemd/resolved.conf.d")
+
+
+def _resolved_dnssec_setting(ctx: HealthContext) -> Optional[Tuple[str, str]]:
+    """The DNSSEC value systemd-resolved will use and the file that sets it,
+    or None when no file sets it (the distribution default applies)."""
+    by_name = {}
+    for directory in RESOLVED_DROPIN_DIRS:
+        for path in sorted(glob.glob(os.path.join(ctx.p(directory), "*.conf"))):
+            by_name.setdefault(os.path.basename(path), path)
+    files = [ctx.p(RESOLVED_CONF)] + [by_name[n] for n in sorted(by_name)]
+
+    setting = None
+    for path in files:
+        text = _read(path)
+        if text is None:
+            continue
+        for match in re.finditer(r"^[ \t]*DNSSEC[ \t]*=[ \t]*(\S*)", text, re.MULTILINE):
+            setting = (match.group(1), path)
+    return setting
+
+
+def check_resolved_dnssec(ctx: HealthContext) -> Finding:
+    """DNSSEC validation in systemd-resolved checks every answer against a
+    root key compiled into systemd. When the root key changed on 11.10.2026,
+    systemd 249 (Ubuntu 22.04) still knew only the old one: with
+    DNSSEC=allow-downgrade - which getScripts.py wrote until 9.30.0 - the host
+    answered SERVFAIL for every name, `ups` included. The next key change will
+    do the same to any systemd that has not learnt the new key by then.
+
+    Reads configuration only; a host whose resolv.conf does not go through
+    systemd-resolved has nothing here to break.
+    """
+    title = "DNSSEC (resolved)"
+    resolv = ctx.p("etc/resolv.conf")
+    if "systemd/resolve" not in os.path.realpath(resolv):
+        return _skip("resolved_dnssec", title, "resolv.conf is not served by systemd-resolved")
+
+    setting = _resolved_dnssec_setting(ctx)
+    if setting is None or setting[0].lower() in ("no", "false", "0", ""):
+        return _ok("resolved_dnssec", title, "validation off")
+
+    value, path = setting
+    host_path = "/" + os.path.relpath(path, ctx.root).lstrip("./")
+    return Finding(
+        "resolved_dnssec", Severity.FAIL, title,
+        f"DNSSEC={value} in {host_path} - a root key change unknown to this "
+        "systemd turns every lookup into SERVFAIL",
+        f"sed -i 's/^DNSSEC=.*/DNSSEC=no/' {host_path}; and systemctl restart systemd-resolved",
+    )
+
+
 def check_script_versions(ctx: HealthContext) -> Finding:
     """Compare the delivered scripts in $HOME against the repository checkout.
 
@@ -1619,6 +1678,7 @@ CHECKS: Tuple[Callable[[HealthContext], Finding], ...] = (
     check_nginx_unit_dropin,
     check_nginx_listen_targets,
     check_certbot_timer_window,
+    check_resolved_dnssec,
     check_script_versions,
     check_backup_disk_space,
     check_build_cache,
