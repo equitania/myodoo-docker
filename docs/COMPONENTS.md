@@ -1040,7 +1040,17 @@ in this repository, stay in `CLAUDE.md`.
   job that in fact never ran. See `ownerp_cron.py` above, which fixes the
   backup's location for the same reason
 
-#### 17. server_hardening.py (v1.10.0)
+#### 17. server_hardening.py (v1.11.0)
+- **fail2ban cannot be left without jails** (v1.11.0, 12.10.2026): a jail with
+  `backend = systemd` needs `python3-systemd`, which came only with a fresh
+  fail2ban install. On a host where fail2ban already existed (Ubuntu 22.04,
+  fail2ban 0.11.2, which loads all jails in one stream) the result was
+  `Number of jail: 0`. `--apply` now installs the module when missing, falls
+  back to `/var/log/auth.log` (or disables only that jail) if it cannot, and
+  after the restart checks `fail2ban-client status`: zero jails → the new
+  `jail.local` moves to `jail.local.failed_<ts>`, the previous one is restored,
+  fail2ban restarts, and the run reports a FAIL. The audit names the missing
+  module as the cause
 - **AIDE database built in the background** (v1.10.0, 12.10.2026): the first
   build (and a rebuild after changed excludes) runs as the transient unit
   `aide-rebaseline` at idle CPU/IO priority — the same unit `syspatch` uses,

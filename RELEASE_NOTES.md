@@ -1,5 +1,32 @@
 # Release Notes
 
+## fail2ban Is No Longer Left Without Jails (12.10.2026)
+
+*scripts/server_hardening.py v1.11.0 · tests/test_server_hardening.py ·
+docs/COMPONENTS.md*
+
+After the hardening rewrote `jail.local` on an Ubuntu 22.04 server, fail2ban
+ran with no jail at all - not even `sshd` - while the run reported success.
+`/var/log/fail2ban.log` said: `Backend 'systemd' failed to initialize due to No
+module named 'systemd'`.
+
+The `sshd` jail reads the journal (`backend = systemd`), which needs the
+`python3-systemd` package. The hardening installed it only together with
+fail2ban; where fail2ban already existed it was missing. fail2ban 0.11 loads
+all jails in one go, so the one jail that could not start took every other
+jail down with it.
+
+### Fixed
+
+- **The module is installed when a jail needs it.** If that is not possible,
+  the jail reads `/var/log/auth.log` instead, and is only switched off when
+  that file does not exist either.
+- **The restart is checked.** If fail2ban reports no jail afterwards, the new
+  `jail.local` is set aside as `jail.local.failed_<timestamp>`, the previous one
+  is restored, fail2ban is restarted and the run reports an error.
+- **The audit names the cause.** A missing `python3-systemd` is reported as such
+  instead of only "Jail NICHT aktiv".
+
 ## SQL-Only and Encrypted Backups Are Deleted and Counted Again (12.10.2026)
 
 *scripts/container2backup.py v4.9.2 · scripts/server-readiness.py v1.13.1 ·

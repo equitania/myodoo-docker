@@ -2,7 +2,7 @@
 """
 Server-Härtungs-Skript
 =======================
-Version: 1.10.0 / Date: 12.10.2026
+Version: 1.11.0 / Date: 12.10.2026
 
 Prüft und härtet: UFW, Fail2Ban, SSH, Kernel, Kernel-Module, Docker,
 Auto-Updates, auditd, AIDE, Nginx
@@ -19,8 +19,9 @@ import subprocess
 import sys
 import os
 
-SCRIPT_VERSION = "1.10.0"
+SCRIPT_VERSION = "1.11.0"
 import re
+import time
 import json
 import shlex
 import shutil
@@ -111,8 +112,8 @@ def backup_file(path):
         backup = p.with_suffix(f".backup_{ts}{p.suffix}")
         shutil.copy2(p, backup)
         info(f"Backup: {backup}")
-        return True
-    return False
+        return str(backup)
+    return None
 
 def confirm(msg, force=False):
     if force:
@@ -525,6 +526,23 @@ def audit_ufw(config, apply=False, force=False):
 
 
 # ─── MODUL: Fail2Ban ─────────────────────────────────────────
+def systemd_journal_available():
+    """Whether fail2ban's interpreter can import the journal reader."""
+    return run('python3 -c "import systemd.journal" 2>/dev/null && echo yes') == "yes"
+
+
+def fail2ban_jail_count(attempts=10):
+    """Jails fail2ban reports after a restart; 0 when none came up. Polls,
+    because the server answers before it has finished loading its jails."""
+    for _ in range(attempts):
+        status = run("fail2ban-client status 2>/dev/null") or ""
+        match = re.search(r"Number of jail:\s*(\d+)", status)
+        if match and int(match.group(1)) > 0:
+            return int(match.group(1))
+        time.sleep(1)
+    return 0
+
+
 def audit_fail2ban(config, apply=False, force=False):
     header("MODUL: Fail2Ban")
     cfg = config.get("fail2ban", {})
@@ -571,6 +589,13 @@ def audit_fail2ban(config, apply=False, force=False):
             fail(f"Jail '{jail_name}' NICHT aktiv")
             Stats.fail_count += 1
 
+    if (any(c.get("enabled", True) and c.get("backend") == "systemd"
+            for c in expected_jails.values())
+            and not systemd_journal_available()):
+        fail("python3-systemd fehlt — Jails mit backend = systemd können nicht starten "
+             "(und reißen in fail2ban 0.11 alle anderen mit)")
+        Stats.fail_count += 1
+
     # Recidive
     if cfg.get("recidive", {}).get("enabled", False):
         if "recidive" in active_jails:
@@ -595,7 +620,7 @@ def audit_fail2ban(config, apply=False, force=False):
     # 5. jail.local generieren
     if apply:
         sub("jail.local generieren")
-        backup_file("/etc/fail2ban/jail.local")
+        previous = backup_file("/etc/fail2ban/jail.local")
 
         lines = ["# Generiert von server_hardening.py"]
         lines.append(f"# {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}\n")
@@ -614,8 +639,34 @@ def audit_fail2ban(config, apply=False, force=False):
         lines.append(f"maxretry = {defs.get('maxretry', 3)}")
         lines.append("")
 
+        # 'backend = systemd' needs the python3-systemd module. It is installed
+        # with fail2ban when this script installs fail2ban, but not when
+        # fail2ban was already there - and fail2ban 0.11 loads every jail in
+        # one stream, so one jail without a backend leaves NONE running (one
+        # Ubuntu 22.04 server, 12.10.2026: "Number of jail: 0").
+        journal_ok = None
+        if any(c.get("enabled", True) and c.get("backend") == "systemd"
+               for c in expected_jails.values()):
+            journal_ok = systemd_journal_available()
+            if not journal_ok:
+                info("python3-systemd fehlt (nötig für backend = systemd) – installiere...")
+                apt_install("python3-systemd")
+                journal_ok = systemd_journal_available()
+
         # Jails
         for jail_name, jail_cfg in expected_jails.items():
+            jail_cfg = dict(jail_cfg)
+            if jail_cfg.get("backend") == "systemd" and journal_ok is False:
+                jail_cfg.pop("backend", None)
+                jail_cfg.pop("journalmatch", None)
+                if os.path.exists("/var/log/auth.log") or "logpath" in jail_cfg:
+                    warn(f"Jail '{jail_name}': python3-systemd nicht installierbar — "
+                         f"liest stattdessen die Log-Datei")
+                else:
+                    warn(f"Jail '{jail_name}': weder python3-systemd noch /var/log/auth.log "
+                         f"— wird deaktiviert")
+                    jail_cfg["enabled"] = False
+                Stats.warn_count += 1
             # A jail pointing at a non-existent logpath makes fail2ban fail to
             # start. Disable such jails (commonly the nginx-* jails before the
             # nginx log pipeline exists) instead of breaking the whole service.
@@ -661,6 +712,24 @@ def audit_fail2ban(config, apply=False, force=False):
 
         info("Fail2Ban wird neugestartet...")
         run("systemctl restart fail2ban")
+        enabled_jails = [l for l in lines if l.strip() == "enabled  = true"]
+        if enabled_jails:
+            loaded = fail2ban_jail_count()
+            if loaded:
+                ok(f"Fail2Ban läuft mit {loaded} Jail(s)")
+            else:
+                fail("Fail2Ban hat nach dem Neustart keinen Jail geladen — "
+                     "Grund in /var/log/fail2ban.log")
+                Stats.fail_count += 1
+                ts = datetime.now().strftime("%Y%m%d_%H%M%S")
+                failed = f"/etc/fail2ban/jail.local.failed_{ts}"
+                shutil.move("/etc/fail2ban/jail.local", failed)
+                if previous:
+                    shutil.copy2(previous, "/etc/fail2ban/jail.local")
+                    info(f"Vorherige jail.local wiederhergestellt; die neue liegt unter {failed}")
+                else:
+                    info(f"Neue jail.local beiseitegelegt: {failed}")
+                run("systemctl restart fail2ban")
 
 
 # ─── MODUL: SSH ──────────────────────────────────────────────

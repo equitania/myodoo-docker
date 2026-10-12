@@ -357,5 +357,82 @@ class AideBackgroundTest(unittest.TestCase):
         self.assertEqual(sh.Stats.ok_count, before[0] + 2)
 
 
+class Fail2banJournalBackendTest(unittest.TestCase):
+    """backend = systemd without python3-systemd left fail2ban with no jail at
+    all on Ubuntu 22.04 (12.10.2026) - fail2ban was already installed, so the
+    package that comes with a fresh install was never added."""
+
+    CONFIG = {"fail2ban": {"enabled": True, "banaction": "ufw", "jails": {
+        "sshd": {"enabled": True, "port": "22", "backend": "systemd",
+                 "journalmatch": "_SYSTEMD_UNIT=ssh.service + _COMM=sshd"},
+        "nginx-http-auth": {"enabled": True, "logpath": "/var/log/nginx/error.log"},
+    }}}
+
+    def apply(self, journal=(False, True), jails_after=("2",), auth_log=True):
+        journal = list(journal)
+        jails_after = list(jails_after)
+        calls, written, restarted = [], {}, []
+
+        def run(cmd, check=False, timeout=30):
+            calls.append(cmd)
+            if "import systemd.journal" in cmd:
+                return "yes" if (journal.pop(0) if journal else False) else ""
+            if cmd == "systemctl restart fail2ban":
+                restarted.append(True)
+            if cmd.startswith("fail2ban-client status"):
+                count = (jails_after.pop(0) if jails_after else "0") if restarted else "0"
+                return f"Status\n|- Number of jail:\t{count}\n`- Jail list:\tsshd"
+            return ""
+
+        def exists(path):
+            return {"/var/log/auth.log": auth_log}.get(path, True)
+
+        def write_text(path_self, text, *a, **k):
+            written[str(path_self)] = text
+
+        with mock.patch.object(sh, "run", run), \
+             mock.patch.object(sh, "apt_install") as apt, \
+             mock.patch.object(sh, "backup_file", return_value="/etc/fail2ban/jail.backup_x.local"), \
+             mock.patch.object(sh.shutil, "which", return_value="/usr/bin/fail2ban-client"), \
+             mock.patch.object(sh.shutil, "move") as move, \
+             mock.patch.object(sh.shutil, "copy2") as copy2, \
+             mock.patch.object(sh.os.path, "exists", side_effect=exists), \
+             mock.patch.object(sh.time, "sleep"), \
+             mock.patch.object(sh.Path, "write_text", write_text):
+            sh.audit_fail2ban(self.CONFIG, apply=True)
+        return calls, written.get("/etc/fail2ban/jail.local", ""), apt, move, copy2
+
+    def test_missing_module_is_installed_and_the_backend_kept(self):
+        calls, jail_local, apt, _, _ = self.apply(journal=(False, False, True))
+        apt.assert_called_once_with("python3-systemd")
+        self.assertIn("backend  = systemd", jail_local)
+
+    def test_not_installable_falls_back_to_the_auth_log(self):
+        _, jail_local, _, _, _ = self.apply(journal=(False, False, False))
+        sshd = jail_local.split("[sshd]")[1].split("[")[0]
+        self.assertIn("enabled  = true", sshd)
+        self.assertNotIn("backend", sshd)
+        self.assertNotIn("journalmatch", sshd)
+
+    def test_no_journal_and_no_auth_log_disables_only_that_jail(self):
+        _, jail_local, _, _, _ = self.apply(journal=(False, False, False), auth_log=False)
+        sshd = jail_local.split("[sshd]")[1].split("[")[0]
+        self.assertIn("enabled  = false", sshd)
+        nginx = jail_local.split("[nginx-http-auth]")[1]
+        self.assertIn("enabled  = true", nginx)
+
+    def test_zero_jails_after_restart_restores_the_previous_file(self):
+        calls, _, _, move, copy2 = self.apply(journal=(True, True), jails_after=())
+        move.assert_called_once()
+        self.assertTrue(move.call_args.args[1].startswith("/etc/fail2ban/jail.local.failed_"))
+        copy2.assert_called_once_with("/etc/fail2ban/jail.backup_x.local", "/etc/fail2ban/jail.local")
+        self.assertEqual(sum(c == "systemctl restart fail2ban" for c in calls), 2)
+
+    def test_jails_loaded_keeps_the_new_file(self):
+        _, _, _, move, copy2 = self.apply(journal=(True, True), jails_after=("2",))
+        move.assert_not_called()
+        copy2.assert_not_called()
+
+
 if __name__ == "__main__":
     unittest.main()
