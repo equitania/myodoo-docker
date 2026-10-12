@@ -1,5 +1,26 @@
 # Release Notes
 
+## The First AIDE Build No Longer Holds Up ups (12.10.2026)
+
+*scripts/server_hardening.py v1.10.0 · tests/test_server_hardening.py ·
+docs/COMPONENTS.md*
+
+Applying the hardening for the first time built the AIDE database in the
+foreground, so `ups` sat at "AIDE-Initialisierung kann mehrere Minuten
+dauern..." for a long time. `syspatch` had already moved its rebuild into the
+background; the first build had not.
+
+### Changed
+
+- **The AIDE database is built in the background.** `server_hardening.py`
+  starts it as the transient systemd unit `aide-rebaseline` at idle CPU and IO
+  priority and returns at once. It is the same unit `syspatch` uses, so neither
+  starts a second build while one is running. Progress:
+  `journalctl -u aide-rebaseline -f`.
+- **A build in progress counts as OK.** The audit, `chk` and the next `ups` no
+  longer report a missing database while it is being built.
+- Hosts without `systemd-run` build it in the foreground as before.
+
 ## The Hardening .env Is Taken From the Server (12.10.2026)
 
 *getScripts.py v9.32.0 · tests/test_getscripts_security_offer.py ·

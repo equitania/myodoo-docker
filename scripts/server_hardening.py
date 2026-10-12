@@ -2,7 +2,7 @@
 """
 Server-Härtungs-Skript
 =======================
-Version: 1.9.0 / Date: 28.09.2026
+Version: 1.10.0 / Date: 12.10.2026
 
 Prüft und härtet: UFW, Fail2Ban, SSH, Kernel, Kernel-Module, Docker,
 Auto-Updates, auditd, AIDE, Nginx
@@ -19,9 +19,10 @@ import subprocess
 import sys
 import os
 
-SCRIPT_VERSION = "1.9.0"
+SCRIPT_VERSION = "1.10.0"
 import re
 import json
+import shlex
 import shutil
 import argparse
 import contextlib
@@ -1173,6 +1174,35 @@ def audit_auditd(config, apply=False, force=False):
 
 
 # ─── MODUL: AIDE ─────────────────────────────────────────────
+AIDE_UNIT = "aide-rebaseline"   # shared with fish/functions/linux/syspatch.fish
+
+
+def aide_background_active():
+    return run(f"systemctl is-active {AIDE_UNIT}") == "active"
+
+
+def start_aide_background(db):
+    """Build the AIDE database in a transient systemd unit at idle priority.
+
+    True when started (or already running), False when systemd-run failed,
+    None when systemd-run is not available - the caller then builds it in the
+    foreground as before.
+    """
+    if not shutil.which("systemd-run"):
+        return None
+    if aide_background_active():
+        return True
+    new_db = f"{db}.new"
+    script = (f"rm -f {new_db}; aideinit -y -f; "
+              f"if test -s {new_db}; then mv {new_db} {db}; fi; "
+              f"if test -s {db}; then echo 'AIDE database ready.'; "
+              f"else echo 'AIDE: no database produced.'; exit 1; fi")
+    result = run(f"systemd-run --unit={AIDE_UNIT} --collect --quiet --nice=19 "
+                 f"-p IOSchedulingClass=idle -p CPUSchedulingPolicy=idle "
+                 f"/bin/sh -c {shlex.quote(script)} >/dev/null 2>&1 && echo started")
+    return result == "started"
+
+
 def audit_aide(config, apply=False, force=False):
     header("MODUL: AIDE (File-Integrity)")
     cfg = config.get("aide", {})
@@ -1195,6 +1225,11 @@ def audit_aide(config, apply=False, force=False):
     if db.exists():
         ok("AIDE-Datenbank vorhanden")
         Stats.ok_count += 1
+    elif shutil.which("systemd-run") and aide_background_active():
+        ok(f"AIDE-Datenbank wird im Hintergrund aufgebaut ({AIDE_UNIT})")
+        Stats.ok_count += 1
+        info("Täglicher Check via /etc/cron.daily/aide (Paket aide-common).")
+        return
     else:
         warn("AIDE-Datenbank nicht initialisiert")
         Stats.warn_count += 1
@@ -1229,8 +1264,20 @@ def audit_aide(config, apply=False, force=False):
             sub("AIDE-Datenbank (neu) initialisieren")
             if db.exists():
                 warn("Excludes geändert — Datenbank wird neu aufgebaut (alte wird ersetzt)...")
-            else:
-                warn("AIDE-Initialisierung kann mehrere Minuten dauern...")
+            # Hashing the filesystem takes many minutes and used to hold up
+            # `ups` the whole time. Same transient unit as syspatch's rebuild,
+            # so either one sees the other running and does not start twice.
+            started = start_aide_background(db)
+            if started is not None:
+                if started:
+                    ok(f"AIDE-Datenbank wird im Hintergrund aufgebaut (niedrige Priorität). "
+                       f"Fortschritt: journalctl -u {AIDE_UNIT} -f")
+                    Stats.fix_count += 1
+                else:
+                    fail("AIDE: Hintergrund-Aufbau ließ sich nicht starten")
+                info("Täglicher Check via /etc/cron.daily/aide (Paket aide-common).")
+                return
+            warn("AIDE-Initialisierung kann mehrere Minuten dauern...")
             run("aideinit -y -f 2>&1", timeout=1800)
             new_db = Path("/var/lib/aide/aide.db.new")
             if new_db.exists():

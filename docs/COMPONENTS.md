@@ -1032,7 +1032,13 @@ in this repository, stay in `CLAUDE.md`.
   job that in fact never ran. See `ownerp_cron.py` above, which fixes the
   backup's location for the same reason
 
-#### 17. server_hardening.py (v1.9.0)
+#### 17. server_hardening.py (v1.10.0)
+- **AIDE database built in the background** (v1.10.0, 12.10.2026): the first
+  build (and a rebuild after changed excludes) runs as the transient unit
+  `aide-rebaseline` at idle CPU/IO priority — the same unit `syspatch` uses,
+  so neither starts a second build while one runs. A running build counts as
+  OK in the audit. Progress: `journalctl -u aide-rebaseline -f`. Without
+  `systemd-run` it falls back to the foreground `aideinit`
 - **Purpose**: Audits and applies the server hardening `bootstrap.sh`
   deliberately leaves off (UFW installed but inactive) — UFW, fail2ban, SSH,
   sysctl, sysctl persistence, kernel module blacklisting, the Docker daemon,

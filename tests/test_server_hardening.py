@@ -293,5 +293,69 @@ class JsonAuditTest(unittest.TestCase):
         self.assertEqual(document["areas"], [])
 
 
+class AideBackgroundTest(unittest.TestCase):
+    """The first AIDE build hashed the filesystem in the foreground and held
+    `ups` for many minutes (12.10.2026). It now runs in the same transient
+    unit as syspatch's rebuild."""
+
+    def fake_run(self, active="inactive", started=True):
+        calls = []
+
+        def run(cmd, check=False, timeout=30):
+            calls.append((cmd, timeout))
+            if cmd.startswith("systemctl is-active"):
+                return active
+            if cmd.startswith("systemd-run"):
+                return "started" if started else ""
+            return ""
+        return run, calls
+
+    def test_unit_name_matches_syspatch(self):
+        fish = (Path(_PATH).parent.parent / "fish/functions/linux/syspatch.fish").read_text(encoding="utf-8")
+        self.assertIn(f"--unit={sh.AIDE_UNIT}", fish)
+
+    def test_starts_a_low_priority_transient_unit(self):
+        run, calls = self.fake_run()
+        with mock.patch.object(sh, "run", run), \
+             mock.patch.object(sh.shutil, "which", return_value="/usr/bin/systemd-run"):
+            self.assertTrue(sh.start_aide_background(Path("/var/lib/aide/aide.db")))
+        command = calls[-1][0]
+        self.assertIn(f"systemd-run --unit={sh.AIDE_UNIT}", command)
+        self.assertIn("IOSchedulingClass=idle", command)
+        self.assertIn("aideinit -y -f", command)
+        self.assertIn("mv /var/lib/aide/aide.db.new /var/lib/aide/aide.db", command)
+
+    def test_a_running_build_is_not_started_twice(self):
+        run, calls = self.fake_run(active="active")
+        with mock.patch.object(sh, "run", run), \
+             mock.patch.object(sh.shutil, "which", return_value="/usr/bin/systemd-run"):
+            self.assertTrue(sh.start_aide_background(Path("/var/lib/aide/aide.db")))
+        self.assertFalse(any(c.startswith("systemd-run") for c, _ in calls))
+
+    def test_without_systemd_run_the_caller_falls_back(self):
+        with mock.patch.object(sh.shutil, "which", return_value=None):
+            self.assertIsNone(sh.start_aide_background(Path("/var/lib/aide/aide.db")))
+
+    def test_apply_no_longer_waits_for_aideinit(self):
+        run, calls = self.fake_run()
+        with mock.patch.object(sh, "run", run), \
+             mock.patch.object(sh.shutil, "which", return_value="/usr/bin/x"), \
+             mock.patch.object(sh.Path, "exists", return_value=False), \
+             mock.patch.object(sh.Path, "is_dir", return_value=False):
+            sh.audit_aide({}, apply=True)
+        self.assertFalse([c for c, t in calls if c.startswith("aideinit")])
+        self.assertTrue([c for c, _ in calls if c.startswith("systemd-run")])
+
+    def test_audit_counts_a_running_build_as_ok(self):
+        run, _ = self.fake_run(active="active")
+        before = (sh.Stats.ok_count, sh.Stats.warn_count)
+        with mock.patch.object(sh, "run", run), \
+             mock.patch.object(sh.shutil, "which", return_value="/usr/bin/x"), \
+             mock.patch.object(sh.Path, "exists", return_value=False):
+            sh.audit_aide({}, apply=False)
+        self.assertEqual(sh.Stats.warn_count, before[1])
+        self.assertEqual(sh.Stats.ok_count, before[0] + 2)
+
+
 if __name__ == "__main__":
     unittest.main()
