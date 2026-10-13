@@ -1,5 +1,28 @@
 # Release Notes
 
+## Base Images with eq-chatbot-core 4.3 (13.10.2026)
+
+*Dockerfiles/v16-odoo/Dockerfile · Dockerfiles/v18-odoo/Dockerfile ·
+Dockerfiles/v19-odoo/Dockerfile*
+
+The reference Dockerfiles now start from the base images built today. They
+carry `eq-chatbot-core>=4.3.0,<5.0.0`, which the chatbot addons of all three
+Odoo versions already require; with an older base image Odoo refuses to
+install those modules.
+
+### Changed
+
+- **v19:** `myodoo/prepare-v19:26.10.13-3.13.16` (was `26.08.12-3.13.15`).
+  Also adds `typst`, which `eq_knowledge_datasheet` needs to render its PDFs.
+- **v18:** `myodoo/prepare-v18:26.10.13-3.13.16` (was `26.05.19-3.13.13`).
+- **v16:** `myodoo/prepare-v16:26.10.13-3.12.15` (was `25.02.24-3.11.11`).
+
+### Note
+
+On a running server `check_dockerimage_odoo.py` sets the `FROM` line from the
+release file at every `doup`, so these lines only serve new installations.
+Existing servers receive the new base image once the release names it.
+
 ## Backup Encryption Works for Every Format (12.10.2026)
 
 *scripts/container2backup.py v4.11.0 · scripts/server-readiness.py v1.14.1 ·

@@ -1,4 +1,4 @@
-FROM myodoo/prepare-v19:26.08.12-3.13.15
+FROM myodoo/prepare-v19:26.10.13-3.13.16
 LABEL maintainer=info@ownerp.com
 # Mit diesem Skript überprüft das passende Dockerimage gemäß des Releasefiles
 # Date 17.03.2026 - Added HEALTHCHECK directive
@@ -6,6 +6,7 @@ LABEL maintainer=info@ownerp.com
 # Date 12.08.2026 - Base image carries geoip-refresh, which bin/boot calls; Python 3.13.15
 # Date 17.08.2026 - ca-certificates/ carries an installation's internal CA (LDAP over STARTTLS)
 # Date 07.10.2026 - odoo user pinned to UID/GID 8069
+# Date 13.10.2026 - Base image 26.10.13-3.13.16: eq-chatbot-core>=4.3.0, typst, Python 3.13.16
 
 # create the odoo user with a fixed UID/GID: 8069 on every server, so the
 # data volume carries the same owner everywhere. Unpinned, adduser took the
