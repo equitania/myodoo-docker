@@ -147,8 +147,8 @@ if os.environ.get('GETSCRIPTS_DEBUG', '').lower() in ('1', 'true', 'yes'):
     logger.debug("Debug logging enabled")
 
 # Script version and date
-SCRIPT_VERSION = "9.32.0"
-SCRIPT_DATE = "12.10.2026"
+SCRIPT_VERSION = "9.33.0"
+SCRIPT_DATE = "14.10.2026"
 
 # Branch of myodoo-docker this server tracks - the single source of truth for
 # main() (update_repository() call) and self_update_and_reexec() (which must
@@ -4221,6 +4221,9 @@ def copy_scripts(_myhome: str, myodoo_docker: str) -> None:
         "server_hardening.py",
         "hardening_config.yaml",
         "odoo_build_cache.py",
+        # The pull-update agent (9.33.0): cron runs it every 5 minutes; it stays
+        # idle until the central .env names a release manager and a token.
+        "ownerp_pull_update.py",
         "getScripts.py"
     ]
 

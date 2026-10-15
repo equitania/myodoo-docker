@@ -1,8 +1,8 @@
 #!/usr/bin/python3
 # -*- coding: utf-8 -*-
 # This script performs an update of an Odoo database in a Docker container
-# Version 5.24.0
-# Date 07.10.2026
+# Version 5.25.0
+# Date 14.10.2026
 ##############################################################################
 #
 #    Shell Script for Odoo, Open Source Management Solution
@@ -77,13 +77,24 @@ logger = logging.getLogger(__name__)
 # Kept in sync with the header comment above. Printed at the start of every run
 # so a pasted log says which version produced it — the single most common
 # question when a report comes back from a server.
-SCRIPT_VERSION = "5.24.0"
-SCRIPT_DATE = "07.10.2026"
+SCRIPT_VERSION = "5.25.0"
+SCRIPT_DATE = "14.10.2026"
 
 # Set by --no-cache. A module-level flag rather than another parameter through
 # process_container(): the build is six call levels below the argument parser,
 # and this switch is reached for on a bad day, not on a normal one.
 BUILD_NO_CACHE = False
+
+# Set by --release-file (5.25.0): the release this run installs, handed over by
+# ownerp_pull_update.py from the release manager's pull job. When set, the
+# release manager download (check_dockerimage_odoo.py + release.txt) is skipped
+# and this file becomes the build folder's release.file. Module-level for the
+# same reason as BUILD_NO_CACHE. (Not RELEASE_FILE: that is the file name.)
+RELEASE_FILE_OVERRIDE = None
+
+# A release file names files, never paths: base URL, image, kernel zip, modules.
+_RELEASE_IMAGE_RE = re.compile(r'^[a-zA-Z0-9][a-zA-Z0-9_./-]*:[a-zA-Z0-9_.-]+$')
+_RELEASE_NAME_RE = re.compile(r'^[A-Za-z0-9][A-Za-z0-9_.+-]*\.zip$')
 
 # Column at which the dots of a compact step line end
 STEP_WIDTH = 44
@@ -838,6 +849,12 @@ Note: Container DNS is inherited from the host - Docker copies /etc/resolv.conf
                              'cached build exports an image with no filesystem '
                              '- usually an on-access virus scanner (e.g. Sophos) '
                              'holding BuildKit mounts open on /var/lib/docker.')
+
+    parser.add_argument('--release-file', metavar='PATH',
+                        help='Install exactly this release instead of asking the '
+                             'release manager: base URL, image, kernel zip and '
+                             'module zips, one per line (the release.file format). '
+                             'Needs exactly one -s. Written by ownerp_pull_update.py.')
 
     parser.add_argument('--validate',
                         action='store_true',
@@ -1909,6 +1926,66 @@ def clean_docker_system():
     print_step("docker prune", status, time.time() - started)
     return total_info, total_warn, total_err
 
+def _release_rows(path):
+    """The first column of every non-empty line of a release file."""
+    with open(path, encoding="utf-8") as handle:
+        rows = [line.split(",")[0].replace(" ", "").strip() for line in handle]
+    return [row for row in rows if row]
+
+
+def release_file_problem(path):
+    """Why a handed-over release file must not be used, or None.
+
+    Checked before anything is touched: line 1 an http(s) base URL, line 2 an
+    image reference, every further line a plain zip file name - no path, so a
+    release can never point the build at a file outside the cache.
+    """
+    if not isfile(path):
+        return "file not found"
+    try:
+        rows = _release_rows(path)
+    except (OSError, UnicodeDecodeError) as exc:
+        return f"cannot read: {exc}"
+    if len(rows) < 3:
+        return "needs at least base URL, image and kernel zip"
+    if not re.match(r'^https?://[^\s/]+(/[^\s]*)?$', rows[0]):
+        return f"line 1 is not a base URL: {rows[0]}"
+    if not _RELEASE_IMAGE_RE.match(rows[1]):
+        return f"line 2 is not an image reference: {rows[1]}"
+    for row in rows[2:]:
+        if not _RELEASE_NAME_RE.match(row):
+            return f"not a plain zip file name: {row}"
+    return None
+
+
+def apply_release_file(path):
+    """Make ``path`` this build folder's release.file and set the image.
+
+    Does what check_dockerimage_odoo.py does after its download: keeps the old
+    release.file as release.file-<timestamp>, sets line 1 of the Dockerfile to
+    FROM <image> and the "# Date" line 4. Runs in the build folder. Returns a
+    problem text, or None.
+    """
+    problem = release_file_problem(path)
+    if problem:
+        return problem
+    if not isfile("Dockerfile"):
+        return "no Dockerfile in the build folder - cannot set the image"
+    image = _release_rows(path)[1]
+    if isfile(RELEASE_FILE):
+        os.rename(RELEASE_FILE, RELEASE_FILE + "-" + time.strftime("%Y-%m-%d_%H-%M-%S"))
+    shutil.copyfile(path, RELEASE_FILE)
+    with open("Dockerfile", encoding="utf-8") as handle:
+        lines = handle.read().split("\n")
+    lines[0] = f"FROM {image}"
+    if len(lines) > 3 and lines[3].startswith("# Date"):
+        lines[3] = "# Date " + time.strftime("%d.%m.%Y")
+    with open("Dockerfile", "w", encoding="utf-8") as handle:
+        handle.write("\n".join(lines))
+    logger.info(f"Release file applied, image {image}")
+    return None
+
+
 def process_container(container, proxy_settings=None, dockerfiles_source=None,
                       log_retention_days=None, run_comment=None):
     """Process a single container update, with its run log closed on any exit.
@@ -2115,7 +2192,22 @@ def _process_container(container, proxy_settings=None, dockerfiles_source=None,
     if not isfile(access_file_name):
         access_file_name = "access_myodoo.txt"  # Try alternative name
         
-    if isfile(check_script_name) and isfile(access_file_name):
+    if RELEASE_FILE_OVERRIDE:
+        # The release was handed over (pull update): no download, no access code.
+        started = time.time()
+        problem = apply_release_file(RELEASE_FILE_OVERRIDE)
+        print_step("release file", "FAILED" if problem else "ok", time.time() - started)
+        if problem:
+            total_errors += 1
+            note_issue("ERROR", problem)
+            logger.error(problem)
+            print(f"{CR}    {problem}")
+            try:
+                os.chdir(original_dir)
+            except Exception:
+                pass
+            return False, total_info, total_warnings, total_errors
+    elif isfile(check_script_name) and isfile(access_file_name):
         # Forward proxy env: the check script downloads the release CSV via wget
         success, _, info, warn, err = run_step(
             "release manager", f"python3 {check_script_name}", env=proxy_env)
@@ -2493,8 +2585,9 @@ def main():
     # Parse command line arguments
     args = parse_arguments()
 
-    global BUILD_NO_CACHE
+    global BUILD_NO_CACHE, RELEASE_FILE_OVERRIDE
     BUILD_NO_CACHE = args.no_cache
+    RELEASE_FILE_OVERRIDE = os.path.abspath(args.release_file) if args.release_file else None
 
     # Set logging level based on verbosity
     if args.verbose:
@@ -2543,6 +2636,17 @@ def main():
         logger.error(f"Unknown container(s) in --specific-container: {', '.join(unknown)}")
         logger.error(f"Known containers: {', '.join(n for n in known if n)}")
         return 1
+
+    # A release belongs to one instance: applying it to every selected (or
+    # every active) container would install one customer's release everywhere.
+    if RELEASE_FILE_OVERRIDE:
+        if len(selected) != 1:
+            logger.error("--release-file needs exactly one container (-s NAME)")
+            return 1
+        problem = release_file_problem(RELEASE_FILE_OVERRIDE)
+        if problem:
+            logger.error(f"--release-file {RELEASE_FILE_OVERRIDE}: {problem}")
+            return 1
 
     history_retention = resolve_history_retention(config)
 

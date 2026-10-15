@@ -684,6 +684,12 @@ class MainAgainstARealConfigFileTest(unittest.TestCase):
         with open(self.config_path, "w", encoding="utf8") as handle:
             handle.write(self.config_text)
 
+    def test_a_release_file_needs_exactly_one_container(self):
+        release = os.path.join(self.tmp, "job.release")
+        with open(release, "w", encoding="utf8") as handle:
+            handle.write(ReleaseFileTest.VALID)
+        self.assertEqual(self.run_main(["--release-file", release]), 1)
+
     def run_main(self, argv):
         original = sys.argv
         sys.argv = ["update_docker_odoo.py", "-c", self.config_path] + argv
@@ -1175,3 +1181,65 @@ class ReleaseVersionTest(unittest.TestCase):
         check = source.index("mismatch = release_version_problem(")
         self.assertLess(source.index('"release manager", f"python3 {check_script_name}"'), check)
         self.assertLess(check, source.index('(f"stop {container_name}", f"docker stop {container_name}")'))
+
+
+class ReleaseFileTest(unittest.TestCase):
+    """--release-file (5.25.0): a release handed over by the pull update."""
+
+    VALID = (
+        "https://modules.example.invalid/19.0\n"
+        "myodoo/prepare-v19:26.10.13-3.12.15\n"
+        "odoo-kernel-19.0.-26.10.11.zip\n"
+        "\n"
+        "account-19.0.1.2.3.zip\n"
+    )
+
+    def setUp(self):
+        self.tmp = tempfile.mkdtemp()
+        self.release = os.path.join(self.tmp, "job.release")
+        self.cwd = os.getcwd()
+        os.chdir(self.tmp)
+        with open("Dockerfile", "w", encoding="utf8") as handle:
+            handle.write("FROM myodoo/prepare-v19:old\n# x\n# y\n# Date 01.01.2026\nRUN true\n")
+
+    def tearDown(self):
+        os.chdir(self.cwd)
+
+    def write(self, text):
+        with open(self.release, "w", encoding="utf8") as handle:
+            handle.write(text)
+        return self.release
+
+    def test_a_valid_release_is_accepted(self):
+        self.assertIsNone(udo.release_file_problem(self.write(self.VALID)))
+
+    def test_paths_and_bad_lines_are_refused(self):
+        bad = {
+            "path in a module line": self.VALID + "../../etc/passwd.zip\n",
+            "not a zip": self.VALID + "account.tar\n",
+            "no base url": self.VALID.replace("https://modules.example.invalid/19.0", "modules"),
+            "bad image": self.VALID.replace("myodoo/prepare-v19:26.10.13-3.12.15", "myodoo prepare"),
+            "too short": "https://modules.example.invalid/19.0\nmyodoo/x:1\n",
+        }
+        for label, text in bad.items():
+            self.assertIsNotNone(udo.release_file_problem(self.write(text)), label)
+        self.assertEqual(udo.release_file_problem(os.path.join(self.tmp, "missing")), "file not found")
+
+    def test_apply_sets_the_image_and_keeps_the_old_release(self):
+        with open("release.file", "w", encoding="utf8") as handle:
+            handle.write("old\n")
+        self.assertIsNone(udo.apply_release_file(self.write(self.VALID)))
+        self.assertEqual(read("release.file"), self.VALID)
+        dockerfile = read("Dockerfile").split("\n")
+        self.assertEqual(dockerfile[0], "FROM myodoo/prepare-v19:26.10.13-3.12.15")
+        self.assertEqual(dockerfile[3], "# Date " + time.strftime("%d.%m.%Y"))
+        self.assertEqual(dockerfile[4], "RUN true")
+        kept = [name for name in os.listdir(".") if name.startswith("release.file-")]
+        self.assertEqual(len(kept), 1)
+        self.assertEqual(read(kept[0]), "old\n")
+
+    def test_apply_refuses_without_touching_anything(self):
+        before = read("Dockerfile")
+        self.assertIsNotNone(udo.apply_release_file(self.write(self.VALID + "../evil.zip\n")))
+        self.assertEqual(read("Dockerfile"), before)
+        self.assertFalse(os.path.exists("release.file"))

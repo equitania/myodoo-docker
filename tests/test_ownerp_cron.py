@@ -49,7 +49,8 @@ class CronFixture(unittest.TestCase):
 class ParsingTest(CronFixture):
     def test_every_shipped_job_is_found(self):
         cron = self.load()
-        self.assertEqual(len(cron.jobs), 8)
+        self.assertEqual(len(cron.jobs), 9)
+        self.assertIn("ownerp_pull_update.py", [job.job_id for job in cron.jobs])
 
     def test_duplicate_scripts_get_numbered_ids(self):
         """The backup runs twice a day from two lines; the name alone is ambiguous."""
@@ -400,13 +401,13 @@ class GroupByScriptTest(CronFixture):
     def test_entries_keep_file_order(self):
         scripts = [e.script for e in oc.group_by_script(self.load().jobs)]
         self.assertEqual(scripts[0], "container2backup.py")
-        self.assertEqual(len(scripts), 7)  # 8 jobs, 2 of them one script
+        self.assertEqual(len(scripts), 8)  # 9 jobs, 2 of them one script
 
     def test_menu_lines_number_from_one(self):
         lines = oc.format_menu(oc.group_by_script(self.load().jobs))
         self.assertTrue(lines[0].startswith("1"))
         self.assertIn("container2backup (2 lines)", lines[0])
-        self.assertTrue(lines[-1].startswith("7"))
+        self.assertTrue(lines[-1].startswith("8"))
 
 
 class MenuParsingTest(unittest.TestCase):

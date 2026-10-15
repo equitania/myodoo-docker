@@ -25,6 +25,7 @@
 - Deploy nginx base files + generate reverse-proxy vhosts for Odoo/other services via wizard + `nginx-set-conf`
 - Deploy PostgreSQL and FastReport containers interactively (profiles, optional self-signed SSL)
 - Update Odoo containers unattended from YAML (image rebuild, module update, restart)
+- Let the release manager schedule an update that the server pulls itself (`ownerp_pull_update.py`, no inbound connection)
 - Add an Odoo instance to the update configuration through a guided assistant that validates before it writes
 - Back up Odoo databases (SQL + filestore) with compression/encryption/streaming, and restore them
 - Renew Let's Encrypt certificates without needless nginx downtime; quarantine broken vhosts
@@ -46,7 +47,7 @@ All commands run as **root** on the target server. The interactive login shell i
 | `nginx-set-conf` | `ngxset` | Generate + deploy vhosts from the wizard YAML (PyPI tool) | `--config_path=$HOME/docker-builds/ngx-conf/` (alias preset) |
 | `pg-local-deploy.sh` | — | Deploy a PostgreSQL container (compose file, network, profile, optional SSL) | interactive only (container name, base dir, db user/name, password, PG version — suggests the newest from Docker Hub, Enter accepts, profile `2cpu4gb|2cpu8gb|4cpu16gb|8cpu32gb`, optional host port, optional self-signed SSL, optional pgvector — default off, `y` builds `postgres-pgvector:<version>` from `postgres:<version>` + `postgresql-<major>-pgvector`; a re-deploy without pgvector exits 1 when a database already uses `vector`). Since 1.4.0 a NEW instance runs as `postgres:5432` (compose `user:`, host user created); a re-deploy keeps the PGDATA owner, older instances stay at 999. `PGDATA` is set explicitly so `postgres:18+` works with the `/var/lib/postgresql/data` mount |
 | `fr-local-deploy.sh` | — | Deploy the FastReport API container (`/opt/fast-report/<name>/…`) | interactive only (container name, port, registry token, image tag — suggested from the registry's tag list after the token, optional secrets). The image runs as `frapi` UID 10000 (fixed at build time, entrypoint drops privileges via gosu — never add `user:`); the script only creates the host user `frapi:10000` |
-| `update_docker_odoo.py` | `doup` (config: `edup`) | Update Odoo containers from `~/docker2update.yaml` (rebuild image, update DB, restart). Writes a full run log per container to `<build folder>/update_<YYYYMMDD>_<HHMMSS>.log` regardless of `-v`; the paths are listed at exit. Logs older than `log_retention_days` (YAML `defaults` or per container, 90 days default, `0` = keep forever) are removed on that instance's next run. Each container run also appends one line to `~/update-history.jsonl` (`defaults.history_retention_days`, 365 default, `0` = forever) | `-c/--config CONFIG` · `-v/--verbose` · `-s/--specific-container NAME` (repeatable, also comma-separated; **overrides `active: false`**) · `--type {M,F,N}` (runtime mode override, never written to the YAML) · `--comment TEXT` (into the run log header and the history) · `--validate` · `--dns-optimize` |
+| `update_docker_odoo.py` | `doup` (config: `edup`) | Update Odoo containers from `~/docker2update.yaml` (rebuild image, update DB, restart). Writes a full run log per container to `<build folder>/update_<YYYYMMDD>_<HHMMSS>.log` regardless of `-v`; the paths are listed at exit. Logs older than `log_retention_days` (YAML `defaults` or per container, 90 days default, `0` = keep forever) are removed on that instance's next run. Each container run also appends one line to `~/update-history.jsonl` (`defaults.history_retention_days`, 365 default, `0` = forever) | `-c/--config CONFIG` · `-v/--verbose` · `-s/--specific-container NAME` (repeatable, also comma-separated; **overrides `active: false`**) · `--type {M,F,N}` (runtime mode override, never written to the YAML) · `--comment TEXT` (into the run log header and the history) · `--validate` · `--dns-optimize` · `--release-file PATH` (install exactly this release instead of asking the release manager; needs exactly one `-s`) |
 | `ownerp_tui.py` | `tui` | curses selection screen for ad-hoc updates: lists every system from `docker2update.yaml` with its mode and its last run, then hands the selection to `update_docker_odoo.py` — one invocation per mode group, sequential, worst exit code wins. **Never writes to the YAML.** Keys: Space select · `a` all/none · `m` mode M→F→N · `c` comment · `Enter` start · `v` validate · `w` add an instance / change a field (runs `ownerp_wizard.py`, then reloads the list) · `d` make it `doup`'s default · `?` help · `q`/`Esc` quit | `-c/--config CONFIG` · `--make-default` · `--no-default` |
 | `ownerp_wizard.py` | `wiz` | Guided editing of `docker2update.yaml`: add an instance, or change one scalar field of an existing entry. Suggests from the file itself — next free host port across both port fields of every entry, unanimous `db_user`/`db_host`, shared build-folder pattern and image prefix; Enter takes the value in brackets. **The only tool here that writes to a customer configuration**: backup → temp file in the same directory → `ownerp_validate.py` against it → error means temp file *and* backup removed and the original left byte-identical; clean means `os.replace()`. Warnings never block. **Refuses without a TTY**, without `ownerp_validate.py`, or on an unparseable config. Scalars only; **never removes an entry**; `db_password` never echoed or shown | `--update [PATH]` (default `~/docker2update.yaml`) · `--version` (no flag = menu) |
 | `container2backup.py` | `dobk` (config: `edbk`) | Back up Odoo DBs (SQL + filestore) + service dirs per `~/container2backup.yaml`. Exit 1 + `Backup FAILED for …` when any database got no archive (container name not found, dump failed); that database's old archives are kept | `--sql-only` · `--validate` |
@@ -57,6 +58,7 @@ All commands run as **root** on the target server. The interactive login shell i
 | `nightly-cleanup.sh` | — | Restart containers over memory threshold (Odoo→PG order) | env: `MEMORY_THRESHOLD=90` · `DRY_RUN=1` |
 | `setup-maintenance-cron.sh` | — | Install `/etc/cron.d/myodoo-maintenance` + logrotate (idempotent) | `--remove` · env: `SCRIPT_DIR=/root` |
 | `ownerp_cron.py` | `docron` (edit: `konsole`) | Report + guided editing of `/etc/cron.d/myodoo-maintenance`. **Bare call on a real terminal is interactive**: report, then a German numbered on/off menu (a script name is one entry even when it is two cron lines, e.g. `container2backup`). **Agents must never rely on that prompt** — always pass `--brief`/`--json`/`--set`/`--enable`/`--disable`, or `--no-input` for the plain report; every one of those (and any non-TTY invocation) skips the menu exactly as before | `--path FILE` · `--brief` · `--json` · `--no-input` (suppress the menu on a terminal) · `--set JOB --schedule EXPR` · `--enable JOB` \| `--disable JOB` (script name, with or without `.py`, switches every line of it) |
+| `ownerp_pull_update.py` | — | Pull-update agent (cron, every 5 min): asks the release manager (`GET <RM_PULL_URL>/rm/api/v1/job`, Bearer token per instance) whether an update is due for an instance here, checks the job against this server, runs `update_docker_odoo.py -s <container> --release-file <file> --comment "pull update run <id>"`, reports start and finish back. Does nothing and prints nothing without `RM_PULL_URL` and a token. Delivered to `/root` by `getScripts.py` ≥ 9.33.0; config in `/root/.config/myodoo-docker/.env` | `--check` (list configured instances, contact nobody) · exit 0 nothing to do / all done, 1 job failed or refused, 2 config error |
 | `server-readiness.py` | `chk` | Report config drift vs. expected server state; read-only, one fix command per finding. A host with `docron --disable container2backup` or `docron --disable odoo_build_cache` mutes the checks that job explains (`backup_recency`+`backup_config`, or `update_config`) instead of failing on a config that is missing on purpose; `resolved_dnssec` FAILs when systemd-resolved validates DNSSEC (`yes`/`allow-downgrade`), because a root key change unknown to the installed systemd turns every lookup into SERVFAIL (happened 11.10.2026 on Ubuntu 22.04); `dns_resolution` is the one check that touches the network — one `getent ahosts github.com`, and only on failure one direct query to `1.1.1.1` (FAIL; WARN on a proxy host when neither answers); `dostat`/`konsole` show the same host as `off`, not as an error. Nine checks run `server_hardening.py --json` once per report and share its result: `hardening_env`, `hardening_firewall`, `hardening_fail2ban`, `hardening_ssh` (FAIL when off) and `hardening_kernel`, `hardening_docker`, `hardening_updates`, `hardening_integrity`, `root_login_locked` (WARN when off) — each mutable on its own (`ownerp_mute.py hardening_firewall --reason "…"`), so a server that deviates on purpose (e.g. behind a corporate firewall) mutes only that part. SKIP when `server_hardening.py` is missing or its audit fails, never a false alarm | `--brief` (non-OK only) \| `--quiet` (silent unless WARN/FAIL; for cron) \| `--muted` (list this host's muted checks) · `--root DIR` `--home DIR` `--repo DIR` (testing) |
 | `dist-upgrade-debian.sh` | — | Guided Debian major upgrade (bookworm→trixie→…) | `[CODENAME]` optional target · `--yes` |
 | `check_docker_volumes.sh` | `dkvol` | List volumes + referencing containers | none |
@@ -173,6 +175,26 @@ neutralize the copy: `docker exec test-odoo /app/bin/boot neutralize`.
 ```
 Installs: backups 02:00+14:00 · ssl-renew 00:00 · cert-guard 23:50 · weblog purge 03:00 · nightly cleanup 04:30.
 
+### Switch on the pull update for an instance
+```fish
+# 1. In the release manager: instance form, tab Update, "New update token" (shown once). Copy it.
+# 2. On the server, as root: add two lines to the central .env with an editor
+mcedit /root/.config/myodoo-docker/.env
+#      RM_PULL_URL=https://releasemanager.example.com
+#      RM_PULL_TOKEN_WEB1=<token>      # container_name upper-cased, every other character "_"
+# 3. Fetch the scripts, then install the cron template (ups alone only delivers it)
+ups
+docron --no-input              # note which jobs are switched off
+/root/setup-maintenance-cron.sh
+docron                         # the template restores the repository schedule: switch those jobs off again
+# 4. Check: lists the configured instances, contacts nobody
+~/ownerp_pull_update.py --check
+# 5. In the release manager: enable the pull update for the instance.
+```
+Optional in the same `.env`: `RM_PULL_MODULE_HOST` (host the zip files may come from, default the
+release manager's host), `RM_PULL_IMAGE_PREFIX` (default `myodoo/`). The log is
+`/var/log/ownerp-pull-update.log`.
+
 ### Set up a customer user without root (restricted mode, getScripts ≥ 9.27.0)
 ```bash
 python3 ~/getScripts.py --restricted   # as the ordinary user; no sudo anywhere
@@ -204,6 +226,12 @@ CIDR (wget/apt/urllib do not). Full walkthrough: `docs/usage/07-proxy.md`.
 
 ## Guardrails & gotchas
 
+- **Pull update: jobs carry data, never commands.** `ownerp_pull_update.py` checks every job against this
+  server (database name = the container's `database_name`, same Odoo major version, image under
+  `RM_PULL_IMAGE_PREFIX`, every download a plain `*.zip` under one https base address). A job that fails is
+  reported with exit code 2 and never run. A lock prevents parallel runs; the token is shown once in the
+  release manager. `--release-file` needs exactly one `-s` (else exit 1) and the file is validated before
+  anything is touched. Without `RM_PULL_URL` or a token the agent is silent by design.
 - **pgvector is a decision, not a default.** Odoo 19 Enterprise's `ai_auto_install` installs the AI
   module `ai` in every new database whenever the server offers the `vector` extension. Never swap
   a customer's DB image for `pgvector/pgvector` "to be safe"; deploy with `pg-local-deploy.sh`

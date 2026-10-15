@@ -11,9 +11,11 @@ in this repository, stay in `CLAUDE.md`.
 
 ### Key Components
 
-#### 1. getScripts.py (v9.32.0)
+#### 1. getScripts.py (v9.33.0)
 - **Purpose**: Main installation and update script
 - **Features**:
+  - Delivers `ownerp_pull_update.py` (v9.33.0, 14.10.2026) to `/root` in
+    `copy_scripts()`, next to the other management scripts
   - Hardening `.env` derived from the server (v9.32.0, 12.10.2026):
     `_offer_env_creation()` takes `SSH_PORT` from `sshd -T` and the admin IPs
     from `_ufw_admin_sources()`, which reads ufw's own `user.rules`/`user6.rules`
@@ -255,11 +257,20 @@ in this repository, stay in `CLAUDE.md`.
   - Automated restart management
   - Module updates for Odoo
 
-#### 4. update_docker_odoo.py (v5.24.0)
+#### 4. update_docker_odoo.py (v5.25.0)
 - **Purpose**: Automated Docker container updates for v16+ Odoo instances
   (image rebuild, container re-creation, module update), driven by
   `docker2update.yaml`
 - **Features**:
+  - **`--release-file PATH`** (v5.25.0, 14.10.2026): installs exactly this
+    release instead of asking the release manager (skips
+    `check_dockerimage_odoo.py` and `release.txt`). Needs exactly one `-s`
+    (else exit 1). `release_file_problem()` validates the file before anything
+    is touched: line 1 an http(s) base URL, line 2 an image reference, every
+    other line a plain zip name, no path. `apply_release_file()` keeps the old
+    `release.file` as `release.file-<timestamp>`, sets Dockerfile line 1 to
+    `FROM <image>` and updates the `# Date` line 4. Used by
+    `ownerp_pull_update.py`; without the flag nothing changes
   - **Data volume follows the image's odoo UID** (v5.24.0, 07.10.2026): the
     odoo user is pinned to UID/GID 8069 in the Dockerfiles; before, it was the
     base image's first free UID (mostly 1000, on the host the cloud image's
@@ -957,7 +968,9 @@ in this repository, stay in `CLAUDE.md`.
   risk an expiry would guard against — a mute nobody remembers — is already
   covered by the visible `[MUTED]` line and the count in every summary
 
-#### 16. server-readiness.py (v1.14.1)
+#### 16. server-readiness.py (v1.14.2)
+- **v1.14.2 (14.10.2026):** `ownerp_pull_update.py` is one of the
+  `DELIVERED_SCRIPTS`, so the stale-tooling check covers it.
 - **v1.14.0 (12.10.2026): configured backup containers must exist.**
   `backup_config` FAILs when a `sql_container` / `data_container` is not in
   `docker ps -a` and lists the containers that are; `backup_recency` names the
@@ -1134,3 +1147,37 @@ in this repository, stay in `CLAUDE.md`.
   `on_fail` severity. `server-readiness.py`'s `HARDENING_AREAS` mirrors this
   list rather than importing it — that script must keep running without
   PyYAML — so a test holds both equal
+
+#### 18. ownerp_pull_update.py (v1.0.0)
+- **Purpose**: Pull-update agent. The release manager never connects to the
+  server; this script asks it whether an update is due for an instance here
+  and carries it out with `update_docker_odoo.py --release-file`. Delivered to
+  `/root` by `getScripts.py` 9.33.0
+- **Cron**: `*/5 * * * * root /usr/bin/python3 /root/ownerp_pull_update.py >>
+  /var/log/ownerp-pull-update.log 2>&1`, the last job of
+  `scripts/myodoo-maintenance.cron`; `myodoo-maintenance.logrotate` covers the
+  log. Cron starts without proxy variables, so the script loads them from
+  `/etc/environment`
+- **Protocol**: `GET <RM_PULL_URL>/rm/api/v1/job` (204 nothing to do, 200 a
+  job), then `POST .../runs/<id>/start` and `.../runs/<id>/finish` with the
+  exit code and the last ~900 KB of the log. One Bearer token per instance
+- **Jobs carry data, never commands.** Before use the job is checked against
+  this server: database name equals the container's `database_name`; Odoo
+  major version matches; image starts with `RM_PULL_IMAGE_PREFIX` (default
+  `myodoo/`); every download is a plain `*.zip` under one https base address
+  on `RM_PULL_MODULE_HOST` (default: host of `RM_PULL_URL`). A refused job is
+  reported with exit code 2 and never run
+- **Run**: writes a release file, then `update_docker_odoo.py -s <container>
+  --release-file <file> --comment "pull update run <id>"` (UPDATE_TIMEOUT 4 h).
+  A lock (`/run/lock/ownerp_pull_update.lock`) prevents parallel runs
+- **Configuration** in the central `.env` (`/root/.config/myodoo-docker/.env`,
+  0600): `RM_PULL_URL` (https only), `RM_PULL_TOKEN_<CONTAINER>` (the
+  `container_name` upper-cased, other characters `_`), optional
+  `RM_PULL_MODULE_HOST`, `RM_PULL_IMAGE_PREFIX`. Without `RM_PULL_URL` or any
+  token it does nothing and prints nothing
+- **`--check`** lists the configured instances and contacts nobody
+- **Exit codes**: 0 nothing to do or all done, 1 a job failed or was refused,
+  2 configuration error
+- **Token**: created in the release manager (instance form, tab Update, "New
+  update token", shown once)
+- **Tests**: `tests/test_ownerp_pull_update.py`

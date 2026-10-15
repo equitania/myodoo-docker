@@ -1,5 +1,71 @@
 # Release Notes
 
+## Pull Update: the Server Asks the Release Manager (14.10.2026)
+
+*scripts/ownerp_pull_update.py v1.0.0 (new) · scripts/update_docker_odoo.py v5.25.0 ·
+scripts/myodoo-maintenance.cron · scripts/myodoo-maintenance.logrotate ·
+getScripts.py v9.33.0 · scripts/server-readiness.py v1.14.2 ·
+tests/test_ownerp_pull_update.py · tests/test_update_docker_odoo.py ·
+docs/COMPONENTS.md · docs/usage/09-reference.md · usage/AGENT.md*
+
+Until now an update on a customer server started only when an operator typed
+`doup`. The release manager can now also schedule one, without ever opening a
+connection to the server: a new agent on the server asks it, every five
+minutes, whether an update is due.
+
+### Added
+
+- **`ownerp_pull_update.py`** asks `GET <RM_PULL_URL>/rm/api/v1/job` with one
+  Bearer token per instance. A job carries data only (database name, Odoo
+  version, image, kernel and module zip files with their download addresses),
+  never a command. The agent checks it against this server before use: the
+  database name must equal the container's `database_name`, the Odoo major
+  version must match, the image must start with `RM_PULL_IMAGE_PREFIX`
+  (default `myodoo/`), and every download must be a plain `*.zip` under one
+  https base address on `RM_PULL_MODULE_HOST` (default: the release manager's
+  host). It then writes a release file, runs `update_docker_odoo.py -s
+  <container> --release-file <file> --comment "pull update run <id>"` and
+  reports start and finish (exit code and the last ~900 KB of the log) back.
+  A job that fails the checks is reported with exit code 2 and never run. A
+  lock (`/run/lock/ownerp_pull_update.lock`) prevents parallel runs.
+- **Configuration** in the central `.env` (`/root/.config/myodoo-docker/.env`,
+  0600): `RM_PULL_URL` (https only), `RM_PULL_TOKEN_<CONTAINER>` (the
+  `container_name` upper-cased, every other character `_`), optional
+  `RM_PULL_MODULE_HOST` and `RM_PULL_IMAGE_PREFIX`. Without `RM_PULL_URL` or
+  without any token the agent does nothing and prints nothing, so the cron
+  line is safe on every server. `--check` lists the configured instances and
+  contacts nobody. Exit codes: 0 nothing to do or all done, 1 a job failed or
+  was refused, 2 configuration error. Cron starts without proxy variables, so
+  the agent loads them from `/etc/environment`.
+- **Cron job** `*/5 * * * * root /usr/bin/python3 /root/ownerp_pull_update.py
+  >> /var/log/ownerp-pull-update.log 2>&1` as the last job of
+  `myodoo-maintenance.cron`; the logrotate file covers the log.
+- **`update_docker_odoo.py --release-file PATH`** (5.25.0) installs exactly
+  this release instead of asking the release manager (no
+  `check_dockerimage_odoo.py`, no `release.txt`). It needs exactly one `-s`
+  (otherwise exit 1) and validates the file before anything is touched: line 1
+  an http(s) base URL, line 2 an image reference, every further line a plain
+  zip name without a path. The old `release.file` is kept as
+  `release.file-<timestamp>`; Dockerfile line 1 becomes `FROM <image>` and the
+  `# Date` line 4 is updated. Without the flag nothing changes.
+
+### Changed
+
+- `getScripts.py` 9.33.0 delivers `ownerp_pull_update.py` to `/root`;
+  `server-readiness.py` 1.14.2 counts it among the delivered scripts, so the
+  stale-tooling check covers it.
+
+### Note
+
+The token is created in the release manager (instance form, tab Update, "New
+update token", shown once). `ups` delivers the new cron template, but only
+`/root/setup-maintenance-cron.sh` (1.3.1, which now also checks that
+`ownerp_pull_update.py` is present) installs it into `/etc/cron.d` — and it
+restores the repository schedule, so a job switched off with `docron` must be
+switched off again afterwards.
+Tests: 1392 green (new `tests/test_ownerp_pull_update.py`, `ReleaseFileTest`,
+cron job counts updated).
+
 ## Base Images with eq-chatbot-core 4.3 (13.10.2026)
 
 *Dockerfiles/v16-odoo/Dockerfile · Dockerfiles/v18-odoo/Dockerfile ·

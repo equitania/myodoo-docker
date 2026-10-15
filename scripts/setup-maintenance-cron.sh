@@ -1,6 +1,6 @@
 #!/bin/bash
 # setup-maintenance-cron.sh — Install the myodoo maintenance cron jobs + logrotate
-# Version 1.3.0 — 02.08.2026
+# Version 1.3.1 — 14.10.2026
 #
 # Installs a declarative /etc/cron.d/ drop-in (versioned in this repo) instead of
 # hand-edited per-user crontabs, plus a matching logrotate config. Idempotent:
@@ -33,8 +33,8 @@
 
 set -Eeuo pipefail
 
-SCRIPT_VERSION="1.3.0"
-SCRIPT_DATE="02.08.2026"
+SCRIPT_VERSION="1.3.1"
+SCRIPT_DATE="14.10.2026"
 
 # Where the maintenance scripts live (getScripts.py copies them to /root).
 SCRIPT_DIR="${SCRIPT_DIR:-/root}"
@@ -48,7 +48,7 @@ CRON_SRC="${SELF_DIR}/myodoo-maintenance.cron"
 LOGROTATE_SRC="${SELF_DIR}/myodoo-maintenance.logrotate"
 
 # Scripts referenced by the cron entries (for an existence sanity-check).
-MANAGED_SCRIPTS=(container2backup.py ssl-renew.sh cleanup-weblogs.py nginx-cert-guard.py nightly-cleanup.sh server-readiness.py odoo_build_cache.py)
+MANAGED_SCRIPTS=(container2backup.py ssl-renew.sh cleanup-weblogs.py nginx-cert-guard.py nightly-cleanup.sh server-readiness.py odoo_build_cache.py ownerp_pull_update.py)
 
 SEPARATOR="────────────────────────────────────────────────────────"
 if [ -t 1 ]; then

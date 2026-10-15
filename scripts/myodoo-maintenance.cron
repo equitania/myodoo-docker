@@ -49,3 +49,10 @@ PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
 # 30 days and prunes the release.file-<timestamp> copies that
 # check_dockerimage_odoo.py creates on every run and never deletes.
 30 3 * * 0 root /usr/bin/python3 /root/odoo_build_cache.py gc >> /var/log/odoo-build-cache.log 2>&1
+
+# Pull update every 5 minutes: asks the release manager whether an update is
+# due for an instance here and carries it out with update_docker_odoo.py.
+# Does nothing (and writes nothing) until RM_PULL_URL and an instance token are
+# set in the central .env - see ownerp_pull_update.py. A run in progress holds a
+# lock, so a long update is never started twice.
+*/5 * * * * root /usr/bin/python3 /root/ownerp_pull_update.py >> /var/log/ownerp-pull-update.log 2>&1
