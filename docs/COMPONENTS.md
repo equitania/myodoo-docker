@@ -1181,3 +1181,29 @@ in this repository, stay in `CLAUDE.md`.
 - **Token**: created in the release manager (instance form, tab Update, "New
   update token", shown once)
 - **Tests**: `tests/test_ownerp_pull_update.py`
+
+#### 19. Dockerfiles/playbooks (generate.py v1.0.0, passwort-setzen.py v1.0.0)
+- **Purpose**: Rebuild the test instance (`test-odoo` / `test-db`) from the
+  newest `live-odoo` backup with odoodev server playbooks (odoodev ≥ 0.75.7),
+  Odoo 16, 18 and 19. Replaces the withdrawn `restore-zip.sh` path
+- **generate.py**: writes the playbooks for one server. Reads the test
+  database and its host data directory from `~/docker2update.yaml`, the backup
+  directory, the database name in the live backup files and the archive
+  suffix (`stream` → `.tar.zst`, else `compression.format`) from
+  `~/container2backup.yaml`; every value has a flag (`--help`). `v16/`, `v18/`,
+  `v19/` hold the output for the templates' values as examples
+- **States**: `neutral`, `anonym`, `anonym-leer`, `stammdaten`, `vorlage`
+  (odoodev sanitize flags), plus `wiederherstellen.yaml` (newest
+  `/opt/backups/prerestore` file, no safety backup on purpose) and
+  `passwoerter.yaml` (one pbkdf2 hash for every user except the technical
+  accounts, 2FA off; the hash comes from `passwort-setzen.py`, stored in
+  `/root/.config/odoodev/test-passwords.env`, 0600)
+- **Flow**: safety backup → stop → restore via staging DB (unpacked in
+  `/opt/backups/restore-tmp`, the backup dir may be a read-only share) →
+  EBICS off via SQL before start → `doup --type F` → `server.uninstall` of
+  `account_ebics*` → `odoo-bin neutralize` → `server.verify`
+- **Pitfalls found on a real server**: modules marked `to remove` via SQL are
+  reset by doup's `-u all`; `odoo-bin -u` inside the running container
+  deadlocks against the serving process — hence `server.uninstall`. One active
+  mail server afterwards is Odoo's neutralization placeholder (host `invalid`)
+- **Not readable by server.restore**: encrypted (`.gpg`) and SQL-only backups

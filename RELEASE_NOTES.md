@@ -4,7 +4,8 @@
 
 *Dockerfiles/playbooks/generate.py v1.0.0 (new) · Dockerfiles/playbooks/passwort-setzen.py
 v1.0.0 (new) · Dockerfiles/playbooks/ANLEITUNG.md · Dockerfiles/playbooks/v16/ ·
-Dockerfiles/playbooks/v18/ · Dockerfiles/playbooks/v19/*
+Dockerfiles/playbooks/v18/ · Dockerfiles/playbooks/v19/ ·
+docs/COMPONENTS.md · docs/usage/09-reference.md · usage/AGENT.md*
 
 Rebuilding a test instance from the live backup was a sequence of manual steps.
 odoodev server playbooks now do it in one run, for Odoo 16, 18 and 19, with the test

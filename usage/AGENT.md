@@ -165,9 +165,18 @@ ls -lah /opt/backups/docker                      # or: llbk
 ```
 
 ### Restore a live backup as a test database
-`restore-zip.sh` was withdrawn on 29.09.2026 (restore is being redone; copies already in `/root`
-stay). Until the replacement exists, follow the manual steps in `scripts/README_BackUp.md`, then
-neutralize the copy: `docker exec test-odoo /app/bin/boot neutralize`.
+Use the odoodev playbooks in `~/myodoo-docker/Dockerfiles/playbooks` (odoodev ≥ 0.75.7; they
+replace the withdrawn `restore-zip.sh`). Target `test-odoo`/`test-db`, source the newest
+`live-odoo` backup; every state ends neutralized, EBICS uninstalled, verified.
+```bash
+cd ~/myodoo-docker/Dockerfiles/playbooks
+python3 generate.py --version 18 --out ~/playbooks   # values from docker2update/container2backup YAML
+mkdir -p /opt/backups/prerestore /opt/backups/restore-tmp
+cd ~/playbooks && odoodev run neutral.yaml --dry-run && odoodev run neutral.yaml
+# states: neutral anonym anonym-leer stammdaten vorlage · wiederherstellen · passwoerter
+```
+Never mark modules `to remove` via SQL and run `-u` — doup's `-u all` resets them and
+`odoo-bin -u` next to the running server deadlocks; use odoodev `server.uninstall`.
 
 ### Enable unattended maintenance (after backup YAML is configured)
 ```bash
