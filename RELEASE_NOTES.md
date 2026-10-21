@@ -1,5 +1,44 @@
 # Release Notes
 
+## Test Instance Playbooks for odoodev (21.10.2026)
+
+*Dockerfiles/playbooks/generate.py v1.0.0 (new) · Dockerfiles/playbooks/passwort-setzen.py
+v1.0.0 (new) · Dockerfiles/playbooks/ANLEITUNG.md · Dockerfiles/playbooks/v16/ ·
+Dockerfiles/playbooks/v18/ · Dockerfiles/playbooks/v19/*
+
+Rebuilding a test instance from the live backup was a sequence of manual steps.
+odoodev server playbooks now do it in one run, for Odoo 16, 18 and 19, with the test
+instance `test-odoo` / `test-db` as target and the newest `live-odoo` backup as
+source.
+
+### Added
+
+- **`generate.py`** writes the playbooks for one server. It reads the test
+  database and its data directory from `~/docker2update.yaml` and the backup
+  directory, the database name in the live backup files and the archive format
+  from `~/container2backup.yaml`; every value can be overridden. `v16/`, `v18/`
+  and `v19/` hold the playbooks generated with the templates' values as examples.
+- **Five data states:** `neutral`, `anonym`, `anonym-leer` (plus chatter and
+  attachments deleted), `stammdaten` (transactional data deleted) and
+  `vorlage` (customer, vendor and contact partners deleted as well). Every
+  state saves the test instance first, restores via a staging database,
+  rebuilds and updates the image with `doup --type F`, and ends neutralized
+  (crons and mail servers off, bank sync removed, `odoo-bin neutralize`) and
+  verified.
+- **EBICS** is switched off before Odoo starts (configuration and users
+  inactive, stored passphrases cleared) and then uninstalled with odoodev's
+  `server.uninstall`. Marking the modules `to remove` via SQL does not work:
+  the rebuild's `-u all` resets them, and `odoo-bin -u` next to the serving
+  process deadlocks.
+- **`wiederherstellen.yaml`** puts back the state saved before the last run;
+  **`passwoerter.yaml`** with `passwort-setzen.py` sets one common password
+  for every user (only its pbkdf2 hash is stored, in a root-only env file)
+  and switches 2FA off.
+
+Needs odoodev 0.75.7 or later. The backup is unpacked in
+`/opt/backups/restore-tmp`, because the backup directory may be a read-only
+network share. Encrypted and SQL-only backups cannot be restored.
+
 ## Pull Update: the Server Asks the Release Manager (14.10.2026)
 
 *scripts/ownerp_pull_update.py v1.0.0 (new) · scripts/update_docker_odoo.py v5.25.0 ·
