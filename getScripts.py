@@ -414,32 +414,49 @@ def normalize_zoxide_version(version: str) -> str:
 # FISH SHELL SUPPORT (New in v7.0.0)
 # =============================================================================
 
+def probe_output(argv: List[str], timeout: float = 10) -> Optional[str]:
+    """Run a `--version`-style probe under the C locale and return its output.
+
+    Why the locale is forced: tools localise their version line. Fish 4.9
+    prints „fish, Version 4.9.3“ (capital V) under a German LANG, and until
+    27.10.2026 the case-sensitive match here treated a freshly installed Fish
+    as missing - the run went on without a word, no configuration was copied
+    and no shell change was offered. The operator's locale is not ours to
+    choose, so every probe speaks C.
+
+    Returns stdout+stderr on exit 0, "" on a non-zero exit, None when the
+    binary is missing or the probe could not run at all.
+    """
+    env = os.environ.copy()
+    env["LC_ALL"] = "C"
+    env["LANG"] = "C"
+    try:
+        result = subprocess.run(argv, capture_output=True, text=True,
+                                timeout=timeout, env=env)
+    except (OSError, subprocess.SubprocessError):
+        return None
+    if result.returncode != 0:
+        return ""
+    return (result.stdout or "") + (result.stderr or "")
+
+
 def is_fish_installed() -> Tuple[bool, Optional[str]]:
     """Check if Fish shell is installed and get its version.
 
     Returns:
         Tuple[bool, Optional[str]]: Installation status and version if installed
     """
-    try:
-        result = subprocess.run(
-            ["fish", "--version"],
-            stdout=subprocess.PIPE,
-            stderr=subprocess.PIPE,
-            text=True,
-            check=False
-        )
-        if result.returncode == 0:
-            output = result.stdout.strip() or result.stderr.strip()
-            # Fish version output: "fish, version 4.0.0"
-            version_match = re.search(r'version (\d+\.\d+\.\d+)', output)
-            if version_match:
-                version = version_match.group(1)
-                logger.info(f"Fish shell version {version} found")
-                return True, version
-        return False, None
-    except FileNotFoundError:
+    output = probe_output(["fish", "--version"])
+    if output is None:
         logger.info("Fish shell not found")
         return False, None
+    # Fish version output: "fish, version 4.0.0" - or "Version" (see probe_output)
+    version_match = re.search(r'version (\d+\.\d+\.\d+)', output, re.IGNORECASE)
+    if version_match:
+        version = version_match.group(1)
+        logger.info(f"Fish shell version {version} found")
+        return True, version
+    return False, None
 
 
 def is_zsh_installed() -> Tuple[bool, Optional[str]]:
@@ -448,24 +465,17 @@ def is_zsh_installed() -> Tuple[bool, Optional[str]]:
     Returns:
         Tuple[bool, Optional[str]]: Installation status and version if installed
     """
-    try:
-        result = subprocess.run(
-            ["zsh", "--version"],
-            capture_output=True,
-            text=True,
-            check=False
-        )
-        if result.returncode == 0:
-            # Output: "zsh 5.9 (x86_64-debian-linux-gnu)"
-            match = re.search(r'zsh (\d+\.\d+(?:\.\d+)?)', result.stdout)
-            if match:
-                version = match.group(1)
-                logger.info(f"ZSH version {version} found")
-                return True, version
-        return False, None
-    except FileNotFoundError:
+    output = probe_output(["zsh", "--version"])
+    if output is None:
         logger.info("ZSH not found")
         return False, None
+    # Output: "zsh 5.9 (x86_64-debian-linux-gnu)"
+    match = re.search(r'zsh (\d+\.\d+(?:\.\d+)?)', output, re.IGNORECASE)
+    if match:
+        version = match.group(1)
+        logger.info(f"ZSH version {version} found")
+        return True, version
+    return False, None
 
 
 def is_fish_repo_configured() -> bool:
@@ -621,13 +631,11 @@ def install_fish_if_needed() -> Tuple[bool, bool]:
             # Verify installation
             installed, new_version = is_fish_installed()
             if installed:
-                if new_version != current_version:
-                    logger.info(f"Fish shell upgraded: {current_version or 'not installed'} → {new_version}")
-                else:
-                    logger.info(f"Fish shell {new_version} is already the latest version")
+                _record_fish_outcome(current_version, new_version)
                 return True, needs_migration
         except Exception as e:
             logger.error(f"Failed to install/upgrade Fish from PPA: {e}")
+            record_install("fish", "failed", f"{e} - see ~/getscripts.log")
             return installed, False
 
     # =========================================================================
@@ -730,10 +738,7 @@ def install_fish_if_needed() -> Tuple[bool, bool]:
             # Verify installation
             installed, new_version = is_fish_installed()
             if installed:
-                if new_version != current_version:
-                    logger.info(f"Fish shell upgraded: {current_version or 'not installed'} → {new_version}")
-                else:
-                    logger.info(f"Fish shell {new_version} is already the latest version")
+                _record_fish_outcome(current_version, new_version)
                 return True, needs_migration
         except Exception as e:
             logger.error(f"Failed to install/upgrade Fish from official repository: {e}")
@@ -761,16 +766,34 @@ def install_fish_if_needed() -> Tuple[bool, bool]:
                         f"Fish {new_version} available from Debian repos only - "
                         "official OBS repo setup failed, will retry on next run"
                     )
+                    _record_fish_outcome(current_version, new_version)
                     return True, needs_migration
             except Exception as fallback_error:
                 logger.error(f"Fallback installation from Debian repositories also failed: {fallback_error}")
+            record_install("fish", "failed", f"{e} - see ~/getscripts.log")
             return installed, False
 
     else:
         logger.warning(f"Unsupported OS: {os_id}. Cannot install Fish shell automatically.")
         return installed, False
 
+    # apt reported success and the probe still found nothing. Until 27.10.2026
+    # this was a silent `return False, False` - the run went on, the install
+    # report never mentioned the shell, and the operator learned of it from
+    # a failing `source ~/.config/fish/config.fish` at the very end.
+    record_install("fish", "failed",
+                   "apt reported success, but `fish --version` gave no version - see ~/getscripts.log")
     return False, False
+
+
+def _record_fish_outcome(previous: Optional[str], current: Optional[str]) -> None:
+    """One install-report line for the shell: installed/upgraded or already current."""
+    if current != previous:
+        logger.info(f"Fish shell upgraded: {previous or 'not installed'} → {current}")
+        record_install("fish", "installed", f"v{current}")
+    else:
+        logger.info(f"Fish shell {current} is already the latest version")
+        record_install("fish", "ok", f"v{current}")
 
 
 def is_starship_installed() -> Tuple[bool, Optional[str]]:
@@ -779,26 +802,17 @@ def is_starship_installed() -> Tuple[bool, Optional[str]]:
     Returns:
         Tuple[bool, Optional[str]]: Installation status and version if installed
     """
-    try:
-        result = subprocess.run(
-            ["starship", "--version"],
-            stdout=subprocess.PIPE,
-            stderr=subprocess.PIPE,
-            text=True,
-            check=False
-        )
-        if result.returncode == 0:
-            output = result.stdout.strip()
-            # Starship version output: "starship 1.17.1"
-            parts = output.split()
-            if len(parts) >= 2:
-                version = parts[1]
-                logger.info(f"Starship version {version} found")
-                return True, version
-        return False, None
-    except FileNotFoundError:
+    output = probe_output(["starship", "--version"])
+    if output is None:
         logger.info("Starship not found")
         return False, None
+    # Starship version output: "starship 1.17.1"
+    match = re.search(r'starship (\S+)', output, re.IGNORECASE)
+    if match:
+        version = match.group(1)
+        logger.info(f"Starship version {version} found")
+        return True, version
+    return False, None
 
 
 def install_starship_if_needed() -> bool:
@@ -2171,16 +2185,15 @@ def install_system_package(package: str, version: Optional[str] = None) -> None:
 
 def get_bat_version() -> Optional[tuple]:
     """Get installed bat version as tuple (major, minor, patch)"""
-    try:
-        # On Debian/Ubuntu systems, bat is installed as batcat
-        result = subprocess.run(['batcat', '--version'], capture_output=True, text=True)
-            
-        if result.returncode == 0:
-            # bat output format: "bat 0.22.1"
-            version_str = result.stdout.split()[1]
-            return tuple(map(int, version_str.split('.')))
-    except Exception as e:
-        logger.error(f"Error getting bat version: {str(e)}")
+    # On Debian/Ubuntu systems, bat is installed as batcat
+    output = probe_output(['batcat', '--version'])
+    if output:
+        # bat output format: "bat 0.22.1"
+        match = re.search(r'bat (\d+\.\d+\.\d+)', output, re.IGNORECASE)
+        if match:
+            return tuple(map(int, match.group(1).split('.')))
+    elif output is None:
+        logger.error("Error getting bat version: batcat not found")
     return None
 
 def check_bat_version() -> bool:
@@ -2398,18 +2411,15 @@ def get_7zip_version() -> Optional[tuple]:
     # Try 7zz (new version) using the found path
     if seven_zz_cmd:
         try:
-            result = subprocess.run([seven_zz_cmd, '--help'],
-                                  capture_output=True, text=True, timeout=10)
-            if result.returncode == 0:
+            output = probe_output([seven_zz_cmd, '--help'])
+            if output:
                 # 7zz output format: "7-Zip (z) [64] 24.08 : Copyright (c) 1999-2024 Igor Pavlov"
-                version_line = _extract_7zip_version_line(result.stdout)
+                version_line = _extract_7zip_version_line(output)
                 version_match = re.search(r'(\d+)\.(\d+)', version_line)
                 if version_match:
                     major = int(version_match.group(1))
                     minor = int(version_match.group(2))
                     return (major, minor, 0)
-        except subprocess.TimeoutExpired:
-            logger.debug(f"Timeout running {seven_zz_cmd}")
         except Exception as e:
             logger.debug(f"Error running {seven_zz_cmd}: {str(e)}")
 
@@ -2472,10 +2482,10 @@ def check_7zip_version() -> bool:
 
         # Binary found - get version directly from it
         try:
-            result = subprocess.run([seven_zz_path, '--help'], capture_output=True, text=True, timeout=10)
-            if result.returncode == 0:
+            output = probe_output([seven_zz_path, '--help'])
+            if output:
                 # 7zz output format: "7-Zip (z) [64] 24.08 : Copyright (c) 1999-2024 Igor Pavlov"
-                version_line = _extract_7zip_version_line(result.stdout)
+                version_line = _extract_7zip_version_line(output)
                 version_match = re.search(r'(\d+)\.(\d+)', version_line)
                 if version_match:
                     major = int(version_match.group(1))
