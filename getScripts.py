@@ -4707,6 +4707,18 @@ def _active_noconfig_jobs(_myhome: str) -> Optional[Dict[str, bool]]:
     return active
 
 
+def is_fresh_server(_myhome: str) -> bool:
+    """Docker installed, no container ever created, no YAML: a server that
+    waits for its first Odoo instance - nothing to recover, nothing broken.
+    An unreadable Docker daemon (None) is not fresh; it is a finding."""
+    if not shutil.which("docker"):
+        return False
+    for name in ("container2backup.yaml", "docker2update.yaml"):
+        if os.path.isfile(os.path.join(_myhome, name)):
+            return False
+    return _any_containers() is False
+
+
 def offer_noconfig_recovery(_myhome: str) -> None:
     """Offer a way out for a server with neither backup nor update config.
 
@@ -4734,8 +4746,10 @@ def offer_noconfig_recovery(_myhome: str) -> None:
     if os.path.isfile(backup_yaml) or os.path.isfile(update_yaml):
         return
     # Option 1 below reads the running containers. Without Docker this is a
-    # fresh server, and offer_bootstrap() is the offer that fits it.
-    if not shutil.which("docker"):
+    # fresh server, and offer_bootstrap() is the offer that fits it. With
+    # Docker but no container at all there is nothing to rebuild from either:
+    # main() names the next step (wizup) instead of this dialog (27.10.2026).
+    if not shutil.which("docker") or is_fresh_server(_myhome):
         return
 
     active_jobs = _active_noconfig_jobs(_myhome)
@@ -6683,6 +6697,12 @@ def main() -> None:
 
         # Server readiness: what is installed vs. what this server still needs.
         print_readiness_report(_myhome)
+
+        # A host that waits for its first instance gets the next step named,
+        # not a list of findings about files no instance has written yet.
+        if is_fresh_server(_myhome):
+            status("")
+            status("Noch keine Odoo-Instanz. Nächster Schritt: wizup")
 
         status("")
         status("=" * 60)

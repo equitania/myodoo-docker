@@ -107,5 +107,56 @@ class MainOrderTest(unittest.TestCase):
         self.assertLess(cron, migrate)
 
 
+class FreshServerTest(unittest.TestCase):
+    """Docker installed, zero containers, no YAML: a fresh server, not a lost one."""
+
+    def setUp(self):
+        self.home = tempfile.mkdtemp(prefix="gs-fresh-")
+
+    def _fresh(self, docker=True, containers=False, yaml=False):
+        if yaml:
+            with open(os.path.join(self.home, "docker2update.yaml"), "w") as handle:
+                handle.write("defaults: {}\n")
+        with mock.patch.object(gs.shutil, "which",
+                               side_effect=lambda n: "/usr/bin/docker" if (docker and n == "docker") else None), \
+                mock.patch.object(gs, "_any_containers", return_value=containers):
+            return gs.is_fresh_server(self.home)
+
+    def test_fresh_when_docker_zero_containers_no_yaml(self):
+        self.assertTrue(self._fresh())
+
+    def test_not_fresh_when_yaml_exists(self):
+        self.assertFalse(self._fresh(yaml=True))
+
+    def test_not_fresh_when_docker_unreadable(self):
+        self.assertFalse(self._fresh(containers=None))
+
+    def test_not_fresh_with_containers(self):
+        self.assertFalse(self._fresh(containers=True))
+
+    def test_not_fresh_without_docker(self):
+        self.assertFalse(self._fresh(docker=False))
+
+    def test_noconfig_offer_silent_on_fresh_server(self):
+        out = io.StringIO()
+        out.isatty = lambda: True
+        with mock.patch.object(gs.shutil, "which", return_value="/usr/bin/docker"), \
+                mock.patch.object(gs, "_any_containers", return_value=False), \
+                mock.patch.object(gs, "_prompt", side_effect=AssertionError("must not prompt")), \
+                mock.patch("sys.stdin", io.StringIO()), mock.patch("sys.stdout", out), \
+                mock.patch.object(gs, "_active_noconfig_jobs", return_value={"container2backup": True}):
+            gs.offer_noconfig_recovery(self.home)
+        self.assertEqual(out.getvalue(), "")
+
+    def test_main_prints_next_step_after_readiness(self):
+        source = inspect.getsource(gs.main)
+        readiness = source.index("print_readiness_report(_myhome)")
+        fresh = source.index("is_fresh_server(_myhome)")
+        done = source.index('"Script completed successfully!"')
+        self.assertLess(readiness, fresh)
+        self.assertLess(fresh, done)
+        self.assertIn("Noch keine Odoo-Instanz. Nächster Schritt: wizup", source)
+
+
 if __name__ == "__main__":
     unittest.main()

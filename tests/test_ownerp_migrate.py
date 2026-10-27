@@ -739,10 +739,31 @@ class FreshServerTest(QuietTest):
         self.assertIn("bootstrap.sh", output)
         self.assertNotIn("--from-docker", output)
 
-    def test_unconfigured_with_docker_keeps_from_docker(self):
-        with unittest.mock.patch.object(om.shutil, "which", return_value="/usr/bin/docker"):
+    def test_containers_present_keeps_from_docker_hint_under_quiet(self):
+        with unittest.mock.patch.object(om.shutil, "which", return_value="/usr/bin/docker"), \
+                unittest.mock.patch.object(om, "_container_count", return_value=2):
             _code, output = self.run_main(["--home", self.home, "--quiet"])
         self.assertIn("--from-docker", output)
+
+    def test_docker_unreadable_keeps_from_docker_hint(self):
+        with unittest.mock.patch.object(om.shutil, "which", return_value="/usr/bin/docker"), \
+                unittest.mock.patch.object(om, "_container_count", return_value=None):
+            _code, output = self.run_main(["--home", self.home, "--quiet"])
+        self.assertIn("--from-docker", output)
+
+    def test_zero_containers_names_wizup(self):
+        with unittest.mock.patch.object(om.shutil, "which", return_value="/usr/bin/docker"), \
+                unittest.mock.patch.object(om, "_container_count", return_value=0):
+            _code, output = self.run_main(["--home", self.home])
+        self.assertIn("wizup", output)
+        self.assertNotIn("--from-docker", output)
+        self.assertNotIn("no configuration to run on", output)
+
+    def test_zero_containers_quiet_prints_nothing(self):
+        with unittest.mock.patch.object(om.shutil, "which", return_value="/usr/bin/docker"), \
+                unittest.mock.patch.object(om, "_container_count", return_value=0):
+            code, output = self.run_main(["--home", self.home, "--quiet"])
+        self.assertEqual((code, output.strip()), (0, ""))
 
 
 if __name__ == "__main__":

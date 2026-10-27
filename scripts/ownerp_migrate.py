@@ -3,7 +3,7 @@
 # ==============================================================================
 # Title:            ownerp_migrate.py
 # Description:      Convert the legacy CSV configurations to YAML, once, safely.
-# Version:          1.5.1
+# Version:          1.6.0
 # Date:             27.10.2026
 # Author:           Equitania Software GmbH
 # ==============================================================================
@@ -83,7 +83,7 @@ import time
 from dataclasses import dataclass, field
 from typing import List, NamedTuple, Optional, Tuple
 
-SCRIPT_VERSION = "1.5.1"
+SCRIPT_VERSION = "1.6.0"
 SCRIPT_DATE = "27.10.2026"
 
 BACKUP_CSV = "container2backup.csv"
@@ -469,6 +469,15 @@ def _docker(args: List[str], timeout: int = 30) -> Tuple[int, str]:
         return 127, "docker not found"
     except (OSError, subprocess.SubprocessError) as exc:
         return 1, str(exc)
+
+
+def _container_count() -> Optional[int]:
+    """Number of containers on this host (running or stopped); None when the
+    daemon does not answer - that is not zero."""
+    code, out = _docker(["ps", "-aq"])
+    if code != 0:
+        return None
+    return len([line for line in out.splitlines() if line.strip()])
 
 
 def inspect_containers() -> List[dict]:
@@ -1114,7 +1123,13 @@ def main(argv=None) -> int:
         # backup half. --quiet silences the empty run, never this.
         unconfigured = [name for name in (BACKUP_YAML, UPDATE_YAML)
                         if not os.path.isfile(os.path.join(args.home, name))]
-        if unconfigured:
+        if unconfigured and shutil.which("docker") and _container_count() == 0:
+            # Docker, but no container was ever created: a fresh server waiting
+            # for its first instance, not a lost configuration (27.10.2026).
+            # --quiet stays quiet here - ups names the next step itself.
+            if not args.quiet:
+                print("No Odoo instance yet — create the first one with: wizup")
+        elif unconfigured:
             print(f"No legacy CSV found, and {' and '.join(unconfigured)} "
                   f"{'is' if len(unconfigured) == 1 else 'are'} missing too — "
                   f"this server has no configuration to run on.")
