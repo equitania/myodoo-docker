@@ -321,6 +321,7 @@ class OfferTest(unittest.TestCase):
             handle.write("SSH_PORT=16667\nALLOWED_IP_1=192.0.2.10\n")
         self.answers = ["j"]
         self.offer(_audit(("hardening_fail2ban", ["fail2ban"], "fail"),
+                          ("hardening_ssh", ["ssh"], "fail"),
                           ("hardening_kernel", ["sysctl"], "warn")))
         self.assertIn("--ssh-transition begin", self.commands[0])
         self.assertEqual(self.applied(), ["sysctl"])

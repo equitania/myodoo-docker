@@ -234,9 +234,11 @@ docs; the transition and its `chk` line replace them.
 - The local banner check uses `socket.create_connection(("127.0.0.1", NEW),
   timeout=5)`; it proves sshd listens, not that the port is reachable from
   outside. The observed login (component 3, finish) proves the latter.
-- The transitional `ufw allow from <ip> to any port OLD proto tcp` rules
-  are deleted by `finish` by address and port (one `ufw delete` per admin
-  IP); ufw rule comments are not used. *(Changed during implementation.)*
+- The transitional `ufw allow from <ip> to any port OLD` rules (proto any,
+  the same form as the SSH_PORT rule, so the audit recognises them and a
+  host already hardened on OLD needs no second rule) are deleted by
+  `finish` by address and port (one `ufw delete` per admin IP); ufw rule
+  comments are not used. *(Changed during implementation and review.)*
 - `is_fresh_server()` reuses `_any_containers()` (`docker ps -aq`); a Docker
   daemon that does not answer gives `None`, which is not fresh.
 - Non-TTY runs (cron, `ups` from a script) never apply hardening; they print

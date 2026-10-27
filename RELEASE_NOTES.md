@@ -67,7 +67,10 @@ explicit question applies the hardening — port change included. Design:
   from an address outside the allowlist (named, with the hint to add it). The
   port-change and `ssh.socket` blockers moved into the transition. When the
   gate blocks, firewall/fail2ban/SSH wait with one status line and the other
-  areas are still offered.
+  areas are still offered. A muted `hardening_ssh` with `SSH_PORT` still
+  differing from the live port blocks them too — UFW would otherwise open
+  only the port sshd is not on. On Ubuntu, `begin` puts `ssh.socket` back and
+  stops when `ssh.service` does not come up after the switch.
 - **The first-run SSH block** no longer says the port is "only recorded": the
   hardening at the end of the installation changes it and asks once before.
 - **server-readiness 1.16.0**: `backup_config`, `update_config` and

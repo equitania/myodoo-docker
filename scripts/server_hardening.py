@@ -820,7 +820,11 @@ def apply_transition_to_config(config, transition, allowed_ips):
     rules = config.setdefault("ufw", {}).setdefault("restricted_ports", [])
     if any(rule.get("comment") == "ssh-transition" for rule in rules):
         return
-    rules.append({"port": old, "proto": "tcp", "comment": "ssh-transition",
+    # proto any, exactly like the SSH_PORT rule: audit_ufw matches a
+    # restricted rule as "<port>  ALLOW IN  <ip>", which a "/tcp" rule is
+    # not - and a host hardened on the old port already carries the
+    # proto-any form, which finish then deletes with the same command.
+    rules.append({"port": old, "proto": "any", "comment": "ssh-transition",
                   "allowed_ips": [dict(a) for a in allowed_ips]})
 
 
@@ -1808,6 +1812,13 @@ def ssh_transition_begin(config, allowed_ips):
         info("ssh.socket ist aktiv – wechsle auf ssh.service (der Port steht dann in sshd_config)")
         run("systemctl disable --now ssh.socket")
         run("systemctl enable --now ssh.service")
+        if (run("systemctl is-active ssh.service") or "").strip() != "active":
+            # Nothing would listen for new logins: put the socket back
+            # before anything else and stop here.
+            run("systemctl enable --now ssh.socket")
+            fail("ssh.service startet nicht – ssh.socket wieder aktiviert, Portwechsel abgebrochen; "
+                 "prüfen: systemctl status ssh.service")
+            return 1
 
     if new not in listen:
         sub(f"sshd zusätzlich auf Port {new}")
@@ -1860,7 +1871,7 @@ def ssh_transition_finish(config, allowed_ips):
         print(f"conflict {old} -> {new}: sshd -t lehnt die Konfiguration ab")
         return 1
     for ip in ips:
-        run(f"ufw delete allow from {ip} to any port {old} proto tcp")
+        run(f"ufw delete allow from {ip} to any port {old}")
     clear_transition()
     print(f"closed {old} -> {new}")
     return 0

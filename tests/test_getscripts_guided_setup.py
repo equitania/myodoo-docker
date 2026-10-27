@@ -274,7 +274,8 @@ class OfferTest(_OfferHarness):
 
     def test_other_answer_prints_later_line_with_four_hints(self):
         self.answers = [""]
-        self.offer(_audit(_area("hardening_firewall", ["ufw"])))
+        with mock.patch.object(gs, "_ssh_listen_ports", return_value=[16667]):
+            self.offer(_audit(_area("hardening_firewall", ["ufw"])))
         self.assertEqual(self.commands, [])
         later = [m for m in self.statuses if m.startswith("Später")]
         self.assertEqual(len(later), 1)
@@ -298,10 +299,23 @@ class OfferTest(_OfferHarness):
         self.assertEqual(self.answers, [])
 
     def test_foreign_peer_means_no_question(self):
-        with mock.patch.object(gs, "_ssh_peers", return_value=["198.51.100.7", "192.0.2.99"]):
+        with mock.patch.object(gs, "_ssh_peers", return_value=["198.51.100.7", "192.0.2.99"]), \
+                mock.patch.object(gs, "_ssh_listen_ports", return_value=[16667]):
             self.offer(_audit(_area("hardening_firewall", ["ufw"])))
         self.assertEqual(self.commands, [])
         self.assertTrue(any("192.0.2.99" in m for m in self.statuses), self.statuses)
+
+    def test_muted_ssh_area_never_starts_the_transition(self):
+        # SSH muted on purpose, firewall pending, SSH_PORT differs from the
+        # live port: the mute keeps the port where it is - and the firewall
+        # must then wait too, or UFW would open only the port sshd is not on.
+        self.answers = ["j"]
+        with mock.patch.object(gs, "_muted_check_ids", return_value={"hardening_ssh"}):
+            self.offer(_audit(_area("hardening_firewall", ["ufw"]), _area("hardening_ssh", ["ssh"]),
+                              _area("hardening_kernel", ["sysctl"], "warn")))
+        self.assertFalse(any("--ssh-transition" in c for c in self.commands), self.commands)
+        self.assertEqual(self.applied(), ["sysctl"])
+        self.assertTrue(any("stummgeschaltet" in m for m in self.statuses), self.statuses)
 
     def test_foreign_peer_does_not_block_harmless_areas(self):
         self.answers = ["j"]
@@ -364,6 +378,19 @@ class FinishTest(unittest.TestCase):
         _run, records = self._run("pending 22 -> 16667\n")
         self.assertEqual(records[0][:2], ("ssh port", "ok"))
         self.assertIn("anmelden über 16667", records[0][2])
+
+    def test_finish_reads_bytes_stdout(self):
+        # run_command() captures without text=True: stdout is bytes. The
+        # first version matched a str regex against it and took every ups
+        # down while a transition was pending (review, 27.10.2026).
+        with open(self.marker, "w") as handle:
+            handle.write("22 16667\n")
+        records = []
+        completed = subprocess.CompletedProcess(["x"], 0, b"pending 22 -> 16667\n", b"")
+        with mock.patch.object(gs, "run_command", return_value=completed), \
+                mock.patch.object(gs, "record_install", side_effect=lambda *a: records.append(a)):
+            gs.finish_ssh_transition(self.home)
+        self.assertEqual(records[0][:2], ("ssh port", "ok"))
 
     def test_finish_records_failed_on_conflict(self):
         _run, records = self._run("conflict 22 -> 16667: x\n", rc=1)

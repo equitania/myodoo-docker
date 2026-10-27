@@ -111,7 +111,9 @@ class ConfigPatchTest(unittest.TestCase):
         self.assertEqual(len(rules), 2)
         extra = rules[1]
         self.assertEqual(extra["port"], 22)
-        self.assertEqual(extra["proto"], "tcp")
+        # proto any, like the SSH_PORT rule: audit_ufw's restricted-rule regex
+        # matches "22  ALLOW IN  <ip>", not "22/tcp" (review, 27.10.2026)
+        self.assertEqual(extra["proto"], "any")
         self.assertEqual(extra["comment"], "ssh-transition")
         self.assertEqual([a["ip"] for a in extra["allowed_ips"]], ["198.51.100.7", "203.0.113.5"])
 
@@ -233,9 +235,9 @@ class _TransitionCli(_TempCentral):
 
         def fake_run(cmd, check=False, timeout=30):
             self.commands.append(cmd)
-            if cmd.startswith("sshd -t -f"):
-                return ""  # valid
-            return ""
+            if cmd == "systemctl is-active ssh.service":
+                return "active"
+            return ""  # sshd -t: valid; everything else: silent success
 
         def fake_module(name):
             def module(config, apply=False, force=False):
@@ -335,6 +337,22 @@ class BeginTest(_TransitionCli):
         self.assertLess(self.commands.index("systemctl disable --now ssh.socket"),
                         self.commands.index("systemctl reload ssh"))
 
+    def test_begin_reverts_the_socket_switch_when_ssh_service_does_not_start(self):
+        self.socket_active = True
+
+        def fake_run(cmd, check=False, timeout=30):
+            self.commands.append(cmd)
+            if cmd == "systemctl is-active ssh.service":
+                return "failed"
+            return ""
+        with mock.patch.object(sh, "run", side_effect=fake_run):
+            code, out = self._begin()
+        self.assertEqual(code, 1)
+        self.assertIn("systemctl enable --now ssh.socket", self.commands)
+        self.assertNotIn("systemctl reload ssh", self.commands)
+        self.assertIsNone(sh.read_transition())
+        self.assertIn("ssh.service", out)
+
     def test_begin_writes_both_ports_marker_and_applies_ufw_fail2ban_ssh(self):
         # after the reload sshd reports both ports
         def listen_after_reload():
@@ -423,8 +441,8 @@ class FinishTest(_TransitionCli):
                          ["Port 16667", "PermitRootLogin yes"])
         self.assertIn("systemctl reload ssh", self.commands)
         deletes = [c for c in self.commands if c.startswith("ufw delete")]
-        self.assertEqual(deletes, ["ufw delete allow from 198.51.100.7 to any port 22 proto tcp",
-                                   "ufw delete allow from 203.0.113.5 to any port 22 proto tcp"])
+        self.assertEqual(deletes, ["ufw delete allow from 198.51.100.7 to any port 22",
+                                   "ufw delete allow from 203.0.113.5 to any port 22"])
         self.assertIsNone(sh.read_transition())
 
     def test_finish_refuses_marker_env_mismatch(self):

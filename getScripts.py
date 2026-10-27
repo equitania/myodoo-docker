@@ -5710,7 +5710,11 @@ def finish_ssh_transition(_myhome: str) -> None:
     if not (os.path.isfile(marker) and os.path.isfile(script)):
         return
     result = run_command(_transition_command(script, "finish"), shell=True, capture_output=True)
-    line = ((getattr(result, "stdout", "") or "").strip().splitlines() or [""])[0]
+    # run_command() captures without text=True - stdout is bytes.
+    out = getattr(result, "stdout", "") or ""
+    if isinstance(out, bytes):
+        out = out.decode("utf-8", errors="replace")
+    line = (out.strip().splitlines() or [""])[0]
     match = re.match(r"^(closed|pending)\s+(\d+)\s*->\s*(\d+)", line)
     if getattr(result, "returncode", 1) == 0 and match and match.group(1) == "closed":
         record_install("ssh port", "updated",
@@ -5821,10 +5825,20 @@ def offer_security_hardening(_myhome: str) -> None:
         env_path = _hardening_env_path(_myhome)
         env = _read_env_file(env_path) if env_path else {}
         listen = _ssh_listen_ports()
-        port_change = _is_port_change(env, listen)
+        # Only a pending (not muted) SSH area may move the port: whoever
+        # muted hardening_ssh wants sshd left alone. With the port still
+        # differing, ufw/fail2ban would then follow SSH_PORT while sshd sits
+        # on the old port - UFW would close the only door. So they wait.
+        port_diff = _is_port_change(env, listen)
+        ssh_pending = any("ssh" in a["modules"] for a in pending)
+        port_change = port_diff and ssh_pending
         coupled = [a for a in pending if set(a["modules"]) & set(SSH_COUPLED_MODULES)]
         if coupled:
             blockers = _lockout_blockers(env, listen, _ssh_peers(listen) if listen else None)
+            if port_diff and not ssh_pending:
+                blockers.insert(0, f"SSH_PORT={env.get('SSH_PORT', '').strip()} weicht vom "
+                                   f"sshd-Port ab, der SSH-Bereich ist stummgeschaltet – Mute "
+                                   f"aufheben oder SSH_PORT anpassen")
             if blockers:
                 # Firewall/SSH wait; the rest can still be offered.
                 names = ", ".join(HARDENING_CHECK_TITLES.get(a["check_id"], a["check_id"])
