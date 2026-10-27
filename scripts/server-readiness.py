@@ -4,7 +4,7 @@
 # Title:            server-readiness.py
 # Description:      Report whether this server matches the state myodoo-docker
 #                   expects, and name the exact command that closes each gap.
-# Version:          1.15.0
+# Version:          1.16.0
 # Date:             27.10.2026
 # Author:           Equitania Software GmbH
 # ==============================================================================
@@ -79,7 +79,7 @@ from dataclasses import dataclass
 from enum import Enum
 from typing import Callable, List, Optional, Tuple
 
-SCRIPT_VERSION = "1.15.0"
+SCRIPT_VERSION = "1.16.0"
 SCRIPT_DATE = "27.10.2026"
 
 # Where nginx keeps its customer vhosts (mirrors nginx-cert-guard.py).
@@ -757,10 +757,14 @@ def _check_backup_recency_from_log(ctx: HealthContext) -> Finding:
     try:
         age = time.time() - os.path.getmtime(ctx.p(BACKUP_LOG))
     except OSError:
+        # With the cron in place the missing log means no backup is configured
+        # yet; the cron setup was the wrong fix to name there (27.10.2026).
+        fix = ("wizbk   # configure the first backup; the cron runs it nightly"
+               if os.path.isfile(ctx.p(CRON_DEST)) else FIX_SETUP_CRON)
         return Finding(
             "backup_recency", Severity.WARN, "Backup recency",
             f"/{BACKUP_LOG} does not exist — no backup has ever logged here",
-            FIX_SETUP_CRON,
+            fix,
         )
 
     if age >= BACKUP_FAIL_AGE:
@@ -795,6 +799,8 @@ def check_backup_recency(ctx: HealthContext) -> Finding:
     if not shutil.which("docker"):
         return _skip("backup_recency", "Backup recency", "docker not installed")
     config, error = _load_backup_config(ctx)
+    if error and _is_fresh_host(error):
+        return _skip("backup_recency", "Backup recency", FRESH_HOST_NOTE)
     if error:
         return _check_backup_recency_from_log(ctx)
 
@@ -860,6 +866,15 @@ def check_backup_recency(ctx: HealthContext) -> Finding:
     )
 
 
+# A host with Docker and no container at all waits for its first instance; a
+# config file no instance has written yet is not a finding (27.10.2026).
+FRESH_HOST_NOTE = "no Odoo instance yet — wizup"
+
+
+def _is_fresh_host(load_error: str) -> bool:
+    return load_error.endswith(" not found") and _container_count() == 0
+
+
 def _load_config(ctx: HealthContext, name: str) -> Tuple[Optional[dict], Optional[str]]:
     """Return (config, error). Missing PyYAML is reported as an error string so
     the caller can SKIP rather than fail."""
@@ -891,6 +906,8 @@ def check_backup_config(ctx: HealthContext) -> Finding:
     config, error = _load_backup_config(ctx)
     if error == "PyYAML not installed":
         return _skip("backup_config", "Backup config", error)
+    if error and _is_fresh_host(error):
+        return _skip("backup_config", "Backup config", FRESH_HOST_NOTE)
     if error:
         # On a machine that runs Docker, a missing backup config usually means
         # the legacy cleanup took the CSV rather than that nobody ever wrote
@@ -954,6 +971,8 @@ def check_update_config(ctx: HealthContext) -> Finding:
     config, error = _load_config(ctx, UPDATE_CONFIG)
     if error == "PyYAML not installed":
         return _skip("update_config", "Update config", error)
+    if error and _is_fresh_host(error):
+        return _skip("update_config", "Update config", FRESH_HOST_NOTE)
     if error:
         # Same reasoning as check_backup_config: what `docker inspect` can
         # still read should not be retyped into an empty editor.

@@ -818,15 +818,19 @@ class FreshHostHintTest(unittest.TestCase):
             patcher.start()
             self.addCleanup(patcher.stop)
 
+    # Since 1.16.0 the missing file on such a host is a SKIP that names the
+    # next step, not a FAIL with a fix (27.10.2026).
     def test_update_config_points_at_wiz(self):
         finding = sr.check_update_config(self.ctx)
-        self.assertIn("wizup", finding.fix)
-        self.assertNotIn("--from-docker", finding.fix)
+        self.assertIs(finding.severity, sr.Severity.SKIP)
+        self.assertIn("wizup", finding.detail)
+        self.assertNotIn("--from-docker", finding.detail)
 
     def test_backup_config_points_at_wiz(self):
         finding = sr.check_backup_config(self.ctx)
-        self.assertIn("wizup", finding.fix)
-        self.assertNotIn("--from-docker", finding.fix)
+        self.assertIs(finding.severity, sr.Severity.SKIP)
+        self.assertIn("wizup", finding.detail)
+        self.assertNotIn("--from-docker", finding.detail)
 
 
 class ResolvedDnssecTest(unittest.TestCase):
@@ -913,6 +917,91 @@ class BackupChecksWithoutDockerTest(unittest.TestCase):
                 finding = check(self.ctx)
                 self.assertEqual(finding.severity, sr.Severity.SKIP, check.__name__)
                 self.assertIn("docker not installed", finding.detail)
+
+
+class FreshServerSkipsTest(unittest.TestCase):
+    """Docker but no container yet: missing configs are SKIP, not FAIL (27.10.2026).
+
+    The first run on an empty host ended with four FAILs about files no Odoo
+    instance had written yet, and a backup-recency fix naming the cron setup
+    although the cron was installed. A configured host whose containers are
+    gone is still a finding.
+    """
+
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(self.tmp.cleanup)
+        self.ctx = sr.HealthContext(root=self.tmp.name, home=self.tmp.name,
+                                    repo=self.tmp.name)
+        patcher = unittest.mock.patch.object(sr.shutil, "which", return_value="/usr/bin/docker")
+        patcher.start()
+        self.addCleanup(patcher.stop)
+
+    def _zero(self):
+        return unittest.mock.patch.object(sr, "_container_count", return_value=0)
+
+    def test_backup_config_skips_on_zero_containers_without_file(self):
+        with self._zero():
+            finding = sr.check_backup_config(self.ctx)
+        self.assertIs(finding.severity, sr.Severity.SKIP)
+        self.assertIn("no Odoo instance yet — wizup", finding.detail)
+
+    def test_update_config_skips_on_zero_containers_without_file(self):
+        with self._zero():
+            finding = sr.check_update_config(self.ctx)
+        self.assertIs(finding.severity, sr.Severity.SKIP)
+        self.assertIn("no Odoo instance yet — wizup", finding.detail)
+
+    def test_backup_recency_skips_on_zero_containers_without_file(self):
+        with self._zero():
+            finding = sr.check_backup_recency(self.ctx)
+        self.assertIs(finding.severity, sr.Severity.SKIP)
+        self.assertIn("no Odoo instance yet", finding.detail)
+
+    def test_config_present_zero_containers_stays_fail(self):
+        with open(os.path.join(self.tmp.name, sr.BACKUP_CONFIG), "w", encoding="utf-8") as handle:
+            handle.write("databases:\n  - name: prod\n    sql_container: gone-db\n"
+                         "    data_container: gone-odoo\n")
+        with self._zero(), unittest.mock.patch.object(sr, "_container_names", return_value=set()), \
+                unittest.mock.patch.object(sr, "_backup_container_problems",
+                                           return_value=["sql_container gone-db does not exist"]):
+            finding = sr.check_backup_config(self.ctx)
+        self.assertIs(finding.severity, sr.Severity.FAIL)
+
+    def test_recency_log_missing_fix_names_wizbk_when_cron_installed(self):
+        cron_path = self.ctx.p(sr.CRON_DEST)
+        os.makedirs(os.path.dirname(cron_path), exist_ok=True)
+        with open(cron_path, "w", encoding="utf-8") as handle:
+            handle.write("0 2 * * * root /root/container2backup.py\n")
+        with open(os.path.join(self.tmp.name, sr.BACKUP_CONFIG), "w", encoding="utf-8") as handle:
+            handle.write("databases: []\n")
+        with unittest.mock.patch.object(sr, "_container_count", return_value=1):
+            finding = sr.check_backup_recency(self.ctx)
+        self.assertIs(finding.severity, sr.Severity.WARN)
+        self.assertNotIn("setup-maintenance-cron", finding.fix)
+        self.assertIn("wizbk", finding.fix)
+
+
+class TransitionWarnTest(unittest.TestCase):
+    """A pending SSH port transition is the audit's own warn line, verbatim."""
+
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(self.tmp.cleanup)
+        self.ctx = sr.HealthContext(root=self.tmp.name, home=self.tmp.name,
+                                    repo=self.tmp.name)
+
+    def test_ssh_transition_pending_is_warn_with_the_audit_line(self):
+        line = "Portwechsel läuft: anmelden über 16667, dann ups"
+        data = {"version": "1.12.0", "env": GOOD_ENV, "error": None,
+                "areas": [_area("hardening_ssh", "warn",
+                                [{"module": "ssh", "level": "warn", "text": line}],
+                                modules=("ssh",))]}
+        with unittest.mock.patch.object(sr, "_hardening_audit", return_value=(data, None)):
+            check = next(c for c in sr.HARDENING_CHECKS if c.__name__ == "check_hardening_ssh")
+            finding = check(self.ctx)
+        self.assertIs(finding.severity, sr.Severity.WARN)
+        self.assertEqual(finding.detail, line)
 
 
 if __name__ == "__main__":
