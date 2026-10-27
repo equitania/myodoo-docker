@@ -147,7 +147,7 @@ if os.environ.get('GETSCRIPTS_DEBUG', '').lower() in ('1', 'true', 'yes'):
     logger.debug("Debug logging enabled")
 
 # Script version and date
-SCRIPT_VERSION = "9.34.0"
+SCRIPT_VERSION = "9.35.0"
 SCRIPT_DATE = "27.10.2026"
 
 # Branch of myodoo-docker this server tracks - the single source of truth for
@@ -5939,6 +5939,31 @@ def update_uv_via_self_update() -> None:
         logger.warning(f"Failed to update uv: {e}")
 
 
+MAINTENANCE_CRON_PATH = "/etc/cron.d/myodoo-maintenance"
+
+
+def ensure_maintenance_cron(_myhome: str) -> None:
+    """Install the maintenance cron once, instead of telling the operator to.
+
+    Until 27.10.2026 the readiness report of the very first run said "run
+    setup-maintenance-cron.sh first" - a second command for the script that
+    had just installed everything else. Runs only on a host with Docker (the
+    jobs need it) and only when the file is missing: re-running the setup
+    script would reset edits made through docron.
+    """
+    if not shutil.which("docker") or os.path.exists(MAINTENANCE_CRON_PATH):
+        return
+    script = os.path.join(_myhome, "setup-maintenance-cron.sh")
+    if not os.path.isfile(script):
+        return
+    result = run_command(f"bash {shlex.quote(script)}", shell=True, capture_output=True)
+    if getattr(result, "returncode", 1) == 0:
+        record_install("maintenance cron", "installed", MAINTENANCE_CRON_PATH)
+    else:
+        record_install("maintenance cron", "failed",
+                       f"exit {getattr(result, 'returncode', '?')} - rerun: bash {script}")
+
+
 def run_install_packages(package_info: Dict[str, Any]) -> None:
     """install_packages() as a step that cannot take the rest of the run down.
 
@@ -6573,6 +6598,10 @@ def main() -> None:
 
         # Install all packages
         run_install_packages(package_info)
+
+        # The maintenance schedule, once, on a host with Docker. Before the
+        # offers below so the cron overview and readiness see it in place.
+        ensure_maintenance_cron(_myhome)
 
         # Everything below needs something install_packages() delivers: PyYAML
         # for the migration and the validators, python3-dotenv for the hardening
