@@ -3,8 +3,8 @@
 # ==============================================================================
 # Title:            ownerp_migrate.py
 # Description:      Convert the legacy CSV configurations to YAML, once, safely.
-# Version:          1.5.0
-# Date:             25.08.2026
+# Version:          1.5.1
+# Date:             27.10.2026
 # Author:           Equitania Software GmbH
 # ==============================================================================
 # Why this exists:
@@ -83,8 +83,8 @@ import time
 from dataclasses import dataclass, field
 from typing import List, NamedTuple, Optional, Tuple
 
-SCRIPT_VERSION = "1.5.0"
-SCRIPT_DATE = "25.08.2026"
+SCRIPT_VERSION = "1.5.1"
+SCRIPT_DATE = "27.10.2026"
 
 BACKUP_CSV = "container2backup.csv"
 BACKUP_PATH_CSV = "container2backup_path.csv"
@@ -1118,8 +1118,14 @@ def main(argv=None) -> int:
             print(f"No legacy CSV found, and {' and '.join(unconfigured)} "
                   f"{'is' if len(unconfigured) == 1 else 'are'} missing too — "
                   f"this server has no configuration to run on.")
-            print("Rebuild it from the running containers with: "
-                  "ownerp_migrate.py --from-docker")
+            if shutil.which("docker"):
+                print("Rebuild it from the running containers with: "
+                      "ownerp_migrate.py --from-docker")
+            else:
+                # No Docker is not a lost configuration, it is a fresh server
+                # (27.10.2026: an empty host was told to read its containers).
+                print("Docker is not installed — run bootstrap.sh first "
+                      "(ups offers it), then wizup.")
         elif not args.quiet:
             print("Nothing to migrate — no legacy CSV configuration found.")
             print("If the CSVs are already gone, rebuild from the running "

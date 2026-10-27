@@ -724,5 +724,26 @@ class UnconfiguredServerTest(MigrateFixture):
         self.assertNotIn("no configuration to run on", output)
 
 
+class FreshServerTest(QuietTest):
+    """No CSV, no YAML and no Docker is a fresh server, not a lost configuration.
+
+    On 27.10.2026 an empty Debian 13 was told to rebuild its configuration
+    from the running containers - on a host that had never had Docker. The
+    one step actually missing, bootstrap.sh, went unnamed.
+    """
+
+    def test_unconfigured_without_docker_points_at_bootstrap(self):
+        with unittest.mock.patch.object(om.shutil, "which", return_value=None):
+            _code, output = self.run_main(["--home", self.home, "--quiet"])
+        self.assertIn("no configuration to run on", output)
+        self.assertIn("bootstrap.sh", output)
+        self.assertNotIn("--from-docker", output)
+
+    def test_unconfigured_with_docker_keeps_from_docker(self):
+        with unittest.mock.patch.object(om.shutil, "which", return_value="/usr/bin/docker"):
+            _code, output = self.run_main(["--home", self.home, "--quiet"])
+        self.assertIn("--from-docker", output)
+
+
 if __name__ == "__main__":
     unittest.main()

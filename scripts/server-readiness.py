@@ -4,8 +4,8 @@
 # Title:            server-readiness.py
 # Description:      Report whether this server matches the state myodoo-docker
 #                   expects, and name the exact command that closes each gap.
-# Version:          1.14.2
-# Date:             14.10.2026
+# Version:          1.15.0
+# Date:             27.10.2026
 # Author:           Equitania Software GmbH
 # ==============================================================================
 # Why this exists:
@@ -79,8 +79,8 @@ from dataclasses import dataclass
 from enum import Enum
 from typing import Callable, List, Optional, Tuple
 
-SCRIPT_VERSION = "1.14.2"
-SCRIPT_DATE = "14.10.2026"
+SCRIPT_VERSION = "1.15.0"
+SCRIPT_DATE = "27.10.2026"
 
 # Where nginx keeps its customer vhosts (mirrors nginx-cert-guard.py).
 NGINX_CONF_D = "etc/nginx/conf.d"
@@ -790,6 +790,10 @@ def check_backup_recency(ctx: HealthContext) -> Finding:
     the same way ownerp_state.find_archives does, so `chk` and `dostat` never
     disagree about what counts as stale.
     """
+    # A host without Docker cannot have run a backup - a fresh server, not a
+    # stale one. SKIP, like check_update_config (27.10.2026).
+    if not shutil.which("docker"):
+        return _skip("backup_recency", "Backup recency", "docker not installed")
     config, error = _load_backup_config(ctx)
     if error:
         return _check_backup_recency_from_log(ctx)
@@ -880,6 +884,10 @@ def _load_backup_config(ctx: HealthContext) -> Tuple[Optional[dict], Optional[st
 
 
 def check_backup_config(ctx: HealthContext) -> Finding:
+    # No Docker, no containers to back up: a fresh server (bootstrap.sh is the
+    # step it is missing, and `ups` offers it), not a lost configuration.
+    if not shutil.which("docker"):
+        return _skip("backup_config", "Backup config", "docker not installed")
     config, error = _load_backup_config(ctx)
     if error == "PyYAML not installed":
         return _skip("backup_config", "Backup config", error)

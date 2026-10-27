@@ -329,12 +329,6 @@ class BackupConfigTest(unittest.TestCase):
         self.assertEqual(finding.severity, sr.Severity.FAIL)
         self.assertIn("docron --disable container2backup", finding.fix)
 
-    def test_the_fix_names_the_docron_alternative_without_docker(self):
-        with unittest.mock.patch.object(sr.shutil, "which", return_value=None):
-            finding = sr.check_backup_config(self.ctx)
-        self.assertEqual(finding.severity, sr.Severity.FAIL)
-        self.assertIn("docron --disable container2backup", finding.fix)
-
 
 class DockerStorageDriverTest(unittest.TestCase):
     """The containerd store was cleared of causing broken images by the
@@ -902,6 +896,23 @@ class ResolvedDnssecTest(unittest.TestCase):
         self.write("usr/lib/systemd/resolved.conf.d/x.conf", "[Resolve]\nDNSSEC=yes\n")
         self.write("etc/systemd/resolved.conf.d/x.conf", "[Resolve]\nDNSSEC=no\n")
         self.assertEqual(sr.check_resolved_dnssec(self.ctx).severity, sr.Severity.OK)
+
+
+class BackupChecksWithoutDockerTest(unittest.TestCase):
+    """A host without Docker cannot run a backup: SKIP, like update_config."""
+
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(self.tmp.cleanup)
+        self.ctx = sr.HealthContext(root=self.tmp.name, home=self.tmp.name,
+                                    repo=self.tmp.name)
+
+    def test_backup_checks_skip_without_docker(self):
+        with unittest.mock.patch.object(sr.shutil, "which", return_value=None):
+            for check in (sr.check_backup_config, sr.check_backup_recency):
+                finding = check(self.ctx)
+                self.assertEqual(finding.severity, sr.Severity.SKIP, check.__name__)
+                self.assertIn("docker not installed", finding.detail)
 
 
 if __name__ == "__main__":
