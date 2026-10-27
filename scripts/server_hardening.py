@@ -1633,6 +1633,239 @@ def audit_open_ports(config, apply=False, force=False):
 
 # Apply order is part of the safety story: the firewall rule for a new SSH
 # port must exist before sshd moves to it, so `-m ssh ufw` runs ufw first.
+# ─── SSH-Portwechsel (Transition) ─────────────────────────────
+def _sshd_listen_ports():
+    """Ports sshd is configured to listen on (`sshd -T`); [] when unknown."""
+    out = run("sshd -T 2>/dev/null")
+    ports = []
+    for line in (out or "").splitlines():
+        parts = line.split()
+        if len(parts) == 2 and parts[0] == "port" and parts[1].isdigit():
+            ports.append(int(parts[1]))
+    return ports
+
+
+def _peer_host(column):
+    """Host part of an ss peer column; IPv4-mapped IPv6 reduced to IPv4."""
+    if column.startswith("["):
+        host = column[1:column.rfind("]")]
+    else:
+        host = column.rsplit(":", 1)[0]
+    return host[7:] if host.lower().startswith("::ffff:") else host
+
+
+def _established_peers(port):
+    """Source addresses of established connections to a local port; None when
+    the socket table cannot be read."""
+    try:
+        result = subprocess.run(["ss", "-tnH", "state", "established", f"( sport = :{port} )"],
+                                capture_output=True, text=True, timeout=10)
+    except Exception:
+        return None
+    if result.returncode != 0:
+        return None
+    hosts = set()
+    for line in result.stdout.splitlines():
+        columns = line.split()
+        if columns and not columns[0].isdigit():
+            columns = columns[1:]
+        if len(columns) >= 4:
+            hosts.add(_peer_host(columns[3]))
+    return sorted(hosts)
+
+
+def _port_in_use_by_other(port):
+    """A listener on the port that is not sshd (sshd's own ports come from -T)."""
+    if port in _sshd_listen_ports():
+        return False
+    out = run(f"ss -tlnH '( sport = :{port} )'")
+    return bool((out or "").strip())
+
+
+def _ssh_banner_ok(host, port, timeout=5):
+    import socket
+    try:
+        with socket.create_connection((host, port), timeout=timeout) as sock:
+            sock.settimeout(timeout)
+            return sock.recv(16).startswith(b"SSH-")
+    except OSError:
+        return False
+
+
+def _ssh_socket_active():
+    return (run("systemctl is-active ssh.socket") or "").strip() == "active"
+
+
+def _dropin_port_files():
+    files = []
+    if SSHD_DROPIN_DIR.is_dir():
+        for dropin in sorted(SSHD_DROPIN_DIR.glob("*.conf")):
+            try:
+                text = dropin.read_text()
+            except OSError:
+                continue
+            if re.search(r"^\s*Port\s+\d+", text, re.MULTILINE):
+                files.append(dropin)
+    return files
+
+
+def _banner_host():
+    """127.0.0.1, or the first ListenAddress when sshd does not bind loopback."""
+    try:
+        text = SSHD_CONFIG.read_text()
+    except OSError:
+        return "127.0.0.1"
+    addresses = re.findall(r"^\s*ListenAddress\s+(\S+)", text, re.MULTILINE)
+    if not addresses:
+        return "127.0.0.1"
+    for address in addresses:
+        if address in ("0.0.0.0", "::", "127.0.0.1", "::1"):
+            return "127.0.0.1"
+    first = addresses[0]
+    return first.rsplit(":", 1)[0].strip("[]") if ":" in first and not first.startswith("[") \
+        else first.strip("[]")
+
+
+def _write_sshd_ports(ports):
+    """Rewrite sshd_config to exactly these Port lines: validate a temp file,
+    back up, replace atomically, reload. Returns the backup path, or None when
+    sshd -t rejected the candidate (nothing changed)."""
+    content = _rewrite_ports(SSHD_CONFIG.read_text(), ports)
+    tmp_path = SSHD_CONFIG.with_name(".sshd_config.transition_tmp")
+    tmp_path.write_text(content)
+    os.chmod(tmp_path, 0o600)
+    result = run(f"sshd -t -f {tmp_path} 2>&1")
+    if result:
+        fail(f"SSH-Config Syntaxfehler: {result}")
+        tmp_path.unlink(missing_ok=True)
+        return None
+    backup = backup_file(SSHD_CONFIG) or ""
+    os.replace(tmp_path, SSHD_CONFIG)
+    run("systemctl reload ssh")
+    return backup
+
+
+def ssh_transition_status():
+    transition = read_transition()
+    return f"pending {transition[0]} -> {transition[1]}" if transition else "none"
+
+
+def _transition_target(config):
+    """(old_from_marker_or_None, new) after the marker/env consistency check;
+    raises ValueError with the operator-facing reason on a mismatch."""
+    new = config.get("ssh", {}).get("port")
+    if not isinstance(new, int):
+        raise ValueError("SSH_PORT fehlt oder ist ungültig in der .env")
+    transition = read_transition()
+    if transition and transition[1] != new:
+        raise ValueError(f"Portwechsel-Marker {transition[0]} -> {transition[1]} widerspricht "
+                         f"SSH_PORT={new} in der .env – Marker prüfen: {TRANSITION_MARKER}")
+    return (transition[0] if transition else None), new
+
+
+def ssh_transition_begin(config, allowed_ips):
+    """Start listening on the new port next to the old one, then apply ufw,
+    fail2ban and ssh with both ports admitted. 0 ok or nothing to do, 1 refused
+    or failed (the reason is printed; sshd_config is as before on failure)."""
+    header("SSH-Portwechsel beginnen")
+    try:
+        _, new = _transition_target(config)
+    except ValueError as exc:
+        fail(str(exc))
+        return 1
+    if not allowed_ips:
+        fail("keine ALLOWED_IP_<n> in der .env – UFW würde SSH für niemanden öffnen")
+        return 1
+    listen = _sshd_listen_ports()
+    if not listen:
+        fail("sshd-Port nicht lesbar (sshd -T)")
+        return 1
+    if set(listen) == {new}:
+        ok(f"sshd lauscht bereits nur auf {new} – kein Portwechsel nötig")
+        return 0
+    old = [p for p in listen if p != new][0]
+    dropins = _dropin_port_files()
+    if dropins:
+        fail(f"Port wird in {dropins[0]} gesetzt – Drop-ins gewinnen gegen sshd_config; "
+             f"Zeile dort entfernen, dann erneut")
+        return 1
+    if new not in listen and _port_in_use_by_other(new):
+        fail(f"Port {new} ist bereits von einem anderen Dienst belegt (ss -tln)")
+        return 1
+    ips = [a["ip"] for a in allowed_ips]
+    for port in listen:
+        peers = _established_peers(port)
+        if peers is None:
+            fail("aktive SSH-Verbindungen nicht lesbar (ss)")
+            return 1
+        outside = [peer for peer in peers if peer not in ips]
+        if outside:
+            fail(f"aktive SSH-Verbindung(en) von {', '.join(outside)} – nicht in der "
+                 f"Allowlist; .env ergänzen oder Sitzung beenden")
+            return 1
+
+    if _ssh_socket_active():
+        info("ssh.socket ist aktiv – wechsle auf ssh.service (der Port steht dann in sshd_config)")
+        run("systemctl disable --now ssh.socket")
+        run("systemctl enable --now ssh.service")
+
+    if new not in listen:
+        sub(f"sshd zusätzlich auf Port {new}")
+        backup = _write_sshd_ports([old, new])
+        if backup is None:
+            return 1
+        after = _sshd_listen_ports()
+        host = _banner_host()
+        if set(after) != {old, new} or not _ssh_banner_ok(host, new):
+            fail(f"Port {new} antwortet nicht – stelle sshd_config wieder her")
+            if backup:
+                shutil.copy2(backup, SSHD_CONFIG)
+            run("systemctl reload ssh")
+            return 1
+        ok(f"sshd lauscht auf {old} und {new}")
+    else:
+        ok(f"sshd lauscht bereits auf {old} und {new}")
+
+    write_transition(old, new)
+    apply_transition_to_config(config, (old, new), allowed_ips)
+    functions = module_functions()
+    for name in ("ufw", "fail2ban", "ssh"):
+        functions[name](config, apply=True, force=True)
+    info(f"Port {old} bleibt offen, bis eine Anmeldung über {new} gesehen wurde; "
+         f"der nächste ups schließt ihn dann.")
+    return 0
+
+
+def ssh_transition_finish(config, allowed_ips):
+    """Close the old port once a login over the new one from an admin address
+    exists. Prints exactly one line: none | pending OLD -> NEW | closed OLD -> NEW."""
+    transition = read_transition()
+    if not transition:
+        print("none")
+        return 0
+    old, new = transition
+    try:
+        _transition_target(config)
+    except ValueError as exc:
+        print(f"conflict {old} -> {new}: {exc}")
+        return 1
+    ips = [a["ip"] for a in allowed_ips]
+    peers = _established_peers(new) or []
+    if not any(peer in ips for peer in peers):
+        print(f"pending {old} -> {new}")
+        return 0
+    with contextlib.redirect_stdout(io.StringIO()):
+        backup = _write_sshd_ports([new])
+    if backup is None:
+        print(f"conflict {old} -> {new}: sshd -t lehnt die Konfiguration ab")
+        return 1
+    for ip in ips:
+        run(f"ufw delete allow from {ip} to any port {old} proto tcp")
+    clear_transition()
+    print(f"closed {old} -> {new}")
+    return 0
+
+
 MODULE_ORDER = ("ufw", "fail2ban", "ssh", "sysctl", "sysctl_persist",
                 "kernel_modules", "docker", "auto_updates", "auditd", "aide",
                 "nginx", "ports")
@@ -1834,10 +2067,19 @@ Beispiele:
     parser.add_argument("--no-reboot", action="store_true",
                         help="auto_updates ohne nächtlichen Neustart anwenden "
                              "(überstimmt auto_reboot in der Konfiguration)")
+    parser.add_argument("--ssh-transition", choices=("begin", "finish", "status"),
+                        help="SSH-Portwechsel: begin lauscht zusätzlich auf SSH_PORT und "
+                             "härtet ufw/fail2ban/ssh; finish schließt den alten Port nach "
+                             "einer Anmeldung über den neuen; status zeigt den Stand")
     args = parser.parse_args(argv)
 
     if args.json and args.apply:
         parser.error("--json gibt es nur im Audit-Modus (ohne --apply)")
+    if args.ssh_transition and (args.apply or args.json or args.module):
+        parser.error("--ssh-transition läuft allein (ohne --apply/--json/-m)")
+    if args.ssh_transition == "status":
+        print(ssh_transition_status())
+        sys.exit(0)
 
     # Root-Check
     if os.geteuid() != 0:
@@ -1920,6 +2162,14 @@ Beispiele:
     port = config.get("ssh", {}).get("port")
     env_info["ssh_port"] = port if isinstance(port, int) else None
     env_info["allowed_ips"] = len(allowed_ips)
+    if args.ssh_transition == "begin":
+        if validation_errors:
+            for err in validation_errors:
+                fail(err)
+            sys.exit(1)
+        sys.exit(ssh_transition_begin(config, allowed_ips))
+    if args.ssh_transition == "finish":
+        sys.exit(ssh_transition_finish(config, allowed_ips))
     if args.json:
         if validation_errors:
             _emit_json({"version": SCRIPT_VERSION, "env": env_info, "areas": [],

@@ -210,5 +210,247 @@ class NoRebootTest(_TempCentral):
         self.assertIs(seen.get("auto_reboot"), False)
 
 
+class _TransitionCli(_TempCentral):
+    """begin/finish/status with every probe replaced; run() is recorded."""
+
+    def setUp(self):
+        super().setUp()
+        self.sshd_config = Path(self.tmp.name) / "sshd_config"
+        self.sshd_config.write_text("Include /etc/ssh/sshd_config.d/*.conf\nPort 22\nPermitRootLogin yes\n")
+        self.dropins = Path(self.tmp.name) / "sshd_config.d"
+        self.dropins.mkdir()
+        for name, value in (("SSHD_CONFIG", self.sshd_config), ("SSHD_DROPIN_DIR", self.dropins)):
+            p = mock.patch.object(sh, name, value)
+            p.start()
+            self.addCleanup(p.stop)
+        self.commands = []
+        self.listen = [22]
+        self.peers = {22: ["198.51.100.7"], 16667: []}
+        self.banner_ok = True
+        self.socket_active = False
+        self.other_listener = False
+        self.applied = []
+
+        def fake_run(cmd, check=False, timeout=30):
+            self.commands.append(cmd)
+            if cmd.startswith("sshd -t -f"):
+                return ""  # valid
+            return ""
+
+        def fake_module(name):
+            def module(config, apply=False, force=False):
+                self.applied.append((name, apply, force, dict(config.get("ufw", {}))))
+            return module
+
+        funcs = {name: fake_module(name) for name in sh.MODULE_ORDER}
+        patches = [
+            mock.patch.object(sh, "run", side_effect=fake_run),
+            mock.patch.object(sh, "_sshd_listen_ports", side_effect=lambda: list(self.listen)),
+            mock.patch.object(sh, "_established_peers",
+                              side_effect=lambda port: list(self.peers.get(port, []))),
+            mock.patch.object(sh, "_ssh_banner_ok", side_effect=lambda host, port, timeout=5: self.banner_ok),
+            mock.patch.object(sh, "_ssh_socket_active", side_effect=lambda: self.socket_active),
+            mock.patch.object(sh, "_port_in_use_by_other", side_effect=lambda port: self.other_listener),
+            mock.patch.object(sh, "module_functions", return_value=funcs),
+            mock.patch.object(sh, "backup_file", side_effect=self._backup),
+        ]
+        for p in patches:
+            p.start()
+            self.addCleanup(p.stop)
+
+    def _backup(self, path):
+        backup = Path(str(path) + ".bak")
+        backup.write_text(Path(path).read_text())
+        return str(backup)
+
+    def _begin(self):
+        out = io.StringIO()
+        with redirect_stdout(out):
+            code = sh.ssh_transition_begin(_config(), IPS)
+        return code, out.getvalue()
+
+    def _finish(self):
+        out = io.StringIO()
+        with redirect_stdout(out):
+            code = sh.ssh_transition_finish(_config(), IPS)
+        return code, out.getvalue()
+
+
+class StatusTest(_TempCentral):
+    def test_status_none_and_pending(self):
+        self.assertEqual(sh.ssh_transition_status(), "none")
+        sh.write_transition(22, 16667)
+        self.assertEqual(sh.ssh_transition_status(), "pending 22 -> 16667")
+
+
+class BeginTest(_TransitionCli):
+    def test_begin_noop_when_only_new_port(self):
+        self.listen = [16667]
+        code, _ = self._begin()
+        self.assertEqual(code, 0)
+        self.assertEqual(self.commands, [])
+        self.assertIsNone(sh.read_transition())
+
+    def test_begin_refuses_without_allowed_ips(self):
+        with redirect_stdout(io.StringIO()):
+            code = sh.ssh_transition_begin(_config(), [])
+        self.assertEqual(code, 1)
+        self.assertIsNone(sh.read_transition())
+
+    def test_begin_refuses_dropin_port_and_names_file(self):
+        (self.dropins / "50-cloud.conf").write_text("Port 2222\n")
+        code, out = self._begin()
+        self.assertEqual(code, 1)
+        self.assertIn("50-cloud.conf", out)
+        self.assertIsNone(sh.read_transition())
+
+    def test_begin_refuses_port_in_use(self):
+        self.other_listener = True
+        code, out = self._begin()
+        self.assertEqual(code, 1)
+        self.assertIn("16667", out)
+
+    def test_begin_refuses_unlisted_peer(self):
+        self.peers[22] = ["198.51.100.7", "192.0.2.99"]
+        code, out = self._begin()
+        self.assertEqual(code, 1)
+        self.assertIn("192.0.2.99", out)
+        self.assertEqual(self.commands, [])
+
+    def test_begin_refuses_marker_env_mismatch(self):
+        sh.write_transition(22, 2200)
+        code, out = self._begin()
+        self.assertEqual(code, 1)
+        self.assertIn("2200", out)
+        self.assertIn("16667", out)
+
+    def test_begin_switches_off_ssh_socket_when_active(self):
+        self.socket_active = True
+        with mock.patch.object(sh, "_sshd_listen_ports",
+                               side_effect=lambda: [22, 16667] if "systemctl reload ssh" in self.commands else [22]):
+            code, _ = self._begin()
+        self.assertEqual(code, 0)
+        self.assertIn("systemctl disable --now ssh.socket", self.commands)
+        self.assertIn("systemctl enable --now ssh.service", self.commands)
+        self.assertLess(self.commands.index("systemctl disable --now ssh.socket"),
+                        self.commands.index("systemctl reload ssh"))
+
+    def test_begin_writes_both_ports_marker_and_applies_ufw_fail2ban_ssh(self):
+        # after the reload sshd reports both ports
+        def listen_after_reload():
+            return [22, 16667] if "systemctl reload ssh" in self.commands else [22]
+        with mock.patch.object(sh, "_sshd_listen_ports", side_effect=listen_after_reload):
+            code, _ = self._begin()
+        self.assertEqual(code, 0)
+        self.assertEqual(self.sshd_config.read_text().splitlines(),
+                         ["Include /etc/ssh/sshd_config.d/*.conf", "Port 22", "Port 16667",
+                          "PermitRootLogin yes"])
+        self.assertEqual(sh.read_transition(), (22, 16667))
+        self.assertTrue(any(c.startswith("sshd -t -f") for c in self.commands))
+        self.assertIn("systemctl reload ssh", self.commands)
+        self.assertEqual([a[0] for a in self.applied], ["ufw", "fail2ban", "ssh"])
+        self.assertTrue(all(a[1] and a[2] for a in self.applied))
+        # the ufw module saw the transitional rule for the old port
+        rules = self.applied[0][3]["restricted_ports"]
+        self.assertEqual([r["port"] for r in rules], [16667, 22])
+
+    def test_begin_accepts_sshd_already_on_both_ports(self):
+        self.listen = [22, 16667]
+        self.sshd_config.write_text("Port 22\nPort 16667\nPermitRootLogin yes\n")
+        code, _ = self._begin()
+        self.assertEqual(code, 0)
+        self.assertEqual(self.sshd_config.read_text().count("Port "), 2)
+        self.assertNotIn("systemctl reload ssh", self.commands)
+        self.assertEqual(sh.read_transition(), (22, 16667))
+        self.assertEqual([a[0] for a in self.applied], ["ufw", "fail2ban", "ssh"])
+
+    def test_begin_restores_backup_when_banner_fails(self):
+        original = self.sshd_config.read_text()
+        self.banner_ok = False
+        self.listen = [22]
+        with mock.patch.object(sh, "_sshd_listen_ports",
+                               side_effect=lambda: [22, 16667] if "systemctl reload ssh" in self.commands else [22]):
+            code, out = self._begin()
+        self.assertEqual(code, 1)
+        self.assertEqual(self.sshd_config.read_text(), original)
+        self.assertEqual(self.commands.count("systemctl reload ssh"), 2)
+        self.assertIsNone(sh.read_transition())
+        self.assertEqual(self.applied, [])
+
+    def test_begin_fails_when_sshd_t_rejects(self):
+        original = self.sshd_config.read_text()
+
+        def fake_run(cmd, check=False, timeout=30):
+            self.commands.append(cmd)
+            return "bad option" if cmd.startswith("sshd -t -f") else ""
+        with mock.patch.object(sh, "run", side_effect=fake_run):
+            code, _ = self._begin()
+        self.assertEqual(code, 1)
+        self.assertEqual(self.sshd_config.read_text(), original)
+        self.assertNotIn("systemctl reload ssh", self.commands)
+        self.assertIsNone(sh.read_transition())
+
+
+class FinishTest(_TransitionCli):
+    def test_finish_none_without_marker(self):
+        code, out = self._finish()
+        self.assertEqual((code, out.strip()), (0, "none"))
+
+    def test_finish_pending_without_peer_on_new(self):
+        sh.write_transition(22, 16667)
+        self.listen = [22, 16667]
+        code, out = self._finish()
+        self.assertEqual((code, out.strip()), (0, "pending 22 -> 16667"))
+        self.assertEqual(sh.read_transition(), (22, 16667))
+        self.assertEqual(self.commands, [])
+
+    def test_finish_ignores_unlisted_peer(self):
+        sh.write_transition(22, 16667)
+        self.listen = [22, 16667]
+        self.peers[16667] = ["192.0.2.99", "127.0.0.1"]
+        code, out = self._finish()
+        self.assertEqual(out.strip(), "pending 22 -> 16667")
+        self.assertEqual(sh.read_transition(), (22, 16667))
+
+    def test_finish_closes_old_port_and_deletes_rules(self):
+        sh.write_transition(22, 16667)
+        self.listen = [22, 16667]
+        self.sshd_config.write_text("Port 22\nPort 16667\nPermitRootLogin yes\n")
+        self.peers[16667] = ["203.0.113.5"]
+        code, out = self._finish()
+        self.assertEqual((code, out.strip()), (0, "closed 22 -> 16667"))
+        self.assertEqual(self.sshd_config.read_text().splitlines(),
+                         ["Port 16667", "PermitRootLogin yes"])
+        self.assertIn("systemctl reload ssh", self.commands)
+        deletes = [c for c in self.commands if c.startswith("ufw delete")]
+        self.assertEqual(deletes, ["ufw delete allow from 198.51.100.7 to any port 22 proto tcp",
+                                   "ufw delete allow from 203.0.113.5 to any port 22 proto tcp"])
+        self.assertIsNone(sh.read_transition())
+
+    def test_finish_refuses_marker_env_mismatch(self):
+        sh.write_transition(22, 2200)
+        self.peers[2200] = ["203.0.113.5"]
+        code, out = self._finish()
+        self.assertEqual(code, 1)
+        self.assertIn("2200", out)
+        self.assertEqual(sh.read_transition(), (22, 2200))
+
+
+class CliDispatchTest(_TempCentral):
+    def test_status_needs_no_root_and_prints_none(self):
+        out = io.StringIO()
+        with redirect_stdout(out), mock.patch.object(sh.os, "geteuid", return_value=1000):
+            with self.assertRaises(SystemExit) as ctx:
+                sh.main(["--ssh-transition", "status"])
+        self.assertEqual(ctx.exception.code, 0)
+        self.assertEqual(out.getvalue().strip(), "none")
+
+    def test_begin_with_apply_is_a_usage_error(self):
+        with redirect_stdout(io.StringIO()), self.assertRaises(SystemExit) as ctx, \
+                mock.patch("sys.stderr", io.StringIO()):
+            sh.main(["--ssh-transition", "begin", "--apply"])
+        self.assertEqual(ctx.exception.code, 2)
+
+
 if __name__ == "__main__":
     unittest.main()
