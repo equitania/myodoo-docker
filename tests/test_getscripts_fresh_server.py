@@ -182,5 +182,84 @@ class MainOrderTest(unittest.TestCase):
                         source.index("print_install_report("))
 
 
+class BootstrapOfferTest(unittest.TestCase):
+    """A host without Docker is a fresh server: offer bootstrap.sh, run it on a yes."""
+
+    def setUp(self):
+        self.home = tempfile.mkdtemp()
+        self.repo = os.path.join(self.home, "myodoo-docker")
+        os.makedirs(os.path.join(self.repo, "scripts"))
+        self.script = os.path.join(self.repo, "scripts", "bootstrap.sh")
+        with open(self.script, "w") as handle:
+            handle.write("#!/bin/bash\n")
+        gs._install_report.clear()
+
+    def offer(self, which, tty, answers=(), returncode=0):
+        with mock.patch.object(gs.shutil, "which", return_value=which), \
+             mock.patch.object(gs.sys.stdin, "isatty", return_value=tty), \
+             mock.patch.object(gs.sys.stdout, "isatty", return_value=tty), \
+             mock.patch("builtins.input", side_effect=list(answers)), \
+             mock.patch.object(gs, "run_command") as run, \
+             mock.patch.object(gs, "status") as st:
+            run.return_value = subprocess.CompletedProcess("bash", returncode, "", "")
+            gs.offer_bootstrap(self.home, self.repo)
+        return run, st
+
+    def report(self):
+        return [(n, s) for n, s, _ in gs._install_report]
+
+    def test_docker_present_is_silent(self):
+        run, st = self.offer("/usr/bin/docker", True)
+        run.assert_not_called()
+        st.assert_not_called()
+
+    def test_no_tty_prints_one_line_and_runs_nothing(self):
+        run, st = self.offer(None, False)
+        run.assert_not_called()
+        self.assertEqual(st.call_count, 1)
+        self.assertIn(self.script, st.call_args.args[0])
+
+    def test_accepted_runs_bootstrap_with_recursion_guard(self):
+        run, _ = self.offer(None, True, [""])
+        self.assertEqual(run.call_args.args[0], f"bash {self.script}")
+        self.assertTrue(run.call_args.kwargs["interactive"])
+        self.assertEqual(run.call_args.kwargs["env"], {"RUN_GETSCRIPTS": "0"})
+        self.assertNotIn("timeout", run.call_args.kwargs)
+        self.assertIn(("bootstrap", "installed"), self.report())
+
+    def test_failed_bootstrap_is_recorded_and_run_continues(self):
+        self.offer(None, True, [""], returncode=100)     # must not raise
+        entry = [e for e in gs._install_report if e[0] == "bootstrap"][0]
+        self.assertEqual(entry[1], "failed")
+        self.assertIn("100", entry[2])
+
+    def test_declined_is_skipped_with_the_command(self):
+        run, _ = self.offer(None, True, ["n"])
+        run.assert_not_called()
+        entry = [e for e in gs._install_report if e[0] == "bootstrap"][0]
+        self.assertEqual(entry[1], "skipped")
+        self.assertIn(self.script, entry[2])
+
+    def test_missing_script_is_silent(self):
+        os.remove(self.script)
+        run, st = self.offer(None, True)
+        run.assert_not_called()
+        st.assert_not_called()
+
+    def test_main_calls_it_before_fish_and_after_the_clone(self):
+        source = inspect.getsource(gs.main)
+        self.assertLess(source.index("update_repository("), source.index("offer_bootstrap("))
+        self.assertLess(source.index("offer_bootstrap("), source.index("ensure_base_packages("))
+        self.assertLess(source.index("offer_bootstrap("), source.index("install_fish_if_needed("))
+
+
+class NoconfigDockerGuardTest(unittest.TestCase):
+    def test_offer_returns_without_docker(self):
+        with mock.patch.object(gs.shutil, "which", return_value=None), \
+             mock.patch.object(gs, "_active_noconfig_jobs") as jobs:
+            gs.offer_noconfig_recovery(tempfile.mkdtemp())
+        jobs.assert_not_called()
+
+
 if __name__ == "__main__":
     unittest.main()

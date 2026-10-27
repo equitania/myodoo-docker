@@ -4724,6 +4724,10 @@ def offer_noconfig_recovery(_myhome: str) -> None:
     update_yaml = os.path.join(_myhome, "docker2update.yaml")
     if os.path.isfile(backup_yaml) or os.path.isfile(update_yaml):
         return
+    # Option 1 below reads the running containers. Without Docker this is a
+    # fresh server, and offer_bootstrap() is the offer that fits it.
+    if not shutil.which("docker"):
+        return
 
     active_jobs = _active_noconfig_jobs(_myhome)
     if not active_jobs or not any(active_jobs.values()):
@@ -4782,6 +4786,66 @@ def offer_noconfig_recovery(_myhome: str) -> None:
             status(later_hint)
     else:
         status(later_hint)
+
+
+# ---------------------------------------------------------------------------
+# Fresh-server offer: bootstrap.sh
+# ---------------------------------------------------------------------------
+
+BOOTSTRAP_RELATIVE = os.path.join("scripts", "bootstrap.sh")
+
+
+def offer_bootstrap(_myhome: str, myodoo_docker: str) -> None:
+    """Offer to run bootstrap.sh when Docker is missing - the fresh-server case.
+
+    Our installation guide puts bootstrap.sh first (Docker CE, nginx, certbot,
+    UFW, fail2ban, unattended-upgrades, python3-yaml/dotenv, curl/git, the
+    UTF-8 locale) and lets it run getScripts.py at the end. The README's
+    one-liner runs getScripts.py directly, and on 27.10.2026 an operator did
+    exactly that on an empty Debian 13: the run recommended `--from-docker`
+    on a host without Docker and listed six FAILs, and nothing named the one
+    step that was actually missing. "Fresh" here means no `docker` on PATH.
+
+    RUN_GETSCRIPTS=0 is the recursion guard: bootstrap's last step is to clone
+    and run getScripts.py, and with the flag off it returns before cloning -
+    which also keeps its target-user resolution out of this call. No timeout:
+    a Docker install behind a slow proxy takes minutes, and the output is
+    streamed (interactive=True) so the operator sees progress. The proxy
+    reaches bootstrap through os.environ, restored at the start of the run.
+    The run continues whatever bootstrap returns - Fish and the scripts are
+    still worth installing - and the install report carries the outcome.
+    """
+    try:
+        if shutil.which("docker"):
+            return
+        script = os.path.join(myodoo_docker, BOOTSTRAP_RELATIVE)
+        if not os.path.isfile(script):
+            return
+        command = f"bash {script}"
+        later = f"Frischer Server ohne Docker – Grundausstattung einrichten mit: {command}"
+        if not (sys.stdin.isatty() and sys.stdout.isatty()):
+            status(later)
+            return
+        print("\nDieser Server hat noch kein Docker. bootstrap.sh richtet die Grundausstattung ein:")
+        print("  Docker CE (overlay2), nginx, certbot, UFW (installiert, aus), fail2ban,")
+        print("  automatische Sicherheitsupdates, python3-yaml/python3-dotenv, curl/git, UTF-8-Locale.")
+        answer = _prompt("Grundausstattung jetzt einrichten? (J/n): ", "j")
+        if answer is None or answer.lower() in ("n", "nein", "no"):
+            record_install("bootstrap", "skipped", command)
+            status(f"Später: {command}")
+            return
+        result = run_command(command, interactive=True, env={"RUN_GETSCRIPTS": "0"})
+        if result.returncode == 0:
+            record_install("bootstrap", "installed",
+                           "Docker, nginx, certbot, UFW, fail2ban, auto updates, python deps")
+        else:
+            record_install("bootstrap", "failed",
+                           f"exit {result.returncode} – see output above; rerun: {command}")
+    except KeyboardInterrupt:
+        print()
+        status("bootstrap-Angebot übersprungen (Ctrl-C) - ups läuft weiter")
+    except Exception as e:
+        logger.debug(f"Bootstrap offer skipped: {e}")
 
 
 # check_id docker_storage_driver reports on: server-readiness.py's
@@ -6393,6 +6457,10 @@ def main() -> None:
             logger.error(f"Failed to update or clone repository: {e}")
             logger.error(f"Please check network connectivity and permissions")
             sys.exit(1)
+
+        # A server without Docker is a fresh server: offer bootstrap.sh first.
+        # It installs the base packages and the locale the steps below rely on.
+        offer_bootstrap(_myhome, myodoo_docker)
 
         # curl before anything that downloads (Fish key, Starship, uv): a
         # minimal image ships without it, and every step then fails one after
