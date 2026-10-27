@@ -2,7 +2,7 @@
 """
 Server-Härtungs-Skript
 =======================
-Version: 1.11.1 / Date: 12.10.2026
+Version: 1.12.0 / Date: 27.10.2026
 
 Prüft und härtet: UFW, Fail2Ban, SSH, Kernel, Kernel-Module, Docker,
 Auto-Updates, auditd, AIDE, Nginx
@@ -19,7 +19,7 @@ import subprocess
 import sys
 import os
 
-SCRIPT_VERSION = "1.11.1"
+SCRIPT_VERSION = "1.12.0"
 import glob
 import re
 import time
@@ -745,6 +745,85 @@ def audit_fail2ban(config, apply=False, force=False):
 
 
 # ─── MODUL: SSH ──────────────────────────────────────────────
+SSHD_CONFIG = Path("/etc/ssh/sshd_config")
+SSHD_DROPIN_DIR = Path("/etc/ssh/sshd_config.d")
+_PORT_LINE_RE = re.compile(r"^\s*#?\s*Port\s+.*$", re.MULTILINE)
+
+
+def read_transition():
+    """(old, new) of a pending SSH port transition, or None.
+
+    The marker holds both ports on one line ("22 16667"). Both come from the
+    marker, never from the .env: an SSH_PORT edited mid-transition must be a
+    visible conflict, not a silently moved target.
+    """
+    try:
+        parts = TRANSITION_MARKER.read_text().split()
+    except OSError:
+        return None
+    if len(parts) != 2 or not all(part.isdigit() for part in parts):
+        return None
+    return int(parts[0]), int(parts[1])
+
+
+def write_transition(old, new):
+    TRANSITION_MARKER.parent.mkdir(parents=True, mode=0o700, exist_ok=True)
+    TRANSITION_MARKER.write_text(f"{old} {new}\n")
+    os.chmod(TRANSITION_MARKER, 0o600)
+
+
+def clear_transition():
+    try:
+        TRANSITION_MARKER.unlink()
+    except FileNotFoundError:
+        pass
+
+
+def _rewrite_ports(content, ports):
+    """sshd_config text with exactly these Port lines.
+
+    Every active or commented Port line goes; the new ones sit where the
+    first one was, or at the end when there was none. Two Port lines make
+    sshd listen on both — that is the transition state.
+    """
+    new_lines = "\n".join(f"Port {port}" for port in ports)
+    matches = list(_PORT_LINE_RE.finditer(content))
+    if not matches:
+        return content.rstrip("\n") + "\n" + new_lines + "\n"
+    first = matches[0]
+    head = content[:first.start()] + new_lines
+    tail = _PORT_LINE_RE.sub("", content[first.end():])
+    tail = re.sub(r"\n{2,}", "\n", tail)
+    return head + tail
+
+
+def expected_ssh_ports(config):
+    """[new] normally, [old, new] while a transition is pending."""
+    port = config.get("ssh", {}).get("port", 22)
+    transition = read_transition()
+    if transition and transition[1] == port:
+        return [transition[0], transition[1]]
+    return [port]
+
+
+def apply_transition_to_config(config, transition, allowed_ips):
+    """Make ufw and fail2ban cover the old port too while both are open.
+
+    One patch on the loaded config instead of a branch in each module: the
+    audit then expects the transitional rule (no "unknown rule"), apply adds
+    it, and finish deletes exactly it.
+    """
+    old, new = transition
+    jails = config.setdefault("fail2ban", {}).setdefault("jails", {})
+    if "sshd" in jails:
+        jails["sshd"]["port"] = f"{old},{new}"
+    rules = config.setdefault("ufw", {}).setdefault("restricted_ports", [])
+    if any(rule.get("comment") == "ssh-transition" for rule in rules):
+        return
+    rules.append({"port": old, "proto": "tcp", "comment": "ssh-transition",
+                  "allowed_ips": [dict(a) for a in allowed_ips]})
+
+
 def audit_ssh(config, apply=False, force=False):
     header("MODUL: SSH-Härtung")
     cfg = config.get("ssh", {})
@@ -752,14 +831,14 @@ def audit_ssh(config, apply=False, force=False):
         info("SSH-Modul deaktiviert")
         return
 
-    sshd_config = Path("/etc/ssh/sshd_config")
+    sshd_config = SSHD_CONFIG
     if not sshd_config.exists():
-        fail("/etc/ssh/sshd_config nicht gefunden")
+        fail(f"{sshd_config} nicht gefunden")
         return
 
     # Read main config + all drop-in files (sshd_config.d/*.conf)
     content = sshd_config.read_text()
-    dropin_dir = Path("/etc/ssh/sshd_config.d")
+    dropin_dir = SSHD_DROPIN_DIR
     dropin_content = ""
     if dropin_dir.is_dir():
         for dropin in sorted(dropin_dir.glob("*.conf")):
@@ -776,17 +855,29 @@ def audit_ssh(config, apply=False, force=False):
     if dropin_content:
         info(f"Drop-in Verzeichnis: {dropin_dir} ({len(list(dropin_dir.glob('*.conf')))} Dateien)")
 
-    # Port prüfen
+    # Port prüfen. sshd listens on every Port line; during a transition two
+    # are expected (old and new), otherwise exactly the configured one.
     port = cfg.get("port", 22)
-    port_match = re.search(r"^\s*Port\s+(\d+)", effective_content, re.MULTILINE)
-    current_port = int(port_match.group(1)) if port_match else 22
-    if current_port == port:
-        ok(f"Port: {port}")
+    transition = read_transition()
+    if transition and transition[1] != port:
+        fail(f"Portwechsel-Marker {transition[0]} -> {transition[1]} widerspricht "
+             f"SSH_PORT={port} in der .env – Marker prüfen: {TRANSITION_MARKER}")
+        Stats.fail_count += 1
+        transition = None
+    elif transition:
+        warn(f"Portwechsel läuft: anmelden über {transition[1]}, dann ups")
+        Stats.warn_count += 1
+    expected_ports = expected_ssh_ports(config) if transition else [port]
+    current_ports = [int(m) for m in
+                     re.findall(r"^\s*Port\s+(\d+)", effective_content, re.MULTILINE)] or [22]
+    if set(current_ports) == set(expected_ports):
+        ok(f"Port: {', '.join(map(str, expected_ports))}")
         Stats.ok_count += 1
     else:
-        fail(f"Port: {current_port} (erwartet: {port})")
+        fail(f"Port: {', '.join(map(str, current_ports))} "
+             f"(erwartet: {', '.join(map(str, expected_ports))})")
         Stats.fail_count += 1
-        changes_needed.append(("Port", str(port)))
+        changes_needed.append(("Port", expected_ports))
 
     # Einstellungen prüfen
     for key, expected in settings.items():
@@ -814,19 +905,24 @@ def audit_ssh(config, apply=False, force=False):
 
         # Lockout guard: changing the SSH port without a matching UFW rule
         # means an enabled firewall blocks the new port for everyone.
-        new_port = dict(changes_needed).get("Port")
-        if new_port:
+        new_ports = dict(changes_needed).get("Port")
+        if new_ports:
             ufw_cfg = config.get("ufw", {})
             ufw_ports = {str(rp.get("port")) for rp in
                          ufw_cfg.get("restricted_ports", []) + ufw_cfg.get("public_ports", [])}
-            if str(new_port) not in ufw_ports:
-                warn(f"SSH-Port {new_port} ist in keiner UFW-Regel (restricted_ports/"
+            missing = [str(p) for p in new_ports if str(p) not in ufw_ports]
+            if missing:
+                warn(f"SSH-Port {', '.join(missing)} ist in keiner UFW-Regel (restricted_ports/"
                      f"public_ports) konfiguriert — bei aktivierter UFW droht ein LOCKOUT! "
                      f"UFW-Modul vor dem nächsten Login prüfen.")
 
         # Build the candidate config in memory.
         content = sshd_config.read_text()
         for key, value in changes_needed:
+            if key == "Port":
+                content = _rewrite_ports(content, value)
+                info(f"Setze: Port {', '.join(map(str, value))}")
+                continue
             pattern = rf"^\s*#?\s*{key}\s+.*"
             replacement = f"{key} {value}"
             if re.search(pattern, content, re.MULTILINE):
@@ -853,8 +949,8 @@ def audit_ssh(config, apply=False, force=False):
             backup_file(sshd_config)
             os.replace(tmp_path, sshd_config)  # atomic
             Stats.fix_count += len(changes_needed)
-            info("SSH wird neugestartet...")
-            run("systemctl reload sshd")
+            info("SSH wird neu geladen...")
+            run("systemctl reload ssh")
 
 
 # ─── MODUL: Kernel/Sysctl ────────────────────────────────────
@@ -1611,6 +1707,8 @@ def _emit_json(document, code=0):
 
 
 CENTRAL_DIR = Path("/root/.config/myodoo-docker")
+# Pending SSH port transition: "<old> <new>", written by --ssh-transition begin.
+TRANSITION_MARKER = CENTRAL_DIR / "ssh-transition"
 REPO_SCRIPTS = Path("/root/myodoo-docker/scripts")
 
 
@@ -1733,6 +1831,9 @@ Beispiele:
                         help="Nur bestimmte Module ausführen")
     parser.add_argument("--json", action="store_true",
                         help="Audit als JSON auf stdout (nur ohne --apply; schreibt nichts)")
+    parser.add_argument("--no-reboot", action="store_true",
+                        help="auto_updates ohne nächtlichen Neustart anwenden "
+                             "(überstimmt auto_reboot in der Konfiguration)")
     args = parser.parse_args(argv)
 
     if args.json and args.apply:
@@ -1782,6 +1883,8 @@ Beispiele:
 
             # Resolve ${ENV_VAR} placeholders (e.g. ${SSH_PORT})
             config = resolve_env_vars(config)
+            if args.no_reboot:
+                config.setdefault("auto_updates", {})["auto_reboot"] = False
 
             # Build the admin-IP allowlist dynamically from ALLOWED_IP_<n> env
             # vars (any count) and inject it BEFORE validation so those IPs get
@@ -1796,6 +1899,12 @@ Beispiele:
 
             # Validate config
             validation_errors = validate_config(config)
+
+            # A pending port transition: ufw and fail2ban cover the old port
+            # too until --ssh-transition finish closes it.
+            transition = read_transition()
+            if transition and transition[1] == config.get("ssh", {}).get("port"):
+                apply_transition_to_config(config, transition, allowed_ips)
         except Exception as exc:
             config_error = str(exc)
 
