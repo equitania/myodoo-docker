@@ -15,6 +15,7 @@ Run from the repository root:
 """
 
 import inspect
+import io
 import logging
 import os
 import subprocess
@@ -200,7 +201,8 @@ class BootstrapOfferTest(unittest.TestCase):
              mock.patch.object(gs.sys.stdout, "isatty", return_value=tty), \
              mock.patch("builtins.input", side_effect=list(answers)), \
              mock.patch.object(gs, "run_command") as run, \
-             mock.patch.object(gs, "status") as st:
+             mock.patch.object(gs, "status") as st, \
+             mock.patch("sys.stdout", io.StringIO()):
             run.return_value = subprocess.CompletedProcess("bash", returncode, "", "")
             gs.offer_bootstrap(self.home, self.repo)
         return run, st
@@ -259,6 +261,34 @@ class NoconfigDockerGuardTest(unittest.TestCase):
              mock.patch.object(gs, "_active_noconfig_jobs") as jobs:
             gs.offer_noconfig_recovery(tempfile.mkdtemp())
         jobs.assert_not_called()
+
+
+class NoiseTest(unittest.TestCase):
+    """A missing bat or 7zz on a fresh host is the expected state, not an error."""
+
+    def test_missing_bat_is_not_an_error(self):
+        with mock.patch.object(gs, "probe_output", return_value=None), \
+             self.assertLogs(gs.logger, level="DEBUG") as logs:
+            self.assertIsNone(gs.get_bat_version())
+            self.assertFalse(gs.check_bat_version())
+        self.assertFalse([r.getMessage() for r in logs.records if r.levelno >= logging.WARNING])
+
+    def test_missing_7zz_reported_once_at_info(self):
+        gs._SEVEN_ZZ_MISSING_REPORTED = False
+        with mock.patch.object(gs.shutil, "which", return_value=None), \
+             mock.patch.object(gs.os.path, "isfile", return_value=False), \
+             self.assertLogs(gs.logger, level="DEBUG") as logs:
+            for _ in range(3):
+                self.assertFalse(gs.check_7zip_version())
+        hits = [r for r in logs.records
+                if "7zz" in r.getMessage() and "not found" in r.getMessage()]
+        self.assertEqual(len(hits), 1)
+        self.assertEqual(hits[0].levelno, logging.INFO)
+
+    def test_bat_older_than_upstream_is_info(self):
+        source = inspect.getsource(gs.install_or_update_bat)
+        self.assertNotIn('logger.warning(f"Installed bat', source)
+        self.assertIn('logger.info(f"Installed bat', source)
 
 
 if __name__ == "__main__":

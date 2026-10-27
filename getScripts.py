@@ -2245,14 +2245,15 @@ def get_bat_version() -> Optional[tuple]:
         if match:
             return tuple(map(int, match.group(1).split('.')))
     elif output is None:
-        logger.error("Error getting bat version: batcat not found")
+        # The expected state on a fresh host, and the installer runs next.
+        logger.debug("bat (batcat) not installed")
     return None
 
 def check_bat_version() -> bool:
     """Check if bat is installed and up to date"""
     current_version = get_bat_version()
     if not current_version:
-        logger.error("bat is not installed")
+        logger.info("bat is not installed")
         return False
 
     logger.info(f"Current bat version: {'.'.join(map(str, current_version))}")
@@ -2321,7 +2322,9 @@ def install_or_update_bat():
                 
                 # Check if this is the latest available
                 if latest_version and compare_versions(new_str, latest_version) < 0:
-                    logger.warning(f"Installed bat {new_str} is older than latest {latest_version}. Consider manual update from source.")
+                    # apt is the delivery path on these servers; nobody builds
+                    # bat from source there, so this is information, not a task.
+                    logger.info(f"Installed bat {new_str} is older than latest {latest_version} (apt delivers the Debian build).")
     except Exception as e:
         logger.error(f"Error installing/updating bat: {str(e)}")
         raise RuntimeError("Failed to install/update bat")
@@ -2505,6 +2508,9 @@ def get_7zip_version() -> Optional[tuple]:
 
     return None
 
+_SEVEN_ZZ_MISSING_REPORTED = False
+
+
 def check_7zip_version() -> bool:
     """Check if 7-Zip is installed and meets minimum version requirements.
 
@@ -2529,7 +2535,12 @@ def check_7zip_version() -> bool:
                 break
 
         if not seven_zz_path:
-            logger.warning("7zz command not found. Need to install newer 7-Zip version.")
+            # Probed three times per run; said once, at INFO - on a fresh host
+            # this is the expected state and the installer runs right after.
+            global _SEVEN_ZZ_MISSING_REPORTED
+            if not _SEVEN_ZZ_MISSING_REPORTED:
+                logger.info("7zz command not found. Need to install newer 7-Zip version.")
+                _SEVEN_ZZ_MISSING_REPORTED = True
             return False
 
         # Binary found - get version directly from it
