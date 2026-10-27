@@ -1249,13 +1249,9 @@ def download_and_install_deb(url: str, filename: str) -> None:
 
         logger.info(f"Successfully downloaded {filename}")
 
-        # Install the package
-        subprocess.run(
-            ["sudo", "dpkg", "-i", filename],
-            capture_output=True,
-            text=True,
-            check=True
-        )
+        # Install the package - through run_command(), which drops the sudo
+        # word as root (a root-only host has no sudo package).
+        run_command(f"sudo dpkg -i {filename}", check=True, capture_output=True)
         logger.info(f"Successfully installed {filename}")
         
         # Cleanup
@@ -4806,6 +4802,11 @@ def offer_noconfig_recovery(_myhome: str) -> None:
 # ---------------------------------------------------------------------------
 
 BOOTSTRAP_RELATIVE = os.path.join("scripts", "bootstrap.sh")
+# A declined offer is remembered here: a host that deliberately runs without
+# Docker (nginx-only, a utility box) must not be asked on every ups, with a
+# default that installs Docker CE on one Enter. Delete the file to be asked
+# again, or run bootstrap.sh by hand.
+BOOTSTRAP_DECLINED_RELATIVE = os.path.join(".config", "myodoo-docker", "bootstrap-declined")
 
 
 def offer_bootstrap(_myhome: str, myodoo_docker: str) -> None:
@@ -4834,6 +4835,9 @@ def offer_bootstrap(_myhome: str, myodoo_docker: str) -> None:
         script = os.path.join(myodoo_docker, BOOTSTRAP_RELATIVE)
         if not os.path.isfile(script):
             return
+        declined_marker = os.path.join(_myhome, BOOTSTRAP_DECLINED_RELATIVE)
+        if os.path.isfile(declined_marker):
+            return
         command = f"bash {script}"
         later = f"Frischer Server ohne Docker – Grundausstattung einrichten mit: {command}"
         if not (sys.stdin.isatty() and sys.stdout.isatty()):
@@ -4845,7 +4849,11 @@ def offer_bootstrap(_myhome: str, myodoo_docker: str) -> None:
         answer = _prompt("Grundausstattung jetzt einrichten? (J/n): ", "j")
         if answer is None or answer.lower() in ("n", "nein", "no"):
             record_install("bootstrap", "skipped", command)
-            status(f"Später: {command}")
+            os.makedirs(os.path.dirname(declined_marker), mode=0o700, exist_ok=True)
+            with open(declined_marker, "w", encoding="utf-8") as handle:
+                handle.write(f"declined {datetime.now():%d.%m.%Y %H:%M} by getScripts.py {SCRIPT_VERSION}\n")
+            status(f"Später: {command}  (ups fragt nicht erneut; zum erneuten Fragen "
+                   f"{declined_marker} löschen)")
             return
         result = run_command(command, interactive=True, env={"RUN_GETSCRIPTS": "0"})
         if result.returncode == 0:
@@ -5931,6 +5939,22 @@ def update_uv_via_self_update() -> None:
         logger.warning(f"Failed to update uv: {e}")
 
 
+def run_install_packages(package_info: Dict[str, Any]) -> None:
+    """install_packages() as a step that cannot take the rest of the run down.
+
+    Since the offers (migration, no-config, hardening) and the reports moved
+    behind the package step (27.10.2026), one apt hiccup there would have
+    skipped all of them and the install report with them - the review of the
+    change found exactly that. A failed package step is a line in the report;
+    the offers handle a missing PyYAML themselves.
+    """
+    try:
+        install_packages(package_info)
+    except Exception as e:
+        logger.error(f"Package installation failed: {e}")
+        record_install("packages", "failed", f"{e} - see ~/getscripts.log; rerun ups")
+
+
 def install_packages(package_info: Dict[str, Any]) -> None:
     """Install all required packages."""
     # A phase marker, not a detail: in lean mode apt/uv output no longer
@@ -6548,7 +6572,7 @@ def main() -> None:
         package_info = read_package_versions(os.path.join(myodoo_docker, "packages.txt"))
 
         # Install all packages
-        install_packages(package_info)
+        run_install_packages(package_info)
 
         # Everything below needs something install_packages() delivers: PyYAML
         # for the migration and the validators, python3-dotenv for the hardening

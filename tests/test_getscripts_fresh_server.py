@@ -333,5 +333,69 @@ class McEditProbeTest(unittest.TestCase):
         self.assertIn(("mc", "failed"), [(n, s) for n, s, _ in gs._install_report])
 
 
+class ReviewFixesTest(unittest.TestCase):
+    """Findings of the whole-branch review (27.10.2026)."""
+
+    def test_deb_install_goes_through_run_command(self):
+        # The one privileged call left outside run_command(): dpkg -i for
+        # fastfetch. On a root-only host without sudo it failed silently.
+        source = inspect.getsource(gs.download_and_install_deb)
+        self.assertNotIn('["sudo", "dpkg"', source)
+        self.assertIn('run_command(f"sudo dpkg -i', source)
+
+    def test_failed_package_step_does_not_abort_the_run(self):
+        gs._install_report.clear()
+        with mock.patch.object(gs, "install_packages", side_effect=gs.InstallationError("apt lock")):
+            gs.run_install_packages({"pip": [], "system": [], "uv_tools": {}})   # must not raise
+        self.assertIn(("packages", "failed"), [(n, s) for n, s, _ in gs._install_report])
+
+    def test_main_uses_the_guarded_package_step(self):
+        source = inspect.getsource(gs.main)
+        self.assertIn("run_install_packages(package_info)", source)
+        self.assertNotIn("\n        install_packages(package_info)", source)
+
+
+class BootstrapOfferOnceTest(unittest.TestCase):
+    """A deliberately Docker-less server (nginx-only host) is asked once, not on every ups."""
+
+    def setUp(self):
+        self.home = tempfile.mkdtemp()
+        self.repo = os.path.join(self.home, "myodoo-docker")
+        os.makedirs(os.path.join(self.repo, "scripts"))
+        self.script = os.path.join(self.repo, "scripts", "bootstrap.sh")
+        with open(self.script, "w") as handle:
+            handle.write("#!/bin/bash\n")
+        self.marker = os.path.join(self.home, gs.BOOTSTRAP_DECLINED_RELATIVE)
+        gs._install_report.clear()
+
+    def offer(self, tty, answers=()):
+        out = io.StringIO()
+        out.isatty = lambda: tty       # type: ignore[method-assign]
+        with mock.patch.object(gs.shutil, "which", return_value=None), \
+             mock.patch.object(gs.sys.stdin, "isatty", return_value=tty), \
+             mock.patch("sys.stdout", out), \
+             mock.patch("builtins.input", side_effect=list(answers)), \
+             mock.patch.object(gs, "run_command") as run, \
+             mock.patch.object(gs, "status") as st:
+            run.return_value = subprocess.CompletedProcess("bash", 0, "", "")
+            gs.offer_bootstrap(self.home, self.repo)
+        return run, st
+
+    def test_decline_writes_the_marker_and_says_so(self):
+        _run, st = self.offer(True, ["n"])
+        self.assertTrue(os.path.isfile(self.marker))
+        self.assertIn(self.marker, st.call_args.args[0])
+
+    def test_marker_silences_the_offer_on_a_tty_and_off(self):
+        os.makedirs(os.path.dirname(self.marker), exist_ok=True)
+        with open(self.marker, "w") as handle:
+            handle.write("declined\n")
+        for tty in (True, False):
+            run, st = self.offer(tty, [])
+            run.assert_not_called()
+            st.assert_not_called()
+            self.assertEqual(gs._install_report, [])
+
+
 if __name__ == "__main__":
     unittest.main()

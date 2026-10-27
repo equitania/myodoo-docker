@@ -22,7 +22,9 @@ address. Design: `docs/superpowers/specs/2026-10-27-first-run-fresh-server-desig
   `RUN_GETSCRIPTS=0` so bootstrap does not call getScripts in turn. Output is
   streamed, there is no timeout, the outcome lands in the install report and
   the run continues either way. Without a terminal only the command line is
-  printed.
+  printed. A decline is remembered in
+  `~/.config/myodoo-docker/bootstrap-declined`, so a host that deliberately
+  runs without Docker is asked once, not on every `ups`.
 - **The first-run dialogue asks for the SSH access.** Third block after proxy
   and DNS: the fixed SSH port (suggested from `sshd -T`) and the admin
   addresses, comma-separated (suggested: the connected sessions). Every entry
@@ -35,6 +37,8 @@ address. Design: `docs/superpowers/specs/2026-10-27-first-run-fresh-server-desig
   rewritten; `--reconfigure` asks again when none exists.
 - `ensure_base_packages()` installs `curl` and `ca-certificates` before the
   Fish setup when curl is missing.
+- `run_install_packages()` wraps the package step: an apt failure there is an
+  install-report line, and the offers and reports behind it still run.
 
 ### Changed
 

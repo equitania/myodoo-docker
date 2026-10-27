@@ -157,7 +157,10 @@ direkt nach dem Klonen an, `scripts/bootstrap.sh` aus dem Repository zu
 starten (Docker CE, nginx, certbot, UFW aus, fail2ban, automatische Updates,
 python3-yaml/-dotenv, curl/git, UTF-8-Locale) — mit `RUN_GETSCRIPTS=0`, damit
 bootstrap nicht wiederum getScripts aufruft. Ohne Terminal steht nur die eine
-Zeile mit dem Befehl. Der Erstlauf-Dialog fragt als dritten Block **SSH-Zugang
+Zeile mit dem Befehl. Ein „n“ wird in
+`~/.config/myodoo-docker/bootstrap-declined` gemerkt — ein bewusst Docker-loser
+Host wird einmal gefragt, nicht bei jedem `ups`; Datei löschen, um erneut
+gefragt zu werden. Der Erstlauf-Dialog fragt als dritten Block **SSH-Zugang
 für die Härtung**: den festen SSH-Port (Vorschlag: der Port aus `sshd -T`) und
 die Admin-Adressen kommagetrennt (Vorschlag: die verbundenen Sitzungen) und
 schreibt `/root/.config/myodoo-docker/.env` sofort — vor dem Klonen als
@@ -484,7 +487,9 @@ the clone to run `scripts/bootstrap.sh` from the repository (Docker CE, nginx,
 certbot, UFW off, fail2ban, unattended upgrades, python3-yaml/-dotenv,
 curl/git, UTF-8 locale) — with `RUN_GETSCRIPTS=0` so bootstrap does not call
 getScripts in turn. Without a terminal only the one line with the command is
-printed. The first-run dialogue asks, as its third block **SSH access for the
+printed. An "n" is remembered in `~/.config/myodoo-docker/bootstrap-declined` —
+a deliberately Docker-less host is asked once, not on every `ups`; delete the
+file to be asked again. The first-run dialogue asks, as its third block **SSH access for the
 hardening**, for the fixed SSH port (suggested: the port from `sshd -T`) and
 the admin addresses, comma-separated (suggested: the connected sessions), and
 writes `/root/.config/myodoo-docker/.env` right away — before the clone as a

@@ -18,7 +18,9 @@ in this repository, stay in `CLAUDE.md`.
     runs right after the clone and, when `docker` is missing, offers to run
     `scripts/bootstrap.sh` from the repository (`RUN_GETSCRIPTS=0` as the
     recursion guard, output streamed, no timeout; non-TTY prints the command
-    only; outcome in the install report). The first-run dialogue gains a
+    only; outcome in the install report; a decline is remembered in
+    `~/.config/myodoo-docker/bootstrap-declined`). `run_install_packages()`
+    keeps an apt failure from taking the offers and reports down. The first-run dialogue gains a
     third block, `configure_ssh_access()`: SSH port and comma-separated admin
     addresses, validated (`parse_admin_addresses()`, networks rejected), the
     `.env` written at once — from `scripts/.env.example` when present, else
