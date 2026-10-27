@@ -167,23 +167,24 @@ class PeerHostTest(unittest.TestCase):
 
 class LockoutGateTest(unittest.TestCase):
     def test_clean_state_has_no_blockers(self):
-        self.assertEqual(gs._lockout_blockers(ENV, [22], ["192.0.2.10"], False), [])
+        self.assertEqual(gs._lockout_blockers(ENV, [22], ["192.0.2.10"]), [])
 
     def test_no_admin_ip_blocks(self):
-        blockers = gs._lockout_blockers({"SSH_PORT": "22"}, [22], ["192.0.2.10"], False)
+        blockers = gs._lockout_blockers({"SSH_PORT": "22"}, [22], ["192.0.2.10"])
         self.assertTrue(any("ALLOWED_IP" in b for b in blockers))
 
     def test_a_session_outside_the_allowlist_blocks(self):
-        blockers = gs._lockout_blockers(ENV, [22], ["192.0.2.10", "198.51.100.7"], False)
-        self.assertTrue(any("außerhalb der Allowlist" in b for b in blockers))
+        blockers = gs._lockout_blockers(ENV, [22], ["192.0.2.10", "198.51.100.7"])
+        self.assertTrue(any("198.51.100.7" in b and "Allowlist" in b for b in blockers))
 
     def test_unreadable_sessions_block(self):
-        self.assertTrue(gs._lockout_blockers(ENV, [22], None, False))
+        self.assertTrue(gs._lockout_blockers(ENV, [22], None))
 
-    def test_port_change_blocks_and_is_detected(self):
+    def test_port_change_is_detected_but_no_longer_blocks(self):
+        # Since 9.35.0 the change itself is carried by server_hardening.py
+        # --ssh-transition (both ports open until a login on the new one).
         env = dict(ENV, SSH_PORT="16667")
-        self.assertTrue(any("Portwechsel" in b
-                            for b in gs._lockout_blockers(env, [22], ["192.0.2.10"], False)))
+        self.assertEqual(gs._lockout_blockers(env, [22], ["192.0.2.10"]), [])
         self.assertTrue(gs._is_port_change(env, [22]))
 
     def test_gate_blocks_when_sshd_still_listens_on_a_second_port(self):
@@ -194,13 +195,8 @@ class LockoutGateTest(unittest.TestCase):
         # out anyone still connecting on 22. Only "SSH_PORT and nothing
         # else" is safe.
         env = dict(ENV, SSH_PORT="16667")
-        self.assertTrue(any("Portwechsel" in b
-                            for b in gs._lockout_blockers(env, [22, 16667], ["192.0.2.10"], False)))
+        self.assertEqual(gs._lockout_blockers(env, [22, 16667], ["192.0.2.10"]), [])
         self.assertTrue(gs._is_port_change(env, [22, 16667]))
-
-    def test_socket_activation_blocks(self):
-        blockers = gs._lockout_blockers(ENV, [22], ["192.0.2.10"], True)
-        self.assertTrue(any("ssh.socket" in b for b in blockers))
 
 
 class SshFactsTest(unittest.TestCase):
@@ -242,11 +238,6 @@ class SshFactsTest(unittest.TestCase):
             self.assertTrue(gs._any_containers())
         self.assertIn("-aq", spy.call_args.args[0])
 
-    def test_socket_active_check_fails_closed(self):
-        # Fail closed: an unreadable systemctl must be treated as a blocker,
-        # not as "socket inactive, go ahead".
-        with mock.patch.object(gs.subprocess, "run", side_effect=OSError("no systemctl")):
-            self.assertTrue(gs._ssh_socket_active())
 
 
 def _audit(*areas, error=None, env=None):
@@ -277,7 +268,6 @@ class OfferTest(unittest.TestCase):
             mock.patch.object(gs, "_ssh_listen_ports", return_value=[22]),
             mock.patch.object(gs, "_ssh_peers", return_value=["192.0.2.10"]),
             mock.patch.object(gs, "UFW_RULES_DIR", os.path.join(self.home, "no-ufw")),
-            mock.patch.object(gs, "_ssh_socket_active", return_value=False),
             mock.patch.object(gs, "_any_containers", return_value=False),
         ]
         for patcher in patches:
@@ -305,40 +295,42 @@ class OfferTest(unittest.TestCase):
         self.assertEqual(self.commands, [])
 
     def test_fix_now_applies_harmless_then_guarded_then_aide(self):
-        self.answers = ["1"]
+        self.answers = ["j"]
         self.offer(_audit(("hardening_integrity", ["auditd", "aide"], "fail"),
                           ("hardening_firewall", ["ufw"], "fail"),
                           ("hardening_kernel", ["sysctl"], "warn")))
         self.assertEqual(self.applied(), ["auditd sysctl", "ufw", "aide"])
 
     def test_a_blocked_gate_applies_nothing_guarded(self):
-        self.answers = ["1"]
+        self.answers = ["j"]
         with mock.patch.object(gs, "_ssh_peers", return_value=["198.51.100.7"]):
             self.offer(_audit(("hardening_firewall", ["ufw"], "fail"),
                               ("hardening_ssh", ["ssh"], "fail")))
         self.assertEqual(self.applied(), [])
 
-    def test_port_change_is_never_applied(self):
+    def test_port_change_runs_the_transition(self):
         with open(self.env_path, "w", encoding="utf-8") as handle:
             handle.write("SSH_PORT=16667\nALLOWED_IP_1=192.0.2.10\n")
-        self.answers = ["1"]
+        self.answers = ["j"]
         self.offer(_audit(("hardening_ssh", ["ssh"], "fail")))
+        self.assertIn("--ssh-transition begin", self.commands[0])
         self.assertEqual(self.applied(), [])
 
-    def test_fail2ban_waits_for_a_pending_port_change(self):
+    def test_fail2ban_goes_through_the_transition_on_a_port_change(self):
         with open(self.env_path, "w", encoding="utf-8") as handle:
             handle.write("SSH_PORT=16667\nALLOWED_IP_1=192.0.2.10\n")
-        self.answers = ["1"]
+        self.answers = ["j"]
         self.offer(_audit(("hardening_fail2ban", ["fail2ban"], "fail"),
                           ("hardening_kernel", ["sysctl"], "warn")))
+        self.assertIn("--ssh-transition begin", self.commands[0])
         self.assertEqual(self.applied(), ["sysctl"])
 
     def test_docker_restart_only_without_containers(self):
-        self.answers = ["1"]
+        self.answers = ["j"]
         self.offer(_audit(("hardening_docker", ["docker"], "warn")))
         self.assertIn("systemctl restart docker", self.commands)
         self.commands.clear()
-        self.answers = ["1"]
+        self.answers = ["j"]
         # A container exists - even one stopped on purpose carries
         # --restart=always and must not be woken up by the daemon restart.
         with mock.patch.object(gs, "_any_containers", return_value=True):
@@ -346,17 +338,18 @@ class OfferTest(unittest.TestCase):
         self.assertEqual(self.applied(), ["docker"])
         self.assertNotIn("systemctl restart docker", self.commands)
 
-    def test_show_commands_applies_nothing(self):
+    def test_any_other_answer_applies_nothing(self):
         self.answers = ["2"]
         self.offer(_audit(("hardening_firewall", ["ufw"], "fail")))
         self.assertEqual(self.commands, [])
 
-    def test_mute_one_area_calls_ownerp_mute(self):
-        open(os.path.join(self.home, "ownerp_mute.py"), "w").close()
-        self.answers = ["4", "1", "Firmen-Firewall davor"]
+    def test_later_line_names_mute_and_reboot_commands(self):
+        self.answers = ["n"]
         self.offer(_audit(("hardening_firewall", ["ufw"], "fail")))
-        self.assertEqual(len(self.commands), 1)
-        self.assertIn("hardening_firewall --reason", self.commands[0])
+        self.assertEqual(self.commands, [])
+        message = gs.status.call_args_list[-1].args[0]
+        self.assertIn("ownerp_mute.py", message)
+        self.assertIn("--apply -m auto_updates", message)
 
     def test_missing_env_is_offered_with_the_session_ip(self):
         os.unlink(self.env_path)
@@ -389,7 +382,7 @@ class OfferTest(unittest.TestCase):
         legacy = os.path.join(self.home, ".env")
         with open(legacy, "w", encoding="utf-8") as handle:
             handle.write("SSH_PORT=22\nALLOWED_IP_1=192.0.2.10\n")
-        self.answers = ["1"]
+        self.answers = ["j"]
         self.offer(_audit(("hardening_ssh", ["ssh"], "fail")))
         self.assertEqual(self.applied(), ["ssh"])
 
@@ -415,60 +408,48 @@ class OfferTest(unittest.TestCase):
                  encoding="utf-8") as handle:
             handle.write(text)
 
-    def test_auto_updates_confirmation_declined_leaves_it_out(self):
-        # hardening_config.yaml ships auto_reboot: true at 03:30 while
-        # backups start 02:00 - auto_updates is otherwise harmless and would
-        # have activated the nightly reboot unasked.
+    def test_auto_updates_applies_without_the_reboot_and_without_a_second_question(self):
+        # hardening_config.yaml ships auto_reboot: true at 03:30 while backups
+        # start 02:00 - the one question covers updates, --no-reboot keeps the
+        # reboot off (captain's decision, 27.10.2026).
         self._write_hardening_config()
-        self.answers = ["1", "n"]
-        self.offer(_audit(("hardening_updates", ["auto_updates"], "fail")))
-        self.assertEqual(self.applied(), [])
-        message = gs.status.call_args_list[-1].args[0]
-        self.assertIn("auto_updates", message)
-
-    def test_auto_updates_confirmation_default_is_no(self):
-        self._write_hardening_config()
-        self.answers = ["1", ""]  # empty answer -> the [j/N] default
-        self.offer(_audit(("hardening_updates", ["auto_updates"], "fail")))
-        self.assertEqual(self.applied(), [])
-
-    def test_auto_updates_confirmation_accepted_applies_it(self):
-        self._write_hardening_config()
-        self.answers = ["1", "j"]
+        self.answers = ["j"]
         self.offer(_audit(("hardening_updates", ["auto_updates"], "fail")))
         self.assertEqual(self.applied(), ["auto_updates"])
+        self.assertIn("--no-reboot", self.commands[0])
+        self.assertEqual(self.answers, [])
 
     def test_auto_updates_without_auto_reboot_applies_without_asking(self):
         # No hardening_config.yaml at all (nothing deployed yet) must not
         # block the harmless apply on a question nobody can answer.
-        self.answers = ["1"]
+        self.answers = ["j"]
         self.offer(_audit(("hardening_updates", ["auto_updates"], "fail")))
         self.assertEqual(self.applied(), ["auto_updates"])
 
-    def test_offer_list_flags_the_auto_reboot_area(self):
+    def test_question_says_without_nightly_reboot(self):
         self._write_hardening_config()
         self.answers = ["3"]
         printed = []
         with mock.patch("builtins.print",
                         side_effect=lambda *a, **k: printed.append(" ".join(map(str, a)))):
             self.offer(_audit(("hardening_updates", ["auto_updates"], "fail")))
-        self.assertTrue(any("automatischem Neustart" in line for line in printed))
+        self.assertTrue(any("ohne nächtlichen Neustart" in line for line in printed), printed)
 
     def test_fail2ban_waits_when_the_ssh_port_is_unreadable(self):
-        self.answers = ["1"]
+        self.answers = ["j"]
         with mock.patch.object(gs, "_ssh_listen_ports", return_value=[]):
             self.offer(_audit(("hardening_fail2ban", ["fail2ban"], "fail"),
                               ("hardening_kernel", ["sysctl"], "warn")))
         self.assertEqual(self.applied(), ["sysctl"])
 
     def test_docker_restart_needs_a_successful_apply_too(self):
-        self.answers = ["1"]
+        self.answers = ["j"]
         with mock.patch.object(gs, "_any_containers", return_value=None):
             self.offer(_audit(("hardening_docker", ["docker"], "warn")))
         self.assertNotIn("systemctl restart docker", self.commands)
 
         self.commands.clear()
-        self.answers = ["1"]
+        self.answers = ["j"]
         with mock.patch.object(gs, "run_command",
                                side_effect=lambda c, **k: self.commands.append(c)
                                or types.SimpleNamespace(returncode=1)):

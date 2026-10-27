@@ -98,7 +98,7 @@ class ConfigureSshAccessTest(unittest.TestCase):
         ok, out = self.run_block(["j", "2222", "192.0.2.10, 198.51.100.7"])
         self.assertTrue(ok)
         self.assertIn("sshd lauscht derzeit auf 22", out)
-        self.assertIn("auf 2222 lauscht", out)
+        self.assertIn("zusätzlich auf 2222 lauschen", out)
         text = open(self.env).read()
         self.assertIn("SSH_PORT=2222\n", text)
         self.assertIn("ALLOWED_IP_2=198.51.100.7\n", text)

@@ -4919,9 +4919,6 @@ def _docker_storage_driver_muted(_myhome: str) -> bool:
 # ---------------------------------------------------------------------------
 
 HARDENING_ENV_RELATIVE = os.path.join(".config", "myodoo-docker", ".env")
-# Modules that can lock the operator out (ufw, ssh) or stop every container
-# (docker needs a daemon restart). Applied only behind _lockout_blockers().
-GUARDED_MODULES = ("ufw", "ssh", "docker")
 
 
 def _hardening_env_path(_myhome: str) -> Optional[str]:
@@ -5161,18 +5158,6 @@ def _ssh_peers(ports: List[int]) -> Optional[List[str]]:
     return sorted(hosts)
 
 
-def _ssh_socket_active() -> bool:
-    # Fail closed: an unreadable systemctl must count as a blocker, not as
-    # "socket inactive, go ahead" - the opposite mistake would apply ufw/ssh
-    # while ssh.socket, not sshd_config, actually owns the port.
-    try:
-        result = subprocess.run(["systemctl", "is-active", "ssh.socket"],
-                                capture_output=True, text=True, timeout=10)
-    except Exception:
-        return True
-    return result.stdout.strip() == "active"
-
-
 def _any_containers() -> Optional[bool]:
     """Whether ANY container exists on this host, running or stopped.
 
@@ -5205,8 +5190,16 @@ def _is_port_change(env: Dict[str, str], listen_ports: List[int]) -> bool:
 
 
 def _lockout_blockers(env: Dict[str, str], listen_ports: List[int],
-                      peers: Optional[List[str]], socket_active: bool) -> List[str]:
-    """Why ufw/ssh must not be applied now; [] means it is safe."""
+                      peers: Optional[List[str]]) -> List[str]:
+    """Why ufw/fail2ban/ssh must not be touched now; [] means it is safe.
+
+    A port change is no longer a blocker: server_hardening.py carries it as
+    a transition (both ports open until a login over the new one is seen),
+    and ssh.socket is switched off by that transition. What remains is what
+    no automation may decide: an .env without admin addresses, a state that
+    cannot be read, and a live session from an address the firewall would
+    cut off.
+    """
     blockers = []
     ips = _allowed_ips(env)
     if not ips:
@@ -5216,19 +5209,13 @@ def _lockout_blockers(env: Dict[str, str], listen_ports: List[int],
         blockers.append("SSH_PORT fehlt in der .env")
     elif not listen_ports:
         blockers.append("sshd-Port nicht lesbar (sshd -T)")
-    elif _is_port_change(env, listen_ports):
-        blockers.append(f"SSH_PORT={port}, sshd lauscht auf "
-                        f"{', '.join(map(str, listen_ports))} – das wäre ein Portwechsel, "
-                        f"den ups nie selbst macht")
-    if socket_active:
-        blockers.append("ssh.socket ist aktiv – dort wird der Port festgelegt, nicht in sshd_config")
     if peers is None:
         blockers.append("aktive SSH-Verbindungen nicht lesbar (ss)")
     else:
         outside = [peer for peer in peers if peer not in ips]
         if outside:
-            blockers.append(f"{len(outside)} aktive SSH-Verbindung(en) von IPs "
-                            f"außerhalb der Allowlist")
+            blockers.append(f"aktive SSH-Verbindung(en) von {', '.join(outside)} – nicht in "
+                            f"der Allowlist; in die .env aufnehmen oder die Sitzung beenden")
     return blockers
 
 
@@ -5378,16 +5365,6 @@ HARDENING_CHECK_TITLES = {
     "hardening_updates": "Automatische Sicherheitsupdates",
     "hardening_integrity": "auditd / AIDE",
 }
-# The sequence proven on 28.09.2026. Printed, never run: step 1 happens in the
-# provider's panel, which nothing on this host can see.
-PORT_CHANGE_STEPS = (
-    "1. Neuen Port in der Firewall/Security Group des Anbieters für die Admin-IPs öffnen (alten offen lassen)",
-    "2. SSH_PORT in /root/.config/myodoo-docker/.env auf den neuen Port setzen",
-    "3. python3 /root/server_hardening.py --apply -f -m ufw fail2ban ssh",
-    "4. In einem zweiten Terminal auf dem neuen Port anmelden – die alte Sitzung offen lassen",
-    "5. Alte UFW-Regeln löschen: ufw delete allow from <IP> to any port <alter Port>",
-    "6. Alten Port beim Anbieter schließen",
-)
 
 
 def _hardening_audit(script: str) -> Optional[dict]:
@@ -5502,7 +5479,7 @@ def configure_ssh_access(home: str) -> bool:
     later = (f"Später: ups fragt beim nächsten Mal nach den Werten, oder: "
              f"cp {template_path} {env_path}; and mcedit {env_path}")
     print("\nDie Firewall lässt SSH später nur von diesen Adressen auf diesem Port zu.")
-    print("Der Port wird hier nur festgelegt, nicht geändert.\n")
+    print("Die Härtung am Ende der Installation stellt den Port um und fragt vorher einmal.\n")
 
     answer = _prompt("Admin-Adressen und Port jetzt festlegen? (J/n): ", "j")
     if answer is None or answer.lower() in ("n", "nein", "no"):
@@ -5561,8 +5538,8 @@ def configure_ssh_access(home: str) -> bool:
         return False
     print(f".env angelegt: {env_path} (nur für root lesbar)")
     if live_port is not None and port != live_port:
-        print(f"sshd lauscht derzeit auf {live_port}. Die Härtung wartet mit UFW und SSH, "
-              f"bis sshd auf {port} lauscht – die sechs Schritte zeigt ups dann an.")
+        print(f"sshd lauscht derzeit auf {live_port}. Die Härtung am Ende lässt sshd zusätzlich "
+              f"auf {port} lauschen; {live_port} schließt sich nach deiner ersten Anmeldung über {port}.")
     return True
 
 
@@ -5658,128 +5635,119 @@ def _offer_env_creation(_myhome: str, env_path: str) -> bool:
 
 
 def _hardening_command(script: str, modules: List[str]) -> str:
+    # auto_updates always without the nightly reboot: hardening_config.yaml
+    # ships auto_reboot: true (03:30) against a 02:00 backup window. Whoever
+    # wants the reboot runs the module by hand (the "Später" line says how).
+    flags = " --no-reboot" if "auto_updates" in modules else ""
     return (f"{shlex.quote(sys.executable)} {shlex.quote(script)} "
-            f"--apply -f -m {' '.join(shlex.quote(m) for m in modules)}")
+            f"--apply -f{flags} -m {' '.join(shlex.quote(m) for m in modules)}")
 
 
-def _print_hardening_commands(script: str, pending: List[dict]) -> None:
-    for area in pending:
-        title = HARDENING_CHECK_TITLES.get(area["check_id"], area["check_id"])
-        print(f"  {title}: {_hardening_command(script, area['modules'])}")
-    if any(set(a["modules"]) & {"ufw", "ssh"} for a in pending):
-        print("  Bei UFW/SSH eine zweite SSH-Sitzung offen halten.")
+def _transition_command(script: str, action: str) -> str:
+    return f"{shlex.quote(sys.executable)} {shlex.quote(script)} --ssh-transition {action}"
 
 
-# Nightly auto-reboot vs. the 02:00 backup window: hardening_config.yaml's
-# auto_updates.auto_reboot (03:30 by default) is what schedules it, and
-# auto_updates otherwise counts as harmless. Read as text, not YAML -
-# getScripts.py runs on bare system Python and this offer is the only thing
-# here that would otherwise need PyYAML.
-_AUTO_REBOOT_RE = re.compile(r"^\s*auto_reboot:\s*true\b", re.MULTILINE)
-_REBOOT_TIME_RE = re.compile(r'^\s*reboot_time:\s*"?([0-9:]+)"?', re.MULTILINE)
+SSH_TRANSITION_RELATIVE = os.path.join(".config", "myodoo-docker", "ssh-transition")
+# Modules whose apply touches the SSH path and therefore passes the gate.
+SSH_COUPLED_MODULES = ("ufw", "fail2ban", "ssh")
+_MODULE_CLAUSES = {
+    "ufw": "Firewall an",
+    "fail2ban": "fail2ban",
+    "ssh": "SSH-Einstellungen nach Vorgabe",
+    "auto_updates": "automatische Sicherheitsupdates (ohne nächtlichen Neustart)",
+    "docker": "Docker-Daemon-Einstellungen",
+    "sysctl": "Kernel-Parameter",
+    "sysctl_persist": None,
+    "kernel_modules": None,
+    "auditd": "auditd",
+    "aide": "AIDE",
+}
 
 
-def _hardening_config_path(_myhome: str) -> Optional[str]:
-    """Same fallback order as _offer_env_creation's template lookup: the
-    deployed file first, the repository checkout (tests, a fresh clone
-    before the first `ups`) second."""
-    central = os.path.join(_myhome, "hardening_config.yaml")
-    if os.path.isfile(central):
-        return central
-    fallback = os.path.join(_myhome, "myodoo-docker", "scripts", "hardening_config.yaml")
-    return fallback if os.path.isfile(fallback) else None
-
-
-def _auto_reboot_time(_myhome: str) -> Optional[str]:
-    """The configured reboot time when auto_updates.auto_reboot is active,
-    "" if active but the time could not be read, else None - also when the
-    config is missing or unreadable, which must not turn into a false
-    "confirm this" the operator cannot even check."""
-    path = _hardening_config_path(_myhome)
-    if not path:
-        return None
-    try:
-        with open(path, "r", encoding="utf-8") as handle:
-            text = handle.read()
-    except OSError:
-        return None
-    if not _AUTO_REBOOT_RE.search(text):
-        return None
-    match = _REBOOT_TIME_RE.search(text)
-    return match.group(1) if match else ""
-
-
-def _apply_hardening(_myhome: str, script: str, pending: List[dict]) -> None:
-    """Harmless modules first, then ufw/ssh behind the lockout gate, then
-    Docker, and AIDE last so its database records the finished state."""
+def _hardening_question(pending: List[dict], env: Dict[str, str], listen: List[int]) -> str:
+    """The one text the operator reads before saying j: what deviates, what
+    applying means, and what to keep in mind. Pure, so a test can read it."""
+    titles = [HARDENING_CHECK_TITLES.get(a["check_id"], a["check_id"]) for a in pending]
     modules = [m for area in pending for m in area["modules"]]
-    env_path = _hardening_env_path(_myhome)
-    env = _read_env_file(env_path) if env_path else {}
-    listen = _ssh_listen_ports()
+    verb = "weicht" if len(titles) == 1 else "weichen"
+    lines = [f"Sicherheits-Härtung: {', '.join(titles)} {verb} ab.", ""]
+    port = env.get("SSH_PORT", "").strip()
+    ips = _allowed_ips(env)
     port_change = _is_port_change(env, listen)
-    # sshd's real port unreadable (sshd -T failed) is not a *detected* port
-    # change, but SSH_PORT in the .env cannot be trusted against it either -
-    # fail2ban's jail follows that value, so treat "unknown" the same as
-    # "changed" rather than gamble on a value we cannot verify.
-    port_unknown = bool(env.get("SSH_PORT", "").strip()) and not listen
-    hold_fail2ban = port_change or port_unknown
-    harmless = [m for m in modules if m not in GUARDED_MODULES and m != "aide"
-                # The sshd jail follows SSH_PORT: moved ahead of sshd it would
-                # watch a port nobody logs in on. It belongs to the manual
-                # port-change sequence (step 3) then.
-                and not (m == "fail2ban" and hold_fail2ban)]
-    guarded = [m for m in modules if m in ("ufw", "ssh")]
+    clauses = []
+    if port_change:
+        old = ", ".join(str(p) for p in listen if str(p) != port) or "?"
+        clauses.append(f"SSH-Port {port} statt {old}")
+    if ips and any(m in ("ufw", "ssh") for m in modules):
+        clauses.append(f"Zugriff nur von {', '.join(ips)}")
+    for module in modules:
+        clause = _MODULE_CLAUSES.get(module, module)
+        if clause and clause not in clauses:
+            clauses.append(clause)
+    lines.append(f"Anwenden heißt: {'; '.join(clauses)}.")
+    if port_change:
+        old = ", ".join(str(p) for p in listen if str(p) != port) or "?"
+        lines.append(f"Port {old} bleibt offen, bis du dich einmal über {port} angemeldet hast; "
+                     f"der nächste ups schließt ihn dann.")
+    tail = "Diese Sitzung offen lassen."
+    if port_change:
+        tail += (f" Schaltet der Anbieter eine eigene Firewall vor (z. B. Hetzner Cloud "
+                 f"Firewall), muss Port {port} dort offen sein.")
+    lines.append(tail)
+    return "\n".join(lines)
 
-    if "auto_updates" in harmless:
-        # auto_updates sits in the harmless group, but hardening_config.yaml
-        # ships auto_reboot: true (03:30) while backups start 02:00 - a
-        # server found on 28.09.2026 with both active. Ask separately, off
-        # by default, rather than fold a nightly reboot into "jetzt beheben".
-        reboot_time = _auto_reboot_time(_myhome)
-        if reboot_time is not None:
-            when = f" ({reboot_time} Uhr)" if reboot_time else ""
-            confirm = _prompt(
-                f"Automatische Updates aktivieren auch den nächtlichen "
-                f"Neustart{when} - das kann mit dem Backup-Fenster "
-                f"kollidieren. Trotzdem aktivieren? [j/N]: ", "n")
-            if confirm is None or confirm.lower() not in ("j", "ja", "y", "yes"):
-                harmless = [m for m in harmless if m != "auto_updates"]
-                status("Automatische Updates übersprungen. Von Hand: "
-                      f"{_hardening_command(script, ['auto_updates'])}")
 
+def finish_ssh_transition(_myhome: str) -> None:
+    """Close the old SSH port once a login over the new one has been seen.
+
+    server_hardening.py --ssh-transition finish decides and prints one line
+    (closed | pending | none | conflict); this only turns it into a report
+    line. Runs on every start, terminal or not: it only closes what the
+    operator opened with the hardening question.
+    """
+    marker = os.path.join(_myhome, SSH_TRANSITION_RELATIVE)
+    script = os.path.join(_myhome, "server_hardening.py")
+    if not (os.path.isfile(marker) and os.path.isfile(script)):
+        return
+    result = run_command(_transition_command(script, "finish"), shell=True, capture_output=True)
+    line = ((getattr(result, "stdout", "") or "").strip().splitlines() or [""])[0]
+    match = re.match(r"^(closed|pending)\s+(\d+)\s*->\s*(\d+)", line)
+    if getattr(result, "returncode", 1) == 0 and match and match.group(1) == "closed":
+        record_install("ssh port", "updated",
+                       f"{match.group(2)} geschlossen, sshd lauscht auf {match.group(3)}")
+    elif getattr(result, "returncode", 1) == 0 and match:
+        record_install("ssh port", "ok",
+                       f"Portwechsel läuft – anmelden über {match.group(3)}, dann ups")
+    elif line == "none":
+        return
+    else:
+        record_install("ssh port", "failed",
+                       f"{line or 'keine Ausgabe'} – prüfen: {_transition_command(script, 'status')}")
+
+
+def _apply_hardening(_myhome: str, script: str, pending: List[dict],
+                     port_change: bool) -> None:
+    """A pending port change goes first and through the transition (which
+    applies ufw, fail2ban and ssh with both ports open); otherwise harmless
+    modules, then ufw/fail2ban/ssh, then Docker, and AIDE last so its
+    database records the finished state."""
+    modules = [m for area in pending for m in area["modules"]]
+    titles = [HARDENING_CHECK_TITLES.get(a["check_id"], a["check_id"]) for a in pending]
+    coupled = [m for m in modules if m in SSH_COUPLED_MODULES]
+    if port_change and coupled:
+        result = run_command(_transition_command(script, "begin"), shell=True, interactive=True)
+        if getattr(result, "returncode", 1) != 0:
+            record_install("hardening", "failed",
+                           "Portwechsel nicht begonnen (Grund oben) – ups fragt beim "
+                           "nächsten Mal erneut")
+            return
+        coupled = []
+    harmless = [m for m in modules
+                if m not in SSH_COUPLED_MODULES and m not in ("docker", "aide")]
     if harmless:
         run_command(_hardening_command(script, harmless), shell=True, interactive=True)
-
-    if "fail2ban" in modules and hold_fail2ban:
-        # When port_change AND guarded are both true, the guarded block below
-        # already prints PORT_CHANGE_STEPS (which covers fail2ban - step 3
-        # applies all three together) - printing it twice would be noise.
-        if not (port_change and guarded):
-            if port_change:
-                print("\nfail2ban wartet auf den Portwechsel:")
-                for step in PORT_CHANGE_STEPS:
-                    print(f"  {step}")
-            else:
-                print("\nfail2ban wartet: SSH_PORT steht in der .env, aber sshd -T "
-                      "liefert aktuell keinen Port (unbekannt). Von Hand, sobald "
-                      f"sshd wieder lesbar ist: {_hardening_command(script, ['fail2ban'])}")
-
-    if guarded:
-        blockers = _lockout_blockers(env, listen, _ssh_peers(listen) if listen else None,
-                                     _ssh_socket_active())
-        if blockers:
-            print("\nFirewall/SSH werden NICHT angewendet:")
-            for reason in blockers:
-                print(f"  – {reason}")
-            if port_change:
-                print("Portwechsel von Hand, in dieser Reihenfolge:")
-                for step in PORT_CHANGE_STEPS:
-                    print(f"  {step}")
-            else:
-                print(f"Von Hand: {_hardening_command(script, guarded)}")
-        else:
-            run_command(_hardening_command(script, guarded), shell=True, interactive=True)
-
+    if coupled:
+        run_command(_hardening_command(script, coupled), shell=True, interactive=True)
     if "docker" in modules:
         result = run_command(_hardening_command(script, ["docker"]), shell=True, interactive=True)
         applied = getattr(result, "returncode", None) == 0
@@ -5790,29 +5758,9 @@ def _apply_hardening(_myhome: str, script: str, pending: List[dict]) -> None:
         else:
             status("daemon.json geschrieben. Docker-Neustart im Wartungsfenster: "
                    "systemctl restart docker (startet alle Container neu)")
-
     if "aide" in modules:
         run_command(_hardening_command(script, ["aide"]), shell=True, interactive=True)
-
-
-def _mute_hardening_area(_myhome: str, pending: List[dict]) -> None:
-    mute_script = os.path.join(_myhome, "ownerp_mute.py")
-    if not os.path.isfile(mute_script):
-        status("ownerp_mute.py fehlt – bitte ups erneut ausführen")
-        return
-    for number, area in enumerate(pending, 1):
-        print(f"  {number}) {HARDENING_CHECK_TITLES.get(area['check_id'], area['check_id'])}")
-    choice = _prompt("Welchen Bereich stummschalten? ")
-    if not choice or not choice.isdigit() or not 1 <= int(choice) <= len(pending):
-        return
-    reason = _prompt("Begründung (Pflicht): ")
-    if not reason:
-        status("Ohne Begründung wird nichts stummgeschaltet")
-        return
-    check_id = pending[int(choice) - 1]["check_id"]
-    run_command(f"{shlex.quote(sys.executable)} {shlex.quote(mute_script)} "
-                f"{shlex.quote(check_id)} --reason {shlex.quote(reason)}",
-                shell=True, interactive=True)
+    record_install("hardening", "installed", ", ".join(titles))
 
 
 def offer_security_hardening(_myhome: str) -> None:
@@ -5870,26 +5818,32 @@ def offer_security_hardening(_myhome: str) -> None:
         if not pending:
             return
 
-        print("\nSicherheits-Härtung: diese Bereiche weichen ab")
-        reboot_time = _auto_reboot_time(_myhome)
-        for area in pending:
-            title = HARDENING_CHECK_TITLES.get(area["check_id"], area["check_id"])
-            if reboot_time is not None and "auto_updates" in area.get("modules", []):
-                title += " (inkl. automatischem Neustart …)"
-            print(f"  – {title}")
-        print("  1) Jetzt beheben (Firewall/SSH nur nach Aussperr-Prüfung)")
-        print("  2) Befehle anzeigen")
-        print("  3) Später")
-        print("  4) Einen Bereich dauerhaft stummschalten")
-        choice = _prompt("Auswahl [3]: ", "3")
-        if choice == "1":
-            _apply_hardening(_myhome, script, pending)
-        elif choice == "2":
-            _print_hardening_commands(script, pending)
-        elif choice == "4":
-            _mute_hardening_area(_myhome, pending)
+        env_path = _hardening_env_path(_myhome)
+        env = _read_env_file(env_path) if env_path else {}
+        listen = _ssh_listen_ports()
+        port_change = _is_port_change(env, listen)
+        coupled = [a for a in pending if set(a["modules"]) & set(SSH_COUPLED_MODULES)]
+        if coupled:
+            blockers = _lockout_blockers(env, listen, _ssh_peers(listen) if listen else None)
+            if blockers:
+                # Firewall/SSH wait; the rest can still be offered.
+                names = ", ".join(HARDENING_CHECK_TITLES.get(a["check_id"], a["check_id"])
+                                  for a in coupled)
+                status(f"{names} warten: {blockers[0]}")
+                pending = [a for a in pending if a not in coupled]
+                port_change = False
+                if not pending:
+                    return
+
+        print("\n" + _hardening_question(pending, env, listen))
+        choice = _prompt("Härtung jetzt anwenden? (j/N): ", "n")
+        if choice is not None and choice.lower() in ("j", "ja", "y", "yes"):
+            _apply_hardening(_myhome, script, pending, port_change)
         else:
-            status("Später: chk zeigt die offenen Bereiche, ups fragt beim nächsten Mal erneut")
+            status("Später: ups fragt beim nächsten Mal erneut · Details: chk · Befehle: "
+                   f"python3 {script} --help · Bereich stummschalten: "
+                   f"python3 {os.path.join(_myhome, 'ownerp_mute.py')} <id> · "
+                   f"Nächtlicher Neustart bei Updates: python3 {script} --apply -m auto_updates")
     except KeyboardInterrupt:
         print()
         status("Härtungs-Angebot übersprungen (Ctrl-C) - ups läuft weiter")
@@ -6612,6 +6566,10 @@ def main() -> None:
 
         # Install all packages
         run_install_packages(package_info)
+
+        # A pending SSH port transition ends here once a login over the new
+        # port exists - before the audit below, which then sees the final state.
+        finish_ssh_transition(_myhome)
 
         # The maintenance schedule, once, on a host with Docker. Before the
         # offers below so the cron overview and readiness see it in place.
