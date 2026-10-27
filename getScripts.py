@@ -6278,6 +6278,35 @@ def main() -> None:
         # Correct the DNSSEC line earlier versions wrote (see RESOLVED_DNSSEC).
         ensure_resolved_dnssec_off()
 
+        # Copy fastfetch config
+        config_directory = os.path.join(_myhome, ".config", "fastfetch")
+        ensure_directory_exists(config_directory)
+        source_fastfetch = os.path.join(myodoo_docker, "scripts", "fastfetch", "config.jsonc")
+        target_fastfetch = os.path.join(config_directory, "config.jsonc")
+        deploy_fastfetch_config(source_fastfetch, target_fastfetch)
+
+        os.chdir(_myhome)
+
+        # Clean up old packages
+        if is_pip_package_installed("nginx-set-conf-equitania"):
+            logger.info("Removing nginx-set-conf-equitania...")
+            uninstall_pip_package("nginx-set-conf-equitania")
+
+        if is_pip_package_installed("odoo-fast-report-mapper-equitania"):
+            logger.info("Removing odoo-fast-report-mapper-equitania...")
+            uninstall_pip_package("odoo-fast-report-mapper-equitania")
+
+        # Read package versions from packages.txt
+        package_info = read_package_versions(os.path.join(myodoo_docker, "packages.txt"))
+
+        # Install all packages
+        install_packages(package_info)
+
+        # Everything below needs something install_packages() delivers: PyYAML
+        # for the migration and the validators, python3-dotenv for the hardening
+        # audit, mc for the hints the offers print. Until 27.10.2026 these ran
+        # first, and on a fresh host the audit reported `ssh.port invalid: ''`
+        # for a .env it had just been handed.
         # Convert leftover CSV configurations to YAML. Must run AFTER
         # copy_scripts (which delivers ownerp_migrate.py) and BEFORE the legacy
         # cleanup below, which is where the CSVs used to be destroyed.
@@ -6312,30 +6341,6 @@ def main() -> None:
             logger.info("Fish already installed - skipping legacy cleanup")
         else:
             logger.warning("Fish is not installed - skipping legacy cleanup")
-
-        # Copy fastfetch config
-        config_directory = os.path.join(_myhome, ".config", "fastfetch")
-        ensure_directory_exists(config_directory)
-        source_fastfetch = os.path.join(myodoo_docker, "scripts", "fastfetch", "config.jsonc")
-        target_fastfetch = os.path.join(config_directory, "config.jsonc")
-        deploy_fastfetch_config(source_fastfetch, target_fastfetch)
-
-        os.chdir(_myhome)
-
-        # Clean up old packages
-        if is_pip_package_installed("nginx-set-conf-equitania"):
-            logger.info("Removing nginx-set-conf-equitania...")
-            uninstall_pip_package("nginx-set-conf-equitania")
-
-        if is_pip_package_installed("odoo-fast-report-mapper-equitania"):
-            logger.info("Removing odoo-fast-report-mapper-equitania...")
-            uninstall_pip_package("odoo-fast-report-mapper-equitania")
-
-        # Read package versions from packages.txt
-        package_info = read_package_versions(os.path.join(myodoo_docker, "packages.txt"))
-
-        # Install all packages
-        install_packages(package_info)
 
         # =====================================================================
         # SHELL SETUP COMPLETION

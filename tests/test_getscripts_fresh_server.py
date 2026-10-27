@@ -168,5 +168,19 @@ class BasePackagesTest(unittest.TestCase):
         self.assertLess(source.index("ensure_base_packages("), source.index("install_fish_if_needed("))
 
 
+class MainOrderTest(unittest.TestCase):
+    """The checks run after the packages they need (PyYAML, python3-dotenv)."""
+
+    def test_offers_run_after_install_packages(self):
+        source = inspect.getsource(gs.main)
+        install = source.index("install_packages(")
+        for call in ("migrate_legacy_csv(", "offer_noconfig_recovery(",
+                     "offer_storage_driver_mute(", "offer_security_hardening(",
+                     "cleanup_legacy_files(_myhome, myodoo_docker)"):  # the call, not the comment mentioning it
+            self.assertLess(install, source.index(call), call)
+        self.assertLess(source.index("offer_security_hardening("),
+                        source.index("print_install_report("))
+
+
 if __name__ == "__main__":
     unittest.main()
