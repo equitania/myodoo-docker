@@ -103,5 +103,70 @@ class ProbeTest(unittest.TestCase):
         self.assertIn(("fish", "installed", "v4.9.3"), gs._install_report)
 
 
+class SudoStripTest(unittest.TestCase):
+    """As root the `sudo` word is dropped - a root-only Debian has no sudo package."""
+
+    def test_root_strips_leading_and_chained_sudo(self):
+        with mock.patch.object(gs.os, "geteuid", return_value=0):
+            self.assertEqual(gs.strip_sudo_for_root("sudo apt update"), "apt update")
+            self.assertEqual(gs.strip_sudo_for_root("curl -o k && sudo mv k /etc/k"),
+                             "curl -o k && mv k /etc/k")
+            self.assertEqual(gs.strip_sudo_for_root("a; sudo b | sudo c"), "a; b | c")
+            self.assertEqual(gs.strip_sudo_for_root('echo "sudo x"'), 'echo "sudo x"')
+
+    def test_non_root_keeps_sudo(self):
+        with mock.patch.object(gs.os, "geteuid", return_value=1000):
+            self.assertEqual(gs.strip_sudo_for_root("sudo apt update"), "sudo apt update")
+
+    def test_run_command_applies_stripping(self):
+        with mock.patch.object(gs.os, "geteuid", return_value=0), \
+             mock.patch.object(gs.subprocess, "run") as run:
+            run.return_value = subprocess.CompletedProcess(["apt"], 0, b"", b"")
+            gs.run_command("sudo apt update", capture_output=True)
+        self.assertEqual(run.call_args.args[0], ["apt", "update"])
+
+
+class WriteSystemFileTest(unittest.TestCase):
+    def test_root_writes_directly(self):
+        target = os.path.join(tempfile.mkdtemp(), "sub", "f.list")
+        with mock.patch.object(gs.os, "geteuid", return_value=0), \
+             mock.patch.object(gs.subprocess, "run") as run:
+            gs.write_system_file(target, "deb x /\n")
+        run.assert_not_called()
+        self.assertEqual(open(target).read(), "deb x /\n")
+
+    def test_root_appends(self):
+        target = os.path.join(tempfile.mkdtemp(), "shells")
+        open(target, "w").write("/bin/bash\n")
+        with mock.patch.object(gs.os, "geteuid", return_value=0):
+            gs.write_system_file(target, "/usr/bin/fish\n", append=True)
+        self.assertEqual(open(target).read(), "/bin/bash\n/usr/bin/fish\n")
+
+    def test_non_root_uses_sudo_tee(self):
+        with mock.patch.object(gs.os, "geteuid", return_value=1000), \
+             mock.patch.object(gs.subprocess, "run") as run:
+            gs.write_system_file("/etc/x", "y", append=True)
+        self.assertEqual(run.call_args.args[0], ["sudo", "tee", "-a", "/etc/x"])
+        self.assertEqual(run.call_args.kwargs["input"], b"y")
+
+
+class BasePackagesTest(unittest.TestCase):
+    def test_installs_curl_when_missing(self):
+        with mock.patch.object(gs.shutil, "which", return_value=None), \
+             mock.patch.object(gs, "install_system_package") as inst:
+            gs.ensure_base_packages()
+        self.assertEqual([c.args[0] for c in inst.call_args_list], ["curl", "ca-certificates"])
+
+    def test_silent_when_curl_present(self):
+        with mock.patch.object(gs.shutil, "which", return_value="/usr/bin/curl"), \
+             mock.patch.object(gs, "install_system_package") as inst:
+            gs.ensure_base_packages()
+        inst.assert_not_called()
+
+    def test_main_installs_base_packages_before_fish(self):
+        source = inspect.getsource(gs.main)
+        self.assertLess(source.index("ensure_base_packages("), source.index("install_fish_if_needed("))
+
+
 if __name__ == "__main__":
     unittest.main()

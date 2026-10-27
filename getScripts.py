@@ -692,10 +692,7 @@ def install_fish_if_needed() -> Tuple[bool, bool]:
 
                 # Add repository
                 repo_list_content = f"deb {repo_url} /"
-                subprocess.run(
-                    ["sudo", "tee", repo_list_path],
-                    input=repo_list_content.encode(), check=True, stdout=subprocess.DEVNULL
-                )
+                write_system_file(repo_list_path, repo_list_content)
 
                 # Import signing key as ASCII-armored .asc (supported since apt 1.4,
                 # Debian 9+) - avoids dependency on gnupg, which minimal images lack.
@@ -1150,7 +1147,7 @@ def prompt_shell_change(_myhome: str) -> bool:
                     shells = f.read()
                 if fish_path not in shells:
                     logger.info(f"Adding {fish_path} to /etc/shells")
-                    subprocess.run(["sudo", "tee", "-a", "/etc/shells"], input=f"{fish_path}\n".encode(), stdout=subprocess.DEVNULL)
+                    write_system_file("/etc/shells", f"{fish_path}\n", append=True)
 
                 # Change shell
                 logger.info(f"Changing default shell to {fish_path}")
@@ -1580,6 +1577,40 @@ def _child_output_excerpt(result: subprocess.CompletedProcess) -> str:
     return "\n".join(lines)
 
 
+# `sudo` in command position: at the start, or right after a shell operator.
+# Quoted occurrences ('echo "sudo x"') are preceded by a quote and stay.
+_SUDO_PREFIX_RE = re.compile(r"(^|[;&|]\s*)sudo\s+")
+
+
+def strip_sudo_for_root(command: str) -> str:
+    """Drop every command-position `sudo` when this process already is root.
+
+    Every privileged command in this script is spelled `sudo …`, although
+    `ups` runs it as root. A minimal Debian installed root-only has no sudo
+    package, and on 27.10.2026 such a host failed every apt call and aborted
+    in install_packages() - the spelling was the only reason. Nothing is
+    stripped for a normal user: there sudo is the privilege, not a word.
+    """
+    if os.geteuid() != 0:
+        return command
+    return _SUDO_PREFIX_RE.sub(r"\1", command)
+
+
+def write_system_file(path: str, content: str, append: bool = False) -> None:
+    """Write (or append to) a root-owned file: directly as root, via `sudo tee`
+    otherwise. The seven `subprocess.run(["sudo", "tee", …])` calls this
+    replaces could not run on a root-only host without the sudo package."""
+    if os.geteuid() == 0:
+        directory = os.path.dirname(path)
+        if directory:
+            os.makedirs(directory, exist_ok=True)
+        with open(path, "a" if append else "w", encoding="utf-8") as handle:
+            handle.write(content)
+        return
+    argv = ["sudo", "tee"] + (["-a"] if append else []) + [path]
+    subprocess.run(argv, input=content.encode(), check=True, stdout=subprocess.DEVNULL)
+
+
 def run_command(command: str, check: bool = False, shell: bool = False, capture_output: bool = False,
                  retries: int = 0, interactive: bool = False,
                  timeout: Optional[float] = None, env: Optional[dict] = None) -> subprocess.CompletedProcess:
@@ -1608,6 +1639,9 @@ def run_command(command: str, check: bool = False, shell: bool = False, capture_
     Raises:
         CommandError: If command fails and check=True
     """
+    # As root the sudo word is dropped (a root-only host has no sudo package).
+    command = strip_sudo_for_root(command)
+
     # If the command contains shell operators like |, &&, ||, >, <, etc., force shell=True
     if any(op in command for op in ['|', '&&', '||', '>', '<', '>>', '<<']):
         shell = True
@@ -2182,6 +2216,24 @@ def install_system_package(package: str, version: Optional[str] = None) -> None:
 
     except Exception as e:
         raise InstallationError(f"Failed to install {package}: {str(e)}") from e
+
+def ensure_base_packages() -> None:
+    """Install curl and ca-certificates when curl is missing.
+
+    git is present by construction - the repository was just cloned - but a
+    minimal Debian ships without curl, and the Fish key import, Starship and
+    uv all download with it. bootstrap.sh installs the same packages; this is
+    the path for a server set up without it.
+    """
+    if shutil.which("curl"):
+        return
+    try:
+        install_system_package("curl")
+        install_system_package("ca-certificates")
+        record_install("base packages", "installed", "curl, ca-certificates")
+    except InstallationError as e:
+        record_install("base packages", "failed", str(e))
+
 
 def get_bat_version() -> Optional[tuple]:
     """Get installed bat version as tuple (major, minor, patch)"""
@@ -6175,6 +6227,11 @@ def main() -> None:
             logger.error(f"Please check network connectivity and permissions")
             sys.exit(1)
 
+        # curl before anything that downloads (Fish key, Starship, uv): a
+        # minimal image ships without it, and every step then fails one after
+        # another with "curl: not found" in the log.
+        ensure_base_packages()
+
         # =====================================================================
         # FISH SHELL SETUP (New in v7.0.0)
         # =====================================================================
@@ -6668,7 +6725,7 @@ set -gx NO_PROXY "{no_proxy}"
 
             new_content = '\n'.join(line for line in lines if line.strip())
 
-            subprocess.run(["sudo", "tee", env_file], input=new_content.encode(), check=True, stdout=subprocess.DEVNULL)
+            write_system_file(env_file, new_content)
             status("System environment proxy configuration applied")
         except Exception as e:
             logger.warning(f"Could not apply system-wide proxy: {e}")
@@ -6692,9 +6749,9 @@ set -gx NO_PROXY "{no_proxy}"
                 f'Environment="HTTPS_PROXY={https_proxy}"\n'
                 f'Environment="NO_PROXY={no_proxy}"\n'
             )
-            subprocess.run(["sudo", "mkdir", "-p", dropin_dir], check=True)
-            subprocess.run(["sudo", "tee", dropin_file], input=dropin_content.encode(), check=True, stdout=subprocess.DEVNULL)
-            subprocess.run(["sudo", "systemctl", "daemon-reload"], check=True)
+            run_command(f"sudo mkdir -p {dropin_dir}", check=True)
+            write_system_file(dropin_file, dropin_content)
+            run_command("sudo systemctl daemon-reload", check=True)
             status("Docker daemon proxy drop-in written")
             # Deliberately no automatic restart: restarting dockerd restarts
             # all containers. The operator must schedule this.
@@ -6838,7 +6895,7 @@ Cache=yes
 CacheFromLocalhost=yes
 """
             run_command("sudo mkdir -p /etc/systemd/resolved.conf.d", check=True)
-            subprocess.run(["sudo", "tee", "/etc/systemd/resolved.conf.d/dns-optimization.conf"], input=config_content.encode(), check=True, stdout=subprocess.DEVNULL)
+            write_system_file("/etc/systemd/resolved.conf.d/dns-optimization.conf", config_content)
             run_command("sudo systemctl restart systemd-resolved", check=True)
 
         elif dns_info["resolvconf"]:
@@ -6846,7 +6903,7 @@ CacheFromLocalhost=yes
             config_content = f"""# DNS servers - managed by getScripts.py
 {dns_nameservers}
 """
-            subprocess.run(["sudo", "tee", "/etc/resolvconf/resolv.conf.d/head"], input=config_content.encode(), check=True, stdout=subprocess.DEVNULL)
+            write_system_file("/etc/resolvconf/resolv.conf.d/head", config_content)
             run_command("sudo resolvconf -u", check=True)
 
         else:
@@ -6860,7 +6917,7 @@ options timeout:2 attempts:3 rotate
             run_command("sudo cp /etc/resolv.conf /etc/resolv.conf.backup.$(date +%Y%m%d_%H%M%S)", shell=True, check=True)
             run_command("sudo chattr -i /etc/resolv.conf 2>/dev/null || true", shell=True, check=True)
             run_command("sudo test -L /etc/resolv.conf && sudo rm /etc/resolv.conf || true", shell=True, check=True)
-            subprocess.run(["sudo", "tee", "/etc/resolv.conf"], input=config_content.encode(), check=True, stdout=subprocess.DEVNULL)
+            write_system_file("/etc/resolv.conf", config_content)
             run_command("sudo chattr +i /etc/resolv.conf", check=True)
 
         # Mark as optimized
