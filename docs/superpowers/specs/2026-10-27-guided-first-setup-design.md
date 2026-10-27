@@ -143,8 +143,10 @@ port as a single line (`22`). Written and removed only by server_hardening.
   3. Writes the marker, then applies `ufw` (SSH_PORT from the admin
      addresses, 80/443 public, `ufw enable`) plus the transitional rules
      `ufw allow from <ip> to any port OLD proto tcp` per admin address,
-     then `fail2ban`, `auto_updates`, `docker`, `aide` as `--apply` does
-     today, and finally the `ssh` module.
+     then `fail2ban` and the `ssh` module. The other modules (kernel,
+     updates, docker, aide) stay with getScripts' `--apply` calls, which
+     keep the Docker-restart logic. *(Changed during implementation: `begin`
+     owns the SSH-coupled modules only.)*
 - `audit_ssh` / `apply` of the `ssh` module become transition-aware: with the
   marker present, the expected `Port` set is `{OLD, NEW}` and the apply path
   writes both lines; without the marker it is `{NEW}` as today. The audit
@@ -232,8 +234,9 @@ docs; the transition and its `chk` line replace them.
 - The local banner check uses `socket.create_connection(("127.0.0.1", NEW),
   timeout=5)`; it proves sshd listens, not that the port is reachable from
   outside. The observed login (component 3, finish) proves the latter.
-- `ufw allow … port OLD` transitional rules are recognisable by their
-  comment `myodoo ssh-transition` so `finish` deletes exactly those.
+- The transitional `ufw allow from <ip> to any port OLD proto tcp` rules
+  are deleted by `finish` by address and port (one `ufw delete` per admin
+  IP); ufw rule comments are not used. *(Changed during implementation.)*
 - `is_fresh_server()` reuses `_any_containers()` (`docker ps -aq`); a Docker
   daemon that does not answer gives `None`, which is not fresh.
 - Non-TTY runs (cron, `ups` from a script) never apply hardening; they print

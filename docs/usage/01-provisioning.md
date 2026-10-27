@@ -256,30 +256,34 @@ passiert:
    aufnehmen — sie werden genannt, ihre UFW-Regeln bleiben bestehen, weil die
    Härtung Regeln nur hinzufügt. Eine bestehende `/root/.env` (Alt-Pfad) wird unverändert
    übernommen, nie überschrieben.
-2. **Weicht danach noch ein Bereich ab**, erscheint ein Menü: `1)` jetzt
-   beheben `2)` Befehle anzeigen `3)` später `4)` einen Bereich dauerhaft
-   stummschalten (`ownerp_mute.py <check_id> --reason "…"`).
-3. **„Jetzt beheben“ wendet die unkritischen Module direkt an**
-   (sysctl, Kernel-Module, Auto-Updates, auditd, AIDE). Steht in
-   `hardening_config.yaml` `auto_reboot: true`, fragen die Auto-Updates
-   vorher gesondert nach und nennen die Uhrzeit des nächtlichen Neustarts;
-   ohne ausdrückliches „j“ bleiben sie weg, und `ups` druckt den Befehl für
-   später. `fail2ban` gehört
-   nicht dazu, wenn ein Portwechsel ansteht oder `sshd -T` den Port nicht
-   lesen kann — seine sshd-Jail folgt `SSH_PORT`, deshalb wartet sie dann
-   ebenfalls (Portwechsel-Schritte bzw. Hinweis auf den unbekannten Port);
-   sonst läuft sie mit den unkritischen Modulen mit. **Firewall
-   und SSH nur nach einer Aussperr-Prüfung**: jede bestehende SSH-Verbindung
-   muss von einer erlaubten IP kommen, sshd muss **ausschließlich** auf
-   `SSH_PORT` lauschen (lauscht er zusätzlich auf einem zweiten Port, zählt
-   das als Portwechsel — das SSH-Modul würde den anderen Port streichen),
-   und `ssh.socket` darf nicht aktiv sein.
-   Schlägt die Prüfung fehl, druckt `ups` die Befehle statt sie auszuführen —
-   bei einem Port-Unterschied die sechs Schritte aus
-   *SSH-Port wechseln* unten. Das `docker`-Modul unterliegt dieser
-   Aussperr-Prüfung nicht — sein einziges Gate ist die Container-Prüfung im
-   nächsten Punkt.
-4. **Was `ups` nie tut**: den SSH-Port ändern, und den Docker-Daemon
+2. **Weicht danach noch ein Bereich ab**, nennt `ups` ihn und sagt in einem
+   Absatz, was Anwenden heißt: neuer SSH-Port statt des alten (wenn
+   `SSH_PORT` vom Live-Port abweicht), Zugriff nur von den Admin-Adressen,
+   Firewall an, fail2ban, automatische Sicherheitsupdates ohne nächtlichen
+   Neustart. Dann **eine** Frage: „Härtung jetzt anwenden? (j/N)“. Alles
+   außer `j` lässt den Server, wie er ist; die Zeile „Später“ nennt `chk`,
+   `server_hardening.py --help`, `ownerp_mute.py <check_id>` (einen Bereich
+   dauerhaft stummschalten) und den Befehl für den nächtlichen Neustart
+   (`server_hardening.py --apply -m auto_updates`).
+3. **„j“ mit Portwechsel startet den Übergang** (`server_hardening.py
+   --ssh-transition begin`, seit 9.35.0/1.12.0): sshd lauscht zusätzlich auf
+   dem neuen Port (Kandidat mit `sshd -t` geprüft, Reload, Verbindung auf
+   den neuen Port; schlägt das fehl, wird die Sicherung zurückgespielt und
+   nichts weiter angefasst), die Firewall lässt alten und neuen Port für die
+   Admin-Adressen zu, fail2ban überwacht beide, dann folgen die übrigen
+   Module. Der alte Port bleibt offen, bis einmal eine Anmeldung über den
+   neuen Port von einer Admin-Adresse zu sehen ist — der nächste `ups`
+   schließt ihn dann (`ssh port: updated` im Install-Report); bis dahin
+   meldet `chk` „Portwechsel läuft: anmelden über <Port>, dann ups“. Eine
+   vorgeschaltete Anbieter-Firewall (Hetzner Cloud Firewall, Security Group)
+   muss den neuen Port offen haben — die Frage sagt das. Ohne Portwechsel
+   laufen die Module wie bisher: unkritische zuerst, dann ufw/fail2ban/ssh,
+   Docker, AIDE.
+4. **Was `ups` nicht tut**: ohne Aussperr-Prüfung an Firewall, fail2ban
+   oder SSH gehen — jede bestehende SSH-Verbindung muss von einer
+   Admin-Adresse kommen, die `.env` braucht mindestens eine, `sshd -T` und
+   `ss` müssen lesbar sein; sonst warten diese drei Bereiche mit einer
+   Statuszeile, die übrigen werden trotzdem angeboten. Und den Docker-Daemon
    neustarten, solange irgendein Container existiert — auch ein gestoppter
    trägt `--restart=always` und würde beim Neustart ungefragt wieder anlaufen
    — oder die `docker`-Härtung selbst fehlschlug. `daemon.json` wird
@@ -307,18 +311,30 @@ IPs, damit man sich nicht aussperrt. Einzelne Module gezielt:
 <a id="de-5a-ssh-port-wechseln"></a>
 ### SSH-Port wechseln
 
-Kein Skript ändert den SSH-Port automatisch — die Firewall/Security Group
-des Anbieters muss den neuen Port zuerst öffnen, und das sieht kein Skript
-auf dem Host. Reihenfolge, am 28.09.2026 so durchgespielt:
+Der Portwechsel ist ein **Übergang** (seit getScripts 9.35.0 /
+server_hardening 1.12.0): sshd lauscht eine Zeit lang auf dem alten und dem
+neuen Port, die Firewall lässt beide für die Admin-Adressen zu, und der alte
+Port schließt sich erst, wenn eine Anmeldung über den neuen Port von einer
+Admin-Adresse gesehen wurde. Was kein Skript sieht, bleibt beim Anbieter: eine
+vorgeschaltete Firewall/Security Group muss den neuen Port offen haben.
 
 1. Neuen Port in der Firewall/Security Group des Anbieters für die
    Admin-IPs öffnen (alten Port offen lassen)
-2. `SSH_PORT` in `/root/.config/myodoo-docker/.env` auf den neuen Port setzen
-3. `sudo python3 /root/server_hardening.py --apply -f -m ufw fail2ban ssh`
-4. In einem zweiten Terminal auf dem neuen Port anmelden — die alte Sitzung
-   offen lassen
-5. Alte UFW-Regel löschen: `ufw delete allow from 192.0.2.10 to any port <alter Port>`
-6. Alten Port beim Anbieter schließen
+2. `SSH_PORT` in `/root/.config/myodoo-docker/.env` auf den neuen Port
+   setzen — auf einem frischen Server hat der Erstlauf das schon erledigt
+3. `ups` und die Frage „Härtung jetzt anwenden?“ mit `j` beantworten, oder
+   von Hand: `sudo python3 /root/server_hardening.py --ssh-transition begin`
+4. Auf dem neuen Port anmelden und `ups` ausführen (oder
+   `sudo python3 /root/server_hardening.py --ssh-transition finish`) — das
+   schließt den alten Port in sshd und UFW und entfernt die Übergangsmarke
+   `/root/.config/myodoo-docker/ssh-transition`
+5. Alten Port beim Anbieter schließen
+
+`sudo python3 /root/server_hardening.py --ssh-transition status` zeigt
+`none` oder `pending <alt> -> <neu>`. Ein Drop-in unter
+`/etc/ssh/sshd_config.d/` mit eigener `Port`-Zeile lehnt `begin` ab und nennt
+die Datei; auf Ubuntu schaltet `begin` von `ssh.socket` auf `ssh.service` um,
+weil der Socket die `Port`-Zeile sonst überstimmt.
 
 <a id="de-5b-cloud-images-root-gesperrt"></a>
 ### Cloud-Images: root gesperrt
@@ -582,31 +598,38 @@ already ran this along the way; this is what happens under the hood:
    `ALLOWED_IP` — they are named, and their ufw rules stay, because the
    hardening only adds rules. An existing `/root/.env` (legacy path) is used as is and never
    overwritten.
-2. **If any area still deviates afterwards**, a menu appears: `1)` fix now
-   `2)` show the commands `3)` later `4)` permanently mute one area
-   (`ownerp_mute.py <check_id> --reason "…"`).
-3. **"Fix now" applies the harmless modules directly** (sysctl, kernel
-   modules, auto-updates, auditd, AIDE). If `hardening_config.yaml` sets
-   `auto_reboot: true`, the auto-updates ask separately first and name the
-   time of the nightly reboot; without an explicit "j" they are left out and
-   `ups` prints the command for later. `fail2ban` is not among them when a
-   port change is pending or `sshd -T` cannot read the port — its sshd jail
-   follows `SSH_PORT`, so it waits too (printing the port-change steps, or a
-   note about the unreadable port); otherwise it applies along with the
-   harmless group. **Firewall and SSH only after a lockout check**: every
-   established SSH connection must come from an allowlisted IP, sshd must
-   listen on `SSH_PORT` **only** (a second listening port counts as a port
-   change — the SSH module would drop the other port), and `ssh.socket`
-   must not be active. When that check fails, `ups` prints the commands instead of
-   running them — on a port mismatch, the six steps from *Changing the SSH
-   port* below. The `docker` module is not subject to this lockout check —
-   its only gate is the container check in the next point.
-4. **What `ups` never does**: change the SSH port, or restart the Docker
-   daemon while any container exists — a stopped one still carries
-   `--restart=always` and would come back unasked on the restart — or after
-   the `docker` hardening itself failed to apply. `daemon.json` is still
-   written; the restart only runs when the apply succeeded *and* no
-   container exists, otherwise it is printed as a maintenance-window hint.
+2. **If any area still deviates afterwards**, `ups` names it and says in
+   one paragraph what applying means: the new SSH port instead of the old
+   one (when `SSH_PORT` differs from the live port), access only from the
+   admin addresses, firewall on, fail2ban, automatic security updates
+   without the nightly reboot. Then **one** question: "Härtung jetzt
+   anwenden? (j/N)". Anything but `j` leaves the server as it is; the
+   "Später" line names `chk`, `server_hardening.py --help`,
+   `ownerp_mute.py <check_id>` (mute one area permanently) and the command
+   for the nightly reboot (`server_hardening.py --apply -m auto_updates`).
+3. **"j" with a port change starts the transition** (`server_hardening.py
+   --ssh-transition begin`, since 9.35.0/1.12.0): sshd listens on the new
+   port in addition to the old one (candidate checked with `sshd -t`,
+   reload, a connection to the new port; on failure the backup is restored
+   and nothing else is touched), the firewall admits old and new port for
+   the admin addresses, fail2ban watches both, then the remaining modules
+   follow. The old port stays open until a login over the new port from an
+   admin address has been seen — the next `ups` then closes it (`ssh port:
+   updated` in the install report); until then `chk` reports "Portwechsel
+   läuft: anmelden über <port>, dann ups". A provider firewall in front
+   (Hetzner Cloud Firewall, security group) must have the new port open —
+   the question says so. Without a port change the modules run as before:
+   harmless ones first, then ufw/fail2ban/ssh, Docker, AIDE.
+4. **What `ups` does not do**: touch firewall, fail2ban or SSH without a
+   lockout check — every established SSH connection must come from an admin
+   address, the `.env` needs at least one, `sshd -T` and `ss` must be
+   readable; otherwise those three areas wait with one status line and the
+   rest is still offered. And restart the Docker daemon while any container
+   exists — a stopped one still carries `--restart=always` and would come
+   back unasked on the restart — or after the `docker` hardening itself
+   failed to apply. `daemon.json` is still written; the restart only runs
+   when the apply succeeded *and* no container exists, otherwise it is
+   printed as a maintenance-window hint.
 
 Without a terminal (cron, CI) only `chk` reports the open areas — `ups` asks
 nothing there.
@@ -628,17 +651,30 @@ so you cannot lock yourself out. Target individual modules with
 <a id="en-5a-changing-the-ssh-port"></a>
 ### Changing the SSH port
 
-No script changes the SSH port automatically — the provider's
-firewall/security group must open the new port first, and nothing on the
-host can see that. The sequence, proven on 28.09.2026:
+The port change is a **transition** (since getScripts 9.35.0 /
+server_hardening 1.12.0): for a while sshd listens on the old and the new
+port, the firewall admits both for the admin addresses, and the old port
+closes only once a login over the new port from an admin address has been
+seen. What no script can see stays with the provider: a firewall/security
+group in front must have the new port open.
 
 1. Open the new port in the provider's firewall/security group for the
    admin IPs (leave the old port open)
-2. Set `SSH_PORT` in `/root/.config/myodoo-docker/.env` to the new port
-3. `sudo python3 /root/server_hardening.py --apply -f -m ufw fail2ban ssh`
-4. Log in on the new port from a second terminal — keep the old session open
-5. Delete the old UFW rule: `ufw delete allow from 192.0.2.10 to any port <old port>`
-6. Close the old port at the provider
+2. Set `SSH_PORT` in `/root/.config/myodoo-docker/.env` to the new port —
+   on a fresh server the first-run dialogue has done that already
+3. Run `ups` and answer "Härtung jetzt anwenden?" with `j`, or by hand:
+   `sudo python3 /root/server_hardening.py --ssh-transition begin`
+4. Log in on the new port and run `ups` (or
+   `sudo python3 /root/server_hardening.py --ssh-transition finish`) — that
+   closes the old port in sshd and UFW and removes the transition marker
+   `/root/.config/myodoo-docker/ssh-transition`
+5. Close the old port at the provider
+
+`sudo python3 /root/server_hardening.py --ssh-transition status` prints
+`none` or `pending <old> -> <new>`. A drop-in under
+`/etc/ssh/sshd_config.d/` with its own `Port` line makes `begin` refuse and
+name the file; on Ubuntu `begin` switches from `ssh.socket` to `ssh.service`,
+because the socket would otherwise override the `Port` line.
 
 <a id="en-5b-cloud-images-root-locked"></a>
 ### Cloud images: root locked

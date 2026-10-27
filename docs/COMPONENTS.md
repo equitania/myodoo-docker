@@ -11,9 +11,29 @@ in this repository, stay in `CLAUDE.md`.
 
 ### Key Components
 
-#### 1. getScripts.py (v9.34.0)
+#### 1. getScripts.py (v9.35.0)
 - **Purpose**: Main installation and update script
 - **Features**:
+  - Guided first setup (v9.35.0, 27.10.2026): `ensure_maintenance_cron()`
+    runs `setup-maintenance-cron.sh` once when `/etc/cron.d/myodoo-maintenance`
+    is missing and Docker is present (never again — re-running resets
+    `docron` edits). `is_fresh_server()` (Docker, zero containers, no YAML)
+    silences `offer_noconfig_recovery()` and ends the run with `Noch keine
+    Odoo-Instanz. Nächster Schritt: wizup`. The hardening offer is **one
+    question**: `_hardening_question()` says what applying means (new port
+    instead of the live one, admin addresses, firewall, fail2ban, updates
+    *without* the nightly reboot — `_hardening_command()` always passes
+    `--no-reboot`), then `Härtung jetzt anwenden? (j/N)`; the four-option menu,
+    `PORT_CHANGE_STEPS` and the separate reboot prompt are gone, the "Später"
+    line names `chk`, `--help`, `ownerp_mute.py` and the reboot command. A
+    pending port change runs `server_hardening.py --ssh-transition begin`
+    (which applies ufw/fail2ban/ssh with both ports open); every run starts
+    with `finish_ssh_transition()`, which turns `--ssh-transition finish`'s
+    one-line verdict into `ssh port: updated|ok|failed`. `_lockout_blockers()`
+    keeps no-admin-IPs, unreadable sshd/ss and a foreign live session, and
+    drops the port-change and `ssh.socket` blockers the transition handles;
+    when it blocks, the SSH-coupled areas wait with a status line and the
+    rest is still offered
   - First run on a fresh server (v9.34.0, 27.10.2026): `offer_bootstrap()`
     runs right after the clone and, when `docker` is missing, offers to run
     `scripts/bootstrap.sh` from the repository (`RUN_GETSCRIPTS=0` as the
@@ -136,7 +156,8 @@ in this repository, stay in `CLAUDE.md`.
     on purpose still carries `--restart=always` and would come back on the
     restart) — a failed apply is reported and skips the restart outright, a
     successful one with any container present prints a maintenance-window
-    hint instead. Never changes the SSH port. Any failure anywhere in the
+    hint instead. Never changed the SSH port itself (until v9.34.0; the
+    transition of v9.35.0 above does). Any failure anywhere in the
     gate — including Ctrl-C — is "skip", never a broken `ups`
   - `copy_scripts()` (v9.26.0, 28.09.2026) now also delivers
     `server_hardening.py` and `hardening_config.yaml`, so
@@ -655,7 +676,13 @@ in this repository, stay in `CLAUDE.md`.
   `setup-maintenance-cron.sh` restores the repository schedule and discards the
   customisation — that is its job, and the tool says so before it writes
 
-#### 9. ownerp_migrate.py (v1.5.1)
+#### 9. ownerp_migrate.py (v1.6.0)
+- **v1.6.0 (27.10.2026):** Docker present but no container at all is a fresh
+  server waiting for its first instance: the no-CSV/no-YAML path prints
+  `No Odoo instance yet — create the first one with: wizup` instead of the
+  `--from-docker` hint, and stays silent under `--quiet` (ups names the next
+  step itself). `_container_count()` (`docker ps -aq`) tells zero from a
+  daemon that does not answer (None keeps the old hint)
 - **v1.5.1 (27.10.2026):** no CSV, no YAML and no Docker is a fresh server —
   the hint names `bootstrap.sh` (ups offers it) and `wizup` instead of
   `--from-docker`
@@ -991,7 +1018,14 @@ in this repository, stay in `CLAUDE.md`.
   risk an expiry would guard against — a mute nobody remembers — is already
   covered by the visible `[MUTED]` line and the count in every summary
 
-#### 16. server-readiness.py (v1.15.0)
+#### 16. server-readiness.py (v1.16.0)
+- **v1.16.0 (27.10.2026):** `backup_config`, `update_config` and
+  `backup_recency` are SKIP `no Odoo instance yet — wizup` when the file is
+  missing, Docker is present and `_container_count() == 0`; a present config
+  on a host whose containers are gone stays FAIL. A missing backup log with
+  the maintenance cron installed names `wizbk` as the fix, not the cron setup.
+  A pending SSH port transition surfaces as the audit's own WARN line
+  (`Portwechsel läuft: anmelden über <port>, dann ups`)
 - **v1.15.0 (27.10.2026):** `backup_config` and `backup_recency` SKIP with
   "docker not installed", like `update_config` — a host without Docker is a
   fresh server, not a broken one.
@@ -1032,7 +1066,7 @@ in this repository, stay in `CLAUDE.md`.
   auto-fixed (needs a password). On a host with no container at all,
   `check_backup_config`/`check_update_config` point at `wizup` (add the
   first instance) instead of `ownerp_migrate.py --from-docker`, which has
-  nothing to rebuild from there
+  nothing to rebuild from there (SKIP since v1.16.0)
 - **`hardening_env` names the fix that works** (v1.11.1, 29.09.2026). A
   `.env` that exists but was not loaded (no `python3-dotenv`) is reported as
   exactly that, before any audit error — otherwise the operator saw
@@ -1101,7 +1135,28 @@ in this repository, stay in `CLAUDE.md`.
   job that in fact never ran. See `ownerp_cron.py` above, which fixes the
   backup's location for the same reason
 
-#### 17. server_hardening.py (v1.11.1)
+#### 17. server_hardening.py (v1.12.0)
+- **SSH port change as a transition** (v1.12.0, 27.10.2026):
+  `--ssh-transition begin` makes sshd listen on the old *and* the new port
+  (`_rewrite_ports()` replaces every `Port` line, `sshd -t` on a temp file,
+  backup, atomic replace, `systemctl reload ssh`, then `sshd -T` and an SSH
+  banner on the new port — any failure restores the backup), writes the
+  marker `/root/.config/myodoo-docker/ssh-transition` (`"<old> <new>"`), and
+  applies `ufw`, `fail2ban` and `ssh` with both ports admitted
+  (`apply_transition_to_config()` adds a transitional `restricted_ports`
+  entry for the old port and sets the sshd jail to `old,new`). It refuses on
+  a marker that contradicts `SSH_PORT`, no `ALLOWED_IP_n`, unreadable sshd,
+  a `Port` line in a `sshd_config.d` drop-in (named), a new port held by
+  another process, or an established SSH peer outside the allowlist; an
+  active `ssh.socket` is switched to `ssh.service` first. `--ssh-transition
+  finish` closes the old port only after an established session on the new
+  port from an admin address exists (single `Port` line, `ufw delete` per
+  admin IP, marker removed) and prints exactly one line: `none | pending
+  OLD -> NEW | closed OLD -> NEW`; `status` prints the same without touching
+  anything (no root needed). While the marker exists `audit_ssh` expects both
+  ports and reports `Portwechsel läuft: anmelden über NEW, dann ups` as a
+  warn. `--no-reboot` applies `auto_updates` with `Automatic-Reboot "false"`
+  regardless of `auto_reboot` in the config
 - **nginx-bad-request watches the vhost logs** (v1.11.1, 12.10.2026):
   `nginx.conf` switches the global `access.log` off and nginx-set-conf vhosts
   write `/var/log/nginx/<domain>-access.log`, so the jail now reads

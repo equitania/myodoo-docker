@@ -41,7 +41,7 @@ Die Tools sind auf einen klaren Ablauf abgestimmt:
 2. **`getScripts.py`** — Fish-Shell, Aliase/Funktionen und alle Verwaltungsskripte nach `/root`.
 3. **`.env` pflegen** — `/root/.config/myodoo-docker/.env` (SSH-Port, erlaubte IPs) für die Härtung.
 4. **`server_hardening.py`** — erst Audit (ohne `--apply`), dann `--apply` (UFW, fail2ban, SSH, sysctl, auditd, AIDE …).
-5. **`setup-maintenance-cron.sh`** — Wartungs-Cron (Backup, Cert-Erneuerung, DSGVO-Weblog-Bereinigung), nachdem `container2backup.yaml` konfiguriert ist.
+5. **`setup-maintenance-cron.sh`** — Wartungs-Cron (Backup, Cert-Erneuerung, DSGVO-Weblog-Bereinigung); seit getScripts 9.35.0 legt `ups` ihn selbst an, sobald Docker da ist — das Skript bleibt für `--remove`.
 
 ### Hauptkomponenten
 
@@ -294,7 +294,7 @@ The tools follow a clear sequence:
 2. **`getScripts.py`** — Fish shell, aliases/functions, and all management scripts into `/root`.
 3. **Fill `.env`** — `/root/.config/myodoo-docker/.env` (SSH port, allowed IPs) for hardening.
 4. **`server_hardening.py`** — audit first (no `--apply`), then `--apply` (UFW, fail2ban, SSH, sysctl, auditd, AIDE …).
-5. **`setup-maintenance-cron.sh`** — maintenance cron (backup, cert renewal, DSGVO weblog purge) once `container2backup.yaml` is configured.
+5. **`setup-maintenance-cron.sh`** — maintenance cron (backup, cert renewal, DSGVO weblog purge); since getScripts 9.35.0 `ups` installs it itself once Docker is present — the script remains for `--remove`.
 
 ### Main Components
 

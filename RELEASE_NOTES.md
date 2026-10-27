@@ -1,5 +1,89 @@
 # Release Notes
 
+## Guided First Setup (27.10.2026)
+
+*getScripts.py v9.35.0 · scripts/server_hardening.py v1.12.0 ·
+scripts/server-readiness.py v1.16.0 · scripts/ownerp_migrate.py v1.6.0 ·
+ReadMe.md · docs/usage/01-provisioning.md · docs/usage/09-reference.md ·
+docs/COMPONENTS.md · usage/AGENT.md*
+
+The 9.34.0 rollout on two empty Debian 13 hosts worked and still left the
+operator confused: the readiness report told them to install the maintenance
+cron by hand, the next `ups` opened a recovery dialogue about containers that
+did not exist, and the hardening offer refused the very port change the
+operator had just typed in and pointed at six manual steps. Decision: the
+values are collected once, the installation runs through, and at the end one
+explicit question applies the hardening — port change included. Design:
+`docs/superpowers/specs/2026-10-27-guided-first-setup-design.md`.
+
+### Added
+
+- **SSH port change as a transition** (`server_hardening.py --ssh-transition
+  begin|finish|status`). `begin` makes sshd listen on the old *and* the new
+  port (temp file, `sshd -t`, backup, atomic replace, reload, then `sshd -T`
+  and an SSH banner on the new port — any failure restores the backup),
+  records the transition in `/root/.config/myodoo-docker/ssh-transition` and
+  applies ufw, fail2ban and ssh with both ports admitted. It refuses when the
+  marker contradicts `SSH_PORT`, no `ALLOWED_IP_n` exists, sshd's ports cannot
+  be read, a `sshd_config.d` drop-in sets `Port` (the file is named), another
+  process holds the new port, or an SSH session from an address outside the
+  allowlist is open; an active `ssh.socket` (Ubuntu) is switched to
+  `ssh.service` first. `finish` closes the old port only after an established
+  session on the new port from an admin address exists, removes the UFW rules
+  for the old port and the marker, and prints one line (`none | pending OLD ->
+  NEW | closed OLD -> NEW`). While the transition is pending the audit expects
+  both ports and reports `Portwechsel läuft: anmelden über NEW, dann ups`.
+- **`server_hardening.py --no-reboot`** applies `auto_updates` with
+  `Automatic-Reboot "false"` whatever `hardening_config.yaml` says.
+- **getScripts installs the maintenance cron itself** (`ensure_maintenance_cron`):
+  once, when `/etc/cron.d/myodoo-maintenance` is missing and Docker is present,
+  with the result in the install report. Never re-run on a host that has the
+  file (that would reset `docron` edits).
+- **Fresh-server mode**: Docker present, no container ever created, no YAML.
+  `offer_noconfig_recovery()` stays silent, `ownerp_migrate.py` prints
+  `No Odoo instance yet — create the first one with: wizup` (nothing under
+  `--quiet`), and the run ends with `Noch keine Odoo-Instanz. Nächster
+  Schritt: wizup`.
+
+### Changed
+
+- **The hardening offer is one question.** Instead of the four-option menu,
+  `ups` prints what applying means — new SSH port instead of the live one (only
+  on a port change), access only from the admin addresses, firewall on,
+  fail2ban, automatic security updates *without* the nightly reboot — plus the
+  note that the old port stays open until the first login over the new one and
+  that a provider firewall must open the new port, then asks `Härtung jetzt
+  anwenden? (j/N)`. `j` with a pending port change runs `--ssh-transition
+  begin` first; the other modules follow as before (harmless, docker with its
+  restart rule, AIDE). Anything else prints the "Später" line, which names
+  `chk`, `server_hardening.py --help`, `ownerp_mute.py <id>` and the command
+  for the nightly reboot. The separate reboot prompt is gone (`--no-reboot` is
+  always passed); "show commands" and "mute" are no longer menu items.
+- **Every `ups` finishes a pending transition** (`finish_ssh_transition`, right
+  after the package step, terminal or not): `ssh port: updated — 22
+  geschlossen, sshd lauscht auf 16667`, or `ok — Portwechsel läuft`.
+- **The lockout gate keeps only what no automation may decide**: no admin
+  addresses in the `.env`, unreadable `sshd -T`/`ss`, or an open SSH session
+  from an address outside the allowlist (named, with the hint to add it). The
+  port-change and `ssh.socket` blockers moved into the transition. When the
+  gate blocks, firewall/fail2ban/SSH wait with one status line and the other
+  areas are still offered.
+- **The first-run SSH block** no longer says the port is "only recorded": the
+  hardening at the end of the installation changes it and asks once before.
+- **server-readiness 1.16.0**: `backup_config`, `update_config` and
+  `backup_recency` are SKIP (`no Odoo instance yet — wizup`) when the file is
+  missing on a host with Docker and zero containers; a present config whose
+  containers are gone stays FAIL. A missing backup log with the cron installed
+  names `wizbk` as the fix, not the cron setup.
+- Docs: the six manual port-change steps are replaced by the transition in
+  *SSH-Port wechseln / Changing the SSH port*; `setup-maintenance-cron.sh` is
+  documented as something `ups` runs itself.
+
+### Removed
+
+- `PORT_CHANGE_STEPS`, the hardening menu, the separate auto-reboot prompt and
+  the `ssh.socket` blocker in getScripts.py.
+
 ## First Run on a Fresh Server (27.10.2026)
 
 *getScripts.py v9.34.0 · scripts/ownerp_migrate.py v1.5.1 · scripts/server-readiness.py
