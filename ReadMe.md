@@ -22,10 +22,12 @@ Für einen **frisch installierten Debian-/Ubuntu-Server** ist `bootstrap.sh` der
 curl -fsSL https://raw.githubusercontent.com/equitania/myodoo-docker/2026/scripts/bootstrap.sh \
   -o /opt/myodoo-bootstrap.sh && chmod +x /opt/myodoo-bootstrap.sh && /opt/myodoo-bootstrap.sh
 
-# Klassische Installation der Skripte (falls bootstrap nicht genutzt wird):
-git clone https://github.com/equitania/myodoo-docker.git
+# Klassische Installation der Skripte (falls bootstrap nicht genutzt wird).
+# Fehlt Docker, bietet getScripts.py bootstrap.sh selbst an und startet es auf Wunsch.
+apt install git python3-requests
+git clone -b 2026 https://github.com/equitania/myodoo-docker.git
 cp myodoo-docker/getScripts.py /root/
-./getScripts.py
+./getScripts.py && exec fish
 
 # DNS-Optimierung (eigenständig)
 ./getScripts.py --dns-check
@@ -206,7 +208,7 @@ Die Fish-Konfiguration enthält ~80 Aliase und Funktionen. Unten die wichtigsten
 cd $HOME && rm -rf myodoo-docker && rm -rf nginx-conf && \
   git clone -b 2026 https://github.com/equitania/myodoo-docker.git && \
   cp myodoo-docker/getScripts.py $HOME && \
-  $HOME/getScripts.py && source ~/.config/fish/config.fish
+  $HOME/getScripts.py && exec fish
 ```
 
 ### Weiterführende Dokumentation
@@ -273,10 +275,12 @@ For a **freshly installed Debian/Ubuntu server**, `bootstrap.sh` is the entry po
 curl -fsSL https://raw.githubusercontent.com/equitania/myodoo-docker/2026/scripts/bootstrap.sh \
   -o /opt/myodoo-bootstrap.sh && chmod +x /opt/myodoo-bootstrap.sh && /opt/myodoo-bootstrap.sh
 
-# Classic script installation (if bootstrap is not used):
-git clone https://github.com/equitania/myodoo-docker.git
+# Classic script installation (if bootstrap is not used).
+# Without Docker, getScripts.py offers bootstrap.sh itself and runs it on request.
+apt install git python3-requests
+git clone -b 2026 https://github.com/equitania/myodoo-docker.git
 cp myodoo-docker/getScripts.py /root/
-./getScripts.py
+./getScripts.py && exec fish
 
 # DNS optimization (standalone)
 ./getScripts.py --dns-check
@@ -457,7 +461,7 @@ The Fish configuration ships ~80 aliases and functions. The most important are b
 cd $HOME && rm -rf myodoo-docker && rm -rf nginx-conf && \
   git clone -b 2026 https://github.com/equitania/myodoo-docker.git && \
   cp myodoo-docker/getScripts.py $HOME && \
-  $HOME/getScripts.py && source ~/.config/fish/config.fish
+  $HOME/getScripts.py && exec fish
 ```
 
 ### Further Documentation

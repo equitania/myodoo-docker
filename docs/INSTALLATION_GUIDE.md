@@ -66,7 +66,9 @@ root-Zugang, DNS-Einträge, offene Ports.
 
 Ein Aufruf richtet die Grundausstattung ein: Docker CE (mit `overlay2` als
 Storage-Driver), nginx, certbot, UFW, fail2ban und automatische
-Sicherheitsupdates. Idempotent, jede Stufe abschaltbar.
+Sicherheitsupdates. Idempotent, jede Stufe abschaltbar. Die Reihenfolge ist
+seit `getScripts.py` 9.34.0 nicht mehr kritisch: bootstrap ruft getScripts
+auf, und getScripts bietet auf einem Server ohne Docker bootstrap selbst an.
 → [01 Provisionierung und Härtung](usage/01-provisioning.md#de-3-schritt-1-bootstrap)
 
 <a id="de-4-schritt-2-getscriptspy"></a>
@@ -230,7 +232,9 @@ DNS records, open ports.
 
 One call installs the baseline: Docker CE (with `overlay2` as the storage
 driver), nginx, certbot, UFW, fail2ban and unattended security updates.
-Idempotent, every stage can be switched off.
+Idempotent, every stage can be switched off. Since `getScripts.py` 9.34.0 the
+order no longer matters: bootstrap runs getScripts, and getScripts offers
+bootstrap itself on a server without Docker.
 → [01 Provisioning and Hardening](usage/01-provisioning.md#en-3-step-1-bootstrap)
 
 <a id="en-4-step-2-getscriptspy"></a>

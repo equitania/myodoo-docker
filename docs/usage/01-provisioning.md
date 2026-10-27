@@ -142,12 +142,31 @@ nach `/root`. Wird vom Bootstrap automatisch ausgeführt; manuell:
 /root/getScripts.py --reconfigure   # First-Run-Einstellungen erneut abfragen
 ```
 
-Danach neue Shell öffnen (oder `source ~/.config/fish/config.fish`) — die
+Danach neue Shell öffnen (aus bash: `exec fish`) — die
 Aliase aus [Kapitel 15](09-reference.md#de-15-shell-referenz-fish) stehen bereit. Später
 aktualisieren mit `ups`. Ab `getScripts.py` 9.25.0 genügt dafür ein einziges
 `ups`: Bringt der Repository-Pull eine neuere Version mit, ersetzt sich das
 Skript mittendrin selbst und startet sofort neu — eine neue Funktion oder ein
 Fix ist damit noch im selben Lauf aktiv, nicht erst beim nächsten `ups`.
+
+### Frischer Server ohne bootstrap
+
+Ab `getScripts.py` 9.34.0 (27.10.2026) kommt auch der Weg über den
+README-Einzeiler zum Ziel. Fehlt `docker` auf dem Host, bietet das Skript
+direkt nach dem Klonen an, `scripts/bootstrap.sh` aus dem Repository zu
+starten (Docker CE, nginx, certbot, UFW aus, fail2ban, automatische Updates,
+python3-yaml/-dotenv, curl/git, UTF-8-Locale) — mit `RUN_GETSCRIPTS=0`, damit
+bootstrap nicht wiederum getScripts aufruft. Ohne Terminal steht nur die eine
+Zeile mit dem Befehl. Der Erstlauf-Dialog fragt als dritten Block **SSH-Zugang
+für die Härtung**: den festen SSH-Port (Vorschlag: der Port aus `sshd -T`) und
+die Admin-Adressen kommagetrennt (Vorschlag: die verbundenen Sitzungen) und
+schreibt `/root/.config/myodoo-docker/.env` sofort — vor dem Klonen als
+Minimaldatei mit nur diesen Schlüsseln, sonst aus `scripts/.env.example`.
+Netze (`/24`) werden abgelehnt, `ALLOWED_IP` kennt nur einzelne Adressen. Ein
+anderer Port als der live lauschende wird eingetragen, nicht umgestellt: die
+Härtung wartet mit UFW und SSH, bis sshd dort lauscht. Versionsabfragen laufen
+unter `LC_ALL=C` (Fish 4.9 schreibt unter deutscher Locale „Version“), und als
+root kommt das Skript ohne das Paket `sudo` aus.
 
 ### Ohne root: eingeschränkter Modus
 
@@ -450,12 +469,31 @@ into `/root`. Executed automatically by bootstrap; manually:
 /root/getScripts.py --reconfigure   # re-run first-run configuration
 ```
 
-Then open a new shell (or `source ~/.config/fish/config.fish`) — the aliases
+Then open a new shell (from bash: `exec fish`) — the aliases
 from [chapter 15](09-reference.md#en-15-shell-reference-fish) are available. Update later
 with `ups`. As of `getScripts.py` 9.25.0, one `ups` is enough: if the
 repository pull brings in a newer version, the script replaces itself
 mid-run and restarts immediately, so a new feature or fix is already active
 in that same run instead of only the next `ups`.
+
+### Fresh server without bootstrap
+
+As of `getScripts.py` 9.34.0 (27.10.2026) the README one-liner reaches the
+goal too. When `docker` is missing on the host, the script offers right after
+the clone to run `scripts/bootstrap.sh` from the repository (Docker CE, nginx,
+certbot, UFW off, fail2ban, unattended upgrades, python3-yaml/-dotenv,
+curl/git, UTF-8 locale) — with `RUN_GETSCRIPTS=0` so bootstrap does not call
+getScripts in turn. Without a terminal only the one line with the command is
+printed. The first-run dialogue asks, as its third block **SSH access for the
+hardening**, for the fixed SSH port (suggested: the port from `sshd -T`) and
+the admin addresses, comma-separated (suggested: the connected sessions), and
+writes `/root/.config/myodoo-docker/.env` right away — before the clone as a
+minimal file with only these keys, otherwise rendered from
+`scripts/.env.example`. Networks (`/24`) are rejected; `ALLOWED_IP` takes
+single addresses only. A port other than the live one is recorded, not
+switched: the hardening waits with UFW and SSH until sshd listens there.
+Version probes run under `LC_ALL=C` (Fish 4.9 prints „Version“ under a German
+locale), and as root the script no longer needs the `sudo` package.
 
 ### Without root: restricted mode
 

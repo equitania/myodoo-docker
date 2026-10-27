@@ -1,5 +1,80 @@
 # Release Notes
 
+## First Run on a Fresh Server (27.10.2026)
+
+*getScripts.py v9.34.0 · scripts/ownerp_migrate.py v1.5.1 · scripts/server-readiness.py
+v1.15.0 · README.md · docs/usage/01-provisioning.md · docs/INSTALLATION_GUIDE.md ·
+docs/COMPONENTS.md · usage/AGENT.md*
+
+The toolkit was rolled out onto an empty Debian 13 the way the README one-liner
+says — install git, clone, run `getScripts.py` — and the run reported success
+with no usable result: Fish installed but not recognised, the hardening audit
+failing on a `.env` it had just been handed, a `--from-docker` hint on a host
+without Docker, and a `.env` pre-filled with port 22 and the current session's
+address. Design: `docs/superpowers/specs/2026-10-27-first-run-fresh-server-design.md`.
+
+### Added
+
+- **getScripts offers `bootstrap.sh` on a fresh server.** When `docker` is
+  missing right after the clone, `offer_bootstrap()` lists what bootstrap
+  installs (Docker CE, nginx, certbot, UFW off, fail2ban, unattended upgrades,
+  python3-yaml/-dotenv, curl/git, UTF-8 locale) and runs it on a yes, with
+  `RUN_GETSCRIPTS=0` so bootstrap does not call getScripts in turn. Output is
+  streamed, there is no timeout, the outcome lands in the install report and
+  the run continues either way. Without a terminal only the command line is
+  printed.
+- **The first-run dialogue asks for the SSH access.** Third block after proxy
+  and DNS: the fixed SSH port (suggested from `sshd -T`) and the admin
+  addresses, comma-separated (suggested: the connected sessions). Every entry
+  must be a single address — networks are rejected by name — and the `.env` is
+  written at once, 0600: rendered from `scripts/.env.example` when the clone
+  exists, otherwise as a minimal file carrying only `SSH_PORT` and
+  `ALLOWED_IP_<n>` and the template path. A port other than the live one is
+  recorded, not changed; the hardening's lockout gate waits until sshd
+  listens there and prints the six steps. An existing `.env` is shown, never
+  rewritten; `--reconfigure` asks again when none exists.
+- `ensure_base_packages()` installs `curl` and `ca-certificates` before the
+  Fish setup when curl is missing.
+
+### Changed
+
+- Migration, no-config, storage-driver and hardening offers now run after
+  `install_packages()`, which delivers PyYAML and python3-dotenv. Before, the
+  hardening audit on a fresh host reported `ssh.port invalid: ''` for the
+  `.env` created two lines above, because python3-dotenv was not installed
+  yet.
+- `ownerp_migrate.py` 1.5.1: with no CSV, no YAML and no Docker the hint
+  names `bootstrap.sh` (ups offers it) and `wizup` instead of `--from-docker`.
+- `server-readiness.py` 1.15.0: `backup_config` and `backup_recency` SKIP
+  with "docker not installed", like `update_config`.
+- A missing bat or 7zz on a fresh host is INFO, said once, not three ERROR
+  lines; "bat older than upstream" after an apt install is INFO.
+- `resolve_install_home()` is the one home resolution for the scripts, the
+  Fish configuration, the first-run marker and the `.env`; the legacy marker
+  location is still honoured.
+- README one-liners install `git python3-requests` together and end in
+  `exec fish` — bash cannot source a Fish configuration file.
+
+### Fixed
+
+- **Fish was installed and not recognised.** Fish 4.9 localises its version
+  line (`fish, Version 4.9.3` under a German locale); the case-sensitive match
+  treated it as missing and `install_fish_if_needed()` fell through silently.
+  Every `--version` probe now runs through `probe_output()` under `LC_ALL=C`
+  with a case-insensitive match, and the Fish outcome is in the install report
+  — including the case "apt reported success, but `fish --version` gave no
+  version".
+- **A failed mcedit verification aborted the whole run** before the install
+  report. `mcedit --version` exits 1 when nothing exported `TERM`, and
+  `apt-cache policy` speaks the locale ("Installiert:"), so the update check
+  never fired under a German `LANG`. Both go through `probe_output()` now
+  (`TERM=dumb` when unset), and a verification failure is an install-report
+  line, not an abort.
+- **Root without the `sudo` package.** Every privileged command was spelled
+  `sudo …`; a root-only minimal Debian failed every apt call. As root,
+  `run_command()` drops the command-position `sudo` word and the seven direct
+  `sudo tee` writes go through `write_system_file()`.
+
 ## Test Instance Playbooks for odoodev (21.10.2026)
 
 *Dockerfiles/playbooks/generate.py v1.0.0 (new) · Dockerfiles/playbooks/passwort-setzen.py

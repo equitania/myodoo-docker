@@ -11,9 +11,27 @@ in this repository, stay in `CLAUDE.md`.
 
 ### Key Components
 
-#### 1. getScripts.py (v9.33.0)
+#### 1. getScripts.py (v9.34.0)
 - **Purpose**: Main installation and update script
 - **Features**:
+  - First run on a fresh server (v9.34.0, 27.10.2026): `offer_bootstrap()`
+    runs right after the clone and, when `docker` is missing, offers to run
+    `scripts/bootstrap.sh` from the repository (`RUN_GETSCRIPTS=0` as the
+    recursion guard, output streamed, no timeout; non-TTY prints the command
+    only; outcome in the install report). The first-run dialogue gains a
+    third block, `configure_ssh_access()`: SSH port and comma-separated admin
+    addresses, validated (`parse_admin_addresses()`, networks rejected), the
+    `.env` written at once — from `scripts/.env.example` when present, else
+    `render_minimal_env()`. `probe_output()` runs every `--version` probe
+    under `LC_ALL=C` (Fish 4.9 prints „Version“ under a German locale and
+    counted as missing); `strip_sudo_for_root()` drops the `sudo` word in
+    `run_command()` as root and `write_system_file()` replaces the direct
+    `sudo tee` calls, so a root-only host without the sudo package works;
+    `ensure_base_packages()` installs curl/ca-certificates before the Fish
+    setup; `resolve_install_home()` is the one home resolution for scripts,
+    markers and the `.env`. Migration, no-config, storage-driver and hardening
+    offers run after `install_packages()` (PyYAML, python3-dotenv). A missing
+    bat/7zz is INFO, not ERROR; the Fish outcome is in the install report
   - Delivers `ownerp_pull_update.py` (v9.33.0, 14.10.2026) to `/root` in
     `copy_scripts()`, next to the other management scripts
   - Hardening `.env` derived from the server (v9.32.0, 12.10.2026):
@@ -635,7 +653,10 @@ in this repository, stay in `CLAUDE.md`.
   `setup-maintenance-cron.sh` restores the repository schedule and discards the
   customisation — that is its job, and the tool says so before it writes
 
-#### 9. ownerp_migrate.py (v1.5.0)
+#### 9. ownerp_migrate.py (v1.5.1)
+- **v1.5.1 (27.10.2026):** no CSV, no YAML and no Docker is a fresh server —
+  the hint names `bootstrap.sh` (ups offers it) and `wizup` instead of
+  `--from-docker`
 - **Purpose**: One-way conversion of the legacy CSV configurations to YAML —
   `container2backup.csv` + `container2backup_path.csv` + `rsync_targets.csv` →
   `container2backup.yaml`, `docker2update.csv` → `docker2update.yaml`
@@ -968,7 +989,10 @@ in this repository, stay in `CLAUDE.md`.
   risk an expiry would guard against — a mute nobody remembers — is already
   covered by the visible `[MUTED]` line and the count in every summary
 
-#### 16. server-readiness.py (v1.14.2)
+#### 16. server-readiness.py (v1.15.0)
+- **v1.15.0 (27.10.2026):** `backup_config` and `backup_recency` SKIP with
+  "docker not installed", like `update_config` — a host without Docker is a
+  fresh server, not a broken one.
 - **v1.14.2 (14.10.2026):** `ownerp_pull_update.py` is one of the
   `DELIVERED_SCRIPTS`, so the stale-tooling check covers it.
 - **v1.14.0 (12.10.2026): configured backup containers must exist.**

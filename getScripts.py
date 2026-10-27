@@ -147,8 +147,8 @@ if os.environ.get('GETSCRIPTS_DEBUG', '').lower() in ('1', 'true', 'yes'):
     logger.debug("Debug logging enabled")
 
 # Script version and date
-SCRIPT_VERSION = "9.33.0"
-SCRIPT_DATE = "14.10.2026"
+SCRIPT_VERSION = "9.34.0"
+SCRIPT_DATE = "27.10.2026"
 
 # Branch of myodoo-docker this server tracks - the single source of truth for
 # main() (update_repository() call) and self_update_and_reexec() (which must
@@ -430,6 +430,10 @@ def probe_output(argv: List[str], timeout: float = 10) -> Optional[str]:
     env = os.environ.copy()
     env["LC_ALL"] = "C"
     env["LANG"] = "C"
+    # mcedit --version exits 1 with "The TERM environment variable is unset!"
+    # when nothing exported TERM (a container exec, a bare cron) - the probe
+    # is not a terminal session and must not depend on one.
+    env.setdefault("TERM", "dumb")
     try:
         result = subprocess.run(argv, capture_output=True, text=True,
                                 timeout=timeout, env=env)
@@ -3017,16 +3021,12 @@ def get_mcedit_version() -> Optional[str]:
     Returns:
         Optional[str]: Version string if installed, None otherwise
     """
-    try:
-        result = subprocess.run(['mcedit', '--version'], capture_output=True, text=True)
-        if result.returncode == 0:
-            # The output might be like: "GNU Midnight Commander X.Y.Z"
-            version_line = result.stdout.strip()
-            match = re.search(r'(\d+\.\d+\.\d+)', version_line)
-            if match:
-                return match.group(1)
-    except Exception as e:
-        logger.error(f"Error getting mcedit version: {e}")
+    output = probe_output(['mcedit', '--version'])
+    if output:
+        # The output might be like: "GNU Midnight Commander X.Y.Z"
+        match = re.search(r'(\d+\.\d+\.\d+)', output)
+        if match:
+            return match.group(1)
     return None
 
 def is_mcedit_update_available() -> Tuple[bool, Optional[str], Optional[str]]:
@@ -3041,20 +3041,17 @@ def is_mcedit_update_available() -> Tuple[bool, Optional[str], Optional[str]]:
         if not current_version:
             return (True, None, None)  # Not installed, so "update" needed (install)
 
-        # Check available version via apt-cache policy
-        result = subprocess.run(
-            ['apt-cache', 'policy', 'mc'],
-            capture_output=True,
-            text=True,
-            check=False
-        )
+        # Check available version via apt-cache policy. Under the C locale:
+        # a German apt says "Installiert:" / "Installationskandidat:", and
+        # the parser below would never see an update.
+        output = probe_output(['apt-cache', 'policy', 'mc'])
 
-        if result.returncode == 0:
+        if output:
             # Parse output to find installed and candidate versions
             installed_line = None
             candidate_line = None
 
-            for line in result.stdout.split('\n'):
+            for line in output.split('\n'):
                 line = line.strip()
                 if line.startswith('Installed:'):
                     installed_line = line.split(':', 1)[1].strip()
@@ -3089,8 +3086,13 @@ def install_or_update_mcedit() -> None:
             new_version = get_mcedit_version()
             if new_version:
                 logger.info(f"mcedit {new_version} has been successfully installed")
+                record_install("mc", "installed", f"v{new_version}")
             else:
-                raise RuntimeError("Failed to verify mcedit installation")
+                # Visible in the install report, not fatal: an editor that
+                # cannot be verified must not abort the run before the report
+                # (27.10.2026 - it did, and the report never printed).
+                record_install("mc", "failed",
+                               "installed via apt, but `mcedit --version` gave no version - see ~/getscripts.log")
             return
 
         # Check if update is available (silent check)
@@ -3114,7 +3116,7 @@ def install_or_update_mcedit() -> None:
 
     except Exception as e:
         logger.error(f"Error installing/updating mcedit: {str(e)}")
-        raise
+        record_install("mc", "failed", str(e))
 
 def is_dns_already_optimized() -> bool:
     """Check if DNS has already been optimized by getScripts.py

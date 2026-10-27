@@ -292,5 +292,46 @@ class NoiseTest(unittest.TestCase):
         self.assertIn('logger.info(f"Installed bat', source)
 
 
+class McEditProbeTest(unittest.TestCase):
+    """mcedit --version refuses without TERM and apt-cache speaks the locale;
+    a failed verification must not abort the whole run."""
+
+    def test_probe_sets_term_when_missing(self):
+        env = {k: v for k, v in os.environ.items() if k != "TERM"}
+        with mock.patch.dict(os.environ, env, clear=True), \
+             mock.patch.object(gs.subprocess, "run") as run:
+            run.return_value = subprocess.CompletedProcess(["x"], 0, "", "")
+            gs.probe_output(["mcedit", "--version"])
+        self.assertEqual(run.call_args.kwargs["env"]["TERM"], "dumb")
+
+    def test_probe_keeps_an_existing_term(self):
+        with mock.patch.dict(os.environ, {"TERM": "xterm-256color"}), \
+             mock.patch.object(gs.subprocess, "run") as run:
+            run.return_value = subprocess.CompletedProcess(["x"], 0, "", "")
+            gs.probe_output(["mcedit", "--version"])
+        self.assertEqual(run.call_args.kwargs["env"]["TERM"], "xterm-256color")
+
+    def test_mcedit_version_via_probe(self):
+        with mock.patch.object(gs, "probe_output", return_value="GNU Midnight Commander 4.8.33\n"):
+            self.assertEqual(gs.get_mcedit_version(), "4.8.33")
+        with mock.patch.object(gs, "probe_output", return_value=None):
+            self.assertIsNone(gs.get_mcedit_version())
+
+    def test_apt_cache_policy_is_read_under_c_locale(self):
+        with mock.patch.object(gs, "get_mcedit_version", return_value="4.8.33"), \
+             mock.patch.object(gs, "probe_output",
+                               return_value="mc:\n  Installed: 3:4.8.33-1\n  Candidate: 3:4.8.34-1\n") as probe:
+            self.assertEqual(gs.is_mcedit_update_available(), (True, "3:4.8.33-1", "3:4.8.34-1"))
+        self.assertEqual(probe.call_args.args[0], ["apt-cache", "policy", "mc"])
+
+    def test_failed_verification_is_recorded_not_raised(self):
+        gs._install_report.clear()
+        with mock.patch.object(gs, "check_mcedit_installed", return_value=False), \
+             mock.patch.object(gs, "run_command"), \
+             mock.patch.object(gs, "get_mcedit_version", return_value=None):
+            gs.install_or_update_mcedit()        # must not raise
+        self.assertIn(("mc", "failed"), [(n, s) for n, s, _ in gs._install_report])
+
+
 if __name__ == "__main__":
     unittest.main()
