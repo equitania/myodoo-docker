@@ -196,13 +196,14 @@ class BootstrapOfferTest(unittest.TestCase):
         gs._install_report.clear()
 
     def offer(self, which, tty, answers=(), returncode=0):
+        out = io.StringIO()            # swallow the prompt text, keep the TTY answer
+        out.isatty = lambda: tty       # type: ignore[method-assign]
         with mock.patch.object(gs.shutil, "which", return_value=which), \
              mock.patch.object(gs.sys.stdin, "isatty", return_value=tty), \
-             mock.patch.object(gs.sys.stdout, "isatty", return_value=tty), \
+             mock.patch("sys.stdout", out), \
              mock.patch("builtins.input", side_effect=list(answers)), \
              mock.patch.object(gs, "run_command") as run, \
-             mock.patch.object(gs, "status") as st, \
-             mock.patch("sys.stdout", io.StringIO()):
+             mock.patch.object(gs, "status") as st:
             run.return_value = subprocess.CompletedProcess("bash", returncode, "", "")
             gs.offer_bootstrap(self.home, self.repo)
         return run, st
