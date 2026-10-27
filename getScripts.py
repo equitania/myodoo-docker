@@ -3784,26 +3784,21 @@ def check_versions_parallel(packages: List[Tuple[str, str]]) -> Dict[str, Dict[s
     
     return results
 
-def setup_environment() -> Tuple[str, str]:
-    """Setup initial environment and return home and local bin paths."""
-    print_header()
+def resolve_install_home() -> str:
+    """The home directory this run installs into.
 
-    # Check if running on Debian/Ubuntu
-    if not is_debian_or_ubuntu():
-        logger.error("This script is only supported on Debian and Ubuntu systems")
-        sys.exit(1)
+    Priority: SUDO_USER (direct 'sudo ./getScripts.py') > current user home.
+    Exception: inside an interactive root shell ('sudo su', 'sudo -s',
+    'sudo -i') SUDO_USER is still set although the operator now works as
+    root — detect this via SUDO_COMMAND (contains the shell, not the
+    script) and install for root in that case.
 
-    # No privilege prompt here any more: without root or passwordless sudo the
-    # run never reaches main() - choose_restricted_mode() either switches to
-    # the restricted mode or stops with the sudo command. The old "continue
-    # without sudo?" path ran the full setup half-way and failed step by step.
-
-    # Get appropriate home directory based on execution context.
-    # Priority: SUDO_USER (direct 'sudo ./getScripts.py') > current user home.
-    # Exception: inside an interactive root shell ('sudo su', 'sudo -s',
-    # 'sudo -i') SUDO_USER is still set although the operator now works as
-    # root — detect this via SUDO_COMMAND (contains the shell, not the
-    # script) and install for root in that case.
+    One resolution for everything that writes into that home: the scripts,
+    the Fish configuration, the first-run marker and the hardening .env. The
+    first-run dialogue used `~` on its own until 27.10.2026, so a `.env` it
+    wrote and the one the hardening offer looked for could have been two
+    different files.
+    """
     _sudo_shell_names = ('su', 'sh', 'bash', 'zsh', 'fish', 'dash')
     _sudo_command = os.environ.get('SUDO_COMMAND', '')
     _sudo_cmd_base = os.path.basename(_sudo_command.split()[0]) if _sudo_command.strip() else ''
@@ -3828,6 +3823,24 @@ def setup_environment() -> Tuple[str, str]:
         _myhome = os.path.expanduser('~')
         current_user = os.environ.get('USER', 'unknown')
         logger.info(f"Running as user '{current_user}', using home: {_myhome}")
+    return _myhome
+
+
+def setup_environment() -> Tuple[str, str]:
+    """Setup initial environment and return home and local bin paths."""
+    print_header()
+
+    # Check if running on Debian/Ubuntu
+    if not is_debian_or_ubuntu():
+        logger.error("This script is only supported on Debian and Ubuntu systems")
+        sys.exit(1)
+
+    # No privilege prompt here any more: without root or passwordless sudo the
+    # run never reaches main() - choose_restricted_mode() either switches to
+    # the restricted mode or stops with the sudo command. The old "continue
+    # without sudo?" path ran the full setup half-way and failed step by step.
+
+    _myhome = resolve_install_home()
 
     local_bin = os.path.join(_myhome, ".local", "bin")
     
@@ -5300,6 +5313,160 @@ def _prompt(text: str, default: str = "") -> Optional[str]:
     return answer or default
 
 
+def parse_admin_addresses(text: str) -> Tuple[List[str], List[str]]:
+    """Split a typed list of admin addresses into (accepted, rejected).
+
+    Commas and whitespace separate; every entry must be a single address
+    (`ipaddress.ip_address`) - ALLOWED_IP_<n> takes no networks. IPv4-mapped
+    IPv6 (`::ffff:192.0.2.1`, what `ss` shows for an IPv4 peer on a dual-stack
+    sshd) is reduced to the IPv4 address. Duplicates collapse, order kept.
+    """
+    accepted: List[str] = []
+    rejected: List[str] = []
+    for entry in re.split(r"[,\s]+", text.strip()):
+        if not entry:
+            continue
+        try:
+            address = ipaddress.ip_address(entry)
+        except ValueError:
+            rejected.append(entry)
+            continue
+        mapped = getattr(address, "ipv4_mapped", None)
+        value = str(mapped) if mapped is not None else str(address)
+        if value not in accepted:
+            accepted.append(value)
+    return accepted, rejected
+
+
+def render_minimal_env(ssh_port: int, ips: List[str], template_path: str) -> str:
+    """A .env with only the hardening keys, for a first run before the clone.
+
+    The README path runs the first-run dialogue before the repository exists,
+    so scripts/.env.example is not there to render. Every other key stays
+    documented in the template this header points at; only SSH_PORT and
+    ALLOWED_IP_<n> come out active, for the same reason _render_env()
+    comments everything else out.
+    """
+    lines = [
+        f"# Hardening access - written by getScripts.py {SCRIPT_VERSION} on {datetime.now():%d.%m.%Y}",
+        "# Every other key (backup encryption, ...) is documented in the template:",
+        f"#   {template_path}",
+        "# Copy the lines you need from there. This file is read by",
+        "# server_hardening.py and container2backup.py; keep it root-only (0600).",
+        f"SSH_PORT={ssh_port}",
+    ]
+    lines += [f"ALLOWED_IP_{slot}={ip}" for slot, ip in enumerate(ips, 1)]
+    return "\n".join(lines) + "\n"
+
+
+def _read_env_access(path: str) -> Tuple[Optional[str], List[str]]:
+    """SSH_PORT and the non-empty ALLOWED_IP_<n> values of an existing .env."""
+    port: Optional[str] = None
+    ips: List[str] = []
+    try:
+        with open(path, encoding="utf-8") as handle:
+            for line in handle:
+                match = _ENV_ACTIVE_KEY_RE.match(line)
+                if not match:
+                    continue
+                key, value = match.group(1), line.split("=", 1)[1].strip()
+                if key == "SSH_PORT":
+                    port = value or None
+                elif not match.group(3) and value:
+                    ips.append(value)
+    except OSError:
+        pass
+    return port, ips
+
+
+def configure_ssh_access(home: str) -> bool:
+    """Third block of the first-run dialogue: SSH port and admin addresses.
+
+    Asked, not derived - the derived-values offer in offer_security_hardening()
+    confirmed port 22 and the current session's address with a default "J",
+    which is a confirmation, not a question (27.10.2026). Writes the .env right
+    here so the hardening offer later in the same run finds it. Returns True
+    when a .env was written. Never overwrites: an existing file is shown with
+    the edit command. The port is only recorded, never changed - the lockout
+    gate of the hardening refuses UFW/SSH until sshd listens on it.
+    """
+    env_path = os.path.join(home, HARDENING_ENV_RELATIVE)
+    template_path = os.path.join(home, "myodoo-docker", "scripts", ".env.example")
+    print("\n" + "=" * 60)
+    print("SSH-Zugang für die Härtung")
+    print("=" * 60)
+    if os.path.isfile(env_path):
+        port, ips = _read_env_access(env_path)
+        print(f"\n.env vorhanden: SSH_PORT={port or '?'}, ALLOWED_IP: "
+              f"{', '.join(ips) if ips else '-'} – ändern mit: mcedit {env_path}")
+        return False
+    later = (f"Später: ups fragt beim nächsten Mal nach den Werten, oder: "
+             f"cp {template_path} {env_path}; and mcedit {env_path}")
+    print("\nDie Firewall lässt SSH später nur von diesen Adressen auf diesem Port zu.")
+    print("Der Port wird hier nur festgelegt, nicht geändert.\n")
+
+    answer = _prompt("Admin-Adressen und Port jetzt festlegen? (J/n): ", "j")
+    if answer is None or answer.lower() in ("n", "nein", "no"):
+        print(later)
+        return False
+
+    listen = _ssh_listen_ports()
+    live_port = listen[0] if listen else None
+    default_port = live_port or 22
+    port: Optional[int] = None
+    for _attempt in range(2):
+        raw = _prompt(f"SSH-Port [{default_port}]: ", str(default_port))
+        if raw is None:
+            print(later)
+            return False
+        if raw.isdigit() and 1 <= int(raw) <= 65535:
+            port = int(raw)
+            break
+        print(f"'{raw}' ist kein gültiger Port (1-65535).")
+    if port is None:
+        print(later)
+        return False
+
+    peers = _ssh_peers(listen) if listen else None
+    suggestion = ", ".join(peers or [])
+    hint = f" [{suggestion}]" if suggestion else ""
+    ips: List[str] = []
+    for _attempt in range(3):
+        raw = _prompt(f"Admin-IPs, kommagetrennt{hint}: ", suggestion)
+        if raw is None:
+            print(later)
+            return False
+        accepted, rejected = parse_admin_addresses(raw)
+        if rejected:
+            for entry in rejected:
+                print(f"'{entry}' ist keine einzelne IP-Adresse (ALLOWED_IP erlaubt "
+                      "nur einzelne Adressen, keine Netze).")
+            continue
+        ips = accepted
+        break
+    else:
+        print(later)
+        return False
+    if not ips:
+        print("Ohne Admin-IP keine .env – UFW würde SSH für niemanden öffnen")
+        print(later)
+        return False
+
+    if os.path.isfile(template_path):
+        with open(template_path, "r", encoding="utf-8") as handle:
+            text = _render_env(handle.read(), port, ips)
+    else:
+        text = render_minimal_env(port, ips, template_path)
+    if not _write_env(env_path, text):
+        print(f"{env_path} existiert bereits – nichts überschrieben")
+        return False
+    print(f".env angelegt: {env_path} (nur für root lesbar)")
+    if live_port is not None and port != live_port:
+        print(f"sshd lauscht derzeit auf {live_port}. Die Härtung wartet mit UFW und SSH, "
+              f"bis sshd auf {port} lauscht – die sechs Schritte zeigt ups dann an.")
+    return True
+
+
 def _offer_env_creation(_myhome: str, env_path: str) -> bool:
     """Create the missing .env from the repository template.
 
@@ -6405,7 +6572,11 @@ def main() -> None:
 # =============================================================================
 
 # First-run marker file
-FIRST_RUN_MARKER = os.path.expanduser("~/.getscripts_configured")
+FIRST_RUN_MARKER_NAME = ".getscripts_configured"
+# Where the marker lived before 27.10.2026: the effective user's home, which
+# under a plain `sudo ./getScripts.py` is /root while the install home is the
+# operator's. Still honoured, so no configured server is asked twice.
+LEGACY_FIRST_RUN_MARKER = os.path.expanduser(f"~/{FIRST_RUN_MARKER_NAME}")
 PROXY_CONFIG_FILE = os.path.expanduser("~/.getscripts_proxy")
 
 # Module constant so tests can patch the path instead of touching the real
@@ -6413,15 +6584,19 @@ PROXY_CONFIG_FILE = os.path.expanduser("~/.getscripts_proxy")
 ETC_ENVIRONMENT = "/etc/environment"
 
 
+def _first_run_marker() -> str:
+    return os.path.join(resolve_install_home(), FIRST_RUN_MARKER_NAME)
+
+
 def is_first_run() -> bool:
     """Check if this is the first run of getScripts.py on this system."""
-    return not os.path.exists(FIRST_RUN_MARKER)
+    return not (os.path.exists(_first_run_marker()) or os.path.exists(LEGACY_FIRST_RUN_MARKER))
 
 
 def mark_configured() -> None:
     """Mark the system as configured after first run."""
     try:
-        with open(FIRST_RUN_MARKER, 'w') as f:
+        with open(_first_run_marker(), 'w') as f:
             f.write(f"Configured on {datetime.now().isoformat()}\n")
             f.write(f"Version: {SCRIPT_VERSION}\n")
         logger.info("System marked as configured")
@@ -6431,12 +6606,13 @@ def mark_configured() -> None:
 
 def reset_configuration() -> None:
     """Reset configuration marker to trigger first-run setup again."""
-    if os.path.exists(FIRST_RUN_MARKER):
-        try:
-            os.remove(FIRST_RUN_MARKER)
-            logger.info("Configuration marker removed")
-        except Exception as e:
-            logger.error(f"Failed to remove configuration marker: {e}")
+    for marker in (_first_run_marker(), LEGACY_FIRST_RUN_MARKER):
+        if os.path.exists(marker):
+            try:
+                os.remove(marker)
+                logger.info("Configuration marker removed")
+            except Exception as e:
+                logger.error(f"Failed to remove configuration marker: {e}")
 
 
 def validate_proxy_url(url: str) -> bool:
@@ -6968,6 +7144,9 @@ def run_first_time_setup() -> bool:
             logger.info("DNS-Konfiguration übersprungen")
     else:
         logger.info("DNS bereits optimiert, überspringe Konfiguration")
+
+    # SSH port and admin addresses for the hardening - asked, not derived.
+    configure_ssh_access(resolve_install_home())
 
     # Mark as configured
     mark_configured()
