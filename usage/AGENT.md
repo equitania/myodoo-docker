@@ -318,14 +318,14 @@ CIDR (wget/apt/urllib do not). Full walkthrough: `docs/usage/07-proxy.md`.
   a `hardening_config.yaml` that expects `PermitRootLogin yes` — `root_login_locked` WARNs, never
   fixes it automatically (it needs a password). Fix: `passwd root` and a drop-in
   `/etc/cloud/cloud.cfg.d/99-ownerp-root.cfg` with `disable_root: false`.
-- **Changing the SSH port is manual, always.** `ups` and `server_hardening.py --apply` never touch
-  it — the provider's firewall/security group must open the new port first, which nothing on the
-  host can see. When `SSH_PORT` in `.env` differs from the port sshd listens on, `ups` prints this
-  sequence instead of applying anything guarded: (1) open the new port for the admin IPs at the
-  provider, old port still open; (2) set `SSH_PORT` in `/root/.config/myodoo-docker/.env`;
-  (3) `server_hardening.py --apply -f -m ufw fail2ban ssh`; (4) log in on the new port from a
-  second terminal, keep the old session open; (5) `ufw delete allow from <IP> to any port <old>`;
-  (6) close the old port at the provider.
+- **Changing the SSH port is a transition** (getScripts 9.35.0 / server_hardening 1.12.0). When
+  `SSH_PORT` in `.env` differs from the port sshd listens on, the hardening question names the
+  change and `j` runs `server_hardening.py --ssh-transition begin`: sshd listens on old AND new
+  port, UFW admits both for the admin IPs, fail2ban watches both. The old port closes on a later
+  `ups` (or `--ssh-transition finish`) only after an established session on the new port from an
+  admin IP exists. What no script can see: a provider firewall/security group in front must have
+  the new port open first. `begin` refuses on a `Port` line in `sshd_config.d/`, a busy new port,
+  a foreign live SSH session, no admin IPs, or a marker that contradicts `SSH_PORT`.
 - **Proxy hosts:** the Docker daemon drop-in written by `--proxy-check` (getScripts ≥ 9.8.0) only
   takes effect after `systemctl restart docker` — maintenance window, restarts all containers.
   fastfetch's `publicip` module ignores `http_proxy` and is stripped automatically on proxy hosts;
