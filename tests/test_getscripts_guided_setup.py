@@ -181,9 +181,40 @@ class QuestionTextTest(unittest.TestCase):
         self.assertIn("SSH-Port 16667 statt 22", text)
         self.assertIn("Zugriff nur von 198.51.100.7, 203.0.113.5", text)
         self.assertIn("Firewall an", text)
-        self.assertIn("Port 22 bleibt offen, bis du dich einmal über 16667 angemeldet hast", text)
+        self.assertIn("SSH-Portwechsel in drei Schritten", text)
+        self.assertIn("1. Bis jetzt:  SSH nur über Port 22", text)
+        self.assertIn("2. Nach j:     Port 16667 kommt dazu, Port 22 bleibt offen.", text)
+        self.assertIn("3. Danach:     neu anmelden über Port 16667, dort ups.", text)
+        self.assertIn("Erst dieser ups schließt Port 22.", text)
         self.assertIn("Hetzner Cloud Firewall", text)
         self.assertIn("Diese Sitzung offen lassen.", text)
+
+    def test_port_change_box_is_closed_and_aligned(self):
+        text = gs._hardening_question([_area("hardening_ssh", ["ssh"])], ENV, [22])
+        box = [line for line in text.splitlines() if line and line[0] in "┌│└+|"]
+        self.assertGreater(len(box), 3)
+        self.assertEqual(len({len(line) for line in box}), 1, box)
+
+    def test_question_without_port_change_keeps_session_hint(self):
+        text = gs._hardening_question([_area("hardening_firewall", ["ufw"])], ENV, [16667])
+        self.assertIn("Diese Sitzung offen lassen.", text)
+        self.assertNotIn("Portwechsel", text)
+
+
+class PendingTransitionTest(unittest.TestCase):
+    """The run that opens a port change ends by naming the new login."""
+
+    def test_marker_is_read_as_old_new(self):
+        home = tempfile.mkdtemp(prefix="gs-transition-")
+        self.assertIsNone(gs.pending_ssh_transition(home))
+        marker = os.path.join(home, gs.SSH_TRANSITION_RELATIVE)
+        os.makedirs(os.path.dirname(marker))
+        with open(marker, "w", encoding="utf-8") as handle:
+            handle.write("22 16667\n")
+        self.assertEqual(gs.pending_ssh_transition(home), ("22", "16667"))
+        with open(marker, "w", encoding="utf-8") as handle:
+            handle.write("garbage\n")
+        self.assertIsNone(gs.pending_ssh_transition(home))
 
     def test_question_without_port_change_has_no_port_sentence(self):
         text = gs._hardening_question([_area("hardening_firewall", ["ufw"])], ENV, [16667])

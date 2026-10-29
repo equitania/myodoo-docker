@@ -11,9 +11,17 @@ in this repository, stay in `CLAUDE.md`.
 
 ### Key Components
 
-#### 1. getScripts.py (v9.35.0)
+#### 1. getScripts.py (v9.35.1)
 - **Purpose**: Main installation and update script
 - **Features**:
+  - Port change in a box (v9.35.1, 29.10.2026): `_hardening_question()`
+    shows a pending SSH port change as three framed steps (old port only →
+    both ports after `j` → new login, whose `ups` closes the old port);
+    `_box()` falls back to ASCII when stdout cannot encode the frame. A run
+    that leaves `ssh-transition` pending ends with a "Jetzt neu anmelden" box
+    (`ssh -p <new>`), last on screen. `fish/config.fish` 1.1.0 refuses being
+    sourced from bash/zsh with one line naming `exec fish` instead of
+    `set: -g: invalid option`.
   - Guided first setup (v9.35.0, 27.10.2026): `ensure_maintenance_cron()`
     runs `setup-maintenance-cron.sh` once when `/etc/cron.d/myodoo-maintenance`
     is missing and Docker is present (never again — re-running resets

@@ -1,5 +1,37 @@
 # Release Notes
 
+## SSH Port Change Explained in a Box (29.10.2026)
+
+*getScripts.py v9.35.1 · fish/config.fish v1.1.0 · docs/COMPONENTS.md ·
+docs/usage/09-reference.md*
+
+The first live run of the guided setup on an empty host went through, and two
+things still needed explaining. The hardening question said "SSH-Port 16667
+statt 22" and, one line later, that port 22 stays open — read together, it was
+not clear which port was in force when. And the run ended in
+`-bash: set: -g: invalid option`: the shell was still bash, and bash sourced
+`config.fish`.
+
+### Changed
+
+- **The port change is three framed steps.** Before: SSH only on the old
+  port, this session. After `j`: the new port is added, the old one stays
+  open, keep this session. Then: log in over the new port and run `ups` —
+  only that run closes the old port. The provider-firewall note sits in the
+  same box. The frame falls back to ASCII when the terminal cannot encode it.
+- **A run that leaves a port change pending ends with "Jetzt neu anmelden"**,
+  after `Script completed successfully!`, naming `ssh -p <new port>` and the
+  `ups` that closes the old port. The new login also starts the new login
+  shell, so no `exec fish` is needed.
+
+### Fixed
+
+- **`source ~/.config/fish/config.fish` from bash or zsh** prints
+  "Das ist die Fish-Konfiguration - Fish starten mit: exec fish" and returns
+  instead of failing on `set -g`. The guard line parses in all three shells
+  and leaves fish with status 0, so `ups`, which sources the file, still
+  returns 0.
+
 ## Guided First Setup (27.10.2026)
 
 *getScripts.py v9.35.0 · scripts/server_hardening.py v1.12.0 ·

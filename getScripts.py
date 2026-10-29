@@ -147,8 +147,8 @@ if os.environ.get('GETSCRIPTS_DEBUG', '').lower() in ('1', 'true', 'yes'):
     logger.debug("Debug logging enabled")
 
 # Script version and date
-SCRIPT_VERSION = "9.35.0"
-SCRIPT_DATE = "27.10.2026"
+SCRIPT_VERSION = "9.35.1"
+SCRIPT_DATE = "29.10.2026"
 
 # Branch of myodoo-docker this server tracks - the single source of truth for
 # main() (update_repository() call) and self_update_and_reexec() (which must
@@ -5685,16 +5685,52 @@ def _hardening_question(pending: List[dict], env: Dict[str, str], listen: List[i
         if clause and clause not in clauses:
             clauses.append(clause)
     lines.append(f"Anwenden heißt: {'; '.join(clauses)}.")
-    if port_change:
-        old = ", ".join(str(p) for p in listen if str(p) != port) or "?"
-        lines.append(f"Port {old} bleibt offen, bis du dich einmal über {port} angemeldet hast; "
-                     f"der nächste ups schließt ihn dann.")
-    tail = "Diese Sitzung offen lassen."
-    if port_change:
-        tail += (f" Schaltet der Anbieter eine eigene Firewall vor (z. B. Hetzner Cloud "
-                 f"Firewall), muss Port {port} dort offen sein.")
-    lines.append(tail)
+    if not port_change:
+        lines.append("Diese Sitzung offen lassen.")
+        return "\n".join(lines)
+    # A port change happens in three steps; one sentence read as if the new
+    # port took over at once (field report 29.10.2026), so it gets a box.
+    old = ", ".join(str(p) for p in listen if str(p) != port) or "?"
+    lines.append("")
+    lines.append(_box("SSH-Portwechsel in drei Schritten", [
+        f"1. Bis jetzt:  SSH nur über Port {old} - diese Sitzung.",
+        f"2. Nach j:     Port {port} kommt dazu, Port {old} bleibt offen.",
+        "               Diese Sitzung offen lassen.",
+        f"3. Danach:     neu anmelden über Port {port}, dort ups.",
+        f"               Erst dieser ups schließt Port {old}.",
+        "",
+        "Hat der Anbieter eine eigene Firewall davor",
+        f"(z. B. Hetzner Cloud Firewall), muss Port {port} dort offen sein.",
+    ]))
     return "\n".join(lines)
+
+
+def _box(title: str, rows: List[str]) -> str:
+    """Frame rows for a terminal; ASCII when stdout cannot carry the box
+    characters (C locale on an old server)."""
+    try:
+        "┌─┐│└┘".encode(sys.stdout.encoding or "ascii")
+        tl, hz, tr, vt, bl, br = "┌", "─", "┐", "│", "└", "┘"
+    except (LookupError, UnicodeEncodeError):
+        tl, hz, tr, vt, bl, br = "+", "-", "+", "|", "+", "+"
+    width = max([len(title) + 2] + [len(r) for r in rows])
+    out = [f"{tl}{hz} {title} {hz * (width - len(title) - 1)}{tr}"]
+    out += [f"{vt} {r.ljust(width)} {vt}" for r in rows]
+    out.append(f"{bl}{hz * (width + 2)}{br}")
+    return "\n".join(out)
+
+
+def pending_ssh_transition(_myhome: str) -> Optional[Tuple[str, str]]:
+    """(old, new) while a port change waits for its first login, else None.
+    The marker holds "old new" and is removed when finish closes the port."""
+    try:
+        with open(os.path.join(_myhome, SSH_TRANSITION_RELATIVE), encoding="utf-8") as handle:
+            parts = handle.read().split()
+    except OSError:
+        return None
+    if len(parts) >= 2 and parts[0].isdigit() and parts[1].isdigit():
+        return parts[0], parts[1]
+    return None
 
 
 def finish_ssh_transition(_myhome: str) -> None:
@@ -6680,6 +6716,19 @@ def main() -> None:
         status("=" * 60)
         status("Script completed successfully!")
         status("=" * 60)
+
+        # The run that opened a port change ends with the one thing left to
+        # do, last on screen - the new login also starts the new login shell.
+        transition = pending_ssh_transition(_myhome)
+        if transition:
+            old, new = transition
+            status("")
+            status(_box("Jetzt neu anmelden", [
+                f"Neue SSH-Sitzung über Port {new} öffnen:",
+                f"    ssh -p {new} <benutzer>@<server>",
+                f"Dort ups ausführen - erst das schließt Port {old}.",
+                "Diese Sitzung erst schließen, wenn die neue steht.",
+            ]))
         if fish_installed:
             logger.info("Fish shell is now configured. Start it with: fish")
             logger.info("Or log out and back in if you changed your default shell.")
