@@ -147,7 +147,7 @@ if os.environ.get('GETSCRIPTS_DEBUG', '').lower() in ('1', 'true', 'yes'):
     logger.debug("Debug logging enabled")
 
 # Script version and date
-SCRIPT_VERSION = "9.35.1"
+SCRIPT_VERSION = "9.36.0"
 SCRIPT_DATE = "29.10.2026"
 
 # Branch of myodoo-docker this server tracks - the single source of truth for
@@ -3909,6 +3909,25 @@ def direct_dns_query(name: str, server: str = DIRECT_DNS_SERVER,
     return rcode == 0 and answers > 0
 
 
+DIRECT_TCP_PORT = 443
+
+
+def direct_tcp_probe(server: str = DIRECT_DNS_SERVER, port: int = DIRECT_TCP_PORT,
+                     timeout: float = 3.0) -> bool:
+    """True when a TCP connection to `server`:`port` completes.
+
+    The counterpart of direct_dns_query(): when the UDP query times out but
+    this succeeds, the network is up and only UDP replies are being dropped
+    - the signature of a stateless firewall in front of the server. Only the
+    handshake, nothing is sent; a proxy-only host fails both, as before.
+    """
+    try:
+        with socket.create_connection((server, port), timeout=timeout):
+            return True
+    except OSError:
+        return False
+
+
 def _effective_dnssec(root: str = "/") -> Optional[Tuple[str, str]]:
     """(value, file) of the last DNSSEC= line systemd-resolved reads from
     /etc, or None. Enough for a hint; server-readiness.py does the full order."""
@@ -3946,6 +3965,17 @@ def diagnose_dns_failure(host: str, root: str = "/") -> List[str]:
         return [f"DNS-Diagnose: {DIRECT_DNS_SERVER} beantwortet {host} direkt, der lokale "
                 f"Resolver nicht — dessen Konfiguration prüfen.",
                 "  Warum: resolvectl status; journalctl -u systemd-resolved -n 30 --no-pager"]
+    if direct_tcp_probe():
+        # Outgoing TCP works, UDP replies never arrive: a firewall in FRONT of
+        # the server that tracks TCP but not UDP (netcup SCP, 29.10.2026 - the
+        # Src/Dst port columns there are also easy to swap). UFW on the host
+        # cannot be the cause then, its outgoing default is allow.
+        return [f"DNS-Diagnose: auch {DIRECT_DNS_SERVER} antwortet nicht per UDP, TCP nach draußen "
+                f"geht aber ({DIRECT_DNS_SERVER}:{DIRECT_TCP_PORT} antwortet) — eine Firewall VOR dem "
+                f"Server verwirft UDP-Antworten (Provider-Firewall ohne UDP-Tracking, z. B. netcup SCP).",
+                "  Behebung dort: eingehend UDP von Quellport 53 (DNS) und 123 (NTP) erlauben, "
+                "Zielport 32768-60999.",
+                "  Gegenprobe: dig +time=2 github.com @1.1.1.1  vs.  curl -4 -m 3 -o /dev/null -w '%{http_code}\\n' http://1.1.1.1/"]
     return [f"DNS-Diagnose: auch {DIRECT_DNS_SERVER} antwortet nicht direkt — ausgehendes DNS "
             f"(UDP 53) gesperrt oder kein Netz.",
             "  Prüfen: ufw status verbose; hinter einem Proxy: env | grep -i proxy"]

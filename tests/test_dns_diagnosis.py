@@ -130,8 +130,9 @@ class DiagnoseDnsFailureTest(unittest.TestCase):
             handle.write(f"[Resolve]\nDNSSEC={value}\n")
         return path
 
-    def diagnose(self, direct):
-        with mock.patch.object(gs, "direct_dns_query", return_value=direct):
+    def diagnose(self, direct, tcp=False):
+        with mock.patch.object(gs, "direct_dns_query", return_value=direct), \
+                mock.patch.object(gs, "direct_tcp_probe", return_value=tcp):
             return "\n".join(gs.diagnose_dns_failure("github.com", root=self.tmp.name))
 
     def test_dnssec_on_and_direct_answer_names_the_file_and_the_fix(self):
@@ -149,9 +150,32 @@ class DiagnoseDnsFailureTest(unittest.TestCase):
 
     def test_no_direct_answer_points_at_the_network(self):
         self.dropin("allow-downgrade")
-        text = self.diagnose(direct=False)
+        text = self.diagnose(direct=False, tcp=False)
         self.assertIn("UDP 53", text)
+        self.assertIn("ufw status verbose", text)
         self.assertNotIn("sed -i", text)
+
+    def test_udp_dead_but_tcp_alive_names_the_firewall_in_front(self):
+        # netcup SCP, 29.10.2026: TCP tracked, UDP replies dropped - DNS dead,
+        # curl to 1.1.1.1 fine, and the old text sent the operator to UFW.
+        self.dropin("no")
+        text = self.diagnose(direct=False, tcp=True)
+        self.assertIn("VOR dem", text)
+        self.assertIn("Quellport 53", text)
+        self.assertIn("123", text)
+        self.assertIn("curl -4", text)
+        self.assertNotIn("ufw status verbose", text)
+        self.assertNotIn("sed -i", text)
+
+    def test_direct_answer_never_runs_the_tcp_probe(self):
+        self.dropin("no")
+        with mock.patch.object(gs, "direct_dns_query", return_value=True), \
+                mock.patch.object(gs, "direct_tcp_probe", side_effect=AssertionError("probed")):
+            gs.diagnose_dns_failure("github.com", root=self.tmp.name)
+
+    def test_tcp_probe_is_false_not_an_exception_when_nothing_answers(self):
+        with mock.patch.object(socket, "create_connection", side_effect=OSError("unreachable")):
+            self.assertFalse(gs.direct_tcp_probe(timeout=0.1))
 
     def test_the_pull_failure_path_calls_it(self):
         with open(os.path.join(REPO, "getScripts.py"), encoding="utf-8") as handle:

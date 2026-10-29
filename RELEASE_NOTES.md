@@ -1,5 +1,34 @@
 # Release Notes
 
+## DNS Diagnosis Tells a Provider Firewall from a Dead Network (29.10.2026)
+
+*getScripts.py v9.36.0 · docs/COMPONENTS.md · docs/usage/08-troubleshooting.md ·
+docs/usage/09-reference.md*
+
+On a fresh netcup host, `ups` failed with `Could not resolve host: github.com`
+and the DNS diagnosis sent the operator to `ufw status verbose`. UFW was
+fine. The provider firewall in front of the server tracks TCP connections
+but not UDP, so every DNS reply was dropped while `curl` to the same address
+worked — and the first visible symptom had been a 15-second login delay,
+fastfetch waiting for three resolver timeouts before its own one-second
+limit even applied.
+
+### Added
+
+- **A TCP counter-probe in `diagnose_dns_failure()`.** When the direct UDP
+  query to 1.1.1.1 fails, `direct_tcp_probe()` completes a handshake to
+  1.1.1.1:443 (nothing is sent). Success means the network is up and only
+  UDP replies are being dropped: the text now names a firewall in front of
+  the server, the rules to add there (incoming UDP from source port 53 for
+  DNS and 123 for NTP, destination ports 32768-60999) and the `dig` vs
+  `curl` check to confirm it. Both failing keeps the previous ufw/proxy
+  hint, so a proxy-only host reads as before.
+
+### Tests
+
+- 1541 tests (+3): the firewall branch, the probe not running when DNS
+  answers, and the probe returning False instead of raising.
+
 ## SSH Port Change Explained in a Box (29.10.2026)
 
 *getScripts.py v9.35.1 · fish/config.fish v1.1.0 · docs/COMPONENTS.md ·

@@ -11,9 +11,17 @@ in this repository, stay in `CLAUDE.md`.
 
 ### Key Components
 
-#### 1. getScripts.py (v9.35.1)
+#### 1. getScripts.py (v9.36.0)
 - **Purpose**: Main installation and update script
 - **Features**:
+  - DNS diagnosis tells a dropping provider firewall from a dead network
+    (v9.36.0, 29.10.2026): when the direct UDP query to 1.1.1.1 fails,
+    `direct_tcp_probe()` tries a TCP handshake to 1.1.1.1:443. Success means
+    the network is up and only UDP replies are dropped — a firewall in front
+    of the server that tracks TCP but not UDP (netcup SCP) — and the text
+    names the rules to add there (incoming UDP from source port 53 and 123)
+    plus the `dig` vs `curl` counter-check. Both failing keeps the old
+    ufw/proxy hint. Found on a netcup host where `ups` blamed UFW.
   - Port change in a box (v9.35.1, 29.10.2026): `_hardening_question()`
     shows a pending SSH port change as three framed steps (old port only →
     both ports after `j` → new login, whose `ups` closes the old port);
