@@ -22,11 +22,13 @@
 # All arithmetic is integer MiB, floored. System Python 3 standard library only.
 # ==============================================================================
 
+import json
 import math
 import os
 import re
+import time
 from dataclasses import dataclass
-from typing import Dict, List, Optional, Tuple
+from typing import Callable, Dict, List, Optional, Set, Tuple
 
 SCRIPT_VERSION = "1.0.0"
 SCRIPT_DATE = "09.11.2026"
@@ -391,3 +393,228 @@ def compute_plan(hw: Hardware, instances: List[Instance]) -> Plan:
 
     return Plan(hardware=hw, budget_mib=budget, need_mib=need, pg_total_mib=pg_total,
                 results=results, over_budget=over, warnings=warnings)
+
+
+# --- state + decisions -----------------------------------------------------
+
+STATE_NAME = ".sizing_state.json"
+CONF_NAME = "odoo.conf"
+
+
+def load_state(build_dir: str) -> Tuple[dict, Optional[str]]:
+    """The per-key decisions of one instance: ({}, None) when there is no file yet."""
+    path = os.path.join(build_dir, STATE_NAME)
+    if not os.path.exists(path):
+        return {}, None
+    try:
+        with open(path, encoding="utf8") as handle:
+            state = json.load(handle)
+    except (OSError, ValueError) as error:
+        return {}, "cannot read %s: %s" % (path, error)
+    if not isinstance(state, dict):
+        return {}, "cannot read %s: not a JSON object" % path
+    return state, None
+
+
+def save_state(build_dir: str, state: dict) -> Optional[str]:
+    """Write the state atomically. Returns an error text, or None on success."""
+    path = os.path.join(build_dir, STATE_NAME)
+    tmp = path + ".tmp"
+    try:
+        with open(tmp, "w", encoding="utf8") as handle:
+            json.dump(state, handle, indent=2, sort_keys=True)
+            handle.write("\n")
+        os.replace(tmp, path)
+    except OSError as error:
+        return "cannot write %s: %s" % (path, error)
+    return None
+
+
+def ensure_dockerignore(build_dir: str, pattern: str = STATE_NAME) -> None:
+    """Keep the state file out of the image build context. Never raises."""
+    path = os.path.join(build_dir, ".dockerignore")
+    try:
+        text = ""
+        if os.path.exists(path):
+            with open(path, encoding="utf8") as handle:
+                text = handle.read()
+            if any(line.strip() == pattern for line in text.splitlines()):
+                return
+        if text and not text.endswith("\n"):
+            text += "\n"
+        with open(path, "w", encoding="utf8") as handle:
+            handle.write(text + pattern + "\n")
+    except OSError:
+        pass
+
+
+@dataclass
+class KeyDecision:
+    key: str
+    action: str                  # "write" | "same" | "keep"
+    current: Optional[str]
+    recommended: str
+    note: str
+
+
+def decide_key(key: str, current: Optional[str], recommended: str, entry: Optional[dict],
+               is_default: bool, override: bool = False,
+               equal: Callable[[str, str], bool] = lambda a, b: a == b) -> KeyDecision:
+    """Decide what to do with one setting; the first matching rule wins."""
+    def make(action, note=""):
+        return KeyDecision(key, action, current, recommended, note)
+
+    status = entry.get("status") if entry else None
+    known = entry.get("known", []) if entry else []
+    same = current is not None and equal(current, recommended)
+    if override and not same:
+        return make("write", "Override")
+    if same:
+        return make("same")
+    if status == "hand":
+        return make("keep", "hand-edited")
+    if current is None:
+        return make("write", "setting absent")
+    if status == "accepted" and current in known:
+        return make("write", "accepted value follows the recommendation")
+    if entry is None and is_default:
+        return make("write", "template default")
+    note = "differs from the recommendation"
+    if entry is None:
+        note += "; not reviewed: dosize --review NAME"
+    return make("keep", note)
+
+
+def format_decision(d: KeyDecision) -> str:
+    if d.action == "keep":
+        return "%s: hand %s, recommended %s - unchanged" % (d.key, d.current, d.recommended)
+    if d.action == "write":
+        return "%s: %s -> %s" % (d.key, d.current if d.current is not None else "(unset)",
+                                 d.recommended)
+    return "%s: %s (ok)" % (d.key, d.current)
+
+
+# --- odoo.conf writer ------------------------------------------------------
+
+def patch_conf_text(text: str, changes: Dict[str, str]) -> str:
+    """Replace the line of each changed key in place; append keys that are absent."""
+    lines = text.splitlines()
+    pending = dict(changes)
+    for index, line in enumerate(lines):
+        stripped = line.strip()
+        if not stripped or stripped[0] in "#;[" or "=" not in stripped:
+            continue
+        key = stripped.partition("=")[0].strip()
+        if key in changes:
+            lines[index] = "%s = %s" % (key, changes[key])
+            pending.pop(key, None)
+    for key, value in pending.items():
+        lines.append("%s = %s" % (key, value))
+    return "\n".join(lines) + "\n"
+
+
+def conf_regression(original: str, patched: str, allowed_keys,
+                    values_of: Callable[[str], Dict[str, str]] = parse_conf_values) -> Optional[str]:
+    """A reason to refuse the patch, or None when it is safe.
+
+    Every setting must survive with its value; the only permitted difference is
+    a value for one of the announced keys.
+    """
+    before = values_of(original)
+    after = values_of(patched)
+    allowed = set(allowed_keys)
+    for key, value in before.items():
+        if key in allowed:
+            continue
+        if key not in after:
+            return "would drop setting: %s" % key
+        if after[key] != value:
+            return "would change setting: %s" % key
+    unexpected = sorted(set(after) - set(before) - allowed)
+    if unexpected:
+        return "would add setting(s): %s" % ", ".join(unexpected)
+    return None
+
+
+@dataclass
+class ConfSync:
+    changed: bool
+    decisions: List[KeyDecision]
+    error: Optional[str]
+    backup: Optional[str]
+
+
+def _remember(state: dict, section: str, decision: KeyDecision) -> None:
+    """Record a written or confirmed value as known, so a later change is a hand edit."""
+    entries = state.setdefault(section, {})
+    entry = entries.get(decision.key)
+    if not isinstance(entry, dict):
+        entry = entries[decision.key] = {"status": "accepted", "known": []}
+    if entry.get("status") == "hand":
+        if decision.action != "write":
+            return
+        entry["status"] = "accepted"     # an override replaced the hand value
+    known = entry.setdefault("known", [])
+    if decision.recommended not in known:
+        known.append(decision.recommended)
+
+
+def sync_odoo_conf(build_dir: str, recommended: Dict[str, str], overrides: Set[str],
+                   template_values: Dict[str, str], now=None) -> ConfSync:
+    """Bring the recommended settings into <build_dir>/odoo.conf, respecting hand edits."""
+    path = os.path.join(build_dir, CONF_NAME)
+    try:
+        with open(path, encoding="utf8") as handle:
+            original = handle.read()
+        mode = os.stat(path).st_mode & 0o7777
+    except OSError as error:
+        return ConfSync(False, [], "cannot read %s: %s" % (path, error), None)
+
+    state, problem = load_state(build_dir)
+    if problem:
+        return ConfSync(False, [], "state file unusable, nothing written: %s" % problem, None)
+    entries = state.get("odoo")
+    entries = entries if isinstance(entries, dict) else {}
+
+    current = parse_conf_values(original)
+    decisions = []
+    for key, value in recommended.items():
+        have = current.get(key)
+        entry = entries.get(key) if isinstance(entries.get(key), dict) else None
+        is_default = have is not None and have == template_values.get(key)
+        decisions.append(decide_key(key, have, value, entry, is_default,
+                                    override=key in overrides))
+    changes = {d.key: d.recommended for d in decisions if d.action == "write"}
+
+    backup = None
+    if changes:
+        patched = patch_conf_text(original, changes)
+        problem = conf_regression(original, patched, changes)
+        if problem:
+            return ConfSync(False, decisions, "refusing to patch %s: %s" % (path, problem), None)
+        stamp = time.strftime("%Y%m%d_%H%M%S", now if isinstance(now, time.struct_time)
+                              else time.localtime(now))
+        backup = "%s.bak_%s" % (path, stamp)
+        try:
+            with open(backup, "w", encoding="utf8") as handle:
+                handle.write(original)
+        except OSError as error:
+            return ConfSync(False, decisions, "cannot write backup %s: %s" % (backup, error), None)
+        tmp = path + ".tmp"
+        try:
+            with open(tmp, "w", encoding="utf8") as handle:
+                handle.write(patched)
+            os.chmod(tmp, mode)
+            os.replace(tmp, path)
+        except OSError as error:
+            return ConfSync(False, decisions, "cannot write %s: %s" % (path, error), backup)
+
+    before = json.dumps(state, sort_keys=True)
+    for d in decisions:
+        if d.action == "write" or (d.action == "same" and isinstance(entries.get(d.key), dict)):
+            _remember(state, "odoo", d)
+    error = None
+    if json.dumps(state, sort_keys=True) != before:
+        error = save_state(build_dir, state)
+        ensure_dockerignore(build_dir)
+    return ConfSync(bool(changes), decisions, error, backup)
