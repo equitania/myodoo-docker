@@ -632,3 +632,275 @@ def sync_odoo_conf(build_dir: str, recommended: Dict[str, str], overrides: Set[s
         error = save_state(build_dir, state)
         ensure_dockerignore(build_dir)
     return ConfSync(bool(changes), decisions, error, backup)
+
+
+# --- postgresql.conf writer ------------------------------------------------
+
+PG_RESTART_KEYS = ("shared_buffers", "max_connections")
+PG_MEMORY_KEYS = ("shared_buffers", "effective_cache_size", "work_mem", "maintenance_work_mem")
+# The four shipped profiles of pg-local-deploy.sh (4 / 8 / 16 / 32 GB): what an
+# untouched deployment holds, hence "template default" for decide_key.
+PG_PROFILE_VALUES: Dict[str, Tuple[str, ...]] = {
+    "shared_buffers": ("1GB", "2GB", "4GB", "8GB"),
+    "effective_cache_size": ("3GB", "6GB", "12GB", "24GB"),
+    "work_mem": ("4MB", "8MB", "16MB", "32MB"),
+    "maintenance_work_mem": ("512MB", "1GB", "2GB", "4GB"),
+    "max_connections": ("100", "150", "200", "300"),
+}
+PG_DATA_DESTINATION = "/var/lib/postgresql/data"
+PG_CONF_NAME = "postgresql.conf"
+PG_HEADER = "# ownerp_sizing"
+
+Runner = Callable[[List[str]], Tuple[int, str]]
+
+_PG_UNITS = {"kb": 1 / 1024, "mb": 1, "gb": 1024, "tb": 1048576}
+_PG_SIZE = re.compile(r"^\s*(\d+)\s*(kB|MB|GB|TB)\s*$", re.IGNORECASE)
+_PG_LINE = re.compile(r"^([A-Za-z_][A-Za-z0-9_.]*)\s*(?:=\s*|\s+)(.*)$")
+
+
+def pg_size_mib(text: str) -> Optional[int]:
+    """A PostgreSQL size as whole MiB; None without a unit (a bare number is not guessed)."""
+    match = _PG_SIZE.match(text or "")
+    if not match:
+        return None
+    return int(int(match.group(1)) * _PG_UNITS[match.group(2).lower()])
+
+
+def pg_equal(key: str, a: str, b: str) -> bool:
+    if key in PG_MEMORY_KEYS:
+        mib_a, mib_b = pg_size_mib(a), pg_size_mib(b)
+        if mib_a is not None and mib_b is not None:
+            return mib_a == mib_b
+    elif key == "max_connections":
+        try:
+            return int(a) == int(b)
+        except (TypeError, ValueError):
+            pass
+    return a == b
+
+
+def _pg_value(raw: str) -> str:
+    raw = raw.strip()
+    if raw.startswith("'"):
+        end = 1
+        while end < len(raw):
+            if raw[end] == "'":
+                if raw[end + 1:end + 2] == "'":
+                    end += 2
+                    continue
+                break
+            end += 1
+        return raw[1:end].replace("''", "'")
+    return raw.split("#", 1)[0].strip()
+
+
+def _pg_setting(line: str) -> Optional[Tuple[str, str]]:
+    stripped = line.strip()
+    if not stripped or stripped.startswith("#"):
+        return None
+    match = _PG_LINE.match(stripped)
+    if not match:
+        return None
+    return match.group(1).lower(), _pg_value(match.group(2))
+
+
+def parse_pg_conf_values(text: str) -> Dict[str, str]:
+    values: Dict[str, str] = {}
+    for line in text.splitlines():
+        setting = _pg_setting(line)
+        if setting:
+            values[setting[0]] = setting[1]
+    return values
+
+
+def patch_pg_conf_text(text: str, changes: Dict[str, str]) -> str:
+    """Replace the last active line of each key; append absent keys under one header."""
+    lines = text.splitlines(keepends=True)
+    last: Dict[str, int] = {}
+    for index, line in enumerate(lines):
+        setting = _pg_setting(line)
+        if setting and setting[0] in changes:
+            last[setting[0]] = index
+    for key, index in last.items():
+        old = _pg_setting(lines[index])[1]
+        ending = "\r\n" if lines[index].endswith("\r\n") else "\n"
+        lines[index] = "%s = %s   %s (was: %s)%s" % (key, changes[key], PG_HEADER, old, ending)
+    result = "".join(lines)
+    pending = [key for key in changes if key not in last]
+    if pending:
+        if result and not result.endswith("\n"):
+            result += "\n"
+        result += "%s\n" % PG_HEADER
+        for key in pending:
+            result += "%s = %s\n" % (key, changes[key])
+    return result
+
+
+def find_pgdata(mounts_json: str) -> Optional[str]:
+    try:
+        mounts = json.loads(mounts_json)
+    except (TypeError, ValueError):
+        return None
+    if not isinstance(mounts, list):
+        return None
+    for mount in mounts:
+        if (isinstance(mount, dict) and isinstance(mount.get("Source"), str)
+                and str(mount.get("Destination", "")).rstrip("/") == PG_DATA_DESTINATION
+                and mount["Source"]):
+            return mount["Source"]
+    return None
+
+
+def container_running(name: str, run: Runner) -> Optional[bool]:
+    code, out = run(["docker", "inspect", "-f", "{{.State.Running}}", name])
+    if code != 0:
+        return None
+    return out.strip() == "true"
+
+
+@dataclass
+class PgSync:
+    changed: bool
+    decisions: List[KeyDecision]
+    restarted: bool
+    verified: Optional[bool]
+    rolled_back: bool
+    error: Optional[str]
+    skipped: Optional[str]
+
+
+def _replace_file(path: str, data: bytes, mode: int, uid: int, gid: int) -> None:
+    """Atomic replace keeping mode and owner; chown failures (not root) are ignored."""
+    tmp = path + ".ownerp_tmp"
+    with open(tmp, "wb") as handle:
+        handle.write(data)
+    os.chmod(tmp, mode)
+    try:
+        os.chown(tmp, uid, gid)
+    except OSError:
+        pass
+    os.replace(tmp, path)
+
+
+def _wait_ready(db: str, db_user: str, run: Runner, sleep, retries: int) -> bool:
+    for attempt in range(retries):
+        code, _ = run(["docker", "exec", db, "pg_isready", "-U", db_user, "-d", "postgres"])
+        if code == 0:
+            return True
+        if attempt < retries - 1:
+            sleep(5)
+    return False
+
+
+def _verify(db: str, db_user: str, changes: Dict[str, str], run: Runner, sleep,
+            attempts: int) -> bool:
+    for attempt in range(attempts):
+        ok = True
+        for key, value in changes.items():
+            code, out = run(["docker", "exec", db, "psql", "-U", db_user, "-d", "postgres",
+                             "-tAc", "SHOW %s" % key])
+            if code != 0 or not pg_equal(key, out.strip(), value):
+                ok = False
+                break
+        if ok:
+            return True
+        if attempt < attempts - 1:
+            sleep(1)      # a reload applies asynchronously
+    return False
+
+
+def sync_postgres(db_container: str, recommended: Dict[str, str], overrides: Set[str],
+                  state_entry: dict, run: Runner, db_user: str, now=None,
+                  sleep=time.sleep, retries: int = 6) -> PgSync:
+    """Bring the recommended settings into the database container's postgresql.conf.
+
+    state_entry is the "pg" section of the state file; it is updated IN PLACE after
+    a verified change (the caller saves it). The caller guarantees Odoo is stopped.
+    """
+    def fail(message, decisions=None):
+        return PgSync(False, decisions or [], False, None, False, message, None)
+
+    code, out = run(["docker", "inspect", "-f", "{{json .Mounts}}", db_container])
+    pgdata = find_pgdata(out) if code == 0 else None
+    if pgdata is None:
+        return PgSync(False, [], False, None, False, None, "db_host is not a local container")
+    path = os.path.join(pgdata, PG_CONF_NAME)
+    try:
+        with open(path, "rb") as handle:
+            original_bytes = handle.read()
+        original = original_bytes.decode("utf8")
+        info = os.stat(path)
+    except (OSError, ValueError) as error:
+        return fail("cannot read %s: %s" % (path, error))
+    mode, uid, gid = info.st_mode & 0o7777, info.st_uid, info.st_gid
+
+    problem = _state_shape_problem({"pg": state_entry}) if isinstance(state_entry, dict) \
+        else "'pg' is not an object"
+    if problem:
+        return fail("state unusable, nothing written: %s" % problem)
+
+    current = parse_pg_conf_values(original)
+    decisions = []
+    for key, value in recommended.items():
+        have = current.get(key)
+        entry = state_entry.get(key)
+        is_default = have is not None and any(
+            pg_equal(key, have, known) for known in PG_PROFILE_VALUES.get(key, ()))
+        decisions.append(decide_key(key, have, value, entry, is_default,
+                                    override=key in overrides,
+                                    equal=lambda a, b, k=key: pg_equal(k, a, b)))
+    changes = {d.key: d.recommended for d in decisions if d.action == "write"}
+
+    def remember():
+        wrapper = {"pg": state_entry}
+        for d in decisions:
+            if d.action == "write" or (d.action == "same"
+                                       and isinstance(state_entry.get(d.key), dict)):
+                _remember(wrapper, "pg", d)
+
+    if not changes:
+        remember()
+        return PgSync(False, decisions, False, None, False, None, None)
+
+    patched = patch_pg_conf_text(original, changes)
+    problem = conf_regression(original, patched, changes, values_of=parse_pg_conf_values)
+    if problem:
+        return fail("refusing to patch %s: %s" % (path, problem), decisions)
+
+    stamp = time.strftime("%Y%m%d_%H%M%S", now if isinstance(now, time.struct_time)
+                          else time.localtime(now))
+    backup = "%s.bak_%s" % (path, stamp)
+    try:
+        _replace_file(backup, original_bytes, mode, uid, gid)
+        _replace_file(path, patched.encode("utf8"), mode, uid, gid)
+    except OSError as error:
+        return fail("cannot write %s: %s" % (path, error), decisions)
+
+    restart = any(key in PG_RESTART_KEYS for key in changes)
+    if restart:
+        applied, _ = run(["docker", "restart", db_container])
+    else:
+        applied, _ = run(["docker", "kill", "--signal=HUP", db_container])
+    good = applied == 0 and _wait_ready(db_container, db_user, run, sleep, retries)
+    if good:
+        good = _verify(db_container, db_user, changes, run, sleep, 1 if restart else 4)
+    if good:
+        remember()
+        return PgSync(True, decisions, restart, True, False, None, None)
+
+    # rollback: the backup bytes come back, the database restarts on them
+    try:
+        _replace_file(path, original_bytes, mode, uid, gid)
+    except OSError as error:
+        return PgSync(False, decisions, restart, False, False,
+                      "new settings were not accepted and the backup could not be restored "
+                      "(%s); restore %s by hand" % (error, backup), None)
+    run(["docker", "restart", db_container])
+    up = _wait_ready(db_container, db_user, run, sleep, retries)
+    if up:
+        message = ("the database did not accept the new settings; rolled back, "
+                   "the old values are active again")
+    else:
+        message = ("the database did not accept the new settings; rolled back to the old "
+                   "postgresql.conf, but the database is not answering - check it")
+    return PgSync(False, decisions, restart, False, True, message, None)

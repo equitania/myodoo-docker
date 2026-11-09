@@ -44,6 +44,14 @@ def recommended(version=18):
     return sz.compute_plan(sz.Hardware(4, 16384), [live, test]).results[0].odoo
 
 
+def recommended_pg(version=18):
+    live = sz.Instance(name="live-odoo", version=version, role="live", users=None,
+                       overrides={}, db_container=None, build_dir="", conf={})
+    test = sz.Instance(name="test-odoo", version=version, role="test", users=None,
+                       overrides={}, db_container=None, build_dir="", conf={})
+    return sz.compute_plan(sz.Hardware(4, 16384), [live, test]).results[0].pg
+
+
 class Base(unittest.TestCase):
     def setUp(self):
         self.dir = tempfile.mkdtemp()
@@ -275,3 +283,245 @@ class TestRegressionAndState(Base):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+# --- postgresql.conf writer ------------------------------------------------
+
+PG_CONF = (
+    "# PostgreSQL configuration\n"
+    "max_connections = 200                   # Standard for 16GB system\n"
+    "shared_buffers = 4GB                   # 25% of total RAM\n"
+    "work_mem = 16MB                        # Increased for complex queries\n"
+    "maintenance_work_mem = 2GB             # For VACUUM, CREATE INDEX\n"
+    "effective_cache_size = 12GB            # 75% of total RAM\n"
+    "random_page_cost = 1.1\n"
+)
+
+
+def show_value(key, text):
+    """What PostgreSQL would answer for SHOW <key> (MiB values print in the largest unit)."""
+    if key == "max_connections":
+        return text
+    mib = sz.pg_size_mib(text)
+    return "%dGB" % (mib // 1024) if mib % 1024 == 0 else "%dMB" % mib
+
+
+class FakeDocker:
+    """Records argv lists and answers like docker would; no real process is started."""
+
+    def __init__(self, pgdata, conf_path, ready=None, show=None, inspect_rc=0):
+        self.calls = []
+        self.pgdata = pgdata
+        self.conf_path = conf_path
+        self.ready = ready or (lambda n: 0)     # n-th pg_isready call (1-based) -> rc
+        self.show = show                         # key -> text overriding the file value
+        self.inspect_rc = inspect_rc
+        self.isready_calls = 0
+
+    def __call__(self, argv):
+        self.calls.append(list(argv))
+        if argv[:2] == ["docker", "inspect"]:
+            if self.inspect_rc:
+                return self.inspect_rc, "Error: No such object"
+            return 0, json.dumps([{"Type": "bind", "Source": self.pgdata,
+                                   "Destination": "/var/lib/postgresql/data"}])
+        if "pg_isready" in argv:
+            self.isready_calls += 1
+            return self.ready(self.isready_calls), ""
+        if "psql" in argv:
+            key = argv[-1].split()[1]
+            if self.show and key in self.show:
+                return 0, self.show[key] + "\n"
+            with open(self.conf_path, encoding="utf8") as handle:
+                values = sz.parse_pg_conf_values(handle.read())
+            return 0, show_value(key, values[key]) + "\n"
+        return 0, ""
+
+    def verbs(self):
+        return [c[1] for c in self.calls if c[0] == "docker"]
+
+
+class PgBase(unittest.TestCase):
+    def setUp(self):
+        self.dir = tempfile.mkdtemp()
+        self.conf = os.path.join(self.dir, "postgresql.conf")
+        with open(self.conf, "w", encoding="utf8") as handle:
+            handle.write(PG_CONF)
+        os.chmod(self.conf, 0o640)
+        self.sleeps = []
+
+    def tearDown(self):
+        shutil.rmtree(self.dir)
+
+    def read(self):
+        with open(self.conf, encoding="utf8") as handle:
+            return handle.read()
+
+    def baks(self):
+        return glob.glob(self.conf + ".bak_*")
+
+    def sync(self, rec=None, entry=None, overrides=(), docker=None, retries=6):
+        self.docker = docker or FakeDocker(self.dir, self.conf)
+        self.entry = {} if entry is None else entry
+        rec = recommended_pg() if rec is None else rec
+        return sz.sync_postgres("live-db", rec, set(overrides), self.entry, self.docker, "odoo",
+                                sleep=self.sleeps.append, retries=retries)
+
+
+class TestPgHelpers(unittest.TestCase):
+    def test_size_parsing_and_equality(self):
+        self.assertEqual(sz.pg_size_mib("4GB"), 4096)
+        self.assertEqual(sz.pg_size_mib("512MB"), 512)
+        self.assertEqual(sz.pg_size_mib("8192kB"), 8)
+        self.assertEqual(sz.pg_size_mib("1TB"), 1048576)
+        self.assertIsNone(sz.pg_size_mib("100"))
+        self.assertTrue(sz.pg_equal("shared_buffers", "4GB", "4096MB"))
+        self.assertTrue(sz.pg_equal("max_connections", "200", "200"))
+        self.assertFalse(sz.pg_equal("work_mem", "16MB", "32MB"))
+
+    def test_parse_takes_the_last_occurrence_and_strips_comments(self):
+        values = sz.parse_pg_conf_values(
+            "shared_buffers = 1GB\n# shared_buffers = 9GB\nshared_buffers = '2GB' # x\n"
+            "work_mem = 4MB   # y\n")
+        self.assertEqual(values["shared_buffers"], "2GB")
+        self.assertEqual(values["work_mem"], "4MB")
+
+    def test_find_pgdata_from_inspect_json(self):
+        def mounts(destination):
+            return json.dumps([{"Source": "/data/pg", "Destination": destination}])
+        self.assertEqual(sz.find_pgdata(mounts("/var/lib/postgresql/data")), "/data/pg")
+        self.assertEqual(sz.find_pgdata(mounts("/var/lib/postgresql/data/")), "/data/pg")
+        self.assertIsNone(sz.find_pgdata(mounts("/other")))
+        self.assertIsNone(sz.find_pgdata("not json"))
+
+    def test_patch_replaces_last_active_line_and_appends(self):
+        text = "a = 1\nwork_mem = 4MB\nwork_mem = 8MB  # c\nz = 2\n"
+        out = sz.patch_pg_conf_text(text, {"work_mem": "16MB", "shared_buffers": "1GB"})
+        self.assertIn("work_mem = 4MB\n", out)
+        self.assertIn("work_mem = 16MB   # ownerp_sizing (was: 8MB)\n", out)
+        self.assertIn("shared_buffers = 1GB", out)
+        self.assertEqual(out.count("# ownerp_sizing"), 2)   # replaced line + one header
+
+    def test_container_running(self):
+        self.assertTrue(sz.container_running("x", lambda a: (0, "true\n")))
+        self.assertFalse(sz.container_running("x", lambda a: (0, "false\n")))
+        self.assertIsNone(sz.container_running("x", lambda a: (1, "")))
+
+
+class TestPgSync(PgBase):
+    def test_profile_values_are_rewritten_and_unrelated_settings_survive(self):
+        rec = recommended_pg()
+        result = self.sync()
+        self.assertIsNone(result.error)
+        self.assertTrue(result.changed)
+        values = sz.parse_pg_conf_values(self.read())
+        for key, value in rec.items():
+            self.assertEqual(values[key], value)
+        self.assertIn("random_page_cost = 1.1\n", self.read())
+        self.assertEqual(len(self.baks()), 1)
+        with open(self.baks()[0], encoding="utf8") as handle:
+            self.assertEqual(handle.read(), PG_CONF)
+        self.assertEqual(os.stat(self.conf).st_mode & 0o7777, 0o640)
+
+    def test_restart_keys_restart_and_other_keys_only_reload(self):
+        result = self.sync()
+        self.assertTrue(result.restarted)
+        self.assertIn(["docker", "restart", "live-db"], self.docker.calls)
+        self.assertNotIn(["docker", "kill", "--signal=HUP", "live-db"], self.docker.calls)
+
+    def test_only_reload_keys_send_hup(self):
+        rec = {"work_mem": "32MB"}
+        result = self.sync(rec=rec)
+        self.assertFalse(result.restarted)
+        self.assertIn(["docker", "kill", "--signal=HUP", "live-db"], self.docker.calls)
+        self.assertNotIn(["docker", "restart", "live-db"], self.docker.calls)
+        self.assertTrue(result.verified)
+
+    def test_verification_reads_show_for_each_changed_key(self):
+        result = self.sync()
+        shows = [c[-1] for c in self.docker.calls if "psql" in c]
+        for key in ("shared_buffers", "max_connections", "work_mem"):
+            self.assertIn("SHOW %s" % key, shows)
+        self.assertTrue(result.verified)
+        self.assertIn(["docker", "exec", "live-db", "pg_isready", "-U", "odoo", "-d", "postgres"],
+                      self.docker.calls)
+
+    def test_unit_mixed_values_are_not_a_hand_edit(self):
+        with open(self.conf, "w", encoding="utf8") as handle:
+            handle.write("shared_buffers = 4096MB\n")
+        result = self.sync(rec={"shared_buffers": "4GB"})
+        self.assertEqual(result.decisions[0].action, "same")
+        self.assertFalse(result.changed)
+        self.assertEqual(self.docker.verbs(), ["inspect"])
+
+    def test_a_hand_value_is_kept_and_reported(self):
+        text = PG_CONF.replace("work_mem = 16MB", "work_mem = 99MB")
+        with open(self.conf, "w", encoding="utf8") as handle:
+            handle.write(text)
+        result = self.sync(rec={"work_mem": "32MB", "shared_buffers": "3GB"})
+        by_key = {d.key: d for d in result.decisions}
+        self.assertEqual(by_key["work_mem"].action, "keep")
+        self.assertEqual(sz.parse_pg_conf_values(self.read())["work_mem"], "99MB")
+        self.assertEqual(sz.parse_pg_conf_values(self.read())["shared_buffers"], "3GB")
+
+    def test_state_entry_is_updated_in_place_after_success(self):
+        result = self.sync()
+        self.assertTrue(result.verified)
+        self.assertEqual(self.entry["shared_buffers"]["known"], [recommended_pg()["shared_buffers"]])
+        self.assertEqual(self.entry["shared_buffers"]["status"], "accepted")
+
+    def test_database_that_does_not_come_up_is_rolled_back(self):
+        # first restart: never ready (6 tries); rollback restart: ready
+        result = self.sync(docker=FakeDocker(self.dir, self.conf,
+                                             ready=lambda n: 1 if n <= 6 else 0))
+        self.assertTrue(result.rolled_back)
+        self.assertFalse(result.changed)
+        self.assertEqual(self.read(), PG_CONF)
+        self.assertIn("rolled back", result.error)
+        self.assertEqual(self.docker.verbs().count("restart"), 2)
+        self.assertEqual(self.entry, {})
+        self.assertTrue(all(s == 5 for s in self.sleeps) and self.sleeps)
+
+    def test_a_database_that_stays_down_after_rollback_is_reported(self):
+        result = self.sync(docker=FakeDocker(self.dir, self.conf, ready=lambda n: 1))
+        self.assertTrue(result.rolled_back)
+        self.assertEqual(self.read(), PG_CONF)
+        self.assertIn("rolled back", result.error)
+        self.assertIn("not answering", result.error)
+
+    def test_a_value_the_server_did_not_take_is_rolled_back(self):
+        old = {"shared_buffers": "4GB"}
+        result = self.sync(docker=FakeDocker(self.dir, self.conf, show=old))
+        self.assertTrue(result.rolled_back)
+        self.assertFalse(result.verified)
+        self.assertEqual(self.read(), PG_CONF)
+        self.assertIn("rolled back", result.error)
+
+    def test_an_external_database_is_skipped_not_failed(self):
+        result = self.sync(docker=FakeDocker(self.dir, self.conf, inspect_rc=1))
+        self.assertIsNotNone(result.skipped)
+        self.assertIn("not a local container", result.skipped)
+        self.assertIsNone(result.error)
+        self.assertEqual(self.read(), PG_CONF)
+        self.assertEqual(self.baks(), [])
+
+    def test_missing_or_non_utf8_conf_is_an_error(self):
+        with open(self.conf, "wb") as handle:
+            handle.write(b"work_mem = 4MB\n# \xff\xfe\n")
+        result = self.sync()
+        self.assertIsNotNone(result.error)
+        self.assertFalse(result.changed)
+        os.remove(self.conf)
+        self.assertIsNotNone(self.sync().error)
+
+    def test_wrong_state_shape_blocks_the_write(self):
+        result = self.sync(entry={"work_mem": "oops"})
+        self.assertIn("nothing written", result.error)
+        self.assertEqual(self.read(), PG_CONF)
+        self.assertNotIn("restart", self.docker.verbs())
+
+    def test_the_regression_gate_protects_foreign_settings(self):
+        patched = PG_CONF.replace("random_page_cost = 1.1", "random_page_cost = 4.0")
+        reason = sz.conf_regression(PG_CONF, patched, {"work_mem"},
+                                    values_of=sz.parse_pg_conf_values)
+        self.assertIn("random_page_cost", reason)
