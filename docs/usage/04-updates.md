@@ -139,11 +139,12 @@ freiwillig: nur eine Instanz, deren Eintrag in `docker2update.yaml` einen
 `sizing:`-Block hat, wird behandelt.
 
 ```yaml
-instances:
-  live-odoo:
+containers:
+  - container_name: "live-odoo"
+    # ... other keys of the entry ...
     sizing:
-      profile: live        # live | test | demo (Pflicht)
-      users: 40            # optional, ganze Zahl >= 1, nur bei live sinnvoll
+      profile: "live"      # live | test | demo (Pflicht)
+      users: 30            # optional, ganze Zahl >= 1, nur bei live sinnvoll
       workers: 6           # optional: fester Wert statt Empfehlung
 ```
 
@@ -405,11 +406,12 @@ PostgreSQL memory settings from the host's hardware. This is opt-in: only an
 instance whose entry in `docker2update.yaml` has a `sizing:` block is handled.
 
 ```yaml
-instances:
-  live-odoo:
+containers:
+  - container_name: "live-odoo"
+    # ... other keys of the entry ...
     sizing:
-      profile: live        # live | test | demo (required)
-      users: 40            # optional, integer >= 1, only meaningful for live
+      profile: "live"      # live | test | demo (required)
+      users: 30            # optional, integer >= 1, only meaningful for live
       workers: 6           # optional: fixed value instead of the recommendation
 ```
 
