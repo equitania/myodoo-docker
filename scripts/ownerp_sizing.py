@@ -215,7 +215,8 @@ def shared_db_partners(containers: List[dict], name: str) -> Tuple[Optional[str]
 
 def shared_db_note(db: str, others: List[str]) -> str:
     return ("database container %s is shared with %s - PostgreSQL left unchanged; "
-            "set it with pg_* overrides or by hand" % (db, ", ".join(others)))
+            "size it by hand for the instances together (dosize shows each one's need)"
+            % (db, ", ".join(others)))
 
 
 # --- calculation -----------------------------------------------------------
