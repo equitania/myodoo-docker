@@ -4,7 +4,7 @@
 # Title:            ownerp_validate.py
 # Description:      Read-only validation of docker2update.yaml and
 #                   container2backup.yaml against declared schemas
-# Version:          1.2.0
+# Version:          1.3.0
 # Date:             09.11.2026
 # Author:           Equitania Software GmbH
 # ==============================================================================
@@ -35,7 +35,7 @@ try:
 except ImportError:  # pragma: no cover - depends on the machine
     yaml = None
 
-SCRIPT_VERSION = "1.2.0"
+SCRIPT_VERSION = "1.3.0"
 SCRIPT_DATE = "09.11.2026"
 
 ERROR = "error"
@@ -350,6 +350,21 @@ PROXY_FIELDS = {
     "bypass_intranet": {"type": bool},
 }
 
+# Optional per-container sizing block (applied by doup, see ownerp_sizing.py).
+# The override names repeat ownerp_sizing.OVERRIDE_KEYS; a test keeps them equal.
+SIZING_FIELDS = {
+    "profile":              {"required": True, "type": str,
+                             "enum": ["live", "test", "demo"]},
+    "users":                {"type": int, "min": 1},
+    "workers":              {"type": int, "min": 1},
+    "max_cron_threads":     {"type": int, "min": 1},
+    "limit_memory_soft_mb": {"type": int, "min": 64},
+    "limit_memory_hard_mb": {"type": int, "min": 64},
+    "db_maxconn":           {"type": int, "min": 1},
+    "pg_shared_buffers_mb": {"type": int, "min": 64},
+    "pg_max_connections":   {"type": int, "min": 1},
+}
+
 # The item schemas are module constants rather than nested "item" rules,
 # because containers and databases are walked by hand further down: each entry
 # needs its own downgrade decision, which the generic walker cannot make. A
@@ -374,6 +389,7 @@ CONTAINER_FIELDS = {
     "db_password_via_env": {"type": bool},
     "log_retention_days":  {"type": int, "min": 0},
     "proxy":               {"type": dict, "fields": PROXY_FIELDS},
+    "sizing":              {"type": dict, "fields": SIZING_FIELDS},
     "pre_build_files":     {"type": list, "item": {"fields": {
         "source": {"type": str, "required": True, "path": "any"},
         "target": {"type": str},

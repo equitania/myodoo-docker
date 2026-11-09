@@ -1,5 +1,5 @@
 # Docker Container Update Configuration
-# Date: 14.07.2026
+# Date: 09.11.2026
 #
 # SECURITY WARNING: This is a TEMPLATE file!
 # Replace all placeholder passwords before production use!
@@ -30,6 +30,11 @@
 #     cannot be fetched during the Docker build itself
 #   log_retention_days: (optional, per container) override of
 #     defaults.log_retention_days, see below
+#   sizing: (optional, per container) host-aware Odoo/PostgreSQL sizing, applied
+#     by doup; see dosize. profile: live|test|demo (required); users: expected
+#     concurrent users (optional); optional overrides: workers, max_cron_threads,
+#     limit_memory_soft_mb, limit_memory_hard_mb, db_maxconn,
+#     pg_shared_buffers_mb, pg_max_connections. Without the block nothing changes.
 #
 # Notes:
 #   - [M]odule update: Only copies new modules to container without updating all (2-3 minutes)
@@ -112,6 +117,12 @@ containers:
     #  - source: "/opt/customer/eq_custom_module"
     #    target: "custom-addons/"
     #  - source: "$HOME/uploads/eq_custom2.tar.gz"
+    # Optional: size workers, memory limits and PostgreSQL memory for this host
+    # (applied by doup, see dosize). Only profile is required.
+    #sizing:
+    #  profile: "live"
+    #  users: 30
+    #  #workers: 6
 
 
   - active: false

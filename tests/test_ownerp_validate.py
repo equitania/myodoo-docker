@@ -388,6 +388,104 @@ class UpdateSchemaTest(unittest.TestCase):
         self.assertEqual(hits[0].severity, ov.WARNING)
 
 
+class SizingBlockTest(UpdateSchemaTest):
+    """The optional 'sizing' block of a container."""
+
+    def with_sizing(self, block):
+        return GOOD_UPDATE + textwrap.indent(textwrap.dedent(block).strip("\n"),
+                                             " " * 8) + "\n"
+
+    def test_sizing_block_is_accepted(self):
+        text = self.with_sizing("""
+            sizing:
+              profile: live
+              users: 30
+              workers: 6
+        """)
+        self.assertEqual(self.check(text), [])
+
+    def test_sizing_profile_is_an_enum(self):
+        errors = self.errors(self.with_sizing("""
+            sizing:
+              profile: prod
+        """))
+        self.assertEqual(len(errors), 1)
+        self.assertEqual(errors[0].path, "containers[0].sizing.profile")
+        self.assertIn("is not one of live, test, demo", errors[0].message)
+
+    def test_sizing_users_must_be_a_whole_number_of_at_least_one(self):
+        errors = self.errors(self.with_sizing("""
+            sizing:
+              profile: live
+              users: 0
+        """))
+        self.assertEqual(len(errors), 1)
+        self.assertIn("must be at least 1", errors[0].message)
+        for bad in ('"30"', "true"):
+            errors = self.errors(self.with_sizing(f"""
+                sizing:
+                  profile: live
+                  users: {bad}
+            """))
+            self.assertEqual(len(errors), 1, bad)
+            self.assertTrue(errors[0].path.endswith("sizing.users"), bad)
+
+    def test_sizing_unknown_key_gets_a_suggestion(self):
+        findings = self.check(self.with_sizing("""
+            sizing:
+              profil: live
+              profile: live
+        """))
+        hits = [f for f in findings if "unknown key" in f.message]
+        self.assertEqual(len(hits), 1)
+        self.assertEqual(hits[0].severity, ov.WARNING)
+        self.assertIn('did you mean "profile"', hits[0].message)
+
+    def test_sizing_without_profile_is_an_error(self):
+        errors = self.errors(self.with_sizing("""
+            sizing:
+              users: 5
+        """))
+        self.assertEqual(len(errors), 1)
+        self.assertIn("is missing", errors[0].message)
+
+    def test_sizing_in_flow_style_keeps_line_numbers(self):
+        text = self.with_sizing("sizing: {{profile: live, users: 0}}")
+        errors = self.errors(text)
+        self.assertEqual(len(errors), 1)
+        sizing_line = text.format(here=self.here).lstrip("\n").splitlines().index(
+            "        sizing: {profile: live, users: 0}") + 1
+        self.assertEqual(errors[0].line, sizing_line)
+
+    def test_the_template_with_the_sizing_example_uncommented_validates(self):
+        path = os.path.join(REPO_ROOT, "scripts", "docker2update.yaml")
+        with open(path, encoding="utf-8") as handle:
+            lines = handle.read().splitlines()
+        out, active = [], False
+        for line in lines:
+            if line.strip() == "#sizing:":
+                active = True
+                out.append(line.replace("#sizing:", "sizing:", 1))
+            elif active and line.startswith("    #") and \
+                    line[5:].startswith("  ") and not line.startswith("    #  #"):
+                out.append("    " + line[5:])
+            else:
+                active = False
+                out.append(line)
+        text = "\n".join(out) + "\n"
+        self.assertIn("\n    sizing:\n", text)
+        tmp = write(self.tmp.name, "t.yaml", text)
+        findings, fatal = ov.validate_update(tmp)
+        self.assertIsNone(fatal)
+        self.assertEqual([f for f in findings if f.severity == ov.ERROR], [])
+        self.assertEqual([f for f in findings if "unknown key" in f.message], [])
+
+    def test_schema_names_match_the_calculation_overrides(self):
+        import ownerp_sizing
+        self.assertEqual(set(ov.SIZING_FIELDS) - {"profile", "users"},
+                         set(ownerp_sizing.OVERRIDE_KEYS))
+
+
 class CollisionTest(UpdateSchemaTest):
     TWO = GOOD_UPDATE + """
       - active: true
