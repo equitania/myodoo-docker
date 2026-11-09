@@ -1997,20 +1997,6 @@ SIZING_ERRORS = 0                    # reset by main(); exit status 1 when > 0
 SIZING_PLAN = {}                     # container name -> (InstanceResult, pg override keys)
 SIZING_COMMAND_TIMEOUT = 300         # above `docker restart -t 120`
 
-# sizing-block override -> the odoo.conf / postgresql.conf keys it pins
-SIZING_ODOO_OVERRIDES = {
-    'workers': ('workers',),
-    'max_cron_threads': ('max_cron_threads',),
-    'limit_memory_soft_mb': ('limit_memory_soft', 'limit_memory_soft_gevent'),
-    'limit_memory_hard_mb': ('limit_memory_hard', 'limit_memory_hard_gevent'),
-    'db_maxconn': ('db_maxconn', 'db_maxconn_gevent'),
-}
-SIZING_PG_OVERRIDES = {
-    'pg_shared_buffers_mb': ('shared_buffers', 'effective_cache_size'),
-    'pg_max_connections': ('max_connections',),
-}
-
-
 def sizing_module():
     """ownerp_sizing.py from this script's own folder; None when missing or broken."""
     module = sys.modules.get('ownerp_sizing')
@@ -2067,13 +2053,6 @@ def _sizing_problem(level, text):
     note_issue(level, text)
 
 
-def _sizing_override_keys(overrides, table):
-    keys = set()
-    for name in overrides:
-        keys.update(table.get(name, ()))
-    return keys
-
-
 def run_sizing_odoo(container, all_containers, path, dockerfiles_source, hardware=None):
     """Write the recommended settings into the build folder's odoo.conf.
 
@@ -2101,7 +2080,7 @@ def run_sizing_odoo(container, all_containers, path, dockerfiles_source, hardwar
         result = next((r for r in plan.results if r.name == name), None)
         if result is None or not result.sized:
             return 0, 0, 0               # block without a usable profile: nothing to apply
-        pg_overrides = _sizing_override_keys(result.overrides, SIZING_PG_OVERRIDES)
+        pg_overrides = sizing.override_conf_keys(result, "pg")
         SIZING_PLAN[name] = (result, pg_overrides)
 
         version = container.get('odoo_version')
@@ -2109,7 +2088,7 @@ def run_sizing_odoo(container, all_containers, path, dockerfiles_source, hardwar
                              f"v{version}-odoo", "odoo.conf")
         template = sizing.parse_conf_values(sizing.read_text(template_path) or "")
         sync = sizing.sync_odoo_conf(path, result.odoo,
-                                     _sizing_override_keys(result.overrides, SIZING_ODOO_OVERRIDES),
+                                     sizing.override_conf_keys(result, "odoo"),
                                      template)
         if sync.error:
             errors += 1

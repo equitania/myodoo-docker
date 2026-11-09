@@ -170,6 +170,16 @@ class TestReview(Base):
             self.assertEqual(fh.read(), before)
         self.assertFalse(os.path.exists(os.path.join(build, sz.STATE_NAME)))
 
+    def test_accepted_pg_value_follows_the_recommendation_despite_unit_spelling(self):
+        instance, result = plan_for({})
+        state = sz.review(instance, result, {}, ask=lambda prompt: "y", out=lambda *a: None,
+                          pg_current={"shared_buffers": "1GB"})
+        entry = state["pg"]["shared_buffers"]
+        self.assertEqual(entry, {"status": "accepted", "known": ["1GB"]})
+        decision = sz.decide_key("shared_buffers", "1024MB", "3072MB", entry, False,
+                                 equal=lambda a, b: sz.pg_equal("shared_buffers", a, b))
+        self.assertEqual(decision.action, "write")
+
     def test_review_with_a_corrupt_state_stops_with_a_message(self):
         path = self.live_test()
         build = os.path.join(self.tmp, "live-odoo")

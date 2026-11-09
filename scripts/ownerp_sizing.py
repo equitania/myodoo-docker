@@ -496,7 +496,7 @@ def decide_key(key: str, current: Optional[str], recommended: str, entry: Option
         return make("keep", "hand-edited")
     if current is None:
         return make("write", "setting absent")
-    if status == "accepted" and current in known:
+    if status == "accepted" and any(equal(current, k) for k in known):
         return make("write", "accepted value follows the recommendation")
     if entry is None and is_default:
         return make("write", "template default")
@@ -966,22 +966,24 @@ DEFAULT_DOCKERFILES = os.path.join(os.path.expanduser("~"), "myodoo-docker", "Do
 DOCKER_TIMEOUT = 30
 
 # sizing-block override -> the settings it pins (same table as update_docker_odoo.py)
-ODOO_OVERRIDES = {
+ODOO_OVERRIDE_KEYS = {
     "workers": ("workers",),
     "max_cron_threads": ("max_cron_threads",),
     "limit_memory_soft_mb": ("limit_memory_soft", "limit_memory_soft_gevent"),
     "limit_memory_hard_mb": ("limit_memory_hard", "limit_memory_hard_gevent"),
     "db_maxconn": ("db_maxconn", "db_maxconn_gevent"),
 }
-PG_OVERRIDES = {
+PG_OVERRIDE_KEYS = {
     "pg_shared_buffers_mb": ("shared_buffers", "effective_cache_size"),
     "pg_max_connections": ("max_connections",),
 }
 
 
-def _override_keys(overrides, table) -> Set[str]:
+def override_conf_keys(result, section: str) -> Set[str]:
+    """The settings of one section ("odoo" or "pg") that an applied override pins."""
+    table = ODOO_OVERRIDE_KEYS if section == "odoo" else PG_OVERRIDE_KEYS
     keys: Set[str] = set()
-    for name in overrides:
+    for name in result.overrides:
         keys.update(table.get(name, ()))
     return keys
 
@@ -1041,7 +1043,7 @@ def _template_values(dockerfiles: str, version: Optional[int]) -> Dict[str, str]
 def _odoo_decisions(inst: Instance, result: InstanceResult, state: dict,
                     template: Dict[str, str]) -> List[KeyDecision]:
     entries = state.get("odoo") if isinstance(state.get("odoo"), dict) else {}
-    overrides = _override_keys(result.overrides, ODOO_OVERRIDES)
+    overrides = override_conf_keys(result, "odoo")
     decisions = []
     for key, value in result.odoo.items():
         have = inst.conf.get(key)
@@ -1095,13 +1097,13 @@ def pending_values(instance: Instance, result: InstanceResult, state: dict,
     pending = []
     odoo_entries = state.get("odoo") if isinstance(state.get("odoo"), dict) else {}
     pg_entries = state.get("pg") if isinstance(state.get("pg"), dict) else {}
-    pinned = _override_keys(result.overrides, ODOO_OVERRIDES)
+    pinned = override_conf_keys(result, "odoo")
     for key, value in result.odoo.items():
         have = instance.conf.get(key)
         if have is None or have == value or key in odoo_entries or key in pinned:
             continue
         pending.append(("odoo", key, have, value))
-    pinned = _override_keys(result.overrides, PG_OVERRIDES)
+    pinned = override_conf_keys(result, "pg")
     for key, value in result.pg.items():
         have = (pg_current or {}).get(key)
         if have is None or pg_equal(key, have, value) or key in pg_entries or key in pinned:
