@@ -111,6 +111,18 @@ class TestReport(Base):
         self.assertEqual(code, 2)
         self.assertIn("missing.yaml", err)
 
+    def test_report_names_a_shared_database_container(self):
+        path = self.live_test()
+        with open(path, encoding="utf-8") as fh:
+            data = yaml.safe_load(fh)
+        data["containers"][1]["db_host"] = "live-db"
+        data["containers"][1]["active"] = False
+        with open(path, "w", encoding="utf-8") as fh:
+            yaml.safe_dump(data, fh)
+        _, out, _ = run_main(["--config", path, "--cpus", "4", "--ram-mib", "16384"])
+        self.assertIn("database container live-db is shared with test-odoo", out)
+        self.assertIn("PostgreSQL left unchanged", out)
+
     def test_report_json_roundtrip(self):
         code, out, _ = run_main(["--json", "--config", self.live_test(),
                                  "--cpus", "4", "--ram-mib", "16384"])
@@ -134,12 +146,13 @@ DIFFERING = {"workers": "3", "db_maxconn": "100", "db_maxconn_gevent": "False"}
 
 
 class TestReview(Base):
-    def test_pending_values_lists_only_differing_unreviewed_keys(self):
+    def test_pending_values_lists_differing_keys_not_following_an_accept(self):
         instance, result = plan_for(dict(DIFFERING, max_cron_threads="1"))
         state = {"odoo": {"db_maxconn_gevent": {"status": "hand", "known": ["False"]}}}
         pending = sz.pending_values(instance, result, state, None)
         self.assertEqual([(s, k, c) for s, k, c, _ in pending],
-                         [("odoo", "workers", "3"), ("odoo", "db_maxconn", "100")])
+                         [("odoo", "workers", "3"), ("odoo", "db_maxconn", "100"),
+                          ("odoo", "db_maxconn_gevent", "False")])   # a kept hand value too
         self.assertEqual(pending[0][3], result.odoo["workers"])
         current = {"shared_buffers": "1GB", "max_connections": "100", "work_mem": "4MB"}
         with_pg = sz.pending_values(instance, result, {}, current)
@@ -229,6 +242,44 @@ class TestReview(Base):
         self.assertTrue(seen)
         self.assertIn("over budget", seen[0])
 
+    def test_a_value_hand_edited_after_doup_can_be_accepted_again(self):
+        build = self.build_dir("live-odoo", "[options]\nworkers = 3\nmax_cron_threads = 2\n")
+        instance, result = plan_for({})
+        template = {"workers": "3", "max_cron_threads": "2"}
+        conf = os.path.join(build, "odoo.conf")
+
+        def sync():
+            return sz.sync_odoo_conf(build, result.odoo, set(), template)
+
+        self.assertIsNone(sync().error)                          # doup writes
+        with open(conf, encoding="utf-8") as fh:
+            text = fh.read()
+        self.assertIn("workers = 5", text)
+        with open(conf, "w", encoding="utf-8") as fh:            # operator edits by hand
+            fh.write(text.replace("workers = 5", "workers = 8"))
+        sync()
+        with open(conf, encoding="utf-8") as fh:
+            self.assertIn("workers = 8", fh.read())               # kept
+        with open(conf, encoding="utf-8") as fh:
+            instance.conf = sz.parse_conf_values(fh.read())
+        state = sz.load_state(build)[0]
+        pending = sz.pending_values(instance, result, state, None)
+        self.assertEqual([(s, k, c) for s, k, c, _ in pending], [("odoo", "workers", "8")])
+        new_state = sz.review(instance, result, state, ask=lambda prompt: "y",
+                              out=lambda *a: None)
+        self.assertIsNone(sz.save_state(build, new_state))
+        sync()                                                   # next doup
+        with open(conf, encoding="utf-8") as fh:
+            self.assertIn("workers = 5", fh.read())
+
+    def test_a_kept_hand_value_is_offered_again(self):
+        instance, result = plan_for({"workers": "8"})
+        state = {"odoo": {"workers": {"status": "hand", "known": ["8"]}}}
+        pending = sz.pending_values(instance, result, state, None)
+        self.assertIn(("odoo", "workers", "8", result.odoo["workers"]), pending)
+        state = {"odoo": {"workers": {"status": "accepted", "known": ["8"]}}}
+        self.assertEqual(sz.pending_values(instance, result, state, None), [])
+
     def test_pg_current_values_reads_show_output_and_survives_failure(self):
         calls = []
 
@@ -248,9 +299,11 @@ class TestPgSubcommand(Base):
 
     def test_pg_subcommand_uses_the_yaml_role_over_the_flag(self):
         path = self.config([("test-odoo", "test", CONF_FIT)])
-        code, out, _ = self.pg("--role", "live", "--container", "test-db", "--config", path,
-                               "--cpus", "4", "--ram-mib", "16384")
+        code, out, err = self.pg("--role", "live", "--container", "test-db", "--config", path,
+                                 "--cpus", "4", "--ram-mib", "16384")
         data = json.loads(out)
+        self.assertIn("role test from the sizing block of test-odoo", err)
+        self.assertIn("--role live ignored", err)
         with open(path, encoding="utf-8") as fh:
             containers = yaml.safe_load(fh)["containers"]
         expected = sz.compute_plan(sz.Hardware(4, 16384), sz.instances_from_config(containers))

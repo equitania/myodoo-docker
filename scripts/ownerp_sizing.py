@@ -197,6 +197,27 @@ def instances_from_config(containers: List[dict], selected: Optional[str] = None
     return result
 
 
+def shared_db_partners(containers: List[dict], name: str) -> Tuple[Optional[str], List[str]]:
+    """The db_host of `name` and the other entries (active or parked) on the same one.
+
+    The plan sizes PostgreSQL per instance; a database container serving more
+    than one instance must not get the values of just one of them.
+    """
+    entries = [c for c in containers or [] if isinstance(c, dict)]
+    own = next((c for c in entries if str(c.get("container_name", "")) == name), None)
+    db = str(own.get("db_host") or "").strip() if own else ""
+    if not db:
+        return None, []
+    others = [str(c.get("container_name", "")) for c in entries
+              if c is not own and str(c.get("db_host") or "").strip() == db]
+    return db, others
+
+
+def shared_db_note(db: str, others: List[str]) -> str:
+    return ("database container %s is shared with %s - PostgreSQL left unchanged; "
+            "set it with pg_* overrides or by hand" % (db, ", ".join(others)))
+
+
 # --- calculation -----------------------------------------------------------
 
 def pg_base_profile(hw: Hardware) -> str:
@@ -323,8 +344,8 @@ def compute_plan(hw: Hardware, instances: List[Instance]) -> Plan:
             break
         max(squeezable, key=lambda s: s.workers).workers -= 1
     if total_need() > budget:
-        for s in others_slots:
-            if s.workers > 1 and not s.fixed_workers:
+        for s in others_slots:        # a blockless instance is never written: never squeezed
+            if s.role is not None and s.workers > 1 and not s.fixed_workers:
                 s.workers = 1
                 s.reasons.append("1 worker: minimal staffing, the RAM budget is too small")
     need = total_need()
@@ -347,9 +368,9 @@ def compute_plan(hw: Hardware, instances: List[Instance]) -> Plan:
         hard = _clamp(soft * 5 // 4, 1600, 2560)
         s.soft = ov.get("limit_memory_soft_mb", soft)
         s.hard = ov.get("limit_memory_hard_mb", hard)
-        s.reasons.append("soft %d MiB / hard %d MiB per process" % (s.soft, s.hard))
         if "limit_memory_soft_mb" in ov and "limit_memory_hard_mb" not in ov:
-            s.hard = _clamp(s.soft * 5 // 4, 1600, 2560)
+            s.hard = max(s.soft, _clamp(s.soft * 5 // 4, 1600, 2560))
+        s.reasons.append("soft %d MiB / hard %d MiB per process" % (s.soft, s.hard))
 
     total = sum(s.workers + s.cron for s in slots)
     if total > processes_rule:
@@ -518,9 +539,20 @@ def format_decision(d: KeyDecision) -> str:
 # --- odoo.conf writer ------------------------------------------------------
 
 def patch_conf_text(text: str, changes: Dict[str, str]) -> str:
-    """Replace the line of each changed key in place; append keys that are absent."""
+    """Replace the line of each changed key in place; add absent keys at the end of
+    the [options] section (at the end of the file when there is none)."""
     lines = text.splitlines()
     pending = dict(changes)
+    insert_at = len(lines)
+    options = next((i for i, line in enumerate(lines)
+                    if line.strip().lower() == "[options]"), None)
+    if options is not None:
+        following = next((i for i in range(options + 1, len(lines))
+                          if lines[i].strip().startswith("[")), None)
+        if following is not None:
+            insert_at = following
+            while insert_at > options + 1 and not lines[insert_at - 1].strip():
+                insert_at -= 1
     for index, line in enumerate(lines):
         stripped = line.strip()
         if not stripped or stripped[0] in "#;[" or "=" not in stripped:
@@ -529,8 +561,7 @@ def patch_conf_text(text: str, changes: Dict[str, str]) -> str:
         if key in changes:
             lines[index] = "%s = %s" % (key, changes[key])
             pending.pop(key, None)
-    for key, value in pending.items():
-        lines.append("%s = %s" % (key, value))
+    lines[insert_at:insert_at] = ["%s = %s" % (key, value) for key, value in pending.items()]
     return "\n".join(lines) + "\n"
 
 
@@ -617,6 +648,7 @@ def sync_odoo_conf(build_dir: str, recommended: Dict[str, str], overrides: Set[s
         try:
             with open(backup, "w", encoding="utf8") as handle:
                 handle.write(original)
+            os.chmod(backup, mode)
         except OSError as error:
             return ConfSync(False, decisions, "cannot write backup %s: %s" % (backup, error), None)
         tmp = path + ".tmp"
@@ -861,6 +893,8 @@ def sync_postgres(db_container: str, recommended: Dict[str, str], overrides: Set
             original_bytes = handle.read()
         original = original_bytes.decode("utf8")
         info = os.stat(path)
+    except PermissionError:      # restricted tier: PGDATA belongs to the postgres user
+        return PgSync(False, [], False, None, False, None, "PostgreSQL settings need root")
     except (OSError, ValueError) as error:
         return fail("cannot read %s: %s" % (path, error))
     mode, uid, gid = info.st_mode & 0o7777, info.st_uid, info.st_gid
@@ -942,6 +976,11 @@ def sync_postgres(db_container: str, recommended: Dict[str, str], overrides: Set
         return PgSync(False, decisions, restart, False, False,
                       "new settings were not accepted and the backup could not be restored "
                       "(%s); restore %s by hand" % (error, backup), None)
+    # a value the database refused is kept as a hand value: not retried on every
+    # run, only after an accept in `dosize --review` or as an override
+    for key in changes:
+        state_entry[key] = {"status": "hand",
+                            "known": [current[key]] if key in current else []}
     try:
         run(["docker", "restart", "-t", "120", db_container])
         up = _wait_ready(db_container, db_user, run, sleep, retries)
@@ -1054,8 +1093,10 @@ def _odoo_decisions(inst: Instance, result: InstanceResult, state: dict,
 
 
 def render_report(plan: Plan, instances: List[Instance], states: Dict[str, dict],
-                  templates: Optional[Dict[str, Dict[str, str]]] = None) -> str:
-    """Plain English text of the plan; states and templates are keyed by instance name.
+                  templates: Optional[Dict[str, Dict[str, str]]] = None,
+                  notes: Optional[Dict[str, List[str]]] = None) -> str:
+    """Plain English text of the plan; states, templates and notes are keyed by
+    instance name.
 
     A state entry may carry "_problem" (text): the state file was unusable.
     """
@@ -1075,6 +1116,7 @@ def render_report(plan: Plan, instances: List[Instance], states: Dict[str, dict]
                      % (result.name, result.role, result.workers, result.cron, result.processes))
         lines.extend("  " + text for text in result.reasons)
         lines.extend("  warning: " + text for text in result.warnings)
+        lines.extend("  note: " + text for text in (notes or {}).get(inst.name, []))
         if state.get("_problem"):
             lines.append("  note: state file unusable (%s); hand edits are not recognised"
                          % state["_problem"])
@@ -1093,20 +1135,28 @@ def render_report(plan: Plan, instances: List[Instance], states: Dict[str, dict]
 
 def pending_values(instance: Instance, result: InstanceResult, state: dict,
                    pg_current: Optional[Dict[str, str]]) -> List[Tuple[str, str, str, str]]:
-    """Settings that differ from the recommendation and were never decided on."""
+    """Settings that differ from the recommendation and do not follow it by themselves:
+    never decided on, kept by hand, or accepted once but edited by hand since."""
+    def follows(entry, have, equal) -> bool:
+        return (isinstance(entry, dict) and entry.get("status") == "accepted"
+                and any(equal(have, known) for known in entry.get("known", [])))
+
     pending = []
     odoo_entries = state.get("odoo") if isinstance(state.get("odoo"), dict) else {}
     pg_entries = state.get("pg") if isinstance(state.get("pg"), dict) else {}
     pinned = override_conf_keys(result, "odoo")
     for key, value in result.odoo.items():
         have = instance.conf.get(key)
-        if have is None or have == value or key in odoo_entries or key in pinned:
+        if (have is None or have == value or key in pinned
+                or follows(odoo_entries.get(key), have, lambda a, b: a == b)):
             continue
         pending.append(("odoo", key, have, value))
     pinned = override_conf_keys(result, "pg")
     for key, value in result.pg.items():
         have = (pg_current or {}).get(key)
-        if have is None or pg_equal(key, have, value) or key in pg_entries or key in pinned:
+        equal = (lambda a, b, k=key: pg_equal(k, a, b))
+        if (have is None or equal(have, value) or key in pinned
+                or follows(pg_entries.get(key), have, equal)):
             continue
         pending.append(("pg", key, have, value))
     return pending
@@ -1119,7 +1169,8 @@ def review(instance: Instance, result: InstanceResult, state: dict, ask=None, ou
     new_state = json.loads(json.dumps(state)) if isinstance(state, dict) else {}
     pending = pending_values(instance, result, new_state, pg_current)
     if not pending:
-        out("Nothing to review: every value matches the recommendation or was decided before.")
+        out("Nothing to review: every value matches the recommendation or follows an "
+            "accepted one.")
         return new_state
     for section, key, current, recommended in pending:
         prompt = "%s: current %s -> recommended %s - accept? (y/N/q)" % (key, current, recommended)
@@ -1191,11 +1242,13 @@ def _run_report(args) -> int:
     defaults = config.get("defaults") if isinstance(config.get("defaults"), dict) else {}
     dockerfiles = os.path.expanduser(str(args.dockerfiles or defaults.get("dockerfiles_source")
                                          or DEFAULT_DOCKERFILES))
-    states, templates = {}, {}
+    states, templates, notes = {}, {}, {}
     for inst in instances:
         state, problem = load_state(inst.build_dir) if inst.build_dir else ({}, None)
         states[inst.name] = dict(state, _problem=problem) if problem else state
         templates[inst.name] = _template_values(dockerfiles, inst.version)
+        db, others = shared_db_partners(containers, inst.name)
+        notes[inst.name] = [shared_db_note(db, others)] if others else []
     problem = bool(plan.over_budget or plan.warnings or any(r.warnings for r in plan.results))
     if args.json:
         results = []
@@ -1204,13 +1257,14 @@ def _run_report(args) -> int:
             data["decisions"] = [asdict(d) for d in _odoo_decisions(
                 inst, result, {k: v for k, v in states[inst.name].items() if k != "_problem"},
                 templates[inst.name])] if result.sized else []
+            data["notes"] = notes[inst.name] if result.sized else []
             results.append(data)
         _say(json.dumps({"hardware": asdict(plan.hardware), "budget_mib": plan.budget_mib,
                          "need_mib": plan.need_mib, "pg_total_mib": plan.pg_total_mib,
                          "over_budget": plan.over_budget, "warnings": plan.warnings,
                          "results": results}, indent=2, sort_keys=True))
     else:
-        sys.stdout.write(render_report(plan, instances, states, templates))
+        sys.stdout.write(render_report(plan, instances, states, templates, notes))
     return 1 if problem else 0
 
 
@@ -1269,6 +1323,9 @@ def _run_pg(args) -> int:
         match.role = args.role
         if match.users is None:
             match.users = args.users
+    elif match.role != args.role:
+        _say("note: role %s from the sizing block of %s in %s; --role %s ignored"
+             % (match.role, match.name, args.config, args.role), sys.stderr)
     plan = compute_plan(hw if hw is not None else probe_hardware(), instances)
     result = plan.results[instances.index(match)]
     for text in plan.warnings:

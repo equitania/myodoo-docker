@@ -154,6 +154,30 @@ class TestPlan(unittest.TestCase):
         self.assertTrue(p.over_budget)
         self.assertTrue(any("Override" in w for w in p.warnings))
 
+    def test_a_blockless_instance_is_never_squeezed_and_counts_with_its_conf(self):
+        # doup never writes a blockless instance, so the plan must count it as it runs
+        p = sz.compute_plan(hw(4, 6), [
+            inst("live-odoo", "live"),
+            inst("old-odoo", None, conf={"workers": "6", "max_cron_threads": "2"})])
+        live, old = p.results
+        self.assertEqual((old.workers, old.cron), (6, 2))
+        self.assertEqual(p.budget_mib, 2970)
+        self.assertEqual(p.need_mib, 4225)
+        self.assertTrue(p.over_budget)
+        self.assertTrue(any("4225" in w and "2970" in w for w in p.warnings), p.warnings)
+        self.assertFalse(any("minimal staffing" in r for r in old.reasons))
+
+    def test_a_soft_only_override_never_gives_hard_below_soft(self):
+        p = sz.compute_plan(hw(8, 64), [
+            inst("live-odoo", "live", overrides={"limit_memory_soft_mb": 3000})])
+        live = p.results[0]
+        soft = int(live.odoo["limit_memory_soft"]) // sz.MIB
+        hard = int(live.odoo["limit_memory_hard"]) // sz.MIB
+        self.assertEqual(soft, 3000)
+        self.assertGreaterEqual(hard, soft)
+        self.assertTrue(any("soft 3000 MiB / hard %d MiB" % hard in r for r in live.reasons),
+                        live.reasons)
+
 
 class TestOverrideRobustness(unittest.TestCase):
     def test_too_small_overrides_are_ignored_with_a_warning(self):

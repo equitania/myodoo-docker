@@ -14,6 +14,7 @@ import shutil
 import sys
 import tempfile
 import unittest
+from unittest import mock
 
 sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "scripts"))
 
@@ -281,10 +282,6 @@ class TestRegressionAndState(Base):
             self.assertEqual(handle.read().splitlines(), ["*.log", sz.STATE_NAME])
 
 
-if __name__ == "__main__":
-    unittest.main()
-
-
 # --- postgresql.conf writer ------------------------------------------------
 
 PG_CONF = (
@@ -310,8 +307,9 @@ class FakeDocker:
     """Records argv lists and answers like docker would; no real process is started."""
 
     def __init__(self, pgdata, conf_path, ready=None, show=None, inspect_rc=0,
-                 running="true", settings="", raise_on_restart=False):
+                 running="true", settings="", raise_on_restart=False, restart_rc=0):
         self.calls = []
+        self.restart_rc = restart_rc             # rc of the first `docker restart`
         self.running = running
         self.settings = settings
         self.raise_on_restart = raise_on_restart
@@ -328,6 +326,9 @@ class FakeDocker:
             return (0, self.running + "\n") if self.running else (1, "")
         if argv[:2] == ["docker", "restart"] and self.raise_on_restart:
             raise RuntimeError("timed out")
+        if argv[:2] == ["docker", "restart"] and self.restart_rc:
+            rc, self.restart_rc = self.restart_rc, 0
+            return rc, "Error response from daemon"
         if argv[:2] == ["docker", "inspect"]:
             if self.inspect_rc:
                 return self.inspect_rc, "Error: No such object"
@@ -492,7 +493,7 @@ class TestPgSync(PgBase):
         self.assertEqual(self.read(), PG_CONF)
         self.assertIn("rolled back", result.error)
         self.assertEqual(self.docker.verbs().count("restart"), 2)
-        self.assertEqual(self.entry, {})
+        self.assertEqual(self.entry["shared_buffers"], {"status": "hand", "known": ["4GB"]})
         self.assertTrue(all(s == 5 for s in self.sleeps) and self.sleeps)
 
     def test_a_database_that_stays_down_after_rollback_is_reported(self):
@@ -593,3 +594,79 @@ class TestPgReview(PgBase):
             self.assertEqual(self.read(), PG_CONF)
             self.assertEqual(self.baks(), [])
             self.assertNotIn("restart", self.docker.verbs())
+
+
+class TestPgFinalFixes(PgBase):
+    def test_a_rolled_back_value_is_kept_as_hand_and_not_retried(self):
+        result = self.sync(docker=FakeDocker(self.dir, self.conf, show={"shared_buffers": "4GB"}))
+        self.assertTrue(result.rolled_back)
+        rec = recommended_pg()
+        current = sz.parse_pg_conf_values(PG_CONF)
+        for key in rec:
+            if not sz.pg_equal(key, current[key], rec[key]):
+                self.assertEqual(self.entry[key], {"status": "hand", "known": [current[key]]}, key)
+        entry = self.entry
+        again = self.sync(entry=entry)
+        self.assertFalse(again.changed)
+        self.assertNotIn("restart", self.docker.verbs())
+        self.assertNotIn("kill", self.docker.verbs())
+        self.assertEqual(self.read(), PG_CONF)
+        # an override still wins over the recorded hand value
+        forced = self.sync(entry=entry, overrides={"work_mem"}, rec={"work_mem": "32MB"})
+        self.assertTrue(forced.changed)
+
+    def test_an_unreadable_postgresql_conf_needs_root_and_is_skipped(self):
+        real_open = open
+
+        def guarded(path, *args, **kwargs):
+            if path == self.conf:
+                raise PermissionError(13, "Permission denied", path)
+            return real_open(path, *args, **kwargs)
+
+        with mock.patch("builtins.open", side_effect=guarded):
+            result = self.sync()
+        self.assertEqual(result.skipped, "PostgreSQL settings need root")
+        self.assertIsNone(result.error)
+        self.assertNotIn("restart", self.docker.verbs())
+        self.assertEqual(self.read(), PG_CONF)
+
+    def test_a_reload_that_is_not_taken_is_rolled_back(self):
+        result = self.sync(rec={"work_mem": "32MB"},
+                           docker=FakeDocker(self.dir, self.conf, show={"work_mem": "16MB"}))
+        self.assertIn(["docker", "kill", "--signal=HUP", "live-db"], self.docker.calls)
+        self.assertTrue(result.rolled_back)
+        self.assertFalse(result.restarted)
+        self.assertEqual(self.read(), PG_CONF)
+        self.assertIn("rolled back", result.error)
+        self.assertEqual(self.entry["work_mem"], {"status": "hand", "known": ["16MB"]})
+        self.assertEqual(self.sleeps.count(1), 3)      # four SHOW rounds after a reload
+
+    def test_a_failing_docker_restart_is_rolled_back(self):
+        result = self.sync(docker=FakeDocker(self.dir, self.conf, restart_rc=1))
+        self.assertTrue(result.rolled_back)
+        self.assertEqual(self.read(), PG_CONF)
+        self.assertEqual(self.docker.verbs().count("restart"), 2)
+        self.assertIn("old values are active again", result.error)
+
+
+class TestConfFinalFixes(Base):
+    def test_absent_keys_land_in_the_options_section(self):
+        text = CONF + "\n[queue_job]\nchannels = root:2\n"
+        out = sz.patch_conf_text(text, {"workers": "5", "db_maxconn_gevent": "16"})
+        lines = out.splitlines()
+        self.assertLess(lines.index("db_maxconn_gevent = 16"), lines.index("[queue_job]"))
+        self.assertEqual(lines[-1], "channels = root:2")
+        self.assertIn("workers = 5", lines)
+        # without a section after [options] the key goes at the end; no [options] at all too
+        self.assertEqual(sz.patch_conf_text(CONF, {"x": "1"}).splitlines()[-1], "x = 1")
+        self.assertEqual(sz.patch_conf_text("a = 1\n", {"x": "1"}), "a = 1\nx = 1\n")
+
+    def test_the_backup_keeps_the_mode_of_odoo_conf(self):
+        os.chmod(self.conf, 0o600)
+        result = self.sync()
+        self.assertTrue(result.changed)
+        self.assertEqual(os.stat(self.baks()[0]).st_mode & 0o7777, 0o600)
+
+
+if __name__ == "__main__":
+    unittest.main()
