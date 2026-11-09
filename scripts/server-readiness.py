@@ -4,7 +4,7 @@
 # Title:            server-readiness.py
 # Description:      Report whether this server matches the state myodoo-docker
 #                   expects, and name the exact command that closes each gap.
-# Version:          1.17.0
+# Version:          1.18.0
 # Date:             09.11.2026
 # Author:           Equitania Software GmbH
 # ==============================================================================
@@ -80,7 +80,7 @@ from dataclasses import dataclass
 from enum import Enum
 from typing import Callable, List, Optional, Tuple
 
-SCRIPT_VERSION = "1.17.0"
+SCRIPT_VERSION = "1.18.0"
 SCRIPT_DATE = "09.11.2026"
 
 # Where nginx keeps its customer vhosts (mirrors nginx-cert-guard.py).
@@ -116,6 +116,7 @@ DELIVERED_SCRIPTS = (
     "ownerp_migrate.py",
     "server_hardening.py",
     "ownerp_pull_update.py",
+    "ownerp_sizing.py",
 )
 
 # cron.d applies run-parts naming (cron(8)): a file whose name contains
@@ -2050,6 +2051,107 @@ def check_odoo_capacity(ctx: HealthContext) -> Finding:
     )
 
 
+def _load_sizing_module(ctx: HealthContext):
+    """ownerp_sizing.py from ctx.home, or None when absent or unimportable.
+
+    Loaded from the delivered file, like the nginx guard, so this check judges
+    with the very arithmetic `doup` and `dosize` apply and never a copy of it.
+    """
+    path = os.path.join(ctx.home, "ownerp_sizing.py")
+    if not os.path.isfile(path):
+        return None
+    try:
+        spec = importlib.util.spec_from_file_location("ownerp_sizing", path)
+        module = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(module)
+        return module
+    except Exception:  # a broken module is reported by check_script_versions
+        return None
+
+
+def check_odoo_sizing(ctx: HealthContext) -> Finding:
+    """Do the odoo.conf values of instances with a `sizing` block fit this host?
+
+    Strictly read-only: it reads docker2update.yaml, each instance's odoo.conf
+    and sizing state, and /proc. It never writes and never asks Docker.
+
+    FAIL when the conf values as they are now (hand values included) plus
+    PostgreSQL exceed RAM; WARN when the recommended plan is over budget, the
+    current values exceed the Odoo budget, or the plan carries warnings; OK
+    otherwise, with hand values and values waiting for the next `doup` listed
+    as a note. No sizing block anywhere is a SKIP: the feature is opt-in.
+    """
+    check_id, title = "odoo_sizing", "Odoo sizing"
+    module = _load_sizing_module(ctx)
+    if module is None:
+        return _skip(check_id, title, "ownerp_sizing.py not available (run ups)")
+    config, error = _load_config(ctx, UPDATE_CONFIG)
+    if error:
+        return _skip(check_id, title, error)
+    containers = [c for c in (config or {}).get("containers") or [] if isinstance(c, dict)]
+    if not any(isinstance(c.get("sizing"), dict) and c.get("active", True) is not False
+               for c in containers):
+        return _skip(check_id, title, "no instance has a sizing block")
+    try:
+        hardware = module.probe_hardware(ctx.root)
+        instances = module.instances_from_config(containers)
+        plan = module.compute_plan(hardware, instances)
+    except Exception as exc:               # SizingError and anything unexpected
+        return _skip(check_id, title, f"cannot compute the plan: {exc}")
+
+    # Current conf values, hand values included; blockless/odd values are
+    # counted by the same rule compute_plan uses for instances without a block.
+    current_need, parts = 0, []
+    for inst in instances:
+        workers, cron = module._blockless_counts(inst.conf)
+        current_need += module._need(workers, cron)
+        parts.append(f"{inst.name} {workers} workers + {cron} cron")
+
+    deviations, problems = [], []
+    templates_dir = os.path.join(ctx.repo, "Dockerfiles")
+    for inst, result in zip(instances, plan.results):
+        if not result.sized:
+            continue
+        state, state_problem = module.load_state(inst.build_dir)
+        if state_problem:
+            problems.append(f"{inst.name}: {state_problem}")
+        template = module._template_values(templates_dir, inst.version)
+        for decision in module._odoo_decisions(inst, result, state, template):
+            if decision.action == "same":
+                continue
+            text = module.format_decision(decision)
+            if decision.action == "write":
+                text += " (written by the next doup)"
+            elif "not reviewed" in decision.note:
+                text += f" (not reviewed: dosize --review {inst.name})"
+            deviations.append(f"{inst.name} {text}")
+
+    summary = (f"{hardware.cpus} CPU / {hardware.ram_mib} MiB RAM: current conf values need "
+               f"{current_need} MiB ({'; '.join(parts)}), Odoo budget {plan.budget_mib} MiB, "
+               f"PostgreSQL {plan.pg_total_mib} MiB, recommended plan needs {plan.need_mib} MiB")
+    fix = "dosize   # shows reasons and deviations"
+
+    if current_need + plan.pg_total_mib > hardware.ram_mib:
+        return Finding(check_id, Severity.FAIL, title,
+                       f"{summary} - current values plus PostgreSQL "
+                       f"({current_need + plan.pg_total_mib} MiB) exceed RAM", fix)
+    warn = []
+    if plan.over_budget:
+        warn.append(f"even the minimal plan needs {plan.need_mib} MiB, budget is "
+                    f"{plan.budget_mib} MiB")
+    if current_need > plan.budget_mib:
+        warn.append(f"current need {current_need} MiB exceeds the budget of "
+                    f"{plan.budget_mib} MiB")
+    warn.extend(plan.warnings)
+    warn.extend(problems)
+    if warn:
+        return Finding(check_id, Severity.WARN, title,
+                       f"{summary} - {'; '.join(warn)}", fix,
+                       "; ".join(deviations) or None)
+    return Finding(check_id, Severity.OK, title, summary, None,
+                   "; ".join(deviations) or None)
+
+
 CHECKS: Tuple[Callable[[HealthContext], Finding], ...] = (
     check_maintenance_cron_present,
     check_maintenance_cron_current,
@@ -2072,6 +2174,7 @@ CHECKS: Tuple[Callable[[HealthContext], Finding], ...] = (
     check_backup_capacity,
     check_build_cache,
     check_odoo_capacity,
+    check_odoo_sizing,
     check_hardening_env,
     *HARDENING_CHECKS,
     check_root_login_locked,

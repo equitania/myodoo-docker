@@ -1218,3 +1218,156 @@ class BackupContainerNamesTest(unittest.TestCase):
         self.assertEqual(finding.severity, sr.Severity.FAIL)
         self.assertIn("sql_container 'live-db' does not exist", finding.detail)
         self.assertTrue(finding.fix.startswith("edbk"))
+
+
+_SIZING_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)),
+                            "..", "scripts", "ownerp_sizing.py")
+
+
+@unittest.skipUnless(HAVE_YAML, "PyYAML not installed")
+class OdooSizingTest(unittest.TestCase):
+    """check_odoo_sizing() judges the conf values of instances with a sizing block."""
+
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(self.tmp.cleanup)
+        self.ctx = sr.HealthContext(root=self.tmp.name, home=self.tmp.name,
+                                    repo=self.tmp.name)
+        patcher = unittest.mock.patch.object(sr.shutil, "which", return_value="/usr/bin/docker")
+        patcher.start()
+        self.addCleanup(patcher.stop)
+        shutil.copy(_SIZING_PATH, os.path.join(self.tmp.name, "ownerp_sizing.py"))
+        self.sizing = sr._load_sizing_module(self.ctx)
+
+    def host(self, cpus, mem_gib):
+        os.makedirs(os.path.join(self.tmp.name, "proc"), exist_ok=True)
+        with open(os.path.join(self.tmp.name, "proc", "cpuinfo"), "w") as handle:
+            handle.write("".join(f"processor\t: {n}\n\n" for n in range(cpus)))
+        with open(os.path.join(self.tmp.name, "proc", "meminfo"), "w") as handle:
+            handle.write(f"MemTotal:       {mem_gib * 1024 * 1024} kB\n")
+
+    def config(self, profiles):
+        """profiles: {name: role or None}; writes the yaml and one build dir each."""
+        lines = ["containers:"]
+        for name, role in profiles.items():
+            build = os.path.join(self.tmp.name, "builds", name)
+            os.makedirs(build, exist_ok=True)
+            lines += [f"  - container_name: {name}", f"    dockerfile_path: {build}",
+                      "    odoo_version: 18.0", f"    db_host: {name[:-4]}-db"]
+            if role:
+                lines += ["    sizing:", f"      profile: {role}"]
+        with open(os.path.join(self.tmp.name, sr.UPDATE_CONFIG), "w") as handle:
+            handle.write("\n".join(lines) + "\n")
+
+    def build(self, name):
+        return os.path.join(self.tmp.name, "builds", name)
+
+    def conf(self, name, values):
+        with open(os.path.join(self.build(name), "odoo.conf"), "w") as handle:
+            handle.write("[options]\n" + "".join(f"{k} = {v}\n" for k, v in values.items()))
+
+    def recommended(self, cpus, mem_gib):
+        """Write every instance's conf at exactly the recommendation."""
+        hw = self.sizing.Hardware(cpus, mem_gib * 1024)
+        instances = self.sizing.instances_from_config(
+            self.sizing._read_config(os.path.join(self.tmp.name, sr.UPDATE_CONFIG))["containers"])
+        for inst, result in zip(instances, self.sizing.compute_plan(hw, instances).results):
+            self.conf(inst.name, result.odoo)
+
+    def set_value(self, name, key, value):
+        path = os.path.join(self.build(name), "odoo.conf")
+        with open(path) as handle:
+            lines = [ln for ln in handle.read().splitlines() if not ln.startswith(key + " ")]
+        lines.append(f"{key} = {value}")
+        with open(path, "w") as handle:
+            handle.write("\n".join(lines) + "\n")
+
+    def live_and_test(self, cpus, mem_gib):
+        self.host(cpus, mem_gib)
+        self.config({"live-odoo": "live", "test-odoo": "test"})
+        self.recommended(cpus, mem_gib)
+
+    def check(self):
+        with unittest.mock.patch.object(sr, "_run", side_effect=AssertionError("no docker")):
+            return sr.check_odoo_sizing(self.ctx)
+
+    def test_no_sizing_block_is_a_skip(self):
+        self.host(4, 16)
+        self.config({"live-odoo": None})
+        finding = self.check()
+        self.assertEqual(finding.severity, sr.Severity.SKIP)
+        self.assertIn("no instance has a sizing block", finding.detail)
+
+    def test_matching_conf_is_ok(self):
+        self.live_and_test(4, 16)
+        finding = self.check()
+        self.assertEqual(finding.severity, sr.Severity.OK, finding.detail)
+        self.assertIn("5", finding.detail)
+        self.assertIsNone(finding.note)
+
+    def test_hand_value_is_an_ok_with_a_note(self):
+        self.live_and_test(4, 16)
+        self.set_value("live-odoo", "workers", 8)
+        with open(os.path.join(self.build("live-odoo"), ".sizing_state.json"), "w") as handle:
+            json.dump({"odoo": {"workers": {"status": "hand", "known": ["8"]}}}, handle)
+        finding = self.check()
+        self.assertEqual(finding.severity, sr.Severity.OK, finding.detail)
+        self.assertIn("workers: hand 8, recommended 5", finding.note)
+
+    def test_unreviewed_deviation_names_the_review_command(self):
+        self.live_and_test(4, 16)
+        self.set_value("live-odoo", "workers", 8)
+        finding = self.check()
+        self.assertEqual(finding.severity, sr.Severity.OK, finding.detail)
+        self.assertIn("dosize --review live-odoo", finding.note)
+
+    def test_over_budget_is_warn(self):
+        self.live_and_test(2, 4)
+        finding = self.check()
+        self.assertEqual(finding.severity, sr.Severity.WARN, finding.detail)
+        self.assertIn("needs", finding.detail)
+        self.assertIn("budget", finding.detail)
+        self.assertTrue(finding.fix.startswith("dosize"))
+
+    def test_conf_above_budget_is_warn(self):
+        # budget at 4 CPU / 16 GiB is 9626 MiB; 24 workers + test = 9750 MiB, still below RAM
+        self.live_and_test(4, 16)
+        self.set_value("live-odoo", "workers", 24)
+        finding = self.check()
+        self.assertEqual(finding.severity, sr.Severity.WARN, finding.detail)
+        self.assertIn("exceeds the budget", finding.detail)
+        self.assertTrue(finding.fix.startswith("dosize"))
+
+    def test_total_above_ram_is_fail(self):
+        self.live_and_test(4, 16)
+        self.set_value("live-odoo", "workers", 60)
+        finding = self.check()
+        self.assertEqual(finding.severity, sr.Severity.FAIL, finding.detail)
+        self.assertTrue(finding.fix.startswith("dosize"))
+
+    def test_check_never_writes(self):
+        self.live_and_test(4, 16)
+        before = sorted(os.walk(self.tmp.name))
+        self.check()
+        self.assertEqual(before, sorted(os.walk(self.tmp.name)))
+
+    def test_missing_module_hardware_or_yaml_support_is_a_skip_not_a_crash(self):
+        self.live_and_test(4, 16)
+        os.remove(os.path.join(self.tmp.name, "proc", "meminfo"))
+        self.assertEqual(self.check().severity, sr.Severity.SKIP)
+        os.remove(os.path.join(self.tmp.name, "ownerp_sizing.py"))
+        self.assertEqual(self.check().severity, sr.Severity.SKIP)
+        shutil.copy(_SIZING_PATH, os.path.join(self.tmp.name, "ownerp_sizing.py"))
+        self.host(4, 16)
+        with unittest.mock.patch.object(sr, "_load_config",
+                                        return_value=(None, "PyYAML not installed")):
+            finding = sr.check_odoo_sizing(self.ctx)
+        self.assertEqual(finding.severity, sr.Severity.SKIP)
+        self.assertIn("PyYAML", finding.detail)
+
+    def test_check_is_registered_after_the_capacity_check(self):
+        self.assertEqual(sr.CHECKS.index(sr.check_odoo_sizing),
+                         sr.CHECKS.index(sr.check_odoo_capacity) + 1)
+
+    def test_delivered_scripts_lists_the_module(self):
+        self.assertIn("ownerp_sizing.py", sr.DELIVERED_SCRIPTS)
