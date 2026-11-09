@@ -1,5 +1,5 @@
 # Backup configuration for Odoo databases
-# Date: 19.06.2026
+# Date: 09.11.2026
 
 # Default settings
 defaults:
@@ -22,6 +22,13 @@ defaults:
   # backup if zstd is missing, encryption is enabled, or the filestore host
   # path cannot be resolved. Can be overridden per database below.
   stream: false
+  # Free-space reserve: before every database or service backup the script
+  # estimates what it will write and refuses (ERROR, exit 1, old archives kept)
+  # when free space minus that estimate would drop below
+  # max(min_free_percent of the filesystem, min_free_gb). Defaults 10 / 5.
+  # Set both to 0 to switch the check off.
+  min_free_percent: 10
+  min_free_gb: 5
 
 # System-wide service backups (independent from databases)
 services:
@@ -42,6 +49,15 @@ services:
     source_path: $HOME/docker-builds
     backup_path: docker-builds
     retention_days: 14
+    # Globs relative to source_path ('*' also crosses '/' in zip and tar).
+    # zips/ in every build folder holds the Odoo release archives, hardlinked
+    # from /opt/odoo-build-cache: free on disk, but a backup copies each one for
+    # real (1.8 GB per archive). They are re-downloadable, so they are never
+    # backed up. This is also the built-in default for a service named
+    # docker_builds; 'exclude: []' switches the default off. Any service
+    # accepts 'exclude:'; a pattern without '/' matches at any depth.
+    exclude:
+      - "*/zips"
 
 # Database specific configurations
 databases:

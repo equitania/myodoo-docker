@@ -1,6 +1,6 @@
 #!/bin/bash
 # setup-maintenance-cron.sh — Install the myodoo maintenance cron jobs + logrotate
-# Version 1.3.1 — 14.10.2026
+# Version 1.4.0 — 09.11.2026
 #
 # Installs a declarative /etc/cron.d/ drop-in (versioned in this repo) instead of
 # hand-edited per-user crontabs, plus a matching logrotate config. Idempotent:
@@ -25,21 +25,27 @@
 # are issued — those are instance-specific. The backup job exits cleanly until a
 # config is present; ssl-renew is a no-op until certs exist.
 #
-# Post-install also scans root's user-crontab (`crontab -l -u root`) for legacy
-# entries referencing the now-managed scripts and warns about them — these would
-# duplicate the cron.d jobs (e.g. backups running twice). The script never edits
-# the user crontab; removal is left to the operator via `sudo crontab -e -u root`.
+# Post-install, legacy entries in root's user-crontab that run a job the cron.d file
+# now owns are commented out (marker "#OWNERP-MOVED-TO-CRON.D# "), after the whole
+# crontab was saved to /var/backups/myodoo-docker/crontab-root.<timestamp>. Such a
+# line runs every job twice - on 09.11.2026 two concurrent backups per slot failed
+# and a disk filled. Lines are never deleted; unrelated lines and other users'
+# crontabs are never touched. Only jobs the cron.d file runs actively are moved: a
+# job parked with `docron --disable` is left alone, so it is not switched off by
+# accident. `--neutralise-legacy` does only this step (getScripts.py runs it on
+# every `ups`, because the installer above runs only once per server).
+#   ./setup-maintenance-cron.sh --neutralise-legacy
 ##############################################################################
 
 set -Eeuo pipefail
 
-SCRIPT_VERSION="1.3.1"
-SCRIPT_DATE="14.10.2026"
+SCRIPT_VERSION="1.4.0"
+SCRIPT_DATE="09.11.2026"
 
 # Where the maintenance scripts live (getScripts.py copies them to /root).
 SCRIPT_DIR="${SCRIPT_DIR:-/root}"
 
-CRON_DEST="/etc/cron.d/myodoo-maintenance"
+CRON_DEST="${MAINTENANCE_CRON_DEST:-/etc/cron.d/myodoo-maintenance}"
 LOGROTATE_DEST="/etc/logrotate.d/myodoo-maintenance"
 
 # Templates ship next to this script.
@@ -49,6 +55,11 @@ LOGROTATE_SRC="${SELF_DIR}/myodoo-maintenance.logrotate"
 
 # Scripts referenced by the cron entries (for an existence sanity-check).
 MANAGED_SCRIPTS=(container2backup.py ssl-renew.sh cleanup-weblogs.py nginx-cert-guard.py nightly-cleanup.sh server-readiness.py odoo_build_cache.py ownerp_pull_update.py)
+
+# Marker for a root-crontab line moved to cron.d, and where the crontab is saved
+# first. Must mirror ownerp_cron.py BACKUP_DIR and server-readiness.py LEGACY_CRON_MARKER.
+LEGACY_MARKER='#OWNERP-MOVED-TO-CRON.D# '
+CRONTAB_BACKUP_DIR="${CRONTAB_BACKUP_DIR:-/var/backups/myodoo-docker}"
 
 SEPARATOR="────────────────────────────────────────────────────────"
 if [ -t 1 ]; then
@@ -70,7 +81,7 @@ trap on_error ERR
 # Resolve a privilege-escalation prefix. Empty when already root.
 SUDO=""
 resolve_privilege() {
-    if [ "$(id -u)" -eq 0 ]; then
+    if [ "$(id -u)" -eq 0 ] || [ -n "${SETUP_CRON_NO_SUDO:-}" ]; then
         SUDO=""
     elif command -v sudo >/dev/null 2>&1; then
         SUDO="sudo"
@@ -149,9 +160,58 @@ install_files() {
     fi
 }
 
+# Comment out root-crontab lines that run a job cron.d already runs. Saves the
+# crontab first, never deletes, prints "moved <script>: <line>" per neutralised
+# line and "backup <path>" at the end (getScripts.py parses these). Silent when
+# there is nothing to do.
+neutralise_legacy_crontab() {
+    command -v crontab >/dev/null 2>&1 || return 0
+    [ -f "$CRON_DEST" ] || return 0
+
+    local dump
+    dump="$($SUDO crontab -l -u root 2>/dev/null || true)"
+    [ -n "$dump" ] || return 0
+
+    # Only jobs the managed file runs actively; a parked job stays as it is.
+    local active_managed
+    active_managed="$(grep -v '^[[:space:]]*#' "$CRON_DEST" || true)"
+
+    local out="" report="" moved=0 line s hit
+    while IFS= read -r line || [ -n "$line" ]; do
+        hit=""
+        if [[ -n "${line//[[:space:]]/}" && ! "$line" =~ ^[[:space:]]*# ]]; then
+            for s in "${MANAGED_SCRIPTS[@]}"; do
+                if [[ "$line" == *"$s"* && "$active_managed" == *"$s"* ]]; then
+                    hit="$s"
+                    break
+                fi
+            done
+        fi
+        if [ -n "$hit" ]; then
+            out+="${LEGACY_MARKER}${line}"$'\n'
+            report+="moved ${hit}: ${line}"$'\n'
+            moved=$((moved + 1))
+        else
+            out+="${line}"$'\n'
+        fi
+    done <<< "$dump"
+    [ "$moved" -gt 0 ] || return 0
+
+    local backup
+    backup="${CRONTAB_BACKUP_DIR}/crontab-root.$(date +%Y%m%d-%H%M%S)"
+    $SUDO mkdir -p -m 700 "$CRONTAB_BACKUP_DIR"
+    printf '%s\n' "$dump" | $SUDO tee "$backup" >/dev/null
+    $SUDO chmod 600 "$backup"
+    [ -s "$backup" ] || die "Could not save root's crontab to ${backup} - left unchanged."
+
+    printf '%s' "$out" | $SUDO crontab -u root -
+    printf '%s' "$report"
+    echo "backup ${backup}"
+}
+
 # Read-only scan of root's user-crontab for legacy entries that would duplicate
 # the jobs we just installed in /etc/cron.d/. Never writes — the user-crontab is
-# off-limits for automated edits (it may contain unrelated operator entries).
+# only edited by neutralise_legacy_crontab() above (it may hold unrelated entries).
 detect_user_crontab_overlap() {
     command -v crontab >/dev/null 2>&1 || return 0
 
@@ -179,15 +239,13 @@ detect_user_crontab_overlap() {
 
     [ "${#overlaps[@]}" -eq 0 ] && return 0
 
-    warn "Legacy entries in root's user-crontab reference scripts we now manage in ${CRON_DEST}:"
+    warn "Entries in root's user-crontab reference scripts also listed in ${CRON_DEST} (job parked there, so left alone):"
     local entry
     for entry in "${overlaps[@]}"; do
         echo "    ${C_YELLOW}>${C_NC} ${entry}" >&2
     done
     echo "" >&2
-    echo "  ${C_YELLOW}These will run IN ADDITION to the cron.d jobs (e.g. duplicate backups).${C_NC}" >&2
-    echo "  Remove them with:  ${C_GREEN}sudo crontab -e -u root${C_NC}" >&2
-    echo "  (this script never edits the user crontab — it may contain unrelated entries)." >&2
+    echo "  ${C_YELLOW}Review them with:  ${C_GREEN}sudo crontab -e -u root${C_NC}" >&2
     echo "" >&2
 }
 
@@ -206,15 +264,17 @@ print_next_steps() {
 
 main() {
     case "${1:-}" in
-        --help|-h) sed -n '2,29p' "$0"; exit 0 ;;
+        --help|-h) sed -n '2,36p' "$0"; exit 0 ;;
         --remove)  resolve_privilege; remove_files; exit 0 ;;
+        --neutralise-legacy) resolve_privilege; neutralise_legacy_crontab; exit 0 ;;
         "")        : ;;
-        *)         die "Unknown option: $1 (use --remove or --help)" ;;
+        *)         die "Unknown option: $1 (use --remove, --neutralise-legacy or --help)" ;;
     esac
 
     resolve_privilege
     install_files
     print_next_steps
+    neutralise_legacy_crontab
     detect_user_crontab_overlap
 }
 

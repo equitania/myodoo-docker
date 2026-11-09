@@ -1,5 +1,74 @@
 # Release Notes
 
+## A Full Root Disk: Double Backup Runs, Zipped Hardlinks, No Reserve (09.11.2026)
+
+*container2backup.py v4.12.0 · server-readiness.py v1.17.0 · getScripts.py
+v9.37.0 · setup-maintenance-cron.sh v1.4.0 · ownerp_validate.py v1.2.0 ·
+scripts/container2backup.yaml · scripts/README_BackUp.md · docs/COMPONENTS.md ·
+docs/usage/05-backup-restore.md · docs/usage/06-maintenance.md ·
+docs/usage/09-reference.md · usage/AGENT.md*
+
+On a customer server the root disk filled up and a PostgreSQL container
+crash-looped on "No space left on device". Three faults added up. A legacy
+root crontab still started every backup a second time in the same second,
+next to the managed `/etc/cron.d/myodoo-maintenance`; both runs shared one
+temp directory, so every database backup failed from 06.11.2026 on and
+retention never ran. The `docker_builds` service backup zipped the release
+archives in `zips/` — hardlinks from `/opt/odoo-build-cache`, 1.8 GB per
+copy, twice a day, 14 days kept. And nothing checked the free space before a
+backup started.
+
+### Added
+
+- **`exclude:` per service in container2backup.** A glob list relative to
+  `source_path`; a pattern without `/` matches at any depth. The built-in
+  default for the service `docker_builds` is `["*/zips"]` (the folder holds
+  regenerable release archives). `exclude: []` switches the default off, an
+  explicit list replaces it. Works for 7z, zip, gzip and zstd; with excludes
+  active symlinks are stored as links instead of being followed into
+  excluded content. The size estimate counts each inode once and skips
+  excluded paths.
+- **A free-space reserve.** `defaults.min_free_percent` (10) and
+  `defaults.min_free_gb` (5); the reserve is the larger of percent of the
+  filesystem and the GB value and is checked before every database and
+  service backup. A refusal is an ERROR: the item fails, its old archives are
+  kept and the run exits 1. Setting both to 0 disables the check.
+- **An exclusive run lock.** `/run/lock/container2backup.lock` (fallback
+  `<temp_path>`): a second run exits 1 and writes nothing. The temp directory
+  is now unique per run.
+- **`backup_capacity` ("Backup growth") in server-readiness.** Projects every
+  archive series at full retention (average recent archive × `retention_days`
+  × runs per day). FAIL when the additional need exceeds the free space minus
+  the reserve; WARN above 50 % of the filesystem or with under 7 days of
+  headroom. Orphaned `*_dockerbackup_*` series — the prefix matches no
+  configured database or `data_container`, for example after a container
+  rename — are never pruned by retention; they get a WARN with an `ls` fix,
+  never an `rm`.
+- **`ups` neutralises legacy root-crontab lines on every run.** Lines that
+  start a job `/etc/cron.d/myodoo-maintenance` runs actively are commented
+  out with the marker `#OWNERP-MOVED-TO-CRON.D# ` — nothing is deleted — and
+  the crontab is saved to `/var/backups/myodoo-docker/crontab-root.<timestamp>`
+  first. The install report lists what moved; a clean server stays silent.
+  Stray files in `/etc/cron.d` are never changed automatically.
+  `setup-maintenance-cron.sh` does the same after installing and has a
+  `--neutralise-legacy` mode that getScripts uses.
+- **`ownerp_validate.py` knows `exclude`, `min_free_percent` and
+  `min_free_gb`**, so `doval` no longer reports them as unknown keys.
+
+### Changed
+
+- **A failed service backup now skips that service's retention and makes the
+  run exit 1.** Before, it exited 0 and pruned the old archives anyway.
+- **The duplicate-cron fix line in server-readiness is a fish one-liner** that
+  saves the root crontab and comments out the legacy lines, instead of the
+  `crontab -e` hint.
+
+### Tests
+
+- 1616 tests (+75): excludes in all four formats, the free-space reserve, the
+  run lock, failed service backups, `backup_capacity`, the legacy-crontab
+  neutralisation in the shell script and in getScripts, and the new validator keys.
+
 ## DNS Diagnosis Tells a Provider Firewall from a Dead Network (29.10.2026)
 
 *getScripts.py v9.36.0 · docs/COMPONENTS.md · docs/usage/08-troubleshooting.md ·

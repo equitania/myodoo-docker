@@ -11,9 +11,19 @@ in this repository, stay in `CLAUDE.md`.
 
 ### Key Components
 
-#### 1. getScripts.py (v9.36.0)
+#### 1. getScripts.py (v9.37.0)
 - **Purpose**: Main installation and update script
 - **Features**:
+  - Legacy root-crontab lines neutralised on every run (v9.37.0, 09.11.2026):
+    `neutralise_legacy_root_crontab()` calls
+    `setup-maintenance-cron.sh --neutralise-legacy` whenever
+    `/etc/cron.d/myodoo-maintenance` exists. Root-crontab lines that start a
+    job the cron.d file runs actively are commented out with the marker
+    `#OWNERP-MOVED-TO-CRON.D# ` (never deleted); the crontab is saved first to
+    `/var/backups/myodoo-docker/crontab-root.<timestamp>`. The install report
+    lists what moved and where the backup is; a clean server prints nothing.
+    Stray files in `/etc/cron.d` are never changed automatically. Reason: a
+    pre-2026 crontab line started every backup a second time in the same second.
   - DNS diagnosis tells a dropping provider firewall from a dead network
     (v9.36.0, 29.10.2026): when the direct UDP query to 1.1.1.1 fails,
     `direct_tcp_probe()` tries a TCP handshake to 1.1.1.1:443. Success means
@@ -260,7 +270,25 @@ in this repository, stay in `CLAUDE.md`.
   - Detects Hetzner DNS issues with DigitalOcean
   - Supports systemd-resolved, resolvconf, and direct DNS config
 
-#### 2. container2backup.py (v4.11.0)
+#### 2. container2backup.py (v4.12.0)
+- **Excludes, free-space reserve and a run lock** (v4.12.0, 09.11.2026):
+  - Per-service `exclude:` — glob list relative to `source_path` (a pattern
+    without `/` matches at any depth). The built-in default for the service
+    `docker_builds` is `["*/zips"]`: that folder holds release archives
+    hardlinked from `/opt/odoo-build-cache`, regenerable, and were zipped
+    once per name (1.8 GB per copy). `exclude: []` switches the default off;
+    an explicit list replaces it. Works in 7z, zip, gzip and zstd; symlinks
+    are stored as links when excludes are active. The size estimate counts
+    each inode once and skips excluded paths.
+  - Free-space reserve: `defaults.min_free_percent` (10) and
+    `defaults.min_free_gb` (5); reserve = max(total × percent, GB), checked
+    before every database and service backup. A refusal is an ERROR, the item
+    fails, the old archives are kept and the run exits 1. Both 0 disables it.
+  - Exclusive lock `/run/lock/container2backup.lock` (fallback
+    `<temp_path>`): a second run exits 1 and writes nothing. The temp dir is
+    unique per run, so two runs can no longer delete each other's files.
+  - A failed service backup now skips that service's retention and makes the
+    run exit 1 (before: exit 0, old archives pruned anyway).
 - **Encryption works for every format** (v4.11.0, 12.10.2026): GPG encrypts the
   finished archive, so `zip`, `gzip` and `zstd` are encrypted too and keep their
   format (`.tar.zst.gpg`, `.sql.zst.gpg`, …). Before, encryption was dropped for
@@ -557,7 +585,10 @@ in this repository, stay in `CLAUDE.md`.
   carry both instructions **and** the `ca-certificates/` directory beside them —
   a `COPY` without its directory would break every fresh build
 
-#### 6. ownerp_validate.py (v1.1.0)
+#### 6. ownerp_validate.py (v1.2.0)
+- **v1.2.0 (09.11.2026):** knows the container2backup keys `exclude` (list of
+  glob patterns per service, each entry checked) and `defaults.min_free_percent`
+  / `defaults.min_free_gb` (numbers ≥ 0), so they no longer show up as unknown keys
 - **Purpose**: Read-only validation of `docker2update.yaml` and
   `container2backup.yaml` against their declared schemas — no other script
   writes as much unattended config as these two, so a typo surfaces at `doval`
@@ -1034,7 +1065,16 @@ in this repository, stay in `CLAUDE.md`.
   risk an expiry would guard against — a mute nobody remembers — is already
   covered by the visible `[MUTED]` line and the count in every summary
 
-#### 16. server-readiness.py (v1.16.0)
+#### 16. server-readiness.py (v1.17.0)
+- **v1.17.0 (09.11.2026):** new check `backup_capacity` ("Backup growth").
+  Projects each archive series at full retention (average of the recent
+  archives × `retention_days` × runs per day). FAIL when the additional need
+  exceeds free space minus the backup reserve; WARN above 50 % of the
+  filesystem or with under 7 days of headroom. Orphaned `*_dockerbackup_*`
+  series whose prefix matches no configured database or `data_container`
+  (e.g. after a container rename) are never pruned by retention: WARN with an
+  `ls` fix, never `rm`. The duplicate-cron fix is now a fish one-liner that
+  backs up the root crontab and comments out the legacy lines.
 - **v1.16.0 (27.10.2026):** `backup_config`, `update_config` and
   `backup_recency` are SKIP `no Odoo instance yet — wizup` when the file is
   missing, Docker is present and `_container_count() == 0`; a present config

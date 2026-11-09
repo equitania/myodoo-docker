@@ -49,6 +49,26 @@ databases:
 > komprimiert). Details, Verschlüsselung (AES-256/GPG) und Restore je Format:
 > [scripts/README_BackUp.md](../../scripts/README_BackUp.md).
 
+**Plattenplatz und Doppelläufe (container2backup 4.12.0):**
+
+- **Platzreserve.** `defaults.min_free_percent` (10) und `defaults.min_free_gb`
+  (5): vor jedem Datenbank- und Dienst-Backup muss der größere der beiden Werte
+  frei bleiben. Sonst scheitert der Eintrag mit ERROR, seine alten Archive
+  bleiben erhalten und der Lauf endet mit Exit `1`. Beide auf `0` schaltet die
+  Prüfung ab.
+- **`exclude:` je Dienst.** Glob-Muster relativ zu `source_path`. Für den
+  Dienst `docker_builds` gilt standardmäßig `["*/zips"]` (Release-Archive,
+  per Hardlink aus `/opt/odoo-build-cache`, jederzeit neu erzeugbar).
+  `exclude: []` schaltet den Standard ab; eine eigene Liste ersetzt ihn.
+- **Immer nur ein Lauf.** Eine exklusive Sperre (`/run/lock/container2backup.lock`)
+  lässt einen zweiten Start mit Exit `1` enden, ohne etwas zu schreiben. Ein
+  fehlgeschlagenes Dienst-Backup überspringt dessen Aufbewahrung und beendet
+  den Lauf mit Exit `1`.
+- `chk` zeigt die Prüfung **Backup growth**: Sie rechnet die Archive bei voller
+  Aufbewahrung gegen den freien Platz und warnt vor verwaisten
+  `*_dockerbackup_*`-Serien, die die Aufbewahrung nie löscht (z. B. nach einer
+  Container-Umbenennung) — mit `ls` ansehen, erst nach Prüfung löschen.
+
 ### Konfiguration prüfen (doval)
 
 Nach jeder manuellen Änderung an `docker2update.yaml` oder
@@ -183,6 +203,24 @@ databases:
 > staging copy. Compression level 3 is enough (filestore media is already
 > compressed). Details, encryption (AES-256/GPG) and per-format restore:
 > [scripts/README_BackUp.md](../../scripts/README_BackUp.md).
+
+**Disk space and double runs (container2backup 4.12.0):**
+
+- **Free-space reserve.** `defaults.min_free_percent` (10) and
+  `defaults.min_free_gb` (5): before every database and service backup the
+  larger of the two must stay free. Otherwise the item fails with an ERROR,
+  its old archives are kept and the run exits `1`. `0` for both disables it.
+- **`exclude:` per service.** Glob patterns relative to `source_path`. For
+  the service `docker_builds` the default is `["*/zips"]` (release archives,
+  hardlinked from `/opt/odoo-build-cache`, regenerable). `exclude: []`
+  switches the default off; an explicit list replaces it.
+- **One run at a time.** An exclusive lock (`/run/lock/container2backup.lock`)
+  makes a second start exit `1` without writing anything. A failed service
+  backup skips that service's retention and makes the run exit `1`.
+- `chk` shows the check **Backup growth**: it projects the archives at full
+  retention against the free space and warns about orphaned
+  `*_dockerbackup_*` series that retention never deletes (for example after a
+  container rename) — list them with `ls`, delete only after checking.
 
 ### Validate the configuration (doval)
 

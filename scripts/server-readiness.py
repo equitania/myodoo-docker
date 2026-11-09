@@ -4,8 +4,8 @@
 # Title:            server-readiness.py
 # Description:      Report whether this server matches the state myodoo-docker
 #                   expects, and name the exact command that closes each gap.
-# Version:          1.16.0
-# Date:             27.10.2026
+# Version:          1.17.0
+# Date:             09.11.2026
 # Author:           Equitania Software GmbH
 # ==============================================================================
 # Why this exists:
@@ -72,6 +72,7 @@ import os
 import re
 import shutil
 import socket
+import stat
 import subprocess
 import sys
 import time
@@ -79,8 +80,8 @@ from dataclasses import dataclass
 from enum import Enum
 from typing import Callable, List, Optional, Tuple
 
-SCRIPT_VERSION = "1.16.0"
-SCRIPT_DATE = "27.10.2026"
+SCRIPT_VERSION = "1.17.0"
+SCRIPT_DATE = "09.11.2026"
 
 # Where nginx keeps its customer vhosts (mirrors nginx-cert-guard.py).
 NGINX_CONF_D = "etc/nginx/conf.d"
@@ -131,6 +132,11 @@ MANAGED_JOBS = (
     "nightly-cleanup",
     "nginx-cert-guard",
 )
+
+# Marker setup-maintenance-cron.sh (--neutralise-legacy) puts in front of a
+# root-crontab line it moved to cron.d; the fix line below does the same by hand.
+LEGACY_CRON_MARKER = "#OWNERP-MOVED-TO-CRON.D# "
+CRONTAB_BACKUP_DIR = "/var/backups/myodoo-docker"      # = ownerp_cron.BACKUP_DIR
 
 # A check whose finding is fully explained by an ownERP job being switched off
 # on purpose. The cron file already records that decision (ownerp_cron.py parks
@@ -596,6 +602,19 @@ def check_logrotate_coverage(ctx: HealthContext) -> Finding:
     )
 
 
+def _crontab_neutralise_fish() -> str:
+    """Fish one-liner that comments out root-crontab lines running a managed job.
+
+    Saves the crontab first (`and` stops the chain when there is none), keeps
+    every line and touches only lines naming a managed job. The pattern is
+    built from MANAGED_JOBS so it cannot drift from the check that found them.
+    """
+    jobs = "|".join(MANAGED_JOBS)
+    return (f"mkdir -p {CRONTAB_BACKUP_DIR}; and crontab -l > "
+            f"{CRONTAB_BACKUP_DIR}/crontab-root.(date +%Y%m%d-%H%M%S); and crontab -l "
+            f"| sed -E 's/^([^#].*({jobs}).*)$/{LEGACY_CRON_MARKER}\\1/' | crontab -")
+
+
 def check_duplicate_cron_entries(ctx: HealthContext) -> Finding:
     """Find maintenance jobs scheduled outside /etc/cron.d/myodoo-maintenance.
 
@@ -641,10 +660,19 @@ def check_duplicate_cron_entries(ctx: HealthContext) -> Finding:
 
     listed = "; ".join(sorted(set(duplicates)))
     if os.path.isfile(ctx.p(CRON_DEST)):
+        # `ups` neutralises root-crontab lines itself (getScripts >= 9.37.0);
+        # what stays here is a stray /etc/cron.d file, which is never touched
+        # automatically, and the manual route for a host that has not run ups.
+        fixes = []
+        if any(item.startswith("crontab -l:") for item in duplicates):
+            fixes.append(_crontab_neutralise_fish() + "   # fish; saves the crontab first, comments out, deletes nothing; ups does this too")
+        for name in sorted({item.split(":")[0][len("/etc/cron.d/"):]
+                            for item in duplicates if item.startswith("/etc/cron.d/")}):
+            fixes.append(f"ls -l /etc/cron.d/{name}   # review, then: mv /etc/cron.d/{name} {CRONTAB_BACKUP_DIR}/")
         return Finding(
             "duplicate_cron_entries", Severity.FAIL, "Duplicate cron",
             f"scheduled twice — {listed}",
-            "crontab -e   # remove the legacy line(s), or rm the stray /etc/cron.d file",
+            "\n".join(fixes) if len(fixes) > 1 else fixes[0],
         )
     return Finding(
         "duplicate_cron_entries", Severity.WARN, "Duplicate cron",
@@ -1037,6 +1065,198 @@ def check_backup_disk_space(ctx: HealthContext) -> Finding:
         return Finding("backup_disk_space", Severity.WARN, "Backup disk", detail,
                        "llbk   # consider lowering retention_days")
     return _ok("backup_disk_space", "Backup disk", detail)
+
+
+# ------------------------------------------------------------------------------
+# Backup growth: will the backups still fit once every series reaches retention?
+# Incident 09.11.2026: a service backup wrote 1.8 GB twice a day with 14 days of
+# retention (54 GB) onto a disk that showed 89 %; the snapshot check warned once
+# and the disk filled between two ups runs. This projects forward instead.
+# ------------------------------------------------------------------------------
+
+CAPACITY_WINDOW_DAYS = 3             # recent archives that set size and runs/day
+CAPACITY_DEFAULT_RETENTION = 14      # = container2backup.py default
+CAPACITY_WARN_FRACTION = 0.5         # projected backups > half the filesystem
+CAPACITY_WARN_MARGIN_DAYS = 7        # headroom below a week of backup volume
+DEFAULT_MIN_FREE_PERCENT = 10        # = container2backup.py defaults.min_free_percent
+DEFAULT_MIN_FREE_GB = 5              # = container2backup.py defaults.min_free_gb
+DOCKER_BACKUP_MARKER = "_dockerbackup_"
+
+
+def _archive_files(folder: str, prefix: str = "") -> List[Tuple[str, int, float]]:
+    """(name, size, mtime) of the archives in `folder`, as find_archives does."""
+    found = []
+    try:
+        names = os.listdir(folder)
+    except OSError:
+        return found
+    for name in names:
+        if (prefix and not name.startswith(prefix)) or not name.endswith(BACKUP_ARCHIVE_SUFFIXES):
+            continue
+        try:
+            info = os.stat(os.path.join(folder, name))
+        except OSError:
+            continue                                  # deleted mid-scan
+        if stat.S_ISREG(info.st_mode):
+            found.append((name, info.st_size, info.st_mtime))
+    return found
+
+
+def _as_float(value, default: float) -> float:
+    try:
+        return float(value)
+    except (TypeError, ValueError):
+        return default
+
+
+def _project_series(files: List[Tuple[str, int, float]], retention_days: float,
+                    now: float) -> Optional[dict]:
+    """Size of one series at full retention.
+
+    projected = average recent archive size x retention_days x runs per day.
+    The average and the rate come from the last CAPACITY_WINDOW_DAYS; with no
+    archive that recent the newest three set the size and the rate is 1/day.
+    Runs per day are the gaps between the window's archives over the time they
+    span (n-1 gaps), rounded to halves and never below 1.
+    """
+    if not files:
+        return None
+    window = CAPACITY_WINDOW_DAYS * 86400
+    recent = [item for item in files if now - item[2] <= window]
+    if recent:
+        span_days = (max(item[2] for item in recent) - min(item[2] for item in recent)) / 86400
+        runs = max(1.0, round((len(recent) - 1) / span_days * 2) / 2) if (
+            len(recent) >= 2 and span_days >= 0.25) else 1.0
+    else:
+        recent = sorted(files, key=lambda item: item[2], reverse=True)[:3]
+        runs = 1.0
+    average = sum(item[1] for item in recent) / len(recent)
+    current = sum(item[1] for item in files)
+    projected = average * retention_days * runs
+    return {"average": average, "runs": runs, "retention": retention_days,
+            "current": current, "projected": projected,
+            "additional": max(0.0, projected - current),
+            "daily": average * runs}
+
+
+def check_backup_capacity(ctx: HealthContext) -> Finding:
+    """Project every backup series to full retention and compare with the disk.
+
+    Reads only; never deletes. Orphans (archives of a database/container pair
+    that is no longer configured, e.g. after a container rename) are never
+    reached by retention and are reported separately.
+    """
+    title = "Backup growth"
+    if not shutil.which("docker"):
+        return _skip("backup_capacity", title, "docker not installed")
+    config, error = _load_backup_config(ctx)
+    if error == "PyYAML not installed":
+        return _skip("backup_capacity", title, error)
+    if error:
+        return _skip("backup_capacity", title,
+                     FRESH_HOST_NOTE if _is_fresh_host(error) else error)
+
+    defaults = config.get("defaults") or {}
+    folder = os.path.expandvars(os.path.expanduser(
+        str(defaults.get("backup_path") or DEFAULT_BACKUP_PATH)))
+    root = ctx.p(folder)
+    try:
+        usage = shutil.disk_usage(root)
+    except OSError:
+        return _skip("backup_capacity", title, f"{folder} not accessible")
+    default_retention = _as_float(defaults.get("retention_days"), CAPACITY_DEFAULT_RETENTION)
+    reserve = max(usage.total * _as_float(defaults.get("min_free_percent"), DEFAULT_MIN_FREE_PERCENT) / 100,
+                  _as_float(defaults.get("min_free_gb"), DEFAULT_MIN_FREE_GB) * 1024 ** 3)
+    usable = usage.free - reserve
+
+    now = time.time()
+    docker_dir = os.path.join(root, DOCKER_BACKUP_SUBDIR)
+    series = []                                       # (label, projection)
+    prefixes = set()
+    for db in config.get("databases") or []:
+        if not isinstance(db, dict) or not db.get("name"):
+            continue
+        name, container = str(db["name"]), str(db.get("data_container") or "")
+        retention = _as_float(db.get("retention_days"), default_retention)
+        if container:
+            prefixes.add(f"{name}_{container}")
+            patterns = [(f"{name}_{container}{DOCKER_BACKUP_MARKER}", name)]
+        else:
+            patterns = []
+        patterns.append((f"{name}_FastReport_", f"{name} FastReport"))
+        for prefix, label in patterns:
+            projection = _project_series(_archive_files(docker_dir, prefix), retention, now)
+            if projection:
+                series.append((label, projection))
+    for name, service in (config.get("services") or {}).items():
+        if not isinstance(service, dict) or not service.get("enabled", True):
+            continue
+        subdir = service.get("backup_path") or name
+        retention = _as_float(service.get("retention_days"), default_retention)
+        projection = _project_series(_archive_files(os.path.join(root, str(subdir))), retention, now)
+        if projection:
+            series.append((str(name), projection))
+
+    # Archives of a pair that is not configured any more: retention never matches them.
+    orphans: dict = {}
+    for name, size, _ in _archive_files(docker_dir):
+        if DOCKER_BACKUP_MARKER not in name:
+            continue
+        prefix = name.split(DOCKER_BACKUP_MARKER)[0]
+        if prefix not in prefixes:
+            count, total = orphans.get(prefix, (0, 0))
+            orphans[prefix] = (count + 1, total + size)
+
+    if not series and not orphans:
+        return _skip("backup_capacity", title, "no archives yet")
+
+    additional = sum(item["additional"] for _, item in series)
+    projected = sum(item["projected"] for _, item in series)
+    growing = sum(item["daily"] for _, item in series if item["additional"] > 0)
+    biggest = sorted(series, key=lambda entry: entry[1]["projected"], reverse=True)[:2]
+    largest = ", ".join(
+        f"{label} {_human(item['projected'])} ({item['retention']:g} d x {item['runs']:g}/day x "
+        f"{_human(item['average'])})" for label, item in biggest)
+    room = f"{_human(max(usable, 0))} usable ({_human(usage.free)} free, {_human(reserve)} reserve)"
+
+    severity, detail, fix = Severity.OK, "", ""
+    if additional > usable:
+        days = max(usable, 0) / growing if growing else 0
+        when = "already at the reserve" if usable <= 0 else f"in ~{max(days, 0.1):.0f} days" if days >= 1 else "within a day"
+        severity = Severity.FAIL
+        detail = (f"backups will reach the reserve {when} — need +{_human(additional)} more at full "
+                  f"retention, {room}; largest: {largest}")
+        fix = (f"edbk   # lower retention_days or shrink the largest series; "
+               f"size: du -sh {folder}/* | sort -h")
+    else:
+        margin_days = CAPACITY_WARN_MARGIN_DAYS * sum(item["daily"] for _, item in series)
+        if usage.total and projected > CAPACITY_WARN_FRACTION * usage.total:
+            severity = Severity.WARN
+            detail = (f"backups will take {_human(projected)} of {_human(usage.total)} "
+                      f"({projected / usage.total * 100:.0f} %) at full retention; largest: {largest}")
+        elif series and usable - additional < margin_days:
+            severity = Severity.WARN
+            detail = (f"only {_human(usable - additional)} headroom once retention is full, less than a "
+                      f"week of backups ({_human(margin_days)}); largest: {largest}")
+        if severity is Severity.WARN:
+            fix = "edbk   # lower retention_days, or enlarge the backup filesystem"
+
+    if orphans:
+        listed = ", ".join(f"{prefix} ({count} file(s), {_human(total)})"
+                           for prefix, (count, total) in sorted(orphans.items())[:3])
+        note = f"orphaned archives retention never deletes: {listed}"
+        review = "; ".join(f"ls -lh {folder}/{DOCKER_BACKUP_SUBDIR}/{prefix}{DOCKER_BACKUP_MARKER}*"
+                           for prefix in sorted(orphans)[:3])
+        detail = f"{detail}; {note}" if detail else note
+        fix = f"{fix}\n{review}   # review, then remove by hand what is obsolete" if fix else \
+              f"{review}   # review, then remove by hand what is obsolete"
+        if severity is Severity.OK:
+            severity = Severity.WARN
+
+    if severity is Severity.OK:
+        return _ok("backup_capacity", title,
+                   f"{len(series)} series project to {_human(projected)} (+{_human(additional)} to go), {room}")
+    return Finding("backup_capacity", severity, title, detail, fix)
 
 
 # ==============================================================================
@@ -1849,6 +2069,7 @@ CHECKS: Tuple[Callable[[HealthContext], Finding], ...] = (
     check_dns_resolution,
     check_script_versions,
     check_backup_disk_space,
+    check_backup_capacity,
     check_build_cache,
     check_odoo_capacity,
     check_hardening_env,

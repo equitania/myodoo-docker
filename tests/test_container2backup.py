@@ -103,6 +103,13 @@ class BackupAdditionalServiceTest(unittest.TestCase):
         self.makedirs_patch = mock.patch.object(c2b.os, "makedirs")
         self.makedirs_patch.start()
         self.addCleanup(self.makedirs_patch.stop)
+        # The reserve check and the size walk read the real disk; the tests
+        # here only care about path building, so stub both.
+        for name, value in (("check_free_reserve", (True, "ok")),
+                            ("estimate_service_bytes", 0)):
+            patch = mock.patch.object(c2b, name, return_value=value)
+            patch.start()
+            self.addCleanup(patch.stop)
 
     def test_falls_back_to_the_service_name_when_backup_path_is_absent(self):
         service_config = {"source_path": "/etc/nginx"}
@@ -411,8 +418,13 @@ class FailedDatabaseKeepsBackupsTest(unittest.TestCase):
         self.assertIn("continue", between)
 
     def test_run_exits_non_zero(self):
-        tail = self.source[self.source.index("    if failed_databases:"):]
+        tail = self.source[self.source.index("    if failed_databases or failed_services:"):]
         self.assertIn("sys.exit(1)", tail[:400])
+
+    def test_failed_service_skips_retention_and_fails_the_run(self):
+        failed = self.source.index("failed_services.append(")
+        cleanup = self.source.index("cleanup_backups(service_backup_path")
+        self.assertIn("continue", self.source[failed:cleanup])
 
 
 class EncryptionEveryFormatTest(unittest.TestCase):
@@ -465,3 +477,513 @@ class EncryptionEveryFormatTest(unittest.TestCase):
     def test_no_format_drops_encryption_silently(self):
         with open(c2b.__file__, encoding="utf-8") as handle:
             self.assertNotIn("Encryption will be ignored", handle.read())
+
+
+class ExcludePatternTest(unittest.TestCase):
+    """4.12.0: 'exclude:' for service backups (incident 09.11.2026: the
+    hardlinked zips/ release cache was copied for real, 54 GB in 14 days)."""
+
+    def test_docker_builds_defaults_to_the_zips_directories_only(self):
+        self.assertEqual(c2b.service_excludes("docker_builds", {}), ["*/zips"])
+
+    def test_top_level_release_zips_are_not_excluded_by_default(self):
+        anchored = c2b.normalize_exclude_patterns(
+            c2b.service_excludes("docker_builds", {}))
+        self.assertFalse(c2b.is_excluded("build1/odoo_kernel.zip", anchored))
+        self.assertTrue(c2b.is_excluded("build1/zips", anchored))
+        self.assertTrue(c2b.is_excluded("build1/zips/odoo_kernel.zip", anchored))
+
+    def test_an_empty_list_switches_the_default_off(self):
+        self.assertEqual(c2b.service_excludes("docker_builds", {"exclude": []}), [])
+
+    def test_an_explicit_list_replaces_the_default(self):
+        self.assertEqual(
+            c2b.service_excludes("docker_builds", {"exclude": ["*.bak"]}), ["*.bak"])
+
+    def test_other_services_exclude_nothing_by_default(self):
+        self.assertEqual(c2b.service_excludes("nginx", {}), [])
+        self.assertEqual(c2b.service_excludes("nginx", {"exclude": None}), [])
+
+    def test_a_malformed_value_is_ignored_with_a_warning(self):
+        with mock.patch("sys.stdout", new=io.StringIO()) as out:
+            self.assertEqual(
+                c2b.service_excludes("nginx", {"exclude": "zips"}), [])
+        self.assertIn("must be a list of strings", out.getvalue())
+
+    def test_a_pattern_without_slash_matches_at_any_depth(self):
+        anchored = c2b.normalize_exclude_patterns(["*.bak", "cache/"])
+        self.assertEqual(anchored, ["*.bak", "*/*.bak", "cache", "*/cache"])
+        self.assertTrue(c2b.is_excluded("a/b/x.bak", anchored))
+        self.assertTrue(c2b.is_excluded("x.bak", anchored))
+        self.assertTrue(c2b.is_excluded("a/cache/f", anchored))
+        self.assertFalse(c2b.is_excluded("a/b/x.txt", anchored))
+
+    def test_leading_dot_slash_and_trailing_slash_are_normalised(self):
+        self.assertEqual(c2b.normalize_exclude_patterns(["./b/zips/"]), ["b/zips"])
+
+
+class ExcludeArgvTest(unittest.TestCase):
+    """The generated argv for each compression format."""
+
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(self.tmp.cleanup)
+        self.src = os.path.join(self.tmp.name, "docker-builds")
+        os.makedirs(self.src)
+        self.calls = []
+
+        def fake_run(argv, **kwargs):
+            self.calls.append(("run", list(argv), kwargs))
+            out = [a for a in argv if str(a).startswith(self.tmp.name) and "out" in a]
+            for path in out:
+                with open(path, "wb") as handle:
+                    handle.write(b"x")
+            return types.SimpleNamespace(returncode=0, stdout=b"", stderr=b"")
+
+        class FakePopen:
+            def __init__(inner, argv, **kwargs):
+                self.calls.append(("popen", list(argv), kwargs))
+                inner.stdout = io.BytesIO()
+                inner.returncode = 0
+                if "-o" in argv:
+                    with open(argv[argv.index("-o") + 1], "wb") as handle:
+                        handle.write(b"x")
+
+            def communicate(inner):
+                return b"", b""
+
+        for patcher in (
+            mock.patch.object(c2b.subprocess, "run", side_effect=fake_run),
+            mock.patch.object(c2b.subprocess, "Popen", FakePopen),
+            mock.patch.object(c2b, "check_compression_tools", return_value={
+                "7zz": True, "zip": True, "gzip": True, "zstd": True}),
+            mock.patch.object(c2b, "get_encryption_settings", return_value=(False, "")),
+        ):
+            patcher.start()
+            self.addCleanup(patcher.stop)
+
+    def compress(self, fmt, exclude, system="Linux"):
+        config = {"defaults": {"compression": {"format": fmt, "level": 3}}}
+        base = os.path.join(self.tmp.name, "out")
+        with mock.patch("sys.stdout", new=io.StringIO()), \
+             mock.patch.object(c2b.platform, "system", return_value=system):
+            return c2b.compress_directory(self.src, base, config, exclude=exclude)
+
+    def test_7z_gets_one_switch_per_pattern_and_stores_symlinks(self):
+        self.assertTrue(self.compress("7z", ["*/zips"]).endswith(".7z"))
+        kind, argv, kwargs = self.calls[0]
+        self.assertIn("-x!*/zips", argv)
+        self.assertIn("-snl", argv)
+        # switches precede the archive name; cwd is the source dir, input '.'
+        self.assertLess(argv.index("-x!*/zips"), argv.index("."))
+        self.assertEqual(argv[-1], ".")
+        self.assertEqual(kwargs["cwd"], self.src)
+
+    def test_zip_excludes_the_directory_and_its_content_after_the_input(self):
+        self.assertTrue(self.compress("zip", ["*/zips"]).endswith(".zip"))
+        argv = self.calls[0][1]
+        tail = argv[argv.index("."):]
+        self.assertEqual(tail, [".", "-y", "-x", "*/zips", "*/zips/*"])
+        self.assertEqual(self.calls[0][2]["cwd"], self.src)
+
+    def test_gzip_on_linux_prefixes_the_pattern_with_the_base_directory(self):
+        self.compress("gzip", ["*/zips"], system="Linux")
+        argv = self.calls[0][1]
+        self.assertEqual(argv[:3], ["tar", "-czf", argv[2]])
+        self.assertIn("--exclude=docker-builds/*/zips", argv)
+        self.assertEqual(argv[-3:], ["-C", self.tmp.name, "docker-builds"])
+
+    def test_gzip_on_macos_excludes_in_the_tar_stage(self):
+        self.compress("gzip", ["*/zips"], system="Darwin")
+        argv = self.calls[0][1]
+        self.assertEqual(argv[:2], ["tar", "-cf"])
+        self.assertIn("--exclude=docker-builds/*/zips", argv)
+
+    def test_zstd_pipes_an_excluding_tar_into_zstd(self):
+        self.compress("zstd", ["*/zips"])
+        kind, argv, _ = self.calls[0]
+        self.assertEqual(kind, "popen")
+        self.assertEqual(argv[0], "tar")
+        self.assertIn("--exclude=docker-builds/*/zips", argv)
+        self.assertLess(argv.index("--exclude=docker-builds/*/zips"), argv.index("-C"))
+
+    def test_without_excludes_the_argv_is_unchanged(self):
+        self.compress("zip", [])
+        self.assertEqual(self.calls[0][1][-1], ".")
+        self.assertNotIn("-x", self.calls[0][1])
+        self.assertNotIn("-y", self.calls[0][1])
+        self.calls.clear()
+        self.compress("7z", None)
+        self.assertFalse([a for a in self.calls[0][1] if a.startswith("-x") or a == "-snl"])
+
+    def test_sql_only_never_gets_excludes(self):
+        config = {"defaults": {"compression": {"format": "zip", "level": 3}}}
+        with open(os.path.join(self.src, "dump.sql"), "w") as handle:
+            handle.write("select 1;")
+        with mock.patch("sys.stdout", new=io.StringIO()):
+            c2b.compress_directory(self.src, os.path.join(self.tmp.name, "out"),
+                                   config, only_sql_dump=True, exclude=["*/zips"])
+        self.assertNotIn("-x", self.calls[0][1])
+
+
+@unittest.skipUnless(c2b.shutil.which("tar"), "tar not installed")
+class ExcludeRealArchiveTest(unittest.TestCase):
+    """The patterns must work with the real tools, not only in argv."""
+
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(self.tmp.cleanup)
+        self.src = os.path.join(self.tmp.name, "docker-builds")
+        os.makedirs(os.path.join(self.src, "b1", "zips"))
+        os.makedirs(os.path.join(self.src, "b1", "addons"))
+        os.makedirs(os.path.join(self.src, "b2", "zips"))
+        for rel, text in (("b1/zips/kernel.zip", "k"), ("b1/addons/m.py", "m"),
+                          ("b1/release.file", "r"), ("b1/hand-placed.zip", "h")):
+            with open(os.path.join(self.src, rel), "w") as handle:
+                handle.write(text)
+        os.link(os.path.join(self.src, "b1/zips/kernel.zip"),
+                os.path.join(self.src, "b2/zips/kernel.zip"))
+        # A symlink to the excluded directory must not leak its content.
+        os.symlink("b1/zips", os.path.join(self.src, "lnk"))
+
+    def names(self, fmt):
+        config = {"defaults": {"compression": {"format": fmt, "level": 1}}}
+        base = os.path.join(self.tmp.name, "out_" + fmt)
+        with mock.patch("sys.stdout", new=io.StringIO()), \
+             mock.patch.object(c2b, "get_encryption_settings", return_value=(False, "")):
+            archive = c2b.compress_directory(self.src, base, config, exclude=["*/zips"])
+        self.assertTrue(archive and os.path.exists(archive), archive)
+        return archive
+
+    def assert_content(self, listing):
+        self.assertIn("m.py", listing)
+        self.assertIn("hand-placed.zip", listing)
+        self.assertNotIn("kernel.zip", listing)
+
+    def test_gzip(self):
+        import subprocess
+        if not c2b.shutil.which("gzip"):
+            self.skipTest("gzip missing")
+        archive = self.names("gzip")
+        self.assert_content(subprocess.run(["tar", "-tzf", archive],
+                                           capture_output=True, text=True).stdout)
+
+    def test_zip(self):
+        import subprocess
+        if not (c2b.shutil.which("zip") and c2b.shutil.which("unzip")):
+            self.skipTest("zip/unzip missing")
+        archive = self.names("zip")
+        self.assert_content(subprocess.run(["unzip", "-l", archive],
+                                           capture_output=True, text=True).stdout)
+
+    def test_7z(self):
+        import subprocess
+        if not c2b.shutil.which("7zz"):
+            self.skipTest("7zz missing")
+        archive = self.names("7z")
+        self.assert_content(subprocess.run(["7zz", "l", archive],
+                                           capture_output=True, text=True).stdout)
+
+    def test_zstd(self):
+        import subprocess
+        if not c2b.shutil.which("zstd"):
+            self.skipTest("zstd missing")
+        archive = self.names("zstd")
+        listing = subprocess.run(f"zstd -dc '{archive}' | tar -t", shell=True,
+                                 capture_output=True, text=True).stdout
+        self.assert_content(listing)
+
+
+class EstimateServiceBytesTest(unittest.TestCase):
+    def test_excluded_paths_and_repeated_inodes_are_not_counted(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            os.makedirs(os.path.join(tmp, "b1", "zips"))
+            with open(os.path.join(tmp, "b1", "zips", "big.zip"), "wb") as handle:
+                handle.write(b"x" * 1000)
+            with open(os.path.join(tmp, "b1", "keep.txt"), "wb") as handle:
+                handle.write(b"y" * 10)
+            os.link(os.path.join(tmp, "b1", "keep.txt"), os.path.join(tmp, "b1", "again.txt"))
+            self.assertEqual(c2b.estimate_service_bytes(tmp, []), 1010)
+            self.assertEqual(
+                c2b.estimate_service_bytes(tmp, c2b.normalize_exclude_patterns(["*/zips"])), 10)
+
+
+class FreeReserveTest(unittest.TestCase):
+    GIB = 1024 ** 3
+
+    def usage(self, total_gib, free_gib):
+        return types.SimpleNamespace(total=total_gib * self.GIB,
+                                     used=(total_gib - free_gib) * self.GIB,
+                                     free=free_gib * self.GIB)
+
+    def check(self, writes, usage, defaults, dev=lambda path: 1):
+        with tempfile.TemporaryDirectory() as tmp:
+            real = [(os.path.join(tmp, name), size * self.GIB) for name, size in writes]
+            for path, _ in real:
+                os.makedirs(path)
+            with mock.patch.object(c2b.shutil, "disk_usage", return_value=usage), \
+                 mock.patch.object(c2b.os, "stat",
+                                   side_effect=lambda p: types.SimpleNamespace(st_dev=dev(p))):
+                return c2b.check_free_reserve("live_db", real, defaults)
+
+    def test_percent_reserve_wins_on_a_big_disk(self):
+        # 1000 GiB disk, 10 % = 100 GiB; 150 free - 40 = 110 >= 100
+        self.assertTrue(self.check([("a", 40)], self.usage(1000, 150), {})[0])
+        # 150 - 60 = 90 < 100
+        ok, msg = self.check([("a", 60)], self.usage(1000, 150), {})
+        self.assertFalse(ok)
+
+    def test_gb_reserve_wins_on_a_small_disk(self):
+        # 20 GiB disk: 10 % = 2 GiB, min_free_gb 5 wins; 9 free - 5 = 4 < 5
+        ok, msg = self.check([("a", 5)], self.usage(20, 9), {})
+        self.assertFalse(ok)
+        # 11 free - 5 = 6 >= 5
+        self.assertTrue(self.check([("a", 5)], self.usage(20, 11), {})[0])
+
+    def test_the_refusal_names_free_estimate_reserve_and_the_way_out(self):
+        ok, msg = self.check([("a", 60)], self.usage(1000, 150), {})
+        for needle in ("live_db", "free 150.0 GiB", "needs ~60.0 GiB",
+                       "reserve to keep 100.0 GiB", "retention_days", "backup_path"):
+            self.assertIn(needle, msg)
+
+    def test_same_mount_writes_are_summed(self):
+        usage = self.usage(1000, 150)
+        # each alone leaves 120 >= 100, together 150 - 60 = 90 < 100
+        self.assertTrue(self.check([("a", 30)], usage, {})[0])
+        self.assertFalse(self.check([("a", 30), ("b", 30)], usage, {})[0])
+
+    def test_different_mounts_are_checked_separately(self):
+        usage = self.usage(1000, 150)
+
+        def dev(path):
+            return 2 if os.path.basename(path) == "b" else 1
+
+        # a and b exist, so each is its own probe point with its own device.
+        self.assertTrue(self.check([("a", 30), ("b", 30)], usage, {}, dev=dev)[0])
+
+    def test_both_keys_zero_disable_the_check(self):
+        ok, msg = self.check([("a", 900)], self.usage(1000, 10),
+                             {"min_free_percent": 0, "min_free_gb": 0})
+        self.assertTrue(ok)
+
+    def test_one_key_zero_keeps_the_other_active(self):
+        defaults = {"min_free_percent": 0, "min_free_gb": 5}
+        self.assertFalse(self.check([("a", 6)], self.usage(1000, 10), defaults)[0])
+
+    def test_invalid_values_fall_back_to_the_defaults(self):
+        with mock.patch("sys.stdout", new=io.StringIO()):
+            self.assertEqual(
+                c2b.reserve_settings({"min_free_percent": "ten", "min_free_gb": -1}),
+                (c2b.DEFAULT_MIN_FREE_PERCENT, c2b.DEFAULT_MIN_FREE_GB))
+
+    def test_write_estimates_follow_the_preflight_factors(self):
+        gib = self.GIB
+        temp, target = c2b.backup_write_estimates(gib, 10 * gib, True, False)
+        self.assertEqual(temp, int(gib * c2b.DUMP_SIZE_FACTOR))
+        self.assertEqual(target, int(10 * gib * 0.9))
+        temp, target = c2b.backup_write_estimates(gib, 10 * gib, False, True)
+        self.assertEqual(target, int(gib * c2b.DUMP_SIZE_FACTOR * 0.3))
+        self.assertEqual(c2b.backup_write_estimates(None, None, False, False), (0, 0))
+
+
+class ServiceFailureTest(unittest.TestCase):
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(self.tmp.cleanup)
+        self.src = os.path.join(self.tmp.name, "src")
+        os.makedirs(self.src)
+        patch = mock.patch.object(c2b, "config", {"defaults": {}}, create=True)
+        patch.start()
+        self.addCleanup(patch.stop)
+
+    def run_service(self, name="nginx", cfg=None, **patches):
+        cfg = dict(cfg or {"source_path": self.src, "backup_path": "svc"})
+        with mock.patch("sys.stdout", new=io.StringIO()) as out:
+            result = c2b.backup_additional_service(
+                cfg, os.path.join(self.tmp.name, "bk"), "ts", name)
+        return result, out.getvalue()
+
+    def test_success_returns_true(self):
+        with mock.patch.object(c2b, "check_free_reserve", return_value=(True, "ok")), \
+             mock.patch.object(c2b, "compress_directory", return_value="/x.7z"):
+            self.assertTrue(self.run_service()[0])
+
+    def test_a_failed_compression_returns_false(self):
+        with mock.patch.object(c2b, "check_free_reserve", return_value=(True, "ok")), \
+             mock.patch.object(c2b, "compress_directory", return_value=None):
+            self.assertFalse(self.run_service()[0])
+
+    def test_a_refused_reserve_returns_false_and_writes_no_archive(self):
+        with mock.patch.object(c2b, "check_free_reserve", return_value=(False, "no room")), \
+             mock.patch.object(c2b, "compress_directory") as compress:
+            result, out = self.run_service()
+        self.assertFalse(result)
+        compress.assert_not_called()
+        self.assertIn("ERROR: no room", out)
+
+    def test_skips_and_disabled_services_are_not_failures(self):
+        self.assertTrue(self.run_service(cfg={"enabled": False})[0])
+        self.assertTrue(self.run_service(cfg={})[0])
+        self.assertTrue(self.run_service(cfg={"source_path": "/nonexistent/x"})[0])
+
+    def test_docker_builds_passes_the_default_exclude_and_announces_it(self):
+        with mock.patch.object(c2b, "check_free_reserve", return_value=(True, "ok")), \
+             mock.patch.object(c2b, "compress_directory", return_value="/x.7z") as compress:
+            _, out = self.run_service(name="docker_builds")
+        self.assertEqual(compress.call_args.kwargs["exclude"], ["*/zips"])
+        self.assertIn("Excluding from svc: */zips", out)
+
+    def test_explicit_empty_exclude_passes_nothing(self):
+        cfg = {"source_path": self.src, "backup_path": "svc", "exclude": []}
+        with mock.patch.object(c2b, "check_free_reserve", return_value=(True, "ok")), \
+             mock.patch.object(c2b, "compress_directory", return_value="/x.7z") as compress:
+            _, out = self.run_service(name="docker_builds", cfg=cfg)
+        self.assertEqual(compress.call_args.kwargs["exclude"], [])
+        self.assertNotIn("Excluding", out)
+
+
+class DatabaseBackupGuardsTest(unittest.TestCase):
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(self.tmp.cleanup)
+        self.temp_base = os.path.join(self.tmp.name, "temp")
+        os.makedirs(self.temp_base)
+        self.config = {"defaults": {"temp_path": self.temp_base}}
+        for patcher in (
+            mock.patch.object(c2b, "config", self.config, create=True),
+            mock.patch.object(c2b, "get_database_data_size_bytes", return_value=10**9),
+        ):
+            patcher.start()
+            self.addCleanup(patcher.stop)
+
+    def backup(self, **kwargs):
+        with mock.patch("sys.stdout", new=io.StringIO()) as out:
+            result = c2b.create_backup(
+                "live_db", "u", "live-db", "live-odoo",
+                os.path.join(self.tmp.name, "bk"), "ts", only_sql_dump=True, **kwargs)
+        return result, out.getvalue()
+
+    def test_a_refused_reserve_stops_before_pg_dump_and_cleans_the_temp_dir(self):
+        with mock.patch.object(c2b, "check_free_reserve", return_value=(False, "no room")), \
+             mock.patch.object(c2b.subprocess, "run") as run:
+            result, out = self.backup()
+        self.assertFalse(result)
+        run.assert_not_called()
+        self.assertIn("ERROR: no room", out)
+        self.assertEqual(os.listdir(self.temp_base), [])
+
+    def test_the_reserve_check_gets_temp_and_target_estimates(self):
+        with mock.patch.object(c2b, "check_free_reserve", return_value=(False, "x")) as check:
+            self.backup()
+        label, writes, _ = check.call_args[0]
+        self.assertEqual(label, "live_db")
+        self.assertEqual(len(writes), 2)
+        self.assertTrue(writes[0][0].startswith(self.temp_base))
+        self.assertTrue(writes[1][0].endswith("/docker"))
+
+    def test_two_runs_in_the_same_second_get_different_temp_dirs(self):
+        made = []
+        real = c2b.tempfile.mkdtemp
+
+        def recording(*args, **kwargs):
+            path = real(*args, **kwargs)
+            made.append(path)
+            return path
+
+        fail = types.SimpleNamespace(returncode=1, stderr=b"")
+        with mock.patch.object(c2b, "check_free_reserve", return_value=(True, "ok")), \
+             mock.patch.object(c2b.tempfile, "mkdtemp", side_effect=recording), \
+             mock.patch.object(c2b.subprocess, "run", return_value=fail), \
+             mock.patch.object(c2b.datetime, "datetime", wraps=c2b.datetime.datetime) as dt:
+            dt.now.return_value = c2b.datetime.datetime(2026, 11, 9, 2, 0, 0)
+            self.backup()
+            self.backup()
+        self.assertEqual(len(made), 2)
+        self.assertNotEqual(made[0], made[1])
+        for path in made:
+            self.assertRegex(os.path.basename(path), r"^live_db_20261109_020000_\w{8}$")
+            self.assertEqual(os.path.dirname(path), self.temp_base)
+
+    def test_stale_warning_recognises_old_and_new_temp_names(self):
+        for name in ("live_db_20261109_020000", "live_db_20261109_020000_ab12cd34"):
+            os.makedirs(os.path.join(self.temp_base, name))
+        os.makedirs(os.path.join(self.temp_base, "other_db_20261109_020000_ab12cd34"))
+        with mock.patch("sys.stdout", new=io.StringIO()):
+            stale = c2b.warn_stale_temp_dirs(self.temp_base, "live_db", "")
+        self.assertEqual(sorted(os.path.basename(p) for p in stale),
+                         ["live_db_20261109_020000", "live_db_20261109_020000_ab12cd34"])
+
+
+class RunLockTest(unittest.TestCase):
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(self.tmp.cleanup)
+        self.lock = os.path.join(self.tmp.name, "c2b.lock")
+
+    def test_the_first_run_holds_the_lock_and_stores_its_pid(self):
+        handle, holder, path = c2b.acquire_run_lock(lock_path=self.lock)
+        self.addCleanup(handle.close)
+        self.assertIsNone(holder)
+        self.assertEqual(path, self.lock)
+        with open(self.lock) as reader:
+            self.assertEqual(reader.read(), str(os.getpid()))
+
+    def test_a_second_run_is_refused_and_writes_nothing(self):
+        handle, _, _ = c2b.acquire_run_lock(lock_path=self.lock)
+        self.addCleanup(handle.close)
+        second, holder, path = c2b.acquire_run_lock(lock_path=self.lock)
+        self.assertIsNone(second)
+        self.assertEqual(holder, str(os.getpid()))
+        with open(self.lock) as reader:
+            self.assertEqual(reader.read(), str(os.getpid()))
+
+    def test_the_lock_is_free_again_after_release(self):
+        handle, _, _ = c2b.acquire_run_lock(lock_path=self.lock)
+        handle.close()
+        again, holder, _ = c2b.acquire_run_lock(lock_path=self.lock)
+        self.addCleanup(again.close)
+        self.assertIsNone(holder)
+
+    def test_an_unwritable_primary_falls_back_to_the_temp_dir(self):
+        primary = os.path.join(self.tmp.name, "missing-dir", "c2b.lock")
+        handle, holder, path = c2b.acquire_run_lock(self.tmp.name, lock_path=primary)
+        self.addCleanup(handle.close)
+        self.assertEqual(path, os.path.join(self.tmp.name, "container2backup.lock"))
+
+    def test_without_any_lock_file_the_run_continues_unlocked(self):
+        primary = os.path.join(self.tmp.name, "missing-dir", "c2b.lock")
+        self.assertEqual(c2b.acquire_run_lock(None, lock_path=primary), (None, None, None))
+
+
+@unittest.skipUnless(c2b.yaml is not None and hasattr(c2b.yaml, "safe_load"),
+                     "PyYAML not installed")
+class RunRefusedWhileLockedTest(unittest.TestCase):
+    """The whole script, started while another run holds the lock."""
+
+    def test_second_run_exits_1_and_creates_nothing(self):
+        import subprocess
+        with tempfile.TemporaryDirectory() as home:
+            temp = os.path.join(home, "temp")
+            backups = os.path.join(home, "backups")
+            os.makedirs(temp)
+            with open(os.path.join(home, "container2backup.yaml"), "w") as handle:
+                handle.write(f"defaults:\n  backup_path: {backups}\n  temp_path: {temp}\n"
+                             "services: {}\ndatabases: []\n")
+            # Take the lock exactly where the script will look for it.
+            holder, none_yet, _ = c2b.acquire_run_lock(temp)
+            self.assertIsNotNone(holder)
+            self.addCleanup(holder.close)
+            code = (
+                "import sys, types, runpy\n"
+                "m = types.ModuleType('dotenv'); m.load_dotenv = lambda *a, **k: None\n"
+                "sys.modules['dotenv'] = m\n"
+                f"sys.argv = ['container2backup.py']\n"
+                f"runpy.run_path({c2b.__file__!r}, run_name='__main__')\n")
+            proc = subprocess.run([sys.executable, "-c", code], capture_output=True,
+                                  text=True, env=dict(os.environ, HOME=home))
+            self.assertEqual(proc.returncode, 1, proc.stdout + proc.stderr)
+            self.assertIn("another container2backup run is active "
+                          f"(PID {os.getpid()}) - this run stops.", proc.stdout)
+            self.assertFalse(os.path.exists(backups))
+            self.assertEqual(sorted(os.listdir(temp)), ["container2backup.lock"]
+                             if not os.path.exists("/run/lock") else [])

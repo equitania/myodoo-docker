@@ -147,8 +147,8 @@ if os.environ.get('GETSCRIPTS_DEBUG', '').lower() in ('1', 'true', 'yes'):
     logger.debug("Debug logging enabled")
 
 # Script version and date
-SCRIPT_VERSION = "9.36.0"
-SCRIPT_DATE = "29.10.2026"
+SCRIPT_VERSION = "9.37.0"
+SCRIPT_DATE = "09.11.2026"
 
 # Branch of myodoo-docker this server tracks - the single source of truth for
 # main() (update_repository() call) and self_update_and_reexec() (which must
@@ -6007,9 +6007,61 @@ def ensure_maintenance_cron(_myhome: str) -> None:
     result = run_command(f"bash {shlex.quote(script)}", shell=True, capture_output=True)
     if getattr(result, "returncode", 1) == 0:
         record_install("maintenance cron", "installed", MAINTENANCE_CRON_PATH)
+        # The setup script neutralises legacy root-crontab lines as part of the
+        # install; its output is captured here, so report what it did.
+        _record_legacy_cron_moves(getattr(result, "stdout", None))
     else:
         record_install("maintenance cron", "failed",
                        f"exit {getattr(result, 'returncode', '?')} - rerun: bash {script}")
+
+
+def _record_legacy_cron_moves(output) -> None:
+    """Turn the lines setup-maintenance-cron.sh prints into one report entry.
+
+    The script prints `moved <script>: <line>` per neutralised root-crontab
+    line and `backup <path>` once. Nothing moved prints nothing, and then
+    nothing is recorded: a clean server must not be told so on every ups.
+    """
+    if isinstance(output, bytes):
+        output = output.decode("utf-8", errors="replace")
+    moved = []
+    backup = ""
+    for line in (output or "").splitlines():
+        if line.startswith("moved "):
+            moved.append(line[len("moved "):].split(":", 1)[0])
+        elif line.startswith("backup "):
+            backup = line[len("backup "):].strip()
+    if moved:
+        record_install("cron (legacy root crontab)", "updated",
+                       f"{len(moved)} legacy line(s) moved to cron.d: "
+                       f"{', '.join(sorted(set(moved)))} (backup: {backup})")
+
+
+def neutralise_legacy_root_crontab(_myhome: str) -> None:
+    """Comment out root-crontab lines that duplicate the managed cron.d jobs.
+
+    Runs on EVERY ups, unlike ensure_maintenance_cron(): on 09.11.2026 a server
+    whose cron.d file had existed for days still carried the pre-2026 crontab
+    lines, every backup ran twice at the same second and failed, and the disk
+    filled while the readiness report showed the FAIL to nobody. The work is
+    done by setup-maintenance-cron.sh --neutralise-legacy, the one place that
+    knows the job list and the marker: it saves the crontab first, comments
+    lines out (never deletes), leaves unrelated lines and other users alone, and
+    prints nothing when there is nothing to do. Stray files in /etc/cron.d are
+    not touched - that is the readiness FAIL's job.
+    """
+    if not os.path.exists(MAINTENANCE_CRON_PATH) or not shutil.which("crontab"):
+        return
+    script = os.path.join(_myhome, "setup-maintenance-cron.sh")
+    if not os.path.isfile(script):
+        return
+    result = run_command(f"bash {shlex.quote(script)} --neutralise-legacy",
+                         shell=True, capture_output=True)
+    if getattr(result, "returncode", 1) != 0:
+        record_install("cron (legacy root crontab)", "failed",
+                       f"could not neutralise - see: crontab -l; rerun: bash {script} --neutralise-legacy")
+        return
+    _record_legacy_cron_moves(getattr(result, "stdout", None))
 
 
 def run_install_packages(package_info: Dict[str, Any]) -> None:
@@ -6654,6 +6706,9 @@ def main() -> None:
         # The maintenance schedule, once, on a host with Docker. Before the
         # offers below so the cron overview and readiness see it in place.
         ensure_maintenance_cron(_myhome)
+
+        # Legacy lines in root's crontab would run every managed job twice.
+        neutralise_legacy_root_crontab(_myhome)
 
         # Everything below needs something install_packages() delivers: PyYAML
         # for the migration and the validators, python3-dotenv for the hardening

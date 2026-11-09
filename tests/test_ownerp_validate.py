@@ -701,3 +701,62 @@ class CommandLineTest(unittest.TestCase):
         code, output = self.run_main(["--version"])
         self.assertEqual(code, 0)
         self.assertIn(ov.SCRIPT_VERSION, output)
+
+
+class BackupExcludeAndReserveKeysTest(unittest.TestCase):
+    """container2backup 4.12.0: services.<name>.exclude and the free-space
+    reserve keys under defaults."""
+
+    def validate(self, text):
+        import tempfile
+        with tempfile.TemporaryDirectory() as tmp:
+            path = os.path.join(tmp, "container2backup.yaml")
+            with open(path, "w", encoding="utf-8") as handle:
+                handle.write(text)
+            findings, fatal = ov.validate_backup(path)
+        self.assertIsNone(fatal)
+        return findings
+
+    BASE = ("defaults:\n  backup_path: /tmp\n{defaults}"
+            "services:\n  docker_builds:\n    source_path: /tmp\n"
+            "    backup_path: docker-builds\n{service}"
+            "databases: []\n")
+
+    def text(self, defaults="", service=""):
+        return self.BASE.format(defaults=defaults, service=service)
+
+    def test_a_list_of_strings_is_clean(self):
+        findings = self.validate(self.text(service='    exclude:\n      - "*/zips"\n'))
+        self.assertEqual(findings, [])
+
+    def test_an_empty_exclude_list_is_accepted(self):
+        self.assertEqual(self.validate(self.text(service="    exclude: []\n")), [])
+
+    def test_exclude_as_a_string_is_an_error(self):
+        findings = self.validate(self.text(service='    exclude: "*/zips"\n'))
+        self.assertEqual([f.severity for f in findings], [ov.ERROR])
+        self.assertEqual(findings[0].path, "services.docker_builds.exclude")
+
+    def test_a_non_string_entry_is_an_error(self):
+        findings = self.validate(self.text(service="    exclude:\n      - 5\n"))
+        self.assertEqual([f.severity for f in findings], [ov.ERROR])
+        self.assertIn("exclude[0]", findings[0].path)
+
+    def test_the_reserve_keys_are_known_numbers(self):
+        findings = self.validate(self.text(
+            defaults="  min_free_percent: 10\n  min_free_gb: 2.5\n"))
+        self.assertEqual(findings, [])
+        findings = self.validate(self.text(
+            defaults="  min_free_percent: 0\n  min_free_gb: 0\n"))
+        self.assertEqual(findings, [])
+
+    def test_a_negative_or_text_reserve_is_an_error(self):
+        findings = self.validate(self.text(defaults="  min_free_percent: -1\n"))
+        self.assertEqual([f.severity for f in findings], [ov.ERROR])
+        findings = self.validate(self.text(defaults='  min_free_gb: "five"\n'))
+        self.assertEqual([f.severity for f in findings], [ov.ERROR])
+
+    def test_a_misspelt_reserve_key_is_a_warning_with_a_hint(self):
+        findings = self.validate(self.text(defaults="  min_free_gigabyte: 5\n"))
+        self.assertEqual([f.severity for f in findings], [ov.WARNING])
+        self.assertIn("min_free_gb", findings[0].message)

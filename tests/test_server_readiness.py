@@ -14,6 +14,7 @@ Run from the repository root:
 import importlib.util
 import json
 import os
+import shutil
 import subprocess
 import sys
 import tempfile
@@ -1002,6 +1003,166 @@ class TransitionWarnTest(unittest.TestCase):
             finding = check(self.ctx)
         self.assertIs(finding.severity, sr.Severity.WARN)
         self.assertEqual(finding.detail, line)
+
+
+class BackupCapacityTest(unittest.TestCase):
+    """check_backup_capacity() projects every series to full retention.
+
+    Incident 09.11.2026: a service backup wrote 1.8 GB twice a day with 14 days
+    of retention (54 GB) onto a disk with 17 GB free. The snapshot check had
+    warned once at 89 % and the disk filled between two ups runs.
+    """
+
+    GB = 1024 ** 3
+
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(self.tmp.cleanup)
+        self.ctx = sr.HealthContext(root=self.tmp.name, home=self.tmp.name,
+                                    repo=self.tmp.name)
+        self.backup = self.ctx.p(sr.DEFAULT_BACKUP_PATH)
+        os.makedirs(os.path.join(self.backup, "docker"))
+        patcher = unittest.mock.patch.object(sr.shutil, "which", return_value="/usr/bin/docker")
+        patcher.start()
+        self.addCleanup(patcher.stop)
+
+    def disk(self, free_gb, total_gb=150):
+        usage = unittest.mock.Mock(total=total_gb * self.GB, free=free_gb * self.GB,
+                                   used=(total_gb - free_gb) * self.GB)
+        patcher = unittest.mock.patch.object(sr.shutil, "disk_usage", return_value=usage)
+        patcher.start()
+        self.addCleanup(patcher.stop)
+
+    def config(self, text):
+        with open(os.path.join(self.tmp.name, sr.BACKUP_CONFIG), "w", encoding="utf-8") as handle:
+            handle.write(text)
+
+    def archive(self, folder, name, size, age_days):
+        path = os.path.join(self.backup, folder, name)
+        os.makedirs(os.path.dirname(path), exist_ok=True)
+        with open(path, "wb") as handle:
+            handle.truncate(size)
+        mtime = time.time() - age_days * 86400
+        os.utime(path, (mtime, mtime))
+
+    def twice_daily(self, folder, stem, size, days=3, suffix=".tar.gz"):
+        for day in range(days):
+            for half in (0.1, 0.6):
+                self.archive(folder, f"{stem}{day}_{half}{suffix}", size, day + half)
+
+    CONFIG = """\
+defaults:
+  backup_path: /opt/backups
+  retention_days: 14
+databases:
+  - name: live_db
+    sql_container: live-db
+    data_container: live-odoo
+services:
+  docker_builds:
+    enabled: true
+    source_path: /srv/docker
+    backup_path: docker_builds
+"""
+
+    @unittest.skipUnless(HAVE_YAML, "PyYAML not installed")
+    def test_incident_shape_fails_with_days_and_largest_series(self):
+        self.config(self.CONFIG)
+        self.disk(free_gb=17)
+        self.twice_daily("docker_builds", "docker_builds_", int(1.8 * self.GB))
+        finding = sr.check_backup_capacity(self.ctx)
+        self.assertIs(finding.severity, sr.Severity.FAIL)
+        self.assertIn("will reach the reserve", finding.detail)
+        self.assertIn("docker_builds", finding.detail)
+        self.assertIn("14 d x 2/day", finding.detail)
+        self.assertIn("edbk", finding.fix)
+
+    @unittest.skipUnless(HAVE_YAML, "PyYAML not installed")
+    def test_plenty_of_room_is_ok(self):
+        self.config(self.CONFIG)
+        self.disk(free_gb=140, total_gb=1000)
+        self.twice_daily("docker_builds", "docker_builds_", 10 * 1024 ** 2)
+        finding = sr.check_backup_capacity(self.ctx)
+        self.assertIs(finding.severity, sr.Severity.OK, finding.detail)
+
+    @unittest.skipUnless(HAVE_YAML, "PyYAML not installed")
+    def test_fits_but_over_half_the_disk_warns(self):
+        self.config(self.CONFIG)
+        self.disk(free_gb=80, total_gb=100)
+        self.twice_daily("docker_builds", "docker_builds_", 2 * self.GB)   # 56 GB projected
+        finding = sr.check_backup_capacity(self.ctx)
+        self.assertIs(finding.severity, sr.Severity.WARN, finding.detail)
+        self.assertIn("at full retention", finding.detail)
+
+    @unittest.skipUnless(HAVE_YAML, "PyYAML not installed")
+    def test_reserve_follows_min_free_settings(self):
+        self.config(self.CONFIG.replace("retention_days: 14\n", "retention_days: 14\n  min_free_gb: 40\n", 1))
+        self.disk(free_gb=45, total_gb=1000)
+        self.twice_daily("docker_builds", "docker_builds_", int(0.5 * self.GB))   # +14 GB, 5 usable
+        self.assertIs(sr.check_backup_capacity(self.ctx).severity, sr.Severity.FAIL)
+
+    @unittest.skipUnless(HAVE_YAML, "PyYAML not installed")
+    def test_orphaned_database_series_warns_with_a_review_command(self):
+        self.config(self.CONFIG)
+        self.disk(free_gb=900, total_gb=1000)
+        self.twice_daily("docker", "live_db_live-odoo_dockerbackup_", 1024 ** 2)
+        self.twice_daily("docker", "live_db_old-odoo_dockerbackup_", 1024 ** 2)
+        finding = sr.check_backup_capacity(self.ctx)
+        self.assertIs(finding.severity, sr.Severity.WARN)
+        self.assertIn("live_db_old-odoo", finding.detail)
+        self.assertIn("6 file(s)", finding.detail)
+        self.assertNotIn("live_db_live-odoo (", finding.detail)
+        self.assertIn("ls -lh", finding.fix)
+        self.assertNotIn("rm ", finding.fix)
+
+    @unittest.skipUnless(HAVE_YAML, "PyYAML not installed")
+    def test_skips_without_config_or_archives(self):
+        self.assertIs(sr.check_backup_capacity(self.ctx).severity, sr.Severity.SKIP)
+        self.config(self.CONFIG)
+        self.disk(free_gb=100)
+        self.assertIs(sr.check_backup_capacity(self.ctx).severity, sr.Severity.SKIP)
+
+    def test_registered_and_mutable(self):
+        self.assertIn(sr.check_backup_capacity, sr.CHECKS)
+
+
+class DuplicateCronFixLineTest(unittest.TestCase):
+    """The fix line for a root-crontab duplicate is a safe fish one-liner (09.11.2026)."""
+
+    def test_one_liner_is_built_from_managed_jobs_and_saves_first(self):
+        line = sr._crontab_neutralise_fish()
+        for job in sr.MANAGED_JOBS:
+            self.assertIn(job, line)
+        self.assertLess(line.index("crontab-root."), line.index("sed -E"))
+        self.assertIn(sr.LEGACY_CRON_MARKER, line)
+        self.assertNotIn("$(", line)                      # fish: (cmd), not $(cmd)
+
+    @unittest.skipUnless(shutil.which("sed"), "sed missing")
+    def test_the_sed_part_only_touches_managed_job_lines(self):
+        line = sr._crontab_neutralise_fish()
+        expression = line.split("sed -E '")[1].split("' |")[0]
+        sample = ("# container2backup comment\n"
+                  "MAILTO=root\n"
+                  "0 2 * * * /root/container2backup.py\n"
+                  "0 5 * * * /usr/bin/other-job\n")
+        out = subprocess.run(["sed", "-E", expression], input=sample, capture_output=True,
+                             text=True, check=True).stdout.splitlines()
+        self.assertEqual(out[0], "# container2backup comment")
+        self.assertEqual(out[1], "MAILTO=root")
+        self.assertEqual(out[2], sr.LEGACY_CRON_MARKER + "0 2 * * * /root/container2backup.py")
+        self.assertEqual(out[3], "0 5 * * * /usr/bin/other-job")
+
+    def test_finding_carries_the_one_liner_for_a_crontab_duplicate(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            ctx = sr.HealthContext(root=tmp, home=tmp, repo=tmp)
+            os.makedirs(os.path.join(tmp, "etc", "cron.d"))
+            with open(os.path.join(tmp, sr.CRON_DEST), "w") as handle:
+                handle.write("0 2 * * * root /root/container2backup.py\n")
+            crontab = "0 2 * * * (date; /root/container2backup.py) | tee -a /var/log/x.log\n"
+            with unittest.mock.patch.object(sr, "_run", return_value=(0, crontab)):
+                finding = sr.check_duplicate_cron_entries(ctx)
+        self.assertIs(finding.severity, sr.Severity.FAIL)
+        self.assertIn("crontab-root.(date", finding.fix)
 
 
 if __name__ == "__main__":

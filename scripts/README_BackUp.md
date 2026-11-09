@@ -48,6 +48,8 @@ defaults:
   compression:
     format: "7z"     # Kompressionsformat: 7z, zip, gzip, zstd
     level: 5         # Kompressionsgrad (0-9, Standard: 5)
+  min_free_percent: 10   # Platzreserve (seit v4.12.0): max(Prozent, GB) muss frei bleiben
+  min_free_gb: 5         # beide 0 = keine Prüfung
 
 services:
   nginx:
@@ -67,6 +69,8 @@ services:
     source_path: $HOME/docker-builds
     backup_path: docker-builds
     retention_days: 14
+    exclude:             # seit v4.12.0; Standard für docker_builds: ["*/zips"]
+      - "*/zips"         # Release-Archive (Hardlinks aus dem Build-Cache), neu erzeugbar
 
 databases:
   - name: live_db
@@ -95,6 +99,17 @@ rsync:
 > **Sicherheitshinweis (seit v4.6.0):** rsync-Kommandos aus der YAML werden ohne Shell ausgeführt.
 > Nur Kommandos, die mit dem `rsync`-Binary beginnen, werden akzeptiert — alle anderen werden
 > mit einer SECURITY-Warnung übersprungen.
+
+> **Platzreserve, `exclude:` und Sperre (seit v4.12.0):**
+> - `exclude:` ist eine Liste von Glob-Mustern relativ zu `source_path` (ein Muster ohne `/`
+>   greift in jeder Tiefe); für `docker_builds` gilt standardmäßig `["*/zips"]`, `exclude: []`
+>   schaltet das ab, eine eigene Liste ersetzt den Standard. Funktioniert in 7z, zip, gzip und zstd.
+> - `defaults.min_free_percent` (10) und `defaults.min_free_gb` (5): Vor jedem Datenbank- und
+>   Dienst-Backup muss der größere Wert frei bleiben. Sonst: ERROR, Eintrag gescheitert, alte
+>   Archive bleiben, Exit 1. Beide `0` = aus.
+> - Eine exklusive Sperre (`/run/lock/container2backup.lock`, Ersatz: `temp_path`) lässt einen
+>   zweiten Lauf mit Exit 1 enden, ohne etwas zu schreiben. Ein gescheitertes Dienst-Backup
+>   überspringt dessen Aufbewahrung und macht den Lauf zu Exit 1.
 
 ### Konfiguration für SQL-Dump-Only Backups
 
@@ -589,6 +604,8 @@ defaults:
   compression:
     format: "7z"     # Compression format: 7z, zip, gzip, zstd
     level: 5         # Compression level (0-9, default: 5)
+  min_free_percent: 10   # free-space reserve (since v4.12.0): max(percent, GB) must stay free
+  min_free_gb: 5         # both 0 = no check
 
 services:
   nginx:
@@ -608,6 +625,8 @@ services:
     source_path: $HOME/docker-builds
     backup_path: docker-builds
     retention_days: 14
+    exclude:             # since v4.12.0; default for docker_builds: ["*/zips"]
+      - "*/zips"         # release archives (hardlinks from the build cache), regenerable
 
 databases:
   - name: live_db
@@ -636,6 +655,17 @@ rsync:
 > **Security note (since v4.6.0):** rsync commands from the YAML are executed without a shell.
 > Only commands starting with the `rsync` binary are accepted — all others are skipped with a
 > SECURITY warning.
+
+> **Free-space reserve, `exclude:` and lock (since v4.12.0):**
+> - `exclude:` is a list of glob patterns relative to `source_path` (a pattern without `/` matches
+>   at any depth); `docker_builds` defaults to `["*/zips"]`, `exclude: []` switches that off, an
+>   explicit list replaces the default. Works in 7z, zip, gzip and zstd.
+> - `defaults.min_free_percent` (10) and `defaults.min_free_gb` (5): before every database and
+>   service backup the larger value must stay free. Otherwise: ERROR, item failed, old archives
+>   kept, exit 1. Both `0` = off.
+> - An exclusive lock (`/run/lock/container2backup.lock`, fallback `temp_path`) makes a second run
+>   exit 1 without writing anything. A failed service backup skips that service's retention and
+>   makes the run exit 1.
 
 ### Configuration for SQL Dump Only Backups
 

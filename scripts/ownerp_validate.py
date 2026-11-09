@@ -4,8 +4,8 @@
 # Title:            ownerp_validate.py
 # Description:      Read-only validation of docker2update.yaml and
 #                   container2backup.yaml against declared schemas
-# Version:          1.1.0
-# Date:             14.09.2026
+# Version:          1.2.0
+# Date:             09.11.2026
 # Author:           Equitania Software GmbH
 # ==============================================================================
 #
@@ -35,8 +35,8 @@ try:
 except ImportError:  # pragma: no cover - depends on the machine
     yaml = None
 
-SCRIPT_VERSION = "1.1.0"
-SCRIPT_DATE = "14.09.2026"
+SCRIPT_VERSION = "1.2.0"
+SCRIPT_DATE = "09.11.2026"
 
 ERROR = "error"
 WARNING = "warning"
@@ -398,6 +398,9 @@ SERVICE_FIELDS = {
     "source_path":    {"type": str, "required": True, "path": "any"},
     "backup_path":    {"type": str, "required": True},
     "retention_days": {"type": int, "min": 0},
+    # Globs relative to source_path; every entry must be a string (checked in
+    # validate_backup). docker_builds defaults to ["*/zips"] when absent.
+    "exclude":        {"type": list},
 }
 
 DATABASE_FIELDS = {
@@ -424,6 +427,9 @@ BACKUP_SCHEMA = {
             "backup_path":      {"type": str, "path": "dir"},
             "temp_path":        {"type": str, "path": "dir"},
             "stream":           {"type": bool},
+            # Free-space reserve before every backup write (0 and 0 = off).
+            "min_free_percent": {"type": (int, float), "min": 0},
+            "min_free_gb":      {"type": (int, float), "min": 0},
             "additional_paths": {"free": True},
             "compression": {"type": dict, "fields": {
                 "format": {"enum": ["7z", "zip", "gzip", "zstd"]},
@@ -540,6 +546,14 @@ def validate_backup(path):
                         and not service.get("enabled", True))
             validate_mapping(service, SERVICE_FIELDS, f"services.{name}",
                              path, findings, downgrade=disabled)
+            patterns = service.get("exclude") if isinstance(service, dict) else None
+            if isinstance(patterns, list):
+                for index, pattern in enumerate(patterns):
+                    if not isinstance(pattern, str):
+                        _add(findings, ERROR, path, line_of(service, "exclude"),
+                             f"services.{name}.exclude[{index}]",
+                             f"must be {_type_name(str)}, not "
+                             f'"{_shown("exclude", pattern)}"', disabled)
 
     databases = data.get("databases")
     if isinstance(databases, list):

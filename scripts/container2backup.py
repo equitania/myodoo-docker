@@ -3,8 +3,8 @@
 # ==============================================================================
 # Title:            container2backup.py
 # Description:      Script to backup Odoo database including FileStore under Docker
-# Version:          4.11.0
-# Date:             12.10.2026
+# Version:          4.12.0
+# Date:             09.11.2026
 # Author:           Equitania Software GmbH
 # ==============================================================================
 # Feature Overview:
@@ -24,6 +24,12 @@
 #   - Optional AES-256 encryption via GPG (7z format only, output: .7z.gpg;
 #     falls back to 7z -p AES when gnupg is not installed)
 #   - Automatic cleanup of old backups
+#   - Per-service 'exclude:' globs (default for docker_builds: */zips, the
+#     hardlinked release cache) so regenerable archives are not copied for real
+#   - Free-space reserve (min_free_percent / min_free_gb) checked before every
+#     write; a refused item counts as failed and keeps its old archives
+#   - Run lock (flock): a second concurrent run stops without touching anything
+#   - Unique temp directory per database run (mkdtemp)
 # ==============================================================================
 #    Copyright (C) 2014-now Equitania Software GmbH(<http://www.equitania.de>).
 #
@@ -59,12 +65,14 @@ import shutil
 import platform
 import argparse  # Add argparse for command line parameters
 import signal  # Decode negative subprocess returncodes (signal kills) for diagnostics
+import fcntl  # Run lock: two overlapping runs must never share a temp dir
+import fnmatch
 
 # Single source of truth for the version banner printed at runtime. Keep these
 # in sync with the header comment above. The __main__ banner is derived from
 # these constants so it cannot silently drift out of date again.
-SCRIPT_VERSION = "4.11.0"
-SCRIPT_DATE = "12.10.2026"
+SCRIPT_VERSION = "4.12.0"
+SCRIPT_DATE = "09.11.2026"
 
 # Every name an archive written here can end in. Retention deletes only files
 # with one of these, and server-readiness.py (BACKUP_ARCHIVE_SUFFIXES) and
@@ -459,6 +467,269 @@ def resolve_filestore_host_path(data_container, db_name):
     return host_path if os.path.isdir(host_path) else None
 
 
+# ---------------------------------------------------------------------------
+# Service exclusions (4.12.0)
+# ---------------------------------------------------------------------------
+# A customer server filled its root disk on 09.11.2026 because the docker_builds
+# service zipped every build folder including zips/. That folder holds the Odoo
+# kernel/module release archives, hardlinked from the shared cache
+# /opt/odoo-build-cache (odoo_build_cache.py): free on disk, but every backup
+# copied them for real - 1.8 GB per archive, twice a day, 14 days = 54 GB.
+#
+# Default for docker_builds: only '*/zips', the hardlinked cache directory,
+# which odoo_build_cache.py re-creates from the release manager at the next
+# build. Top-level '*.zip' files of a build folder are deliberately NOT in the
+# default: release.file only names archives, and a build folder may carry a
+# hand-placed zip (patch, custom module) that is not downloadable again. An
+# operator who knows better sets 'exclude:' explicitly; 'exclude: []' switches
+# the default off.
+DEFAULT_SERVICE_EXCLUDES = {"docker_builds": ["*/zips"]}
+
+
+def service_excludes(service_name, service_config):
+    """Exclude patterns for one service: the 'exclude' key if present (even an
+    empty list), else the built-in default for that service name, else none.
+
+    A malformed value is ignored with a warning - backing up too much is the
+    safe direction, and ownerp_validate.py reports it as an error.
+    """
+    raw = service_config.get('exclude')
+    if raw is None:
+        return list(DEFAULT_SERVICE_EXCLUDES.get(service_name, []))
+    if not isinstance(raw, list) or not all(isinstance(p, str) for p in raw):
+        print(f"WARNING: services.{service_name}.exclude must be a list of "
+              f"strings - ignoring it.")
+        return list(DEFAULT_SERVICE_EXCLUDES.get(service_name, []))
+    return [p for p in raw if p.strip()]
+
+
+def normalize_exclude_patterns(patterns):
+    """Turn the operator's globs into patterns anchored at the source root.
+
+    A pattern without '/' ('*.bak', 'cache') means "anywhere", like tar and
+    .gitignore - it becomes 'P' and '*/P'. A pattern with '/' is relative to
+    source_path. All three archivers then get the same anchored list.
+    """
+    result = []
+    for pattern in patterns:
+        pattern = pattern.strip()
+        while pattern.startswith('./'):
+            pattern = pattern[2:]
+        pattern = pattern.strip('/')
+        if not pattern:
+            continue
+        variants = [pattern] if '/' in pattern else [pattern, '*/' + pattern]
+        for variant in variants:
+            if variant not in result:
+                result.append(variant)
+    return result
+
+
+def is_excluded(rel_path, anchored_patterns):
+    """True when rel_path or any parent directory of it matches a pattern.
+
+    Matching a parent covers the whole directory, which is what the archivers
+    do as well. '*' crosses '/' here as it does for tar and zip (7z's '*' stays
+    within one path component, so it excludes slightly less - the estimate
+    errs on the safe, larger side only for 7z).
+    """
+    parts = rel_path.split('/')
+    for end in range(1, len(parts) + 1):
+        candidate = '/'.join(parts[:end])
+        for pattern in anchored_patterns:
+            if fnmatch.fnmatchcase(candidate, pattern):
+                return True
+    return False
+
+
+def exclude_args_7z(anchored_patterns):
+    """7zz run with cwd=source_dir and input '.': archive names are relative
+    to the source root. -snl stores symlinks as links instead of following
+    them into excluded content (only set when excluding, so existing service
+    archives keep their old symlink handling)."""
+    if not anchored_patterns:
+        return []
+    return ['-snl'] + [f'-x!{p}' for p in anchored_patterns]
+
+
+def exclude_args_zip(anchored_patterns):
+    """zip runs with cwd=source_dir and '.': stored names are relative to the
+    source root. '-x' takes the directory and its content as two patterns;
+    -y stores symlinks as links (not followed into excluded content)."""
+    if not anchored_patterns:
+        return []
+    args = ['-y', '-x']
+    for pattern in anchored_patterns:
+        args.extend([pattern, pattern + '/*'])
+    return args
+
+
+def exclude_args_tar(anchored_patterns, base_name):
+    """tar archives '<base_name>/...' (tar -C parent base_name), so every
+    pattern is prefixed with the base directory. tar does not follow
+    symlinks by default and skips the content of an excluded directory."""
+    return [f'--exclude={base_name}/{p}' for p in anchored_patterns]
+
+
+def estimate_service_bytes(source_path, anchored_patterns):
+    """Uncompressed bytes a service backup reads: the sum of file sizes below
+    source_path without excluded paths, each inode counted once (hardlinked
+    names share their blocks on the source disk). Archives are compressed, so
+    this is normally an upper bound; only a hardlink that is NOT excluded
+    would be copied once per name - exclude such trees, as the default does.
+    """
+    total = 0
+    seen = set()
+    for dirpath, dirnames, filenames in os.walk(source_path, followlinks=False):
+        rel_dir = os.path.relpath(dirpath, source_path)
+        rel_dir = '' if rel_dir == '.' else rel_dir.replace(os.sep, '/')
+        if anchored_patterns:
+            dirnames[:] = [d for d in dirnames
+                           if not is_excluded(f"{rel_dir}/{d}" if rel_dir else d,
+                                              anchored_patterns)]
+        for name in filenames:
+            rel = f"{rel_dir}/{name}" if rel_dir else name
+            if anchored_patterns and is_excluded(rel, anchored_patterns):
+                continue
+            try:
+                st = os.lstat(os.path.join(dirpath, name))
+            except OSError:
+                continue
+            key = (st.st_dev, st.st_ino)
+            if key in seen:
+                continue
+            seen.add(key)
+            total += st.st_size
+    return total
+
+
+# ---------------------------------------------------------------------------
+# Free-space reserve (4.12.0)
+# ---------------------------------------------------------------------------
+# On 09.11.2026 a full root disk crash-looped a PostgreSQL container ("could not
+# write lock file postmaster.pid: No space left on device"). A backup must never
+# be the thing that takes the last free space: before each write, free minus
+# the estimate has to stay above max(min_free_percent of the filesystem,
+# min_free_gb).
+DEFAULT_MIN_FREE_PERCENT = 10
+DEFAULT_MIN_FREE_GB = 5
+_GIB = 1024 ** 3
+
+
+def reserve_settings(defaults):
+    """(percent, gb) from defaults; both 0 disables the check."""
+    def number(key, fallback):
+        value = (defaults or {}).get(key, fallback)
+        if isinstance(value, bool) or not isinstance(value, (int, float)) or value < 0:
+            print(f"WARNING: defaults.{key} must be a number >= 0 - using {fallback}.")
+            return fallback
+        return value
+    return (number('min_free_percent', DEFAULT_MIN_FREE_PERCENT),
+            number('min_free_gb', DEFAULT_MIN_FREE_GB))
+
+
+def check_free_reserve(label, writes, defaults):
+    """Refuse a write that would leave less than the reserve free.
+
+    ``writes`` is a list of (path, estimated_bytes). Paths on the same
+    filesystem are summed - staging in temp and the archive in the target
+    compete for one pool of free space. Returns (ok, message); the message
+    is the complete ERROR text when not ok. A filesystem that cannot be
+    probed is skipped (we do not refuse because a probe failed).
+    """
+    percent, gb = reserve_settings(defaults)
+    if percent == 0 and gb == 0:
+        return True, "reserve check disabled"
+
+    pools = {}
+    for path, estimate in writes:
+        probe = _existing_parent(path)
+        try:
+            dev = os.stat(probe).st_dev
+            usage = shutil.disk_usage(probe)
+        except OSError:
+            continue
+        pool = pools.setdefault(dev, {'path': probe, 'usage': usage, 'estimate': 0})
+        pool['estimate'] += int(estimate or 0)
+
+    for pool in pools.values():
+        usage = pool['usage']
+        reserve = max(usage.total * percent / 100.0, gb * _GIB)
+        if usage.free - pool['estimate'] < reserve:
+            return False, (
+                f"{label}: not enough free space on {pool['path']} - "
+                f"free {_human(usage.free)}, this backup needs ~{_human(pool['estimate'])}, "
+                f"reserve to keep {_human(reserve)} "
+                f"(min_free_percent {percent}, min_free_gb {gb}). Nothing was written. "
+                f"Lower retention_days, move backup_path to a larger mount, "
+                f"or free space.")
+    return True, "ok"
+
+
+def backup_write_estimates(db_size, filestore_size, streaming, only_sql_dump):
+    """(temp_bytes, target_bytes) a database backup will write.
+
+    Same factors as disk_preflight(): a dump is DUMP_SIZE_FACTOR x the table
+    data, the archive ~0.3x of the SQL and ~0.9x of the filestore (already
+    compressed media). Unknown sizes count as 0 - the reserve itself is still
+    enforced.
+    """
+    dump_est = int((db_size or 0) * DUMP_SIZE_FACTOR)
+    fs = filestore_size or 0
+    if only_sql_dump:
+        return dump_est, int(dump_est * 0.3)
+    if streaming:
+        return dump_est, int(fs * 0.9)
+    return int(dump_est + fs * 1.05), int(dump_est * 0.3 + fs * 0.9)
+
+
+# ---------------------------------------------------------------------------
+# Run lock (4.12.0)
+# ---------------------------------------------------------------------------
+# On 09.11.2026 two cron sources started this script in the same second; both
+# used the same per-second temp directory, one deleted the other's dump.sql,
+# every database backup failed and retention (which only runs after a success)
+# never freed anything. flock is released by the kernel when the process dies,
+# so a crashed run cannot leave a stale lock behind.
+RUN_LOCK_PATH = "/run/lock/container2backup.lock"
+
+
+def acquire_run_lock(fallback_dir=None, lock_path=RUN_LOCK_PATH):
+    """Take the exclusive run lock without blocking.
+
+    Returns (handle, holder_pid, path):
+      * handle set        - lock held; keep the object alive for the whole run
+      * holder_pid set    - another run holds it (pid may be '?')
+      * both None         - no lock file could be created anywhere; the run
+                            continues unlocked (a backup beats no backup)
+    """
+    candidates = [lock_path]
+    if fallback_dir:
+        candidates.append(os.path.join(fallback_dir, "container2backup.lock"))
+    for path in candidates:
+        try:
+            handle = open(path, 'a+')
+        except OSError:
+            continue
+        try:
+            fcntl.flock(handle, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        except OSError:
+            # Held by someone else. Read the pid but write nothing.
+            try:
+                handle.seek(0)
+                pid = handle.read().strip() or '?'
+            except OSError:
+                pid = '?'
+            handle.close()
+            return None, pid, path
+        handle.seek(0)
+        handle.truncate()
+        handle.write(str(os.getpid()))
+        handle.flush()
+        return handle, None, path
+    return None, None, None
+
+
 # A plain-text dump can outgrow the table data it comes from: TOAST-compressed
 # text is written out uncompressed and bytea as hex (2x).
 DUMP_SIZE_FACTOR = 1.5
@@ -559,7 +830,9 @@ def warn_stale_temp_dirs(temp_base, db_name, current_dir):
 
     Only reports - removing is the operator's decision. Returns the paths.
     """
-    pattern = re.compile(re.escape(db_name) + r'_\d{8}_\d{6}')
+    # Since 4.12.0 the name ends in mkdtemp's random suffix (_xxxxxxxx); the
+    # older form without it is still reported.
+    pattern = re.compile(re.escape(db_name) + r'_\d{8}_\d{6}(?:_[A-Za-z0-9_]{8})?')
     stale = []
     try:
         entries = sorted(os.listdir(temp_base))
@@ -691,9 +964,11 @@ def create_backup(db_name, db_user, sql_container, data_container, backup_path, 
     # Create temp directory for backup preparation
     if temp_base and os.path.exists(temp_base):
         # Create a unique subdirectory in the configured base temp path
+        # mkdtemp, not a per-second name: on 09.11.2026 two runs started in the
+        # same second shared one directory and one deleted the other's
+        # dump.sql. The run lock stops that too; this makes it impossible.
         timestamp_dir = datetime.datetime.now().strftime('%Y%m%d_%H%M%S')
-        temp_dir = os.path.join(temp_base, f"{db_name}_{timestamp_dir}")
-        os.makedirs(temp_dir, exist_ok=True)
+        temp_dir = tempfile.mkdtemp(prefix=f"{db_name}_{timestamp_dir}_", dir=temp_base)
         print(f"Using configured temporary directory: {temp_dir}")
         custom_temp = True
     else:
@@ -738,8 +1013,9 @@ def create_backup(db_name, db_user, sql_container, data_container, backup_path, 
         if custom_temp:
             warn_stale_temp_dirs(temp_base, db_name, temp_dir)
 
+        db_size = get_database_data_size_bytes(sql_container, db_user, db_name)
+        fs_size = None
         if not only_sql_dump:
-            db_size = get_database_data_size_bytes(sql_container, db_user, db_name)
             fs_size = get_filestore_size_bytes(data_container, db_name)
             ok, msg = disk_preflight(temp_dir, docker_backup_path, db_size,
                                      fs_size, use_stream)
@@ -747,6 +1023,18 @@ def create_backup(db_name, db_user, sql_container, data_container, backup_path, 
                 print(f"ABORTING backup for {db_name}: insufficient disk space - {msg}")
                 print(preflight_hint(use_stream))
                 return False
+
+        # Free-space reserve (4.12.0): applies to every kind of database
+        # backup, including SQL-only, and to the temp mount as well as the
+        # target (they are summed when they share a filesystem).
+        temp_need, target_need = backup_write_estimates(
+            db_size, fs_size, use_stream, only_sql_dump)
+        ok, msg = check_free_reserve(
+            db_name, [(temp_dir, temp_need), (docker_backup_path, target_need)],
+            config.get('defaults', {}))
+        if not ok:
+            print(f"ERROR: {msg}")
+            return False
 
         # 1. Export SQL dump to file
         dump_file = os.path.join(temp_dir, "dump.sql")
@@ -858,9 +1146,15 @@ def create_backup(db_name, db_user, sql_container, data_container, backup_path, 
 def backup_additional_service(service_config, base_backup_path, timestamp, service_name):
     """
     Creates backup for additional services like nginx, letsencrypt, etc.
+
+    Returns True when the service was backed up or legitimately skipped
+    (disabled, no/missing source_path - check_paths() already reports those),
+    False when a backup was attempted and failed or was refused for lack of
+    free space. Until 4.12.0 a failure only printed a line and the run still
+    exited 0.
     """
     if not service_config.get('enabled', True):
-        return
+        return True
 
     # No safe default exists for an unknown source directory - backing up the
     # wrong path is worse than backing up nothing, so this is a skip, not a
@@ -868,12 +1162,12 @@ def backup_additional_service(service_config, base_backup_path, timestamp, servi
     raw_source_path = service_config.get('source_path')
     if raw_source_path is None:
         print(f"No source_path configured for service {service_name}, skipping backup.")
-        return
+        return True
 
     source_path = os.path.expandvars(os.path.expanduser(raw_source_path))
     if not os.path.exists(source_path):
         print(f"Source path {source_path} does not exist, skipping backup.")
-        return
+        return True
 
     # A missing backup_path used to raise KeyError mid-run. The service name
     # is the obvious subdirectory, and the validator reports the omission.
@@ -887,13 +1181,27 @@ def backup_additional_service(service_config, base_backup_path, timestamp, servi
     output_file_base = f'{backup_path}/{backup_subdir}_{timestamp}'
     
     print(f"Creating backup for {backup_subdir}")
+    excludes = service_excludes(service_name, service_config)
+    if excludes:
+        print(f"Excluding from {backup_subdir}: {', '.join(excludes)}")
+
+    # Refuse before writing when the archive would eat into the reserve.
+    estimate = estimate_service_bytes(source_path, normalize_exclude_patterns(excludes))
+    ok, msg = check_free_reserve(
+        backup_subdir, [(backup_path, estimate)], config.get('defaults', {}))
+    if not ok:
+        print(f"ERROR: {msg}")
+        return False
+
     # Service backups are not affected by SQL-only mode
-    output_file = compress_directory(source_path, output_file_base, config, only_sql_dump=False)
-    
+    output_file = compress_directory(source_path, output_file_base, config,
+                                     only_sql_dump=False, exclude=excludes)
+
     if output_file:
         print(f"Backup created for {backup_subdir}")
-    else:
-        print(f"Error creating backup for {backup_subdir}")
+        return True
+    print(f"Error creating backup for {backup_subdir}")
+    return False
 
 def check_paths(config):
     """
@@ -1040,7 +1348,7 @@ def cleanup_backups_by_pattern(cleanup_path, cutoff_timestamp, pattern):
     
     print(f"Cleanup completed: {deleted_count} files deleted out of {checked_count} checked\n")
 
-def compress_directory(source_dir, output_file_base, config, only_sql_dump=False):
+def compress_directory(source_dir, output_file_base, config, only_sql_dump=False, exclude=None):
     """
     Compresses a directory using the configured compression format
     
@@ -1049,6 +1357,8 @@ def compress_directory(source_dir, output_file_base, config, only_sql_dump=False
         output_file_base: Output file path without extension
         config: Configuration dictionary
         only_sql_dump: If True, only include the SQL dump file, not the entire directory
+        exclude: optional list of glob patterns relative to source_dir
+                 (service backups only; see normalize_exclude_patterns)
         
     Returns:
         str: Path to the compressed file
@@ -1068,6 +1378,7 @@ def compress_directory(source_dir, output_file_base, config, only_sql_dump=False
     
     encryption_enabled, password = get_encryption_settings()
     output_file = None
+    anchored_excludes = [] if only_sql_dump else normalize_exclude_patterns(exclude or [])
     
     # Encryption is GPG on the finished archive, so it works for every format
     # and the configured format is kept (<archive>.gpg). Before 4.11.0 any
@@ -1119,6 +1430,7 @@ def compress_directory(source_dir, output_file_base, config, only_sql_dump=False
                 print("WARNING: The backup password is visible in the process list while 7zz runs.")
                 print("Install gnupg (apt-get install gnupg) for secure encryption.")
                 zip_args.extend(['-p' + password, '-mhe=on'])
+            zip_args.extend(exclude_args_7z(anchored_excludes))
                 
             # Run 7zz with cwd=source_dir and relative inputs (like the zip
             # path). The previous code passed a literal '<source_dir>/*' argument
@@ -1151,7 +1463,9 @@ def compress_directory(source_dir, output_file_base, config, only_sql_dump=False
                 print(f"Zip command for SQL-only mode: {zip_args}")
             else:
                 # Standard zip: cwd=source_dir, zip everything with '.'
-                zip_args = ['zip', '-r', f'-{compression_level}', output_file, '.']
+                # -x takes several patterns, so it must come after the input.
+                zip_args = (['zip', '-r', f'-{compression_level}', output_file, '.']
+                            + exclude_args_zip(anchored_excludes))
                 print(f"Zip command for full backup: {zip_args}")
 
             print(f"Creating ZIP archive: {output_file}")
@@ -1187,7 +1501,9 @@ def compress_directory(source_dir, output_file_base, config, only_sql_dump=False
                     temp_tar = f"{output_file_base}.tar"
                     print(f"Creating tar archive: {temp_tar}")
                     tar_result = subprocess.run(
-                        ['tar', '-cf', temp_tar, '-C', parent_dir, base_name],
+                        ['tar', '-cf', temp_tar]
+                        + exclude_args_tar(anchored_excludes, base_name)
+                        + ['-C', parent_dir, base_name],
                         stdout=subprocess.PIPE, stderr=subprocess.PIPE,
                     )
 
@@ -1206,7 +1522,9 @@ def compress_directory(source_dir, output_file_base, config, only_sql_dump=False
                     # Linux tar supports direct gzip compression
                     print(f"Creating tar.gz archive: {output_file}")
                     result = subprocess.run(
-                        ['tar', '-czf', output_file, '-C', parent_dir, base_name],
+                        ['tar', '-czf', output_file]
+                        + exclude_args_tar(anchored_excludes, base_name)
+                        + ['-C', parent_dir, base_name],
                         stdout=subprocess.PIPE, stderr=subprocess.PIPE,
                     )
             
@@ -1234,7 +1552,8 @@ def compress_directory(source_dir, output_file_base, config, only_sql_dump=False
                 print(f"Creating tar.zst archive: {output_file}")
 
                 producer = subprocess.Popen(
-                    ['tar', '-C', parent_dir, '-cf', '-', base_name],
+                    ['tar'] + exclude_args_tar(anchored_excludes, base_name)
+                    + ['-C', parent_dir, '-cf', '-', base_name],
                     stdout=subprocess.PIPE, stderr=subprocess.PIPE,
                 )
                 consumer = subprocess.Popen(
@@ -1373,6 +1692,22 @@ if __name__ == "__main__":
         with open(backup_config, 'r', encoding="utf8") as config_file:
             config = yaml.safe_load(config_file)
         
+        # Run lock first, before anything is created or deleted: a second run
+        # started in the same second (two cron sources, 09.11.2026) stops here.
+        # The handle must stay referenced until the process ends.
+        lock_fallback = os.path.expandvars(os.path.expanduser(
+            config.get('defaults', {}).get('temp_path', '') or ''))
+        if not (lock_fallback and os.path.isdir(lock_fallback)):
+            lock_fallback = None
+        run_lock, lock_holder, lock_file = acquire_run_lock(lock_fallback)
+        if lock_holder is not None:
+            print(f"ERROR: another container2backup run is active (PID {lock_holder}) "
+                  f"- this run stops. (lock: {lock_file})")
+            sys.exit(1)
+        if run_lock is None:
+            print("WARNING: could not create a run lock file - continuing without "
+                  "protection against a concurrent run.")
+
         # Get backup path from config or use default
         backup_path = os.path.expandvars(os.path.expanduser(
             config.get('defaults', {}).get('backup_path', '/opt/backups')
@@ -1554,8 +1889,18 @@ if __name__ == "__main__":
         timestamp = datetime.datetime.fromtimestamp(time.time()).strftime('%Y-%m-%d_%H-%M-%S')
         additional_backups = config.get('services', {})
 
+        failed_services = []
         for service_name, service_config in additional_backups.items():
-            backup_additional_service(service_config, backup_path, timestamp, service_name)
+            service_ok = backup_additional_service(service_config, backup_path, timestamp, service_name)
+            if not service_ok:
+                # Same rule as for databases: retention only runs after a
+                # successful backup, so a failing service never deletes the
+                # last good archive. Before 4.12.0 retention ran regardless
+                # and the run exited 0.
+                print(f"\nERROR: No backup was created for service {service_name}. "
+                      f"Keeping all existing backups of {service_name}.")
+                failed_services.append(f"service {service_name} (backup failed, see above)")
+                continue
 
             # Clean up old backups for this service
             # A missing backup_path used to raise KeyError mid-run. The service
@@ -1591,9 +1936,10 @@ if __name__ == "__main__":
         print(f"Missing required configuration field: {str(e)}")
         exit(1)
 
-    if failed_databases:
-        print(f"Backup FAILED for {len(failed_databases)} database(s):")
-        for entry in failed_databases:
+    if failed_databases or failed_services:
+        failed = failed_databases + failed_services
+        print(f"Backup FAILED for {len(failed)} item(s):")
+        for entry in failed:
             print(f"- {entry}")
         sys.exit(1)
 

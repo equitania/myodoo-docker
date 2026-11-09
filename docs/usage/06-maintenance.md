@@ -31,6 +31,17 @@ Wartungsjobs als `/etc/cron.d/myodoo-maintenance` (inkl. logrotate):
 Entfernen mit `--remove`. Details zum Nightly-Cleanup:
 [scripts/NIGHTLY_CLEANUP.md](../../scripts/NIGHTLY_CLEANUP.md).
 
+**Alte Zeilen in der Root-Crontab:** Steht dort noch ein Job aus der Zeit vor
+der cron.d-Datei (z. B. `container2backup.py`), liefe er doppelt — beim Backup
+zur selben Sekunde, mit zerstörten Backups und volliger Platte als Folge.
+`ups` (ab getScripts 9.37.0) und `setup-maintenance-cron.sh` kommentieren solche
+Zeilen aus (Marke `#OWNERP-MOVED-TO-CRON.D# `, nichts wird gelöscht) und sichern
+die Crontab vorher nach `/var/backups/myodoo-docker/crontab-root.<Zeitstempel>`.
+Die Meldung steht im Installationsbericht; ist nichts zu tun, bleibt es still.
+Fremde Dateien in `/etc/cron.d` fasst `ups` nie an — dafür meldet `chk` einen
+FAIL mit der Korrektur. Von Hand:
+`~/myodoo-docker/scripts/setup-maintenance-cron.sh --neutralise-legacy`.
+
 Der wöchentliche Readiness-Report schreibt bewusst **kein** Logfile: `--quiet`
 gibt nichts aus, solange alles in Ordnung ist, sodass Cron per `MAILTO=root`
 ausschließlich bei tatsächlicher Abweichung eine Mail schickt. Den vollen
@@ -127,6 +138,16 @@ maintenance jobs as `/etc/cron.d/myodoo-maintenance` (incl. logrotate):
 
 Remove with `--remove`. Nightly cleanup details:
 [scripts/NIGHTLY_CLEANUP.md](../../scripts/NIGHTLY_CLEANUP.md).
+
+**Legacy lines in root's crontab:** If a job from before the cron.d file is
+still there (e.g. `container2backup.py`), it would run twice — a backup twice in
+the same second, broken backups and a full disk as the result. `ups` (since
+getScripts 9.37.0) and `setup-maintenance-cron.sh` comment such lines out
+(marker `#OWNERP-MOVED-TO-CRON.D# `, nothing is deleted) and save the crontab
+first to `/var/backups/myodoo-docker/crontab-root.<timestamp>`. The install
+report says what moved; with nothing to do it stays silent. `ups` never touches
+stray files in `/etc/cron.d` — `chk` reports a FAIL with the fix for those. By
+hand: `~/myodoo-docker/scripts/setup-maintenance-cron.sh --neutralise-legacy`.
 
 The weekly readiness report deliberately writes **no** logfile: `--quiet` prints
 nothing while everything is fine, so cron mails via `MAILTO=root` only on actual
