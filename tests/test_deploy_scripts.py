@@ -120,5 +120,34 @@ class HostUserTests(unittest.TestCase):
             self.assertIn("rc=0", result.stdout)
 
 
+@unittest.skipUnless(shutil.which("bash") and shutil.which("python3"), "bash/python3 missing")
+class PostgresSizingTests(unittest.TestCase):
+    SIZING = ROOT / "scripts" / "ownerp_sizing.py"
+
+    def block(self, extra="--cpus 4 --ram-mib 16384", sizing=None, role="live"):
+        env_line = (f'export OWNERP_SIZING="{sizing or self.SIZING}"\n'
+                    f'export OWNERP_SIZING_ARGS="--config /nonexistent {extra}"\n')
+        return source_and_run(PG, "PG_DEPLOY_NO_MAIN",
+                              env_line + f"_pg_sizing_block {role} live-db")
+
+    def test_sizing_block_for_a_new_live_container(self):
+        result = self.block()
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertIn("shared_buffers = 4096MB", result.stdout)
+        self.assertIn("4cpu16gb", result.stdout)
+        self.assertIn("# --- ownerp_sizing override ---", result.stdout)
+
+    def test_missing_module_means_fallback(self):
+        result = self.block(sizing="/nonexistent/ownerp_sizing.py")
+        self.assertNotEqual(result.returncode, 0)
+        self.assertEqual(result.stdout, "")
+
+    def test_over_budget_still_prints_the_block_and_warns(self):
+        result = self.block(extra="--cpus 1 --ram-mib 1024")
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertIn("shared_buffers = ", result.stdout)
+        self.assertIn("over budget", result.stderr)
+
+
 if __name__ == "__main__":
     unittest.main()

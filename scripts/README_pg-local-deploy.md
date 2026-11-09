@@ -42,7 +42,8 @@ Das Skript fragt interaktiv ab:
 | DB-Name | `postgres` | Initiale Datenbank |
 | Passwort | — (Pflicht) | Silent-Eingabe mit Wiederholung |
 | PostgreSQL-Version | neueste vom Docker Hub | Das Skript zeigt den neuesten Patch-Stand jeder Hauptversion, Enter übernimmt den neuesten (z.B. `18.6` → Image `postgres:18.6`). Ohne Verbindung zum Docker Hub wird die Version von Hand eingegeben ([verfügbare Tags](https://hub.docker.com/_/postgres/tags)). Vor einer neuen Hauptversion prüfen, ob die Odoo-Version sie unterstützt. |
-| Conf-Profil | `2cpu8gb` | Hardware-Profil (siehe oben) |
+| Rolle | `keine Angabe` | `live` / `test` / `demo` / keine Angabe (ab 1.5.0). Mit Rolle berechnet `ownerp_sizing.py pg` (Suchpfad `$OWNERP_SIZING`, sonst `~/ownerp_sizing.py`) die Speicherwerte; bei `live` fragt das Skript zusätzlich „Gleichzeitige Benutzer“ (Enter = aus der Hardware). Die Werte werden hinter dem Basisprofil an `postgresql.conf.src` angehängt (PostgreSQL gilt die letzte Angabe). Fehlt das Modul, scheitert der Aufruf (auch Exit 2 bei unlesbarer Konfiguration) oder ist die Ausgabe unbrauchbar, meldet das Skript „Berechnung nicht verfügbar - feste Profile“ und zeigt das Menü der vier festen Profile. Über dem RAM-Budget werden die Werte trotzdem übernommen, die Warnung erscheint auf stderr. |
+| Conf-Profil | `2cpu8gb` | Hardware-Profil (siehe oben); nur gefragt, wenn keine Rolle gewählt oder die Berechnung nicht verfügbar ist |
 | Host-Port | keiner | Optionales Publish auf `127.0.0.1` |
 | SSL | `nein` | Self-Signed-SSL aktivieren (y/N) |
 | pgvector | `nein` | pgvector installieren (y/N) → Image `postgres-pgvector:<Version>`, siehe unten |
@@ -175,7 +176,8 @@ The script prompts interactively:
 | DB name | `postgres` | Initial database |
 | Password | — (required) | Silent input with confirmation |
 | PostgreSQL version | newest on Docker Hub | The script shows the newest patch release of every major version; Enter takes the newest (e.g. `18.6` → image `postgres:18.6`). Without a connection to Docker Hub the version is typed by hand ([available tags](https://hub.docker.com/_/postgres/tags)). Before choosing a new major version, check that the Odoo version supports it. |
-| Conf profile | `2cpu8gb` | Hardware profile (see above) |
+| Role | `not specified` | `live` / `test` / `demo` / not specified (since 1.5.0). With a role, `ownerp_sizing.py pg` (looked up via `$OWNERP_SIZING`, else `~/ownerp_sizing.py`) calculates the memory settings; for `live` the script also asks "Gleichzeitige Benutzer" (concurrent users; Enter = derive from hardware). The values are appended to `postgresql.conf.src` after the base profile (PostgreSQL takes the last occurrence). If the module is missing, the call fails (including exit 2 for an unreadable config) or the output is unusable, the script prints "Berechnung nicht verfügbar - feste Profile" (calculation unavailable, fixed profiles) and shows the menu of the four fixed profiles. Over the RAM budget the values are still used; the warning appears on stderr. |
+| Conf profile | `2cpu8gb` | Hardware profile (see above); asked only when no role is chosen or the calculation is unavailable |
 | Host port | none | Optional publish on `127.0.0.1` |
 | SSL | `no` | Enable self-signed SSL (y/N) |
 | pgvector | `no` | Install pgvector (y/N) → image `postgres-pgvector:<version>`, see below |

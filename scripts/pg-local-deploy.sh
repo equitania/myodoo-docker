@@ -2,7 +2,7 @@
 #
 # pg-local-deploy.sh — interaktives On-Premise-Deploy für PostgreSQL-Docker.
 #
-# Version: 1.4.0 — 12.10.2026
+# Version: 1.5.0 — 09.11.2026
 #
 # Spiegelt das Ansible-Playbook
 #   semaphore/playbooks/odoo/pg/pb_pg_docker_start.yaml
@@ -37,6 +37,14 @@
 # PGDATA wird ausdrücklich gesetzt: Ab postgres:18 liegt der Standard unter
 # /var/lib/postgresql/18/docker, und das Image verweigert den Start, wenn
 # /var/lib/postgresql/data ein Mount ist, den es nicht benutzt.
+#
+# Rolle und Berechnung (1.5.0): Das Skript fragt die Rolle der Instanz (live/
+# test/demo) und übernimmt die Speicherwerte aus der gemeinsamen Berechnung
+# (ownerp_sizing.py pg ... --json, Suchpfad $OWNERP_SIZING oder
+# ~/ownerp_sizing.py). Die Werte werden hinter dem Basisprofil an
+# postgresql.conf.src angehängt (PostgreSQL gilt die letzte Angabe). Fehlt das
+# Modul, schlägt der Aufruf fehl (z.B. Exit 2 bei unlesbarer Konfiguration) oder
+# ist die Ausgabe unbrauchbar, bleiben die vier festen Profile wie bisher.
 #
 # Sicherheits-Hygiene: KEINE Secrets im Skript hinterlegt — das DB-Passwort
 # wird zwingend interaktiv (silent, mit Wiederholung) abgefragt.
@@ -199,6 +207,44 @@ _ensure_host_user() {  # name uid comment
     fi
 }
 
+# Speicherwerte einer neuen Instanz aus der gemeinsamen Berechnung.
+# Aufruf: _pg_sizing_block <rolle> <container> [benutzer]
+# stdout: "base_profile=<name>", dann der Override-Block ("# --- ownerp_sizing
+# override ---" und "key = value"-Zeilen). Rückgabe != 0 (stdout leer), wenn das
+# Modul fehlt, der Aufruf scheitert oder das JSON unbrauchbar ist. Über dem
+# RAM-Budget liefert die Berechnung trotzdem Werte; die Warnung geht nach stderr.
+# OWNERP_SIZING_ARGS (optional) reicht weitere Flags durch (Tests: --cpus/--ram-mib).
+_pg_sizing_block() {  # role container [users]
+    local role="$1" container="$2" users="${3:-}" module json
+    module="${OWNERP_SIZING:-$HOME/ownerp_sizing.py}"
+    [ -f "$module" ] || return 1
+    command -v python3 >/dev/null 2>&1 || return 1
+    local -a cmd=(python3 "$module" pg --role "$role" --container "$container" --json)
+    [ -n "$users" ] && cmd+=(--users "$users")
+    # shellcheck disable=SC2206
+    [ -n "${OWNERP_SIZING_ARGS:-}" ] && cmd+=(${OWNERP_SIZING_ARGS})
+    json="$("${cmd[@]}")" || return 1
+    printf '%s' "$json" | python3 -c '
+import json, re, sys
+try:
+    data = json.load(sys.stdin)
+    base = data["base_profile"]
+    values = data["values"]
+    if not re.fullmatch(r"[A-Za-z0-9_]+", base) or not values:
+        raise ValueError("unusable")
+    lines = []
+    for key, val in values.items():
+        if not re.fullmatch(r"[a-z_]+", key) or not re.fullmatch(r"[0-9]+(MB|GB|kB)?", str(val)):
+            raise ValueError("unusable")
+        lines.append(f"{key} = {val}")
+except (ValueError, KeyError, TypeError, AttributeError):
+    sys.exit(1)
+print(f"base_profile={base}")
+print("# --- ownerp_sizing override ---")
+print("\n".join(lines))
+'
+}
+
 # Tests sourcen das Skript nur für die Hilfsfunktionen.
 [ -n "${PG_DEPLOY_NO_MAIN:-}" ] && return 0
 
@@ -302,6 +348,46 @@ if ! [[ "$pg_version" =~ ^[0-9]+(\.[0-9]+)*$ ]]; then
 fi
 
 echo
+echo "  Rolle dieser Instanz?"
+echo "    1) live   2) test   3) demo   4) keine Angabe (feste Profile)"
+read -rp "  Auswahl [4]: " role_choice
+case "${role_choice:-4}" in
+    1) pg_role="live" ;;
+    2) pg_role="test" ;;
+    3) pg_role="demo" ;;
+    4) pg_role="" ;;
+    *) _err "Ungültige Auswahl: $role_choice"; exit 1 ;;
+esac
+sizing_block=""
+if [ -n "$pg_role" ]; then
+    pg_users=""
+    if [ "$pg_role" = "live" ]; then
+        read -rp "  Gleichzeitige Benutzer [aus Hardware]: " pg_users
+        if [ -n "$pg_users" ] && ! [[ "$pg_users" =~ ^[0-9]+$ ]]; then
+            _err "Benutzerzahl muss numerisch sein: $pg_users"
+            exit 1
+        fi
+    fi
+    if sizing_out="$(_pg_sizing_block "$pg_role" "$pg_name" "$pg_users")" && [ -n "$sizing_out" ]; then
+        sizing_base="$(head -n1 <<< "$sizing_out" | cut -d= -f2)"
+        sizing_block="$(tail -n +2 <<< "$sizing_out")"
+        case "$sizing_base" in
+            2cpu4gb)  pg_conf_version="2cpu4gb"  ; conf_func="_conf_2cpu4gb"  ;;
+            2cpu8gb)  pg_conf_version="2cpu8gb"  ; conf_func="_conf_2cpu8gb"  ;;
+            4cpu16gb) pg_conf_version="4cpu16gb" ; conf_func="_conf_4cpu16gb" ;;
+            8cpu32gb) pg_conf_version="8cpu32gb" ; conf_func="_conf_8cpu32gb" ;;
+            *) sizing_block="" ;;
+        esac
+    fi
+    if [ -z "$sizing_block" ]; then
+        _info "Berechnung nicht verfügbar - feste Profile"
+    else
+        echo "  Speicherwerte aus der Berechnung:"
+        sed 's/^/    /' <<< "$sizing_block"
+    fi
+fi
+if [ -z "$sizing_block" ]; then
+echo
 echo "  Conf-Profil (Spiegel der Ansible-Profile):"
 echo "    1) 2cpu4gb   — 2 CPU,  4 GB RAM (kleine Systeme)"
 echo "    2) 2cpu8gb   — 2 CPU,  8 GB RAM (Standard)"
@@ -316,6 +402,7 @@ case "$conf_choice" in
     4) pg_conf_version="8cpu32gb" ; conf_func="_conf_8cpu32gb" ;;
     *) _err "Ungültige Auswahl: $conf_choice"; exit 1 ;;
 esac
+fi
 _ok "Conf-Profil: $pg_conf_version"
 
 echo
@@ -445,6 +532,12 @@ if ! "$conf_func" > "$conf_src"; then
 fi
 chmod 0644 "$conf_src"
 _ok "Profil geschrieben: $conf_src ($(wc -l < "$conf_src" | tr -d ' ') Zeilen)"
+
+# Berechnete Speicherwerte hinter dem Basisprofil anhängen (letzte Angabe gilt).
+if [ -n "$sizing_block" ]; then
+    { echo; echo "$sizing_block"; } >> "$conf_src"
+    _ok "Speicherwerte aus der Berechnung angehängt (Basisprofil $pg_conf_version)"
+fi
 
 # SSL-Override anhängen — die eingebetteten Profile bleiben 1:1 Ansible-Kopien.
 # server.crt/server.key liegen in PGDATA (PostgreSQL-Defaults, kein Pfad nötig).
