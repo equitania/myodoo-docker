@@ -1065,7 +1065,7 @@ def _default_review(name, path, out=print):
     return ownerp_sizing.main(["--review", name, "--config", path])
 
 
-def ask_sizing(path, index, ask=input, out=print, review=None):
+def ask_sizing(path, index, ask=input, out=print, review=None, load=None):
     """The wizup flow for the sizing block of one entry. Returns an exit code.
 
     Writes through set_fields like every other change. `ask` and `out` are
@@ -1120,6 +1120,17 @@ def ask_sizing(path, index, ask=input, out=print, review=None):
     out(f"\n  Sizing role set to {role}{detail} for {name}.")
     out(f"  Written to {path}\n  Backup:    {result.backup}")
     out("  The values take effect with the next doup. Preview: dosize")
+
+    # Plan warnings (over budget ...) are shown before the operator confirms
+    # anything further. A missing module or an unreadable host prints nothing.
+    loader = load or (ownerp_sizing.load_host if ownerp_sizing else None)
+    if loader is not None:
+        try:
+            plan = loader(path)[0]
+            for text in plan.warnings:
+                out(f"  WARNING: {text}")
+        except Exception:
+            pass
 
     answer = ask("  Review the single values now? (Y/n): ").strip().lower()
     if answer in ("", "y", "yes", "j", "ja"):

@@ -1242,6 +1242,8 @@ def _run_review(args) -> int:
         if pg_current is None:
             _say("PostgreSQL values are not reviewed: database container %s did not answer."
                  % inst.db_container)
+    for text in plan.warnings:
+        _say("WARNING: %s" % text)
     new_state = review(inst, result, state, pg_current=pg_current)
     if new_state != state:
         error = save_state(inst.build_dir, new_state)

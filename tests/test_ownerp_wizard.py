@@ -1248,3 +1248,34 @@ class SizingBlockTest(ConfigFixture):
         self.assertEqual(code, 1)
         self.assertIn("not a scalar", out)
         self.assertEqual(self.read(self.update), text)
+
+
+class SizingWarningTest(ConfigFixture):
+    def test_ask_sizing_shows_over_budget_before_the_review_question(self):
+        class Plan:
+            warnings = ["over budget: minimal staffing needs 900 MiB, budget 500 MiB"]
+        script = iter(["live", "", "n"])
+        events = []
+
+        def ask(prompt):
+            events.append(("ask", prompt))
+            return next(script)
+        wiz.ask_sizing(self.update, 0, ask=ask,
+                       out=lambda text: events.append(("out", text)),
+                       load=lambda path: (Plan(), [], []))
+        texts = [t for _k, t in events]
+        warn = next(i for i, t in enumerate(texts) if "over budget" in t)
+        review = next(i for i, t in enumerate(texts) if "Review the single" in t)
+        self.assertLess(warn, review)
+        self.assertIn("WARNING", texts[warn])
+
+    def test_a_failing_loader_prints_nothing_extra(self):
+        script = iter(["test", "n"])
+        out = []
+
+        def broken(path):
+            raise RuntimeError("no host")
+        code = wiz.ask_sizing(self.update, 0, ask=lambda p: next(script),
+                              out=out.append, load=broken)
+        self.assertEqual(code, 0)
+        self.assertNotIn("WARNING", "\n".join(out))

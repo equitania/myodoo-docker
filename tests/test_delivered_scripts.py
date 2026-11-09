@@ -114,6 +114,25 @@ class DeliveredScriptsTest(unittest.TestCase):
                           f"{name} is version-checked but never delivered")
 
 
+class HeaderDateTest(unittest.TestCase):
+    def test_header_date_equals_script_date(self):
+        """`# Date:` and SCRIPT_DATE are one fact written twice."""
+        wrong = []
+        for name in delivered_names():
+            path = os.path.join(SCRIPTS, name)
+            if not name.endswith(".py") or not os.path.isfile(path):
+                continue
+            with open(path, encoding="utf-8") as handle:
+                text = handle.read()
+            header = re.search(r"^# Date:\s+(\S+)", text, re.MULTILINE)
+            const = re.search(r'^SCRIPT_DATE\s*=\s*["\']([^"\']+)["\']',
+                              text, re.MULTILINE)
+            if header and const and header.group(1) != const.group(1):
+                wrong.append(f"{name}: header {header.group(1)} != "
+                             f"SCRIPT_DATE {const.group(1)}")
+        self.assertEqual(wrong, [])
+
+
 class DeliveryHardeningTest(unittest.TestCase):
     def test_delivery_repairs_a_missing_execute_bit(self):
         """The safety net, exercised: shebang in, execute bit out."""

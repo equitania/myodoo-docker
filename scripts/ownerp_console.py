@@ -5,7 +5,7 @@
 # Description:      The ownERP console: server state, and the configuration
 #                   editing that used to mean hand-writing YAML.
 # Version:          1.3.0
-# Date:             21.08.2026
+# Date:             09.11.2026
 # Author:           Equitania Software GmbH
 # ==============================================================================
 # Stage 3 of docs/superpowers/specs/2026-08-13-ownerp-console-design.md.

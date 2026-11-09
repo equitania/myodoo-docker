@@ -212,6 +212,23 @@ class TestReview(Base):
         self.assertIsNone(problem)
         self.assertEqual(state["odoo"]["workers"], {"status": "accepted", "known": ["3"]})
 
+    def test_review_prints_the_plan_warnings_before_the_first_prompt(self):
+        path = self.live_test(live_conf="[options]\nworkers = 3\nmax_cron_threads = 1\n")
+        out = io.StringIO()
+        seen = []
+
+        def fake_input(prompt=""):
+            seen.append(out.getvalue())
+            return "y"
+        with mock.patch.object(sz, "_stdin_is_tty", return_value=True), \
+                mock.patch.object(sz, "default_runner", return_value=(1, "no docker")), \
+                mock.patch("builtins.input", side_effect=fake_input), \
+                contextlib.redirect_stdout(out):
+            sz.main(["--review", "live-odoo", "--config", path,
+                     "--cpus", "1", "--ram-mib", "1500"])
+        self.assertTrue(seen)
+        self.assertIn("over budget", seen[0])
+
     def test_pg_current_values_reads_show_output_and_survives_failure(self):
         calls = []
 
