@@ -15,19 +15,23 @@
 #   instances and their roles (live / test / demo), and returns one plan.
 #
 # What it never does:
-#   Write anything, import YAML, or refuse. When even the minimal staffing does
+#   Write a config file (the report and the review only read; the review saves
+#   its decisions in the state file), import YAML at module level, or refuse. When even the minimal staffing does
 #   not fit the RAM budget, the plan is still complete and carries
 #   `over_budget = True` plus a warning naming need and budget.
 #
 # All arithmetic is integer MiB, floored. System Python 3 standard library only.
 # ==============================================================================
 
+import argparse
 import json
 import math
 import os
 import re
+import subprocess
+import sys
 import time
-from dataclasses import dataclass, field
+from dataclasses import asdict, dataclass, field
 from typing import Callable, Dict, List, Optional, Set, Tuple
 
 SCRIPT_VERSION = "1.0.0"
@@ -953,3 +957,360 @@ def sync_postgres(db_container: str, recommended: Dict[str, str], overrides: Set
         message = ("the database did not accept the new settings%s; rolled back to the old "
                    "postgresql.conf, but the database is not answering - check it" % cause)
     return PgSync(False, decisions, restart, False, True, message, None)
+
+
+# --- report / review / CLI ---------------------------------------------------
+
+DEFAULT_CONFIG = os.path.join(os.path.expanduser("~"), "docker2update.yaml")
+DEFAULT_DOCKERFILES = os.path.join(os.path.expanduser("~"), "myodoo-docker", "Dockerfiles")
+DOCKER_TIMEOUT = 30
+
+# sizing-block override -> the settings it pins (same table as update_docker_odoo.py)
+ODOO_OVERRIDES = {
+    "workers": ("workers",),
+    "max_cron_threads": ("max_cron_threads",),
+    "limit_memory_soft_mb": ("limit_memory_soft", "limit_memory_soft_gevent"),
+    "limit_memory_hard_mb": ("limit_memory_hard", "limit_memory_hard_gevent"),
+    "db_maxconn": ("db_maxconn", "db_maxconn_gevent"),
+}
+PG_OVERRIDES = {
+    "pg_shared_buffers_mb": ("shared_buffers", "effective_cache_size"),
+    "pg_max_connections": ("max_connections",),
+}
+
+
+def _override_keys(overrides, table) -> Set[str]:
+    keys: Set[str] = set()
+    for name in overrides:
+        keys.update(table.get(name, ()))
+    return keys
+
+
+def default_runner(argv: List[str]) -> Tuple[int, str]:
+    """Run a command; (exit code, output). Never raises."""
+    try:
+        done = subprocess.run(argv, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+                              universal_newlines=True, timeout=DOCKER_TIMEOUT)
+        out = done.stdout or ""
+        if done.returncode != 0:
+            out += done.stderr or ""
+        return done.returncode, out
+    except subprocess.TimeoutExpired:
+        return 124, "timed out after %d s: %s" % (DOCKER_TIMEOUT, " ".join(argv))
+    except (OSError, ValueError) as error:
+        return 127, "cannot run %s: %s" % (argv[0] if argv else "command", error)
+
+
+def _read_config(path: str, missing_ok: bool = False) -> dict:
+    try:
+        import yaml
+    except ImportError:
+        raise SizingError("PyYAML is not installed (apt install python3-yaml)")
+    if missing_ok and not os.path.exists(path):
+        return {"containers": []}
+    try:
+        with open(path, encoding="utf-8") as handle:
+            config = yaml.safe_load(handle)
+    except (OSError, UnicodeError, yaml.YAMLError) as error:
+        raise SizingError("cannot read %s: %s" % (path, error))
+    if not isinstance(config, dict) or not isinstance(config.get("containers"), list):
+        raise SizingError("cannot read %s: no 'containers' list" % path)
+    return config
+
+
+def _host_from_config(config: dict, hardware: Optional[Hardware], selected: Optional[str]):
+    hw = hardware if hardware is not None else probe_hardware()
+    containers = [c for c in config["containers"] if isinstance(c, dict)]
+    instances = instances_from_config(containers, selected=selected)
+    return compute_plan(hw, instances), instances, containers
+
+
+def load_host(config_path: str, hardware: Optional[Hardware] = None,
+              selected: Optional[str] = None) -> Tuple[Plan, List[Instance], List[dict]]:
+    """Read docker2update.yaml and calculate the plan of the whole host."""
+    return _host_from_config(_read_config(config_path), hardware, selected)
+
+
+def _template_values(dockerfiles: str, version: Optional[int]) -> Dict[str, str]:
+    if version is None:
+        return {}
+    text = read_text(os.path.join(dockerfiles, "v%d-odoo" % version, CONF_NAME))
+    return parse_conf_values(text) if text is not None else {}
+
+
+def _odoo_decisions(inst: Instance, result: InstanceResult, state: dict,
+                    template: Dict[str, str]) -> List[KeyDecision]:
+    entries = state.get("odoo") if isinstance(state.get("odoo"), dict) else {}
+    overrides = _override_keys(result.overrides, ODOO_OVERRIDES)
+    decisions = []
+    for key, value in result.odoo.items():
+        have = inst.conf.get(key)
+        entry = entries.get(key) if isinstance(entries.get(key), dict) else None
+        is_default = have is not None and have == template.get(key)
+        decisions.append(decide_key(key, have, value, entry, is_default, override=key in overrides))
+    return decisions
+
+
+def render_report(plan: Plan, instances: List[Instance], states: Dict[str, dict],
+                  templates: Optional[Dict[str, Dict[str, str]]] = None) -> str:
+    """Plain English text of the plan; states and templates are keyed by instance name.
+
+    A state entry may carry "_problem" (text): the state file was unusable.
+    """
+    hw = plan.hardware
+    reserve = hw.ram_mib - plan.budget_mib - plan.pg_total_mib
+    lines = ["Hardware: %d CPU, %.1f GiB RAM" % (hw.cpus, hw.ram_mib / 1024),
+             "Budget: %d MiB for Odoo (RAM - %d MiB system - %d MiB PostgreSQL), need: %d MiB"
+             % (plan.budget_mib, reserve, plan.pg_total_mib, plan.need_mib), ""]
+    for inst, result in zip(instances, plan.results):
+        if not result.sized:
+            lines.append("%s: without sizing block (counted with its current configuration)"
+                         % result.name)
+            lines.extend("  " + text for text in result.reasons)
+            continue
+        state = states.get(inst.name) or {}
+        lines.append("%s (%s): %d workers, cron %d, %d processes"
+                     % (result.name, result.role, result.workers, result.cron, result.processes))
+        lines.extend("  " + text for text in result.reasons)
+        lines.extend("  warning: " + text for text in result.warnings)
+        if state.get("_problem"):
+            lines.append("  note: state file unusable (%s); hand edits are not recognised"
+                         % state["_problem"])
+            state = {}
+        template = (templates or {}).get(inst.name, {})
+        for decision in _odoo_decisions(inst, result, state, template):
+            lines.append("  " + format_decision(decision))
+    if not any(r.sized for r in plan.results):
+        lines += ["", "No instance has a sizing block yet. To opt in, add one per instance "
+                      "with the wizard: wizup"]
+    if plan.warnings:
+        lines.append("")
+        lines.extend("Warning: " + text for text in plan.warnings)
+    return "\n".join(lines) + "\n"
+
+
+def pending_values(instance: Instance, result: InstanceResult, state: dict,
+                   pg_current: Optional[Dict[str, str]]) -> List[Tuple[str, str, str, str]]:
+    """Settings that differ from the recommendation and were never decided on."""
+    pending = []
+    odoo_entries = state.get("odoo") if isinstance(state.get("odoo"), dict) else {}
+    pg_entries = state.get("pg") if isinstance(state.get("pg"), dict) else {}
+    pinned = _override_keys(result.overrides, ODOO_OVERRIDES)
+    for key, value in result.odoo.items():
+        have = instance.conf.get(key)
+        if have is None or have == value or key in odoo_entries or key in pinned:
+            continue
+        pending.append(("odoo", key, have, value))
+    pinned = _override_keys(result.overrides, PG_OVERRIDES)
+    for key, value in result.pg.items():
+        have = (pg_current or {}).get(key)
+        if have is None or pg_equal(key, have, value) or key in pg_entries or key in pinned:
+            continue
+        pending.append(("pg", key, have, value))
+    return pending
+
+
+def review(instance: Instance, result: InstanceResult, state: dict, ask=None, out=print,
+           pg_current: Optional[Dict[str, str]] = None) -> dict:
+    """Ask per value; returns the new state. Writes no config file."""
+    ask = ask or input
+    new_state = json.loads(json.dumps(state)) if isinstance(state, dict) else {}
+    pending = pending_values(instance, result, new_state, pg_current)
+    if not pending:
+        out("Nothing to review: every value matches the recommendation or was decided before.")
+        return new_state
+    for section, key, current, recommended in pending:
+        prompt = "%s: current %s -> recommended %s - accept? (y/N/q)" % (key, current, recommended)
+        while True:
+            try:
+                answer = ask(prompt).strip().lower()
+            except EOFError:
+                answer = "q"
+            if answer in ("y", "n", "q", ""):
+                break
+            out("Please answer y, n, Enter (= n) or q.")
+        if answer == "q":
+            out("Stopped; the decisions so far are kept.")
+            break
+        status = "accepted" if answer == "y" else "hand"
+        new_state.setdefault(section, {})[key] = {"status": status, "known": [current]}
+    return new_state
+
+
+def pg_current_values(db_container: str, run: Runner = default_runner,
+                      db_user: str = "postgres") -> Optional[Dict[str, str]]:
+    """The values the database runs with right now, or None when it cannot be asked."""
+    keys = PG_MEMORY_KEYS + ("max_connections",)
+    query = "SELECT name || '|' || current_setting(name) FROM pg_settings WHERE name IN (%s)" \
+        % ", ".join("'%s'" % k for k in keys)
+    try:
+        code, output = run(["docker", "exec", db_container, "psql", "-U", db_user,
+                            "-d", "postgres", "-tAc", query])
+    except Exception:
+        return None
+    if code != 0:
+        return None
+    values = {}
+    for line in output.splitlines():
+        name, sep, value = line.partition("|")
+        if sep and name.strip() in keys:
+            values[name.strip()] = value.strip()
+    return values or None
+
+
+def _stdin_is_tty() -> bool:
+    try:
+        return sys.stdin.isatty()
+    except (AttributeError, ValueError):
+        return False
+
+
+def _say(text: str, stream=None) -> None:
+    print(text, file=stream if stream is not None else sys.stdout)
+
+
+def _hardware_from_args(args) -> Optional[Hardware]:
+    if args.cpus is None and args.ram_mib is None:
+        return None
+    if args.cpus is None or args.ram_mib is None or args.cpus < 1 or args.ram_mib < 1:
+        raise SizingError("--cpus and --ram-mib must be given together and be positive")
+    return Hardware(args.cpus, args.ram_mib)
+
+
+def _add_common(parser) -> None:
+    parser.add_argument("--config", default=DEFAULT_CONFIG, help="docker2update.yaml")
+    parser.add_argument("--cpus", type=int, help="replace the probe (what-if)")
+    parser.add_argument("--ram-mib", type=int, help="replace the probe (what-if)")
+
+
+def _run_report(args) -> int:
+    config = _read_config(args.config)
+    plan, instances, containers = _host_from_config(config, _hardware_from_args(args), None)
+    defaults = config.get("defaults") if isinstance(config.get("defaults"), dict) else {}
+    dockerfiles = os.path.expanduser(str(args.dockerfiles or defaults.get("dockerfiles_source")
+                                         or DEFAULT_DOCKERFILES))
+    states, templates = {}, {}
+    for inst in instances:
+        state, problem = load_state(inst.build_dir) if inst.build_dir else ({}, None)
+        states[inst.name] = dict(state, _problem=problem) if problem else state
+        templates[inst.name] = _template_values(dockerfiles, inst.version)
+    problem = bool(plan.over_budget or plan.warnings or any(r.warnings for r in plan.results))
+    if args.json:
+        results = []
+        for inst, result in zip(instances, plan.results):
+            data = asdict(result)
+            data["decisions"] = [asdict(d) for d in _odoo_decisions(
+                inst, result, {k: v for k, v in states[inst.name].items() if k != "_problem"},
+                templates[inst.name])] if result.sized else []
+            results.append(data)
+        _say(json.dumps({"hardware": asdict(plan.hardware), "budget_mib": plan.budget_mib,
+                         "need_mib": plan.need_mib, "pg_total_mib": plan.pg_total_mib,
+                         "over_budget": plan.over_budget, "warnings": plan.warnings,
+                         "results": results}, indent=2, sort_keys=True))
+    else:
+        sys.stdout.write(render_report(plan, instances, states, templates))
+    return 1 if problem else 0
+
+
+def _run_review(args) -> int:
+    if not _stdin_is_tty():
+        _say("ownerp_sizing: --review asks questions and needs a terminal; run it in a terminal "
+             "(for example: dosize --review %s)" % args.review, sys.stderr)
+        return 2
+    plan, instances, containers = load_host(args.config, _hardware_from_args(args), args.review)
+    pairs = [(i, r) for i, r in zip(instances, plan.results) if i.name == args.review]
+    if not pairs:
+        _say("ownerp_sizing: no instance named %s in %s" % (args.review, args.config), sys.stderr)
+        return 2
+    inst, result = pairs[0]
+    if not result.sized:
+        _say("ownerp_sizing: %s has no sizing block with a profile; add one with wizup first"
+             % inst.name, sys.stderr)
+        return 2
+    state, problem = load_state(inst.build_dir)
+    if problem:
+        _say("ownerp_sizing: %s; fix or remove the file, nothing was changed" % problem,
+             sys.stderr)
+        return 2
+    pg_current = None
+    if inst.db_container:
+        container = next((c for c in containers if c.get("container_name") == inst.name), {})
+        pg_current = pg_current_values(str(inst.db_container), default_runner,
+                                       str(container.get("db_user") or "postgres"))
+        if pg_current is None:
+            _say("PostgreSQL values are not reviewed: database container %s did not answer."
+                 % inst.db_container)
+    new_state = review(inst, result, state, pg_current=pg_current)
+    if new_state != state:
+        error = save_state(inst.build_dir, new_state)
+        if error:
+            _say("ownerp_sizing: %s" % error, sys.stderr)
+            return 2
+        ensure_dockerignore(inst.build_dir)
+        _say("Decisions saved. The next doup writes the accepted values; hand values stay.")
+    return 0
+
+
+def _run_pg(args) -> int:
+    hw = _hardware_from_args(args)
+    config = _read_config(args.config, missing_ok=True)
+    containers = [c for c in config["containers"] if isinstance(c, dict)]
+    instances = instances_from_config(containers)
+    match = next((i for i in instances if i.db_container == args.container), None)
+    if match is None:
+        match = Instance(name=args.container, version=None, role=args.role, users=args.users,
+                         overrides={}, db_container=args.container, build_dir="", conf={})
+        instances.append(match)
+    elif match.role not in PG_WEIGHTS:       # a block without a usable profile: the flag fills in
+        match.role = args.role
+        if match.users is None:
+            match.users = args.users
+    plan = compute_plan(hw if hw is not None else probe_hardware(), instances)
+    result = plan.results[instances.index(match)]
+    for text in plan.warnings:
+        _say("warning: " + text, sys.stderr)
+    _say(json.dumps({"role": match.role, "container": args.container,
+                     "base_profile": pg_base_profile(plan.hardware), "values": result.pg,
+                     "reasons": result.reasons, "warnings": result.warnings + plan.warnings,
+                     "over_budget": plan.over_budget}, indent=2, sort_keys=True))
+    return 0
+
+
+def main(argv: Optional[List[str]] = None) -> int:
+    argv = list(sys.argv[1:] if argv is None else argv)
+    if argv and argv[0] == "pg":
+        argv = argv[1:]
+        parser = argparse.ArgumentParser(prog="ownerp_sizing.py pg",
+                                         description="PostgreSQL values for one database container")
+        parser.add_argument("--role", required=True, choices=sorted(PG_WEIGHTS))
+        parser.add_argument("--container", required=True, help="database container name")
+        parser.add_argument("--users", type=int)
+        parser.add_argument("--json", action="store_true", help="always JSON (the default here)")
+        _add_common(parser)
+        runner = _run_pg
+    else:
+        if argv and argv[0] == "report":
+            argv = argv[1:]
+        parser = argparse.ArgumentParser(prog="ownerp_sizing.py [report]",
+                                         description="Host-wide Odoo and PostgreSQL sizing report")
+        parser.add_argument("--json", action="store_true")
+        parser.add_argument("--review", metavar="NAME",
+                            help="decide per value for one instance (needs a terminal)")
+        parser.add_argument("--dockerfiles", metavar="PATH",
+                            help="folder with v<version>-odoo/odoo.conf templates")
+        parser.add_argument("--version", action="version",
+                            version="ownerp_sizing.py %s (%s)" % (SCRIPT_VERSION, SCRIPT_DATE))
+        _add_common(parser)
+        runner = None
+    args = parser.parse_args(argv)
+    if runner is None:
+        runner = _run_review if args.review else _run_report
+    try:
+        return runner(args)
+    except SizingError as error:
+        _say("ownerp_sizing: %s" % error, sys.stderr)
+        return 2
+
+
+if __name__ == "__main__":
+    sys.exit(main())
