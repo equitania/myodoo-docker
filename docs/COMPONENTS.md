@@ -1355,8 +1355,9 @@ in this repository, stay in `CLAUDE.md`.
 - **Purpose**: Sizing assistant. Computes workers, cron threads, memory limits,
   `db_maxconn` and PostgreSQL memory for the whole host from one budget, with a
   reason for every value. Started with `dosize`; imported by `update_docker_odoo.py`
-  (`doup`), `ownerp_wizard.py`, `ownerp_console.py`, `server-readiness.py` and
-  `pg-local-deploy.sh` (`ownerp_sizing.py pg --json`), so all show the same result
+  (`doup`), `ownerp_wizard.py`, `ownerp_console.py` and `server-readiness.py`;
+  `pg-local-deploy.sh` calls the CLI (`ownerp_sizing.py pg --json`), so all show
+  the same result
 - **Opt-in**: only an instance whose `docker2update.yaml` entry has a `sizing:`
   block is sized. Keys: `profile` (required: live | test | demo), `users`
   (optional, integer >= 1, live only), overrides `workers`, `max_cron_threads`,
@@ -1374,7 +1375,15 @@ in this repository, stay in `CLAUDE.md`.
   warns "over budget: minimal staffing needs N MiB, budget M MiB"
 - **A hand edit wins**: a value is written only when it is still the repo
   template's value, was accepted in `dosize --review NAME`, or is an explicit
-  override in the block. State per build folder in `.sizing_state.json`
+  override in the block. State per build folder in `.sizing_state.json`.
+  `dosize --review NAME` offers every value kept by hand or hand-edited after
+  `doup` wrote it
+- **PostgreSQL guards**: a database container shared with another entry (active
+  or parked, same `db_host`) is left unchanged with one WARNING ("database
+  container X is shared with Y - PostgreSQL left unchanged"), and `dosize` / `chk`
+  show the same note; without root the step is skipped ("PostgreSQL settings need
+  root", info); a rolled-back value is kept as a hand value until it is accepted
+  in `dosize --review NAME` or made an override, so it is not retried every run
 - **`dosize`**: report (hardware, budget, per-instance values, reasons,
   deviations); `--json`; `--review NAME` asks per value (y / N / q) and needs a
   terminal; `--cpus N --ram-mib M` what-if. Exit 0 fits, 1 over budget or

@@ -170,8 +170,10 @@ wurde oder wenn er im Block als Überschreibung steht. Jeder von Hand
 gehaltene Wert wird gemeldet („key: hand X, recommended Y - unchanged“). Eine
 Empfehlung für einen von Hand gehaltenen Schlüssel übernehmen: den Wert als
 Überschreibung in den Block schreiben oder ihn in `dosize --review NAME`
-annehmen. Bis zur ersten Durchsicht schreibt `doup` nur Werte, die noch der
-Vorlage entsprechen, und meldet den Rest. Der Stand liegt je Build-Ordner in
+annehmen; die Durchsicht bietet auch einen Wert wieder an, der von Hand gehalten
+wird oder nach dem Schreiben durch `doup` von Hand geändert wurde. Bis zur
+ersten Durchsicht schreibt `doup` nur Werte, die noch der Vorlage entsprechen,
+und meldet den Rest. Der Stand liegt je Build-Ordner in
 `.sizing_state.json` (per `.dockerignore` aus dem Image gehalten).
 
 ```fish
@@ -205,10 +207,23 @@ Vorher entsteht `postgresql.conf.bak_<Zeitstempel>`; bei `shared_buffers` oder
 zu 5 Minuten Wartezeit auf `pg_isready`, andere Schlüssel werden nur neu
 geladen. Jeder geänderte Schlüssel wird mit `SHOW` geprüft; wird er nicht
 übernommen, stellt `doup` die Sicherung wieder her und meldet „rolled back“.
+Ein zurückgerollter Wert gilt danach als Handwert und wird nicht bei jedem
+`doup` erneut versucht, sondern erst nach Annahme in `dosize --review NAME` oder
+als Überschreibung im Block.
+
+Teilen sich mehrere Einträge von `docker2update.yaml` (aktiv oder geparkt) einen
+DB-Container (gleicher `db_host`), lässt `doup` PostgreSQL unverändert und gibt
+eine WARNING aus („database container X is shared with Y - PostgreSQL left
+unchanged“), denn gestoppt ist nur das Odoo der gerade aktualisierten Instanz;
+`dosize` und `chk` zeigen denselben Hinweis. Ohne root-Rechte (eingeschränkte
+Stufe) ist `postgresql.conf` nicht lesbar; der Schritt wird mit der Info-Zeile
+„PostgreSQL settings need root“ übersprungen, ohne Fehler.
 
 `server-readiness.py` (`chk`) prüft nur auf Hosts mit Sizing-Block
 (`odoo_sizing`; sonst SKIP): FAIL, wenn aktueller Bedarf plus PostgreSQL das RAM
-übersteigen, WARN bei Überschreitung oder Warnungen. `pg-local-deploy.sh`
+übersteigen, WARN, wenn selbst die kleinste Besetzung nicht ins Budget passt
+(„over budget“), der aktuelle Bedarf über dem Budget liegt
+(„exceeds the budget“) oder der Plan Warnungen trägt. `pg-local-deploy.sh`
 fragt die Rolle und nimmt die Speicherwerte aus der gemeinsamen Berechnung;
 fällt sie aus, gelten die vier festen Profile unverändert.
 
@@ -434,8 +449,9 @@ template's value, when it was accepted in `dosize --review NAME`, or when it is
 an explicit override in the block. Every value kept by hand is reported
 ("key: hand X, recommended Y - unchanged"). To adopt a recommendation for a key
 kept by hand, put the value into the block as an override or accept it in
-`dosize --review NAME`. Until the first review `doup` writes only values that
-still equal the template and reports the rest. The state lives per build folder
+`dosize --review NAME`; the review also offers again a value that is kept by hand
+or was edited by hand after `doup` wrote it. Until the first review `doup`
+writes only values that still equal the template and reports the rest. The state lives per build folder
 in `.sizing_state.json` (kept out of the image via `.dockerignore`).
 
 ```fish
@@ -466,11 +482,23 @@ are kept as hand edits. A backup `postgresql.conf.bak_<timestamp>` is written
 first; for `shared_buffers` or `max_connections` a `CHECKPOINT` is followed by
 `docker restart -t 120` and up to 5 minutes of waiting for `pg_isready`, other
 keys are only reloaded. Every changed key is verified with `SHOW`; if it was not
-taken, `doup` restores the backup and reports "rolled back".
+taken, `doup` restores the backup and reports "rolled back". A rolled-back value
+is then kept as a hand value and not retried on every `doup`, only after it is
+accepted in `dosize --review NAME` or made an override in the block.
+
+When more than one entry of `docker2update.yaml` (active or parked) uses the
+same database container (same `db_host`), `doup` leaves PostgreSQL unchanged
+with a WARNING ("database container X is shared with Y - PostgreSQL left
+unchanged"), because only the Odoo of the instance being updated is stopped;
+`dosize` and `chk` show the same note. Without root (restricted tier)
+`postgresql.conf` cannot be read; the step is skipped with the info line
+"PostgreSQL settings need root", not an error.
 
 `server-readiness.py` (`chk`) checks only on hosts with a sizing block
 (`odoo_sizing`; otherwise SKIP): FAIL when the current need plus PostgreSQL
-exceeds RAM, WARN when over budget or with warnings. `pg-local-deploy.sh` asks
+exceeds RAM, WARN when even the minimal staffing does not fit ("over budget"),
+when the current need is above the budget ("exceeds the budget") or when the
+plan carries warnings. `pg-local-deploy.sh` asks
 for the role and takes its memory values from the shared calculation; if that
 fails, the four fixed profiles apply unchanged.
 

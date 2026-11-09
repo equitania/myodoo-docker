@@ -37,7 +37,7 @@ entry has a `sizing:` block is touched.
   `doup -s NAME` recomputes the whole host and applies one instance.
 - **`chk` check `odoo_sizing`.** Only on hosts with a sizing block, otherwise
   SKIP. FAIL when the current need plus PostgreSQL exceeds RAM; WARN when over
-  budget or with plan warnings.
+  budget, when the current need is above the budget, or with plan warnings.
 - **`pg-local-deploy.sh` 1.5.0** asks the role and takes the PostgreSQL memory
   values from the shared calculation; on any failure the four fixed profiles
   apply as before.
@@ -48,14 +48,33 @@ entry has a `sizing:` block is touched.
   repo template's value, was accepted in `dosize --review NAME`, or is an
   explicit override in the block. Every kept value is reported ("key: hand X,
   recommended Y - unchanged"). To adopt a recommendation for such a key, put
-  the value in the block as an override or accept it in the review. Until the
-  first review `doup` writes only values that still equal the template.
+  the value in the block as an override or accept it in the review; the review
+  offers every value kept by hand or hand-edited after `doup` wrote it. Until
+  the first review `doup` writes only values that still equal the template.
+- **A shared database container is left alone.** When another entry of
+  `docker2update.yaml` (active or parked) has the same `db_host`, `doup` leaves
+  PostgreSQL unchanged with one WARNING ("database container X is shared with
+  Y - PostgreSQL left unchanged"): only one instance's Odoo is stopped, and the
+  plan's values would fit that instance only. `dosize` and `chk` show the same
+  note.
+- **PostgreSQL needs root.** Without it (restricted tier) `postgresql.conf`
+  cannot be read; the step is skipped with "PostgreSQL settings need root", an
+  info line, not an error.
+- **A rolled-back value is not retried every run.** It is kept as a hand value
+  until it is accepted in `dosize --review NAME` or made an override, so a
+  refused change does not cost a database restart on every `doup`.
+- **Instances without a block are counted as they run.** They are never
+  squeezed to minimal staffing, because `doup` never writes them; when they
+  leave too little, the plan says "over budget" with the real need.
 - **Sizing never aborts an update.** Errors are ERROR lines, the update goes on
   with the unchanged config, the run exits 1 and the summary shows "sizing
   errors N".
 - **Over budget is a warning.** A host too small even for the minimal staffing
   gets that staffing and "over budget: minimal staffing needs N MiB, budget M
-  MiB"; `doup` exit status is unaffected.
+  MiB"; `doup` exit status is unaffected. `doup` prints every plan warning
+  (over budget, an override above the budget, too many processes) as a WARNING
+  in the plan's own words, and a block without a valid profile as a WARNING
+  that points at `doval`.
 
 ## A Full Root Disk: Double Backup Runs, Zipped Hardlinks, No Reserve (09.11.2026)
 
