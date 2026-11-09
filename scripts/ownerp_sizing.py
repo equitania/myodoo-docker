@@ -223,8 +223,16 @@ def _blockless_counts(conf: Dict[str, str]) -> Tuple[int, int]:
 class _Slot:
     """Working state of one instance during the calculation."""
 
-    def __init__(self, inst: Instance):
+    def __init__(self, inst: Instance, warnings: List[str]):
         self.inst = inst
+        self.ov: Dict[str, int] = {}
+        for key, value in inst.overrides.items():
+            minimum = 64 if key.endswith("_mb") else 1
+            if value < minimum:
+                warnings.append("%s: override %s = %d ignored (minimum %d), computed value kept"
+                                % (inst.name, key, value, minimum))
+            else:
+                self.ov[key] = value
         self.role = inst.role if inst.role in ("live", "test", "demo") else None
         self.workers = 0
         self.cron = 0
@@ -235,7 +243,7 @@ class _Slot:
 
     @property
     def fixed_workers(self) -> bool:
-        return "workers" in self.inst.overrides
+        return "workers" in self.ov
 
 
 def compute_plan(hw: Hardware, instances: List[Instance]) -> Plan:
@@ -247,15 +255,17 @@ def compute_plan(hw: Hardware, instances: List[Instance]) -> Plan:
     cron_live = 2 if cpus >= 8 else 1
     warnings: List[str] = []
 
-    slots = [_Slot(i) for i in instances]
+    slots = [_Slot(i, warnings) for i in instances]
     live = [s for s in slots if s.role == "live"]
     others_slots = [s for s in slots if s.role != "live"]
 
     # non-live instances: fixed sizes, or what a blockless conf already uses
     for s in others_slots:
-        ov = s.inst.overrides
+        ov = s.ov
         if s.role in FIXED_ROLES:
             s.workers, s.cron, s.soft, s.hard = FIXED_ROLES[s.role]
+            s.soft = ov.get("limit_memory_soft_mb", s.soft)
+            s.hard = ov.get("limit_memory_hard_mb", s.hard)
             s.reasons.append("%s profile: %d workers, cron %d, soft %d MiB, hard %d MiB"
                              % (s.role, s.workers, s.cron, s.soft, s.hard))
         else:
@@ -273,7 +283,7 @@ def compute_plan(hw: Hardware, instances: List[Instance]) -> Plan:
     if n_live:
         host_workers = max(2, (processes_rule - others - n_live * cron_live) // n_live)
         for s in live:
-            ov = s.inst.overrides
+            ov = s.ov
             s.cron = ov.get("max_cron_threads", cron_live)
             workers = host_workers
             reason = ("%d workers: %d CPU -> %d processes, other instances use %d, cron %d"
@@ -313,7 +323,7 @@ def compute_plan(hw: Hardware, instances: List[Instance]) -> Plan:
     need = total_need()
     over = need > budget
     if over:
-        if any(s.inst.overrides for s in slots):
+        if any(s.ov for s in slots):
             warnings.append("Override exceeds the RAM budget: needs %d MiB, budget %d MiB"
                             % (need, budget))
         else:
@@ -325,7 +335,7 @@ def compute_plan(hw: Hardware, instances: List[Instance]) -> Plan:
     # live memory limits: what the non-live instances leave of the budget
     live_share = budget - sum(_need(s.workers, s.cron) for s in others_slots)
     for s in live:
-        ov = s.inst.overrides
+        ov = s.ov
         soft = _clamp(live_share // (n_live * (s.workers + s.cron + 1)), 600, 2048)
         hard = _clamp(soft * 5 // 4, 1600, 2560)
         s.soft = ov.get("limit_memory_soft_mb", soft)
@@ -348,7 +358,7 @@ def compute_plan(hw: Hardware, instances: List[Instance]) -> Plan:
         odoo: Dict[str, str] = {}
         pg: Dict[str, str] = {}
         if sized:
-            ov = s.inst.overrides
+            ov = s.ov
             maxconn = ov.get("db_maxconn", DB_MAXCONN)
             values = {
                 "workers": str(s.workers),

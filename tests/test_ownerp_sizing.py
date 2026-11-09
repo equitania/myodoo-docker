@@ -155,6 +155,26 @@ class TestPlan(unittest.TestCase):
         self.assertTrue(any("Override" in w for w in p.warnings))
 
 
+class TestOverrideRobustness(unittest.TestCase):
+    def test_too_small_overrides_are_ignored_with_a_warning(self):
+        base = sz.compute_plan(hw(4, 16), [inst("live-odoo", "live"), inst("test-odoo", "test")])
+        for key, value in (("workers", -1), ("max_cron_threads", 0), ("pg_max_connections", 0),
+                           ("limit_memory_soft_mb", 10), ("db_maxconn", 0)):
+            p = sz.compute_plan(hw(4, 16), [
+                inst("live-odoo", "live", overrides={key: value}), inst("test-odoo", "test")])
+            self.assertEqual(p.results[0].odoo, base.results[0].odoo, key)
+            self.assertEqual(p.results[0].pg, base.results[0].pg, key)
+            self.assertTrue(any(key in w and str(value) in w for w in p.warnings), key)
+
+    def test_a_test_instance_takes_memory_overrides(self):
+        p = sz.compute_plan(hw(4, 16), [
+            inst("live-odoo", "live"),
+            inst("test-odoo", "test", overrides={"limit_memory_soft_mb": 700,
+                                                 "limit_memory_hard_mb": 1500})])
+        self.assertEqual(p.results[1].odoo["limit_memory_soft"], str(700 * sz.MIB))
+        self.assertEqual(p.results[1].odoo["limit_memory_hard"], str(1500 * sz.MIB))
+
+
 class TestHelpers(unittest.TestCase):
     def test_odoo_keys_per_version(self):
         base = ("workers", "max_cron_threads", "limit_memory_soft", "limit_memory_hard", "db_maxconn")
