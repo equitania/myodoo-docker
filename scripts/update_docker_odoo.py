@@ -1,8 +1,8 @@
 #!/usr/bin/python3
 # -*- coding: utf-8 -*-
 # This script performs an update of an Odoo database in a Docker container
-# Version 5.25.0
-# Date 14.10.2026
+# Version 5.26.0
+# Date 09.11.2026
 ##############################################################################
 #
 #    Shell Script for Odoo, Open Source Management Solution
@@ -77,8 +77,8 @@ logger = logging.getLogger(__name__)
 # Kept in sync with the header comment above. Printed at the start of every run
 # so a pasted log says which version produced it — the single most common
 # question when a report comes back from a server.
-SCRIPT_VERSION = "5.25.0"
-SCRIPT_DATE = "14.10.2026"
+SCRIPT_VERSION = "5.26.0"
+SCRIPT_DATE = "09.11.2026"
 
 # Set by --no-cache. A module-level flag rather than another parameter through
 # process_container(): the build is six call levels below the argument parser,
@@ -1986,8 +1986,247 @@ def apply_release_file(path):
     return None
 
 
+# --- sizing: apply the container's `sizing` block ---------------------------
+#
+# Two steps per container, both optional (no `sizing` block: nothing happens,
+# nothing is printed) and both without any power to stop the update: every
+# failure is an ERROR/WARNING line, the update goes on with the unchanged
+# config, and only the final exit status carries the sizing errors.
+
+SIZING_ERRORS = 0                    # reset by main(); exit status 1 when > 0
+SIZING_PLAN = {}                     # container name -> (InstanceResult, pg override keys)
+SIZING_COMMAND_TIMEOUT = 300         # above `docker restart -t 120`
+
+# sizing-block override -> the odoo.conf / postgresql.conf keys it pins
+SIZING_ODOO_OVERRIDES = {
+    'workers': ('workers',),
+    'max_cron_threads': ('max_cron_threads',),
+    'limit_memory_soft_mb': ('limit_memory_soft', 'limit_memory_soft_gevent'),
+    'limit_memory_hard_mb': ('limit_memory_hard', 'limit_memory_hard_gevent'),
+    'db_maxconn': ('db_maxconn', 'db_maxconn_gevent'),
+}
+SIZING_PG_OVERRIDES = {
+    'pg_shared_buffers_mb': ('shared_buffers', 'effective_cache_size'),
+    'pg_max_connections': ('max_connections',),
+}
+
+
+def sizing_module():
+    """ownerp_sizing.py from this script's own folder; None when missing or broken."""
+    module = sys.modules.get('ownerp_sizing')
+    if module is not None:
+        return module
+    try:
+        import importlib.util
+        path = join(os.path.dirname(os.path.abspath(__file__)), 'ownerp_sizing.py')
+        if not isfile(path):
+            return None
+        spec = importlib.util.spec_from_file_location('ownerp_sizing', path)
+        module = importlib.util.module_from_spec(spec)
+        sys.modules['ownerp_sizing'] = module     # dataclasses look the module up
+        try:
+            spec.loader.exec_module(module)
+        except BaseException:
+            sys.modules.pop('ownerp_sizing', None)
+            raise
+        return module
+    except Exception as error:
+        logger.debug(f"ownerp_sizing.py not usable: {error}")
+        return None
+
+
+def default_runner(argv):
+    """Run a docker argv list; (exit code, output). Never raises."""
+    try:
+        done = subprocess.run(argv, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+                              universal_newlines=True, timeout=SIZING_COMMAND_TIMEOUT)
+        out = done.stdout or ""
+        if done.returncode != 0:
+            out += done.stderr or ""
+        return done.returncode, out
+    except subprocess.TimeoutExpired:
+        return 124, f"timed out after {SIZING_COMMAND_TIMEOUT} s: {' '.join(argv)}"
+    except (OSError, ValueError) as error:
+        return 127, f"cannot run {argv[0] if argv else 'command'}: {error}"
+
+
+def exit_code_for(failure_count, sizing_errors):
+    """0 only when no container failed and sizing had no errors."""
+    return 0 if failure_count == 0 and sizing_errors == 0 else 1
+
+
+def _sizing_line(text):
+    print(f"{CR}    {text}")
+    run_log_write(f"    {text}")
+    sys.stdout.flush()
+
+
+def _sizing_problem(level, text):
+    """One WARNING/ERROR line on screen and in the run log, plus the closing recap."""
+    _sizing_line(f"{level}: {text}")
+    note_issue(level, text)
+
+
+def _sizing_override_keys(overrides, table):
+    keys = set()
+    for name in overrides:
+        keys.update(table.get(name, ()))
+    return keys
+
+
+def run_sizing_odoo(container, all_containers, path, dockerfiles_source, hardware=None):
+    """Write the recommended settings into the build folder's odoo.conf.
+
+    Returns (info, warnings, errors). Never raises.
+    """
+    global SIZING_ERRORS, CURRENT_STEP
+    if not isinstance(container.get('sizing'), dict):
+        return 0, 0, 0
+    info = warnings = errors = 0
+    label = "sizing odoo.conf"
+    CURRENT_STEP = label
+    try:
+        sizing = sizing_module()
+        if sizing is None:
+            errors += 1
+            print_step(label, "FAILED")
+            _sizing_problem("ERROR", "ownerp_sizing.py is missing or broken; odoo.conf left unchanged")
+            return info, warnings, errors
+        name = container['container_name']
+        hw = hardware if hardware is not None else sizing.probe_hardware()
+        instances = sizing.instances_from_config(all_containers or [container], selected=name)
+        if not any(i.name == name for i in instances):
+            instances += sizing.instances_from_config([container], selected=name)
+        plan = sizing.compute_plan(hw, instances)
+        result = next((r for r in plan.results if r.name == name), None)
+        mine = next((i for i in instances if i.name == name), None)
+        if result is None or not result.sized:
+            return 0, 0, 0               # block without a usable profile: nothing to apply
+        pg_overrides = _sizing_override_keys(mine.overrides, SIZING_PG_OVERRIDES)
+        SIZING_PLAN[name] = (result, pg_overrides)
+
+        version = container.get('odoo_version')
+        template_path = join(dockerfiles_source or DEFAULT_DOCKERFILES_SOURCE,
+                             f"v{version}-odoo", "odoo.conf")
+        template = sizing.parse_conf_values(sizing.read_text(template_path) or "")
+        sync = sizing.sync_odoo_conf(path, result.odoo,
+                                     _sizing_override_keys(mine.overrides, SIZING_ODOO_OVERRIDES),
+                                     template)
+        if sync.error:
+            errors += 1
+            print_step(label, "FAILED")
+            _sizing_problem("ERROR", f"{sync.error}; update continues with the unchanged odoo.conf")
+        else:
+            written = sum(1 for d in sync.decisions if d.action == "write") if sync.changed else 0
+            print_step(label, f"{written} written, {len(sync.decisions) - written} unchanged")
+            for d in sync.decisions:
+                if d.action == "keep" or (d.action == "write" and sync.changed):
+                    _sizing_line(sizing.format_decision(d))
+                    info += d.action == "keep"
+            if sync.backup:
+                _sizing_line(f"backup {sync.backup}")
+        for text in result.warnings:
+            _sizing_line(f"note: {text}")
+        if plan.over_budget:
+            warnings += 1
+            _sizing_problem(
+                "WARNING", f"over budget: the instances on this host need {plan.need_mib} MiB, "
+                f"the budget is {plan.budget_mib} MiB; the minimal staffing is applied")
+    except Exception as error:
+        errors += 1
+        print_step(label, "FAILED")
+        _sizing_problem("ERROR", f"sizing odoo.conf failed ({type(error).__name__}: {error}); "
+                                 "update continues with the unchanged odoo.conf")
+    finally:
+        CURRENT_STEP = ""
+        SIZING_ERRORS += errors
+    return info, warnings, errors
+
+
+def _odoo_container_down(name, runner):
+    """True when the Odoo container is stopped or already removed."""
+    sizing = sizing_module()
+    state = sizing.container_running(name, runner)
+    if state is not None:
+        return not state
+    # Unknown: after `docker rm` the inspect call fails with "No such object".
+    code, out = runner(["docker", "inspect", "-f", "{{.State.Running}}", name])
+    return code != 0 and "no such" in out.lower()
+
+
+def run_sizing_postgres(container, db_user, runner=None):
+    """Write the recommended settings into the database container's postgresql.conf.
+
+    Runs while Odoo is stopped (between the stop block and the build).
+    Returns (info, warnings, errors). Never raises.
+    """
+    global SIZING_ERRORS, CURRENT_STEP
+    name = container.get('container_name')
+    if not isinstance(container.get('sizing'), dict) or name not in SIZING_PLAN:
+        return 0, 0, 0
+    result, pg_overrides = SIZING_PLAN[name]
+    if not result.pg:
+        return 0, 0, 0
+    info = warnings = errors = 0
+    label = "sizing postgresql.conf"
+    CURRENT_STEP = label
+    try:
+        sizing = sizing_module()
+        if sizing is None:
+            return 0, 0, 0                # the odoo step has already reported it
+        runner = runner or default_runner
+        if not _odoo_container_down(name, runner):
+            warnings += 1
+            print_step(label, "skipped")
+            _sizing_problem("WARNING", "Odoo container still running, PostgreSQL change skipped")
+            return info, warnings, errors
+        path = expand_path(container['dockerfile_path'])
+        state, problem = sizing.load_state(path)
+        if problem:
+            errors += 1
+            print_step(label, "FAILED")
+            _sizing_problem("ERROR", f"state file unusable, PostgreSQL settings not changed: {problem}")
+            return info, warnings, errors
+        pg_state = state.setdefault("pg", {})
+        before = json.dumps(pg_state, sort_keys=True)
+        sync = sizing.sync_postgres(container.get('db_host'), result.pg, pg_overrides,
+                                    pg_state, runner, db_user)
+        if json.dumps(pg_state, sort_keys=True) != before:
+            problem = sizing.save_state(path, state)
+            sizing.ensure_dockerignore(path)
+            if problem:
+                errors += 1
+                _sizing_problem("ERROR", f"state file not saved: {problem}")
+        if sync.skipped:
+            info += 1
+            print_step(label, "skipped")
+            _sizing_line(sync.skipped)
+        elif sync.error:
+            errors += 1
+            print_step(label, "FAILED")
+            _sizing_problem("ERROR", f"{sync.error}; update continues")
+        else:
+            written = sum(1 for d in sync.decisions if d.action == "write") if sync.changed else 0
+            print_step(label, f"{written} written, {len(sync.decisions) - written} unchanged")
+            for d in sync.decisions:
+                if d.action == "keep" or (d.action == "write" and sync.changed):
+                    _sizing_line(sizing.format_decision(d))
+                    info += d.action == "keep"
+            if sync.restarted and sync.verified:
+                _sizing_line("database restarted, new values verified with SHOW")
+    except Exception as error:
+        errors += 1
+        print_step(label, "FAILED")
+        _sizing_problem("ERROR", f"sizing postgresql.conf failed ({type(error).__name__}: "
+                                 f"{error}); update continues")
+    finally:
+        CURRENT_STEP = ""
+        SIZING_ERRORS += errors
+    return info, warnings, errors
+
+
 def process_container(container, proxy_settings=None, dockerfiles_source=None,
-                      log_retention_days=None, run_comment=None):
+                      log_retention_days=None, run_comment=None, all_containers=None):
     """Process a single container update, with its run log closed on any exit.
 
     A thin wrapper around _process_container, which returns from a dozen
@@ -1996,13 +2235,13 @@ def process_container(container, proxy_settings=None, dockerfiles_source=None,
     """
     try:
         return _process_container(container, proxy_settings, dockerfiles_source,
-                                  log_retention_days, run_comment)
+                                  log_retention_days, run_comment, all_containers)
     finally:
         close_run_log()
 
 
 def _process_container(container, proxy_settings=None, dockerfiles_source=None,
-                       log_retention_days=None, run_comment=None):
+                       log_retention_days=None, run_comment=None, all_containers=None):
     """Process a single container update.
 
     Args:
@@ -2014,6 +2253,8 @@ def _process_container(container, proxy_settings=None, dockerfiles_source=None,
             (see resolve_log_retention); None uses the built-in default
         run_comment: Optional operator comment for this run, recorded in the
             run log header and the run history (see --comment)
+        all_containers: Every container entry of the config, for the sizing
+            plan of the whole host (default: only this container)
     """
     # Set default values if missing
     container.setdefault('delay_time', 30)
@@ -2271,6 +2512,12 @@ def _process_container(container, proxy_settings=None, dockerfiles_source=None,
     else:
         logger.debug("odoo_build_cache.py not present - build downloads every archive")
 
+    # Sizing: odoo.conf is settled (http_interface is synced above) before the
+    # build copies it into the image. Never fatal.
+    info, warn, err = run_sizing_odoo(container, all_containers, path, dockerfiles_source)
+    total_info += info
+    total_warnings += warn
+    total_errors += err
 
     # Stop and remove the container plus its image
     for step_label, step_command in (
@@ -2281,7 +2528,14 @@ def _process_container(container, proxy_settings=None, dockerfiles_source=None,
         total_info += info
         total_warnings += warn
         total_errors += err
-    
+
+    # Sizing: Odoo is down for the whole build, so a PostgreSQL restart costs
+    # no extra downtime. Never fatal.
+    info, warn, err = run_sizing_postgres(container, db_user)
+    total_info += info
+    total_warnings += warn
+    total_errors += err
+
     # Verify Dockerfile exists
     if not isfile('Dockerfile'):
         logger.error(f"Dockerfile not found in {path}")
@@ -2585,7 +2839,9 @@ def main():
     # Parse command line arguments
     args = parse_arguments()
 
-    global BUILD_NO_CACHE, RELEASE_FILE_OVERRIDE
+    global BUILD_NO_CACHE, RELEASE_FILE_OVERRIDE, SIZING_ERRORS
+    SIZING_ERRORS = 0
+    SIZING_PLAN.clear()
     BUILD_NO_CACHE = args.no_cache
     RELEASE_FILE_OVERRIDE = os.path.abspath(args.release_file) if args.release_file else None
 
@@ -2697,7 +2953,8 @@ def main():
             result = process_container(container, resolve_proxy_settings(config, container),
                                        dockerfiles_source,
                                        resolve_log_retention(config, container),
-                                       args.comment)
+                                       args.comment,
+                                       all_containers=config['containers'])
             warning_count = error_count = 0
             if isinstance(result, tuple):
                 success, info_count, warning_count, error_count = result
@@ -2747,6 +3004,8 @@ def main():
         print_step("log statistics",
                    f"{total_info_count} info, {total_warning_count} warning, "
                    f"{total_error_count} error")
+        if SIZING_ERRORS > 0:
+            print_step("sizing errors", str(SIZING_ERRORS))
 
         # Final Docker system cleanup after all containers are processed.
         # It prints its own step line, including the space it reclaimed.
@@ -2758,7 +3017,7 @@ def main():
     sys.stderr.flush()
     
     # Exit with appropriate code
-    return 0 if failure_count == 0 else 1
+    return exit_code_for(failure_count, SIZING_ERRORS)
 
 if __name__ == "__main__":
     try:
