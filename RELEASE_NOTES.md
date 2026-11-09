@@ -1,5 +1,62 @@
 # Release Notes
 
+## Sizing Assistant: Workers, Memory Limits and PostgreSQL from the Hardware (09.11.2026)
+
+*ownerp_sizing.py v1.0.0 (new) · update_docker_odoo.py v5.26.0 ·
+ownerp_validate.py v1.3.0 · ownerp_wizard.py v1.3.0 · ownerp_console.py v1.3.0 ·
+server-readiness.py v1.18.0 · pg-local-deploy.sh v1.5.0 · getScripts.py v9.38.0 ·
+fish/conf.d/33-aliases-backup.fish v2.1.0 · docs/COMPONENTS.md ·
+docs/usage/04-updates.md · docs/usage/09-reference.md · usage/AGENT.md*
+
+Worker counts, memory limits and PostgreSQL memory were copied from a template
+or guessed per host, and nobody could tell afterwards why a server ran with
+the values it had. The sizing assistant computes them for the whole host from
+one budget, gives a reason for every value, and never overwrites a value
+somebody set by hand. It is opt-in: only an instance whose `docker2update.yaml`
+entry has a `sizing:` block is touched.
+
+### Added
+
+- **`ownerp_sizing.py` and the `dosize` alias.** A read-only report with
+  hardware, budget, per-instance values, reasons and deviations. `--json`,
+  `--review NAME` (asks per value, y / N / q, needs a terminal) and
+  `--cpus N --ram-mib M` for a what-if. Exit 0 fits, 1 over budget or
+  warnings, 2 configuration unreadable. Delivered by `ups`, also in the
+  restricted Docker tier, and listed in the login overview.
+- **The `sizing:` block.** `profile` (required: live | test | demo), `users`
+  (optional, live), and the overrides `workers`, `max_cron_threads`,
+  `limit_memory_soft_mb`, `limit_memory_hard_mb`, `db_maxconn`,
+  `pg_shared_buffers_mb`, `pg_max_connections`. A value below the minimum is
+  ignored with a warning. Set it with `wizup` (menu "Set role/sizing"), in
+  `konsole`, or by hand; `doval` checks it.
+- **`doup` applies the sizing.** `odoo.conf` is written right after the
+  release-archive step with a `.bak_<timestamp>` backup and a gate that no
+  foreign setting may change. PostgreSQL is changed in the restart window
+  while Odoo is stopped, for a local database container only, verified with
+  `SHOW` and rolled back from `postgresql.conf.bak_<timestamp>` on failure.
+  `doup -s NAME` recomputes the whole host and applies one instance.
+- **`chk` check `odoo_sizing`.** Only on hosts with a sizing block, otherwise
+  SKIP. FAIL when the current need plus PostgreSQL exceeds RAM; WARN when over
+  budget or with plan warnings.
+- **`pg-local-deploy.sh` 1.5.0** asks the role and takes the PostgreSQL memory
+  values from the shared calculation; on any failure the four fixed profiles
+  apply as before.
+
+### Behaviour worth knowing
+
+- **A hand edit wins.** `doup` writes a value only when it still equals the
+  repo template's value, was accepted in `dosize --review NAME`, or is an
+  explicit override in the block. Every kept value is reported ("key: hand X,
+  recommended Y - unchanged"). To adopt a recommendation for such a key, put
+  the value in the block as an override or accept it in the review. Until the
+  first review `doup` writes only values that still equal the template.
+- **Sizing never aborts an update.** Errors are ERROR lines, the update goes on
+  with the unchanged config, the run exits 1 and the summary shows "sizing
+  errors N".
+- **Over budget is a warning.** A host too small even for the minimal staffing
+  gets that staffing and "over budget: minimal staffing needs N MiB, budget M
+  MiB"; `doup` exit status is unaffected.
+
 ## A Full Root Disk: Double Backup Runs, Zipped Hardlinks, No Reserve (09.11.2026)
 
 *container2backup.py v4.12.0 · server-readiness.py v1.17.0 · getScripts.py

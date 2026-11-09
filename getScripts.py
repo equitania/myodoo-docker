@@ -147,7 +147,7 @@ if os.environ.get('GETSCRIPTS_DEBUG', '').lower() in ('1', 'true', 'yes'):
     logger.debug("Debug logging enabled")
 
 # Script version and date
-SCRIPT_VERSION = "9.37.0"
+SCRIPT_VERSION = "9.38.0"
 SCRIPT_DATE = "09.11.2026"
 
 # Branch of myodoo-docker this server tracks - the single source of truth for
@@ -4311,6 +4311,7 @@ def copy_scripts(_myhome: str, myodoo_docker: str) -> None:
         "ownerp_cron.py",
         "ownerp_migrate.py",
         "ownerp_state.py",
+        "ownerp_sizing.py",
         "ownerp_console.py",
         "docker_table.py",
         # ownerp_tui.py was here until 13.08.2026; see RETIRED_SCRIPTS below.
@@ -6372,6 +6373,7 @@ RESTRICTED_DOCKER_SCRIPTS = (
     "ownerp_validate.py",      # doval, and the write check of the wizard
     "ownerp_wizard.py",        # wiz / wizup / wizbk
     "ownerp_state.py",         # dostat
+    "ownerp_sizing.py",        # dosize, imported by doup
     "ownerp_migrate.py",       # --from-docker: YAMLs from the running containers
     "docker_table.py",         # dps / dpsall / dpi
 )

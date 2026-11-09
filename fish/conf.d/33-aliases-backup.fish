@@ -1,5 +1,5 @@
 # Backup and Update Aliases
-# Version 2.0.0 | 13.08.2026
+# Version 2.1.0 | 09.11.2026
 
 # Backup operations
 alias dobk='$HOME/container2backup.py'
@@ -27,6 +27,11 @@ alias docron='$HOME/ownerp_cron.py'
 # the readiness checks. Reads only. Exit code 0 clean / 1 attention / 2 broken,
 # so it is usable from cron without parsing the text.
 alias dostat='$HOME/ownerp_state.py'
+
+# Sizing report: workers, memory limits and PostgreSQL per instance with the
+# reason for every value. Reads only. `dosize --review NAME` asks per value
+# (y / N / q) and needs a terminal. Exit 0 fits / 1 over budget or warnings / 2 broken.
+alias dosize='$HOME/ownerp_sizing.py'
 
 # The same facts, plus editing, in a full-screen interface. Starts nothing:
 # no updates, no backups, no container operations - `doup` and `dobk` stay

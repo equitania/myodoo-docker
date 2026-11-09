@@ -52,6 +52,7 @@ All commands run as **root** on the target server. The interactive login shell i
 | `ownerp_wizard.py` | `wiz` | Guided editing of `docker2update.yaml`: add an instance, or change one scalar field of an existing entry. Suggests from the file itself — next free host port across both port fields of every entry, unanimous `db_user`/`db_host`, shared build-folder pattern and image prefix; Enter takes the value in brackets. **The only tool here that writes to a customer configuration**: backup → temp file in the same directory → `ownerp_validate.py` against it → error means temp file *and* backup removed and the original left byte-identical; clean means `os.replace()`. Warnings never block. **Refuses without a TTY**, without `ownerp_validate.py`, or on an unparseable config. Scalars only; **never removes an entry**; `db_password` never echoed or shown | `--update [PATH]` (default `~/docker2update.yaml`) · `--version` (no flag = menu) |
 | `container2backup.py` | `dobk` (config: `edbk`) | Back up Odoo DBs (SQL + filestore) + service dirs per `~/container2backup.yaml`. Exit 1 + `Backup FAILED for …` when any database got no archive (container name not found, dump failed); that database's old archives are kept. Exit 1 also when a service backup fails (its retention is then skipped). Keys: per-service `exclude:` (globs relative to `source_path`; default `["*/zips"]` for `docker_builds`; `[]` disables, an explicit list replaces; 7z/zip/gzip/zstd), `defaults.min_free_percent` (10) / `defaults.min_free_gb` (5) = free-space reserve max(total×pct, GB) checked before every DB/service backup (refusal = ERROR, item failed, old archives kept; both 0 disables). Exclusive lock `/run/lock/container2backup.lock`: a second run exits 1 and writes nothing (4.12.0) | `--sql-only` · `--validate` |
 | `ownerp_validate.py` | `doval` | Read-only schema validation of `docker2update.yaml` and/or `container2backup.yaml` — structure, required fields, types, enums, port form, duplicate container/database names and host ports (active entries only), path existence (warning), unknown keys with a suggestion (warning). Findings name the file and line number; never prints a `*password` value; never writes | `--update [PATH]` (default `~/docker2update.yaml`) · `--backup [PATH]` (default `~/container2backup.yaml`) · `--version` (no flag = both, at default paths) |
+| `ownerp_sizing.py` | `dosize` | Sizing report: workers, cron threads, memory limits, `db_maxconn` and PostgreSQL memory per instance with a reason per value, computed for the whole host from one budget; read-only. Imported by `doup`, `wiz`, `konsole`, `chk`, `pg-local-deploy.sh`. Exit 0 fits / 1 over budget or warnings / 2 config unreadable | `[--json]` `[--review NAME]` (asks per value y/N/q, needs a terminal) `[--cpus N --ram-mib M]` (what-if) |
 | `ssl-renew.sh` | — | `certbot renew`; nginx bounced only when a cert is actually due | no flags (daily cron) |
 | `nginx-cert-guard.py` | — | Keep nginx up when one vhost breaks; DNS-drift early warning | mode (required): `--reconcile` \| `--check` \| `--list` \| `--restore DOMAIN` · `--start` (with --reconcile) · `--apply` (with --check) · `--dry-run` · `--nginx-conf-dir DIR` · `--state-file FILE` |
 | `cleanup-weblogs.py` | — | Rotate nginx logs, GDPR purge > 7 days | `--clear-cache` (also wipe proxy/FastCGI caches — off by default) |
@@ -142,6 +143,40 @@ only the pre-selection. `-s` beats `active: false`, so a parked system runs when
 `doup` keeps starting the runner directly until `~/.ownerp_tui_default` exists (`d` in the
 screen, or `ownerp_tui.py --make-default`), and even then only for an interactive shell
 with no arguments.
+
+### Size workers, memory and PostgreSQL (opt-in per instance)
+```fish
+dosize                                           # report: hardware, budget, values, reasons, deviations
+dosize --json                                    # machine-readable
+dosize --review live-odoo                        # asks per value (y / N / q); needs a terminal
+dosize --cpus 8 --ram-mib 32768                  # what-if for other hardware
+doup -s live-odoo                                # recompute the whole host, apply to live-odoo only
+echo $status                                     # dosize: 0 fits, 1 over budget/warnings, 2 config unreadable
+```
+Only an instance whose `docker2update.yaml` entry has a `sizing:` block is sized (set it with
+`wizup` > "Set role/sizing", in `konsole`, or by hand). Keys: `profile` (required: live|test|demo),
+`users` (int >= 1, live), overrides `workers`, `max_cron_threads`, `limit_memory_soft_mb`,
+`limit_memory_hard_mb`, `db_maxconn`, `pg_shared_buffers_mb`, `pg_max_connections` (int >= 1, the
+`*_mb` keys >= 64; a lower value is ignored with a warning). Instances without a block count with
+their current `odoo.conf`; `active: false` entries do not count.
+- **A hand edit wins.** `doup` writes a value only if it still equals the repo template's value,
+  was accepted in `dosize --review NAME`, or is an override in the block. Kept hand values are
+  reported ("key: hand X, recommended Y - unchanged"). To re-adopt a recommendation for such a
+  key: put the value in the block as an override, or accept it in `dosize --review NAME`. Until
+  the first review `doup` writes only template-equal values and reports the rest. State:
+  `<build folder>/.sizing_state.json`.
+- **`doup` never aborts because of sizing**, but sizing errors (unreadable state/conf, PostgreSQL
+  rollback, missing module, unreadable hardware) are ERROR lines, the update continues with the
+  unchanged config, the run **exits 1** and the summary shows "sizing errors N".
+- **Over budget is a warning**, not an error: the minimal staffing is set and "over budget:
+  minimal staffing needs N MiB, budget M MiB" is printed (`doup` WARNING, exit unaffected; `chk`
+  `odoo_sizing` WARN, FAIL if current need + PostgreSQL > RAM; `dosize` exit 1).
+- PostgreSQL is changed in the restart window, only for a local db container; external or stopped
+  db containers are skipped (info). Values set via `ALTER SYSTEM`/command line stay hand edits.
+  Backups `odoo.conf.bak_<timestamp>` / `postgresql.conf.bak_<timestamp>`; changes are verified
+  with `SHOW`, otherwise rolled back.
+- `pg-local-deploy.sh` (1.5.0) asks the role and takes memory values from `ownerp_sizing.py pg
+  --json`; on any failure the four fixed profiles apply.
 
 ### Validate configuration after editing either YAML
 ```bash

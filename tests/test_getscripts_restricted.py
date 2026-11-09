@@ -343,5 +343,12 @@ class DockerTierTest(unittest.TestCase):
              mock.patch.object(grp, "getgrnam", side_effect=KeyError("docker")):
             self.assertEqual(gs.restricted_docker_state(), "none")
 
+class SizingModuleTierTest(unittest.TestCase):
+    def test_restricted_docker_tier_gets_the_sizing_module(self):
+        self.assertIn("ownerp_sizing.py", gs.RESTRICTED_DOCKER_SCRIPTS)
+        src = open(gs.__file__, encoding="utf-8").read()
+        self.assertIn('        "ownerp_sizing.py",\n', src)
+
+
 if __name__ == "__main__":
     unittest.main()

@@ -11,9 +11,10 @@ in this repository, stay in `CLAUDE.md`.
 
 ### Key Components
 
-#### 1. getScripts.py (v9.37.0)
+#### 1. getScripts.py (v9.38.0)
 - **Purpose**: Main installation and update script
 - **Features**:
+  - **Delivers `ownerp_sizing.py`** (v9.38.0, 09.11.2026): in the `copy_scripts()` list and in `RESTRICTED_DOCKER_SCRIPTS` (restricted Docker tier); fish alias `dosize` (`33-aliases-backup.fish` 2.1.0) and a row in the login overview
   - Legacy root-crontab lines neutralised on every run (v9.37.0, 09.11.2026):
     `neutralise_legacy_root_crontab()` calls
     `setup-maintenance-cron.sh --neutralise-legacy` whenever
@@ -342,10 +343,11 @@ in this repository, stay in `CLAUDE.md`.
   - Automated restart management
   - Module updates for Odoo
 
-#### 4. update_docker_odoo.py (v5.25.0)
+#### 4. update_docker_odoo.py (v5.26.0)
 - **Purpose**: Automated Docker container updates for v16+ Odoo instances
   (image rebuild, container re-creation, module update), driven by
   `docker2update.yaml`
+- **Sizing from the hardware** (v5.26.0, 09.11.2026): for an instance whose `docker2update.yaml` entry has a `sizing:` block, `doup` computes workers, memory limits and PostgreSQL memory via `ownerp_sizing.py` (opt-in). A hand edit wins; `-s NAME` recomputes the host and applies one instance; sizing errors are ERROR lines, never an abort, but the run exits 1 ("sizing errors N"); over budget is a WARNING. `odoo.conf` gets a `.bak_<timestamp>` and a regression gate; PostgreSQL is changed in the restart window for local database containers only, verified with `SHOW`, rolled back on failure. See `docs/usage/04-updates.md`
 - **Features**:
   - **`--release-file PATH`** (v5.25.0, 14.10.2026): installs exactly this
     release instead of asking the release manager (skips
@@ -585,7 +587,8 @@ in this repository, stay in `CLAUDE.md`.
   carry both instructions **and** the `ca-certificates/` directory beside them —
   a `COPY` without its directory would break every fresh build
 
-#### 6. ownerp_validate.py (v1.2.0)
+#### 6. ownerp_validate.py (v1.3.0)
+- **`sizing:` block schema** (v1.3.0): `profile` (live | test | demo), `users`, and the seven override keys (`workers`, `max_cron_threads`, `limit_memory_soft_mb`, `limit_memory_hard_mb`, `db_maxconn`, `pg_shared_buffers_mb`, `pg_max_connections`), asserted equal to `OVERRIDE_KEYS` in `ownerp_sizing.py`
 - **v1.2.0 (09.11.2026):** knows the container2backup keys `exclude` (list of
   glob patterns per service, each entry checked) and `defaults.min_free_percent`
   / `defaults.min_free_gb` (numbers ≥ 0), so they no longer show up as unknown keys
@@ -610,10 +613,11 @@ in this repository, stay in `CLAUDE.md`.
 - **`update_docker_odoo.py --validate` and `container2backup.py --validate`**
   both delegate to it
 
-#### 7. ownerp_wizard.py (v1.2.0)
+#### 7. ownerp_wizard.py (v1.3.0)
 - **Purpose**: Guided editing of `docker2update.yaml` **and**
   `container2backup.yaml` — add an entry, or change one field of an existing
   one. `wiz` asks which file, `wizup`/`wizbk` go straight there
+- **Role and sizing** (v1.3.0): `wizup` menu "Set role/sizing" writes the `sizing:` block (one-line mapping); plan warnings are shown before asking
 - **The only tool in this set that writes to a customer's configuration**, so
   the write path is the substance: timestamped backup → build in memory →
   temporary file **in the same directory** → `ownerp_validate.py` runs against
@@ -826,10 +830,11 @@ in this repository, stay in `CLAUDE.md`.
 - **Exit code** `0` clean / `1` needs attention / `2` broken, plus `--json`, so
   cron and monitoring never parse the text
 
-#### 11. ownerp_console.py (v1.2.0)
+#### 11. ownerp_console.py (v1.3.0)
 - **Purpose**: The ownERP console — server state and configuration editing in
   a full-screen interface. Started with `konsole`; stage 3 (last) of
   `docs/superpowers/specs/2026-08-13-ownerp-console-design.md`
+- **Role and users** (v1.3.0): form fields Role / Concurrent users write the `sizing:` block
 - **Owns no data and no write path**: facts from `ownerp_state.py`,
   configuration changes through `ownerp_wizard.py`, cron changes through
   `ownerp_cron.py`. The suite fails if a write call appears here — a second
@@ -1065,7 +1070,8 @@ in this repository, stay in `CLAUDE.md`.
   risk an expiry would guard against — a mute nobody remembers — is already
   covered by the visible `[MUTED]` line and the count in every summary
 
-#### 16. server-readiness.py (v1.17.0)
+#### 16. server-readiness.py (v1.18.0)
+- **`odoo_sizing`** (v1.18.0): only on hosts with a `sizing:` block (otherwise SKIP). FAIL when the current configuration plus PostgreSQL exceeds RAM; WARN when over budget, above budget or with plan warnings; OK with a note listing deviations. Fix line: `dosize`
 - **v1.17.0 (09.11.2026):** new check `backup_capacity` ("Backup growth").
   Projects each archive series at full retention (average of the recent
   archives × `retention_days` × runs per day). FAIL when the additional need
@@ -1344,3 +1350,35 @@ in this repository, stay in `CLAUDE.md`.
   deadlocks against the serving process — hence `server.uninstall`. One active
   mail server afterwards is Odoo's neutralization placeholder (host `invalid`)
 - **Not readable by server.restore**: encrypted (`.gpg`) and SQL-only backups
+
+#### 20. ownerp_sizing.py (v1.0.0)
+- **Purpose**: Sizing assistant. Computes workers, cron threads, memory limits,
+  `db_maxconn` and PostgreSQL memory for the whole host from one budget, with a
+  reason for every value. Started with `dosize`; imported by `update_docker_odoo.py`
+  (`doup`), `ownerp_wizard.py`, `ownerp_console.py`, `server-readiness.py` and
+  `pg-local-deploy.sh` (`ownerp_sizing.py pg --json`), so all show the same result
+- **Opt-in**: only an instance whose `docker2update.yaml` entry has a `sizing:`
+  block is sized. Keys: `profile` (required: live | test | demo), `users`
+  (optional, integer >= 1, live only), overrides `workers`, `max_cron_threads`,
+  `limit_memory_soft_mb`, `limit_memory_hard_mb`, `db_maxconn`,
+  `pg_shared_buffers_mb`, `pg_max_connections` (minimum 1, the `*_mb` keys
+  minimum 64; a lower value is ignored with a warning)
+- **Calculation**: processes = 2 x CPU + 1; OS reserve 1 GiB + 10 % RAM;
+  PostgreSQL 25 % RAM split live 3 / test 1 / demo 1; 325 MiB per Odoo process;
+  live minimum 2 workers; test 2 workers / cron 1 / 512 / 1200 MiB; demo 1 worker
+  / 384 / 1024 MiB; live limits between 600/1600 and 2048/2560 MiB;
+  `db_maxconn` 16; `max_connections` = max(100, processes x 16 + 20). Instances
+  without a block count with their current `odoo.conf`; parked entries
+  (`active: false`) do not count
+- **Never refuses**: if even the minimal staffing does not fit, it sets it and
+  warns "over budget: minimal staffing needs N MiB, budget M MiB"
+- **A hand edit wins**: a value is written only when it is still the repo
+  template's value, was accepted in `dosize --review NAME`, or is an explicit
+  override in the block. State per build folder in `.sizing_state.json`
+- **`dosize`**: report (hardware, budget, per-instance values, reasons,
+  deviations); `--json`; `--review NAME` asks per value (y / N / q) and needs a
+  terminal; `--cpus N --ram-mib M` what-if. Exit 0 fits, 1 over budget or
+  warnings, 2 config unreadable
+- **`pg-local-deploy.sh` (v1.5.0)**: asks the role (German dialog) and takes the
+  memory settings from `ownerp_sizing.py pg --json` as an override block after
+  the base profile; any failure falls back to the four fixed profiles

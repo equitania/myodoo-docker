@@ -101,6 +101,9 @@ class DeliveredScriptsTest(unittest.TestCase):
                      "server_hardening.py", "hardening_config.yaml"):
             self.assertIn(name, delivered)
 
+    def test_the_sizing_module_is_delivered_and_committed_executable(self):
+        self.assertIn("ownerp_sizing.py", delivered_names())
+
     def test_delivery_and_the_version_check_agree(self):
         """Two lists, one fact. On ownerp_mute.py they disagreed once: ups would
         install it and the version check would never notice a stale copy."""

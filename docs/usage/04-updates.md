@@ -130,6 +130,87 @@ womit jeder Container über seinen veröffentlichten Port unerreichbar wäre. Au
 hier wird vorher eine `.bak_<Zeitstempel>` geschrieben, und der Schreibvorgang
 wird verweigert, sobald sich sonst irgendeine Einstellung ändern würde.
 
+<a id="de-sizing"></a>
+### Sizing: Worker, Speicher, PostgreSQL
+
+Wer will, lässt `doup` die Worker-Zahl, die Speichergrenzen und die
+PostgreSQL-Speicherwerte aus der Hardware des Hosts berechnen. Das ist
+freiwillig: nur eine Instanz, deren Eintrag in `docker2update.yaml` einen
+`sizing:`-Block hat, wird behandelt.
+
+```yaml
+instances:
+  live-odoo:
+    sizing:
+      profile: live        # live | test | demo (Pflicht)
+      users: 40            # optional, ganze Zahl >= 1, nur bei live sinnvoll
+      workers: 6           # optional: fester Wert statt Empfehlung
+```
+
+Der Block wird mit `wizup` (Menü „Set role/sizing“), in `konsole` (Felder Role /
+Concurrent users) oder von Hand gesetzt. Außer `profile` und `users` sind
+diese Überschreibungen erlaubt: `workers`, `max_cron_threads`,
+`limit_memory_soft_mb`, `limit_memory_hard_mb`, `db_maxconn`,
+`pg_shared_buffers_mb`, `pg_max_connections` (ganze Zahlen, mindestens 1, die
+`*_mb`-Schlüssel mindestens 64; ein kleinerer Wert wird mit Warnung ignoriert
+und der berechnete bleibt).
+
+Gerechnet wird für den ganzen Host mit einem Budget: Prozesse = 2 × CPU + 1,
+Reserve für das Betriebssystem 1 GiB + 10 % RAM, PostgreSQL 25 % RAM (live 3 :
+test 1 : demo 1), 325 MiB je Odoo-Prozess. Instanzen ohne Block zählen mit
+ihrer aktuellen `odoo.conf`; geparkte Einträge (`active: false`) zählen nicht.
+Beispiel 4 CPU / 16 GiB, live + test: live 5 Worker, Cron 1, Soft-Limit
+1189 MiB, Hard-Limit 1600 MiB, PostgreSQL `shared_buffers` 3072MB,
+`max_connections` 132.
+
+**Eine Handänderung gewinnt.** `doup` schreibt einen Wert nur, wenn er noch dem
+Wert der Repo-Vorlage entspricht, wenn er in `dosize --review NAME` angenommen
+wurde oder wenn er im Block als Überschreibung steht. Jeder von Hand
+gehaltene Wert wird gemeldet („key: hand X, recommended Y - unchanged“). Eine
+Empfehlung für einen von Hand gehaltenen Schlüssel übernehmen: den Wert als
+Überschreibung in den Block schreiben oder ihn in `dosize --review NAME`
+annehmen. Bis zur ersten Durchsicht schreibt `doup` nur Werte, die noch der
+Vorlage entsprechen, und meldet den Rest. Der Stand liegt je Build-Ordner in
+`.sizing_state.json` (per `.dockerignore` aus dem Image gehalten).
+
+```fish
+dosize                  # Bericht: Hardware, Budget, Werte je Instanz, Gründe
+dosize --json           # dasselbe maschinenlesbar
+dosize --review live-odoo   # fragt je Wert (y / N / q); braucht ein Terminal
+dosize --cpus 8 --ram-mib 32768   # Was-wäre-wenn
+```
+
+Exit-Status von `dosize`: 0 passt, 1 über Budget oder Warnungen, 2 Konfiguration
+nicht lesbar.
+
+`doup` bricht wegen des Sizings nie ab. Fehler (nicht lesbarer Stand oder
+`odoo.conf`, PostgreSQL-Rollback, fehlendes Modul, nicht lesbare Hardware)
+erscheinen als ERROR-Zeile, das Update läuft mit unveränderter Konfiguration
+weiter, der Lauf endet mit Exit-Status 1, und die Zusammenfassung zeigt „sizing
+errors N“. Passt selbst die kleinste Besetzung nicht ins Budget, setzt der
+Assistent sie trotzdem und warnt („over budget“); das ist eine WARNING und
+ändert den Exit-Status von `doup` nicht. `doup -s NAME` rechnet den ganzen Host
+neu und wendet nur auf NAME an. `odoo.conf` wird gleich nach dem
+Release-Archiv-Schritt geschrieben, mit Sicherung `odoo.conf.bak_<Zeitstempel>`
+und der Sperre, dass sich keine fremde Einstellung ändert.
+
+PostgreSQL wird im Neustartfenster angepasst, während Odoo gestoppt ist, und
+nur bei einer lokalen DB-Instanz (ein Container mit Mount auf
+`/var/lib/postgresql/data`); eine externe oder gestoppte Datenbank wird mit
+einer Info-Zeile übersprungen. Werte, die außerhalb von `postgresql.conf`
+stehen (`ALTER SYSTEM`, Kommandozeile), bleiben als Handänderung unangetastet.
+Vorher entsteht `postgresql.conf.bak_<Zeitstempel>`; bei `shared_buffers` oder
+`max_connections` folgt auf `CHECKPOINT` ein `docker restart -t 120` mit bis
+zu 5 Minuten Wartezeit auf `pg_isready`, andere Schlüssel werden nur neu
+geladen. Jeder geänderte Schlüssel wird mit `SHOW` geprüft; wird er nicht
+übernommen, stellt `doup` die Sicherung wieder her und meldet „rolled back“.
+
+`server-readiness.py` (`chk`) prüft nur auf Hosts mit Sizing-Block
+(`odoo_sizing`; sonst SKIP): FAIL, wenn aktueller Bedarf plus PostgreSQL das RAM
+übersteigen, WARN bei Überschreitung oder Warnungen. `pg-local-deploy.sh`
+fragt die Rolle und nimmt die Speicherwerte aus der gemeinsamen Berechnung;
+fällt sie aus, gelten die vier festen Profile unverändert.
+
 <a id="de-odoo-uid-8069"></a>
 ### Besitzer der Odoo-Daten: UID/GID 8069
 
@@ -315,6 +396,81 @@ warns when it is unset, and **Odoo 20 changes the default to `127.0.0.1`**, whic
 would leave every container unreachable through its published port. A
 `.bak_<timestamp>` is written first here too, and the write is refused as soon as
 any other setting would change.
+
+<a id="en-sizing"></a>
+### Sizing: Workers, Memory, PostgreSQL
+
+If you want, `doup` computes the worker count, the memory limits and the
+PostgreSQL memory settings from the host's hardware. This is opt-in: only an
+instance whose entry in `docker2update.yaml` has a `sizing:` block is handled.
+
+```yaml
+instances:
+  live-odoo:
+    sizing:
+      profile: live        # live | test | demo (required)
+      users: 40            # optional, integer >= 1, only meaningful for live
+      workers: 6           # optional: fixed value instead of the recommendation
+```
+
+Set the block with `wizup` (menu "Set role/sizing"), in `konsole` (fields Role /
+Concurrent users) or by hand. Besides `profile` and `users` these overrides are
+allowed: `workers`, `max_cron_threads`, `limit_memory_soft_mb`,
+`limit_memory_hard_mb`, `db_maxconn`, `pg_shared_buffers_mb`,
+`pg_max_connections` (integers, minimum 1, the `*_mb` keys minimum 64; a lower
+value is ignored with a warning and the computed one is kept).
+
+The calculation is host-wide with one budget: processes = 2 × CPU + 1, OS
+reserve 1 GiB + 10 % RAM, PostgreSQL 25 % RAM (live 3 : test 1 : demo 1),
+325 MiB per Odoo process. Instances without a block count with their current
+`odoo.conf`; parked entries (`active: false`) do not count. Example 4 CPU /
+16 GiB, live + test: live 5 workers, cron 1, soft limit 1189 MiB, hard limit
+1600 MiB, PostgreSQL `shared_buffers` 3072MB, `max_connections` 132.
+
+**A hand edit wins.** `doup` writes a value only when it is still the repo
+template's value, when it was accepted in `dosize --review NAME`, or when it is
+an explicit override in the block. Every value kept by hand is reported
+("key: hand X, recommended Y - unchanged"). To adopt a recommendation for a key
+kept by hand, put the value into the block as an override or accept it in
+`dosize --review NAME`. Until the first review `doup` writes only values that
+still equal the template and reports the rest. The state lives per build folder
+in `.sizing_state.json` (kept out of the image via `.dockerignore`).
+
+```fish
+dosize                  # report: hardware, budget, per-instance values, reasons
+dosize --json           # the same, machine-readable
+dosize --review live-odoo   # asks per value (y / N / q); needs a terminal
+dosize --cpus 8 --ram-mib 32768   # what-if
+```
+
+`dosize` exit status: 0 fits, 1 over budget or warnings, 2 configuration
+unreadable.
+
+`doup` never aborts because of sizing. Errors (unreadable state or `odoo.conf`,
+PostgreSQL rollback, missing module, unreadable hardware) appear as ERROR lines,
+the update continues with the unchanged config, the run exits 1, and the summary
+shows "sizing errors N". If even the minimal staffing does not fit the budget
+the assistant still sets it and warns ("over budget"); that is a WARNING and
+does not change `doup`'s exit status. `doup -s NAME` recomputes the whole host
+and applies only to NAME. `odoo.conf` is written right after the release-archive
+step, with a backup `odoo.conf.bak_<timestamp>` and a gate that no foreign
+setting may change.
+
+PostgreSQL is adjusted in the restart window while Odoo is stopped, and only for
+a local database container (a container with a mount on
+`/var/lib/postgresql/data`); an external or stopped database is skipped with an
+info line. Values set outside `postgresql.conf` (`ALTER SYSTEM`, command line)
+are kept as hand edits. A backup `postgresql.conf.bak_<timestamp>` is written
+first; for `shared_buffers` or `max_connections` a `CHECKPOINT` is followed by
+`docker restart -t 120` and up to 5 minutes of waiting for `pg_isready`, other
+keys are only reloaded. Every changed key is verified with `SHOW`; if it was not
+taken, `doup` restores the backup and reports "rolled back".
+
+`server-readiness.py` (`chk`) checks only on hosts with a sizing block
+(`odoo_sizing`; otherwise SKIP): FAIL when the current need plus PostgreSQL
+exceeds RAM, WARN when over budget or with warnings. `pg-local-deploy.sh` asks
+for the role and takes its memory values from the shared calculation; if that
+fails, the four fixed profiles apply unchanged.
 
 <a id="en-odoo-uid-8069"></a>
 ### Owner of the Odoo data: UID/GID 8069

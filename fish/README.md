@@ -25,7 +25,7 @@ fish/
 │   ├── 30-aliases-system.linux.fish # System aliases (Linux)
 │   ├── 31-aliases-git.fish       # Git aliases
 │   ├── 32-aliases-docker.fish    # Docker aliases
-│   ├── 33-aliases-backup.fish    # Backup & update aliases (dobk, edbk, llbk, doval, wiz, wizup, wizbk, docron, dostat, konsole, edup)
+│   ├── 33-aliases-backup.fish    # Backup & update aliases (dobk, edbk, llbk, doval, wiz, wizup, wizbk, docron, dostat, dosize, konsole, edup)
 │   ├── 34-aliases-nginx.fish     # Nginx aliases (ngx+, ngx-, etc.)
 │   ├── 35-aliases-odoo.fish      # Odoo aliases
 │   ├── 40-completions.fish       # Dynamic completions
@@ -75,6 +75,7 @@ fish/
 | `wizbk` | `wiz` pre-selected for the backup configuration / `wiz` mit vorausgewählter Backup-Konfiguration |
 | `docron` | Maintenance cron overview — when jobs run and when they last ran / Wartungs-Cron-Übersicht, wann Jobs laufen und zuletzt liefen |
 | `dostat` | The whole server on one page: instances, backup ages, maintenance jobs, readiness (read-only) / der ganze Server auf einer Seite (rein lesend) |
+| `dosize` | Sizing report: workers, memory limits and PostgreSQL per instance with reasons (read-only); `--review NAME` asks per value / Sizing-Bericht je Instanz mit Begründung (rein lesend); `--review NAME` fragt Wert für Wert |
 | `konsole` | Full-screen console for the same facts plus editing; starts nothing itself / Vollbild-Konsole für dieselben Fakten plus Bearbeitung, startet selbst nichts |
 
 ### Nginx

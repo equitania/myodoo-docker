@@ -104,6 +104,10 @@ class AdvertisedCommandsTest(unittest.TestCase):
                         "wizup", "wizbk"):
             self.assertIn(command, advertised)
 
+    def test_dosize_is_defined_and_advertised(self):
+        self.assertIn("dosize", defined_names())
+        self.assertIn("dosize", advertised_commands())
+
     def test_the_withdrawn_tui_is_no_longer_advertised(self):
         """A panel that names a command an operator cannot run is worse than
         one that omits it: they type it at 3am and get 'command not found'."""
