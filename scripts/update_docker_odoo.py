@@ -2099,10 +2099,9 @@ def run_sizing_odoo(container, all_containers, path, dockerfiles_source, hardwar
             instances += sizing.instances_from_config([container], selected=name)
         plan = sizing.compute_plan(hw, instances)
         result = next((r for r in plan.results if r.name == name), None)
-        mine = next((i for i in instances if i.name == name), None)
         if result is None or not result.sized:
             return 0, 0, 0               # block without a usable profile: nothing to apply
-        pg_overrides = _sizing_override_keys(mine.overrides, SIZING_PG_OVERRIDES)
+        pg_overrides = _sizing_override_keys(result.overrides, SIZING_PG_OVERRIDES)
         SIZING_PLAN[name] = (result, pg_overrides)
 
         version = container.get('odoo_version')
@@ -2110,7 +2109,7 @@ def run_sizing_odoo(container, all_containers, path, dockerfiles_source, hardwar
                              f"v{version}-odoo", "odoo.conf")
         template = sizing.parse_conf_values(sizing.read_text(template_path) or "")
         sync = sizing.sync_odoo_conf(path, result.odoo,
-                                     _sizing_override_keys(mine.overrides, SIZING_ODOO_OVERRIDES),
+                                     _sizing_override_keys(result.overrides, SIZING_ODOO_OVERRIDES),
                                      template)
         if sync.error:
             errors += 1

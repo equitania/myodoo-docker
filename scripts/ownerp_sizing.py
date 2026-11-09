@@ -27,7 +27,7 @@ import math
 import os
 import re
 import time
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Callable, Dict, List, Optional, Set, Tuple
 
 SCRIPT_VERSION = "1.0.0"
@@ -90,6 +90,7 @@ class InstanceResult:
     pg: Dict[str, str]
     reasons: List[str]
     warnings: List[str]
+    overrides: Dict[str, int] = field(default_factory=dict)   # applied, sanitised
 
 
 @dataclass
@@ -389,7 +390,7 @@ def compute_plan(hw: Hardware, instances: List[Instance]) -> Plan:
         results.append(InstanceResult(
             name=s.inst.name, role=s.inst.role, sized=sized, workers=s.workers,
             cron=s.cron, processes=processes, odoo=odoo, pg=pg,
-            reasons=s.reasons, warnings=s.warnings))
+            reasons=s.reasons, warnings=s.warnings, overrides=dict(s.ov)))
 
     return Plan(hardware=hw, budget_mib=budget, need_mib=need, pg_total_mib=pg_total,
                 results=results, over_budget=over, warnings=warnings)

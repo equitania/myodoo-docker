@@ -1270,9 +1270,10 @@ CONF_V18 = (
 class FakeDocker:
     """Answers the docker calls of the sizing PostgreSQL step."""
 
-    def __init__(self, pgdata, odoo_running=False, show=None):
+    def __init__(self, pgdata, odoo_running=False, show=None, odoo_inspect=None):
         self.pgdata = pgdata
         self.odoo_running = odoo_running
+        self.odoo_inspect = odoo_inspect  # fixed (code, text) for the Odoo container
         self.show = show              # None: echo the value from postgresql.conf
         self.calls = []
 
@@ -1283,6 +1284,8 @@ class FakeDocker:
                 return 0, json.dumps([{"Destination": "/var/lib/postgresql/data",
                                        "Source": self.pgdata}])
             if argv[-1] == "live-odoo":
+                if self.odoo_inspect is not None:
+                    return self.odoo_inspect
                 return 0, "true" if self.odoo_running else "false"
             return 0, "true"
         if argv[:2] == ["docker", "exec"] and "psql" in argv:
@@ -1461,6 +1464,31 @@ class SizingStepsTest(unittest.TestCase):
         self.assertEqual(docker.restarted(), [])
         self.assertEqual(counts[1], 1)
         self.assertEqual(counts[2], 0)
+
+    def test_removed_odoo_container_lets_the_postgres_step_proceed(self):
+        live, pgdata, docker = self.pg_setup(
+            odoo_inspect=(1, "Error: No such object: live-odoo"))
+        counts, _ = self.run_pg(live, docker)
+        self.assertEqual(counts[1:], (0, 0))
+        self.assertIn(["docker", "restart", "-t", "120", "live-db"], docker.restarted())
+
+    def test_unknown_odoo_state_other_than_removed_skips_the_postgres_step(self):
+        live, pgdata, docker = self.pg_setup(odoo_inspect=(1, "permission denied"))
+        counts, _ = self.run_pg(live, docker)
+        self.assertEqual(docker.restarted(), [])
+        self.assertEqual(counts[1], 1)
+
+    def test_ignored_override_does_not_overwrite_a_hand_edit(self):
+        live = self.container("live-odoo", {"profile": "live", "max_cron_threads": 0},
+                              conf=CONF_V18.replace("max_cron_threads = 2", "max_cron_threads = 0"))
+        self.run_odoo(live, [live])
+        self.assertIn("max_cron_threads = 0", self.conf_of(live))
+
+    def test_applied_override_still_wins_over_a_hand_edit(self):
+        live = self.container("live-odoo", {"profile": "live", "workers": 8},
+                              conf=CONF_V18.replace("workers = 3", "workers = 7"))
+        self.run_odoo(live, [live])
+        self.assertIn("workers = 8", self.conf_of(live))
 
     def test_postgres_step_restarts_verifies_and_reports(self):
         live, pgdata, docker = self.pg_setup()
