@@ -413,7 +413,23 @@ def load_state(build_dir: str) -> Tuple[dict, Optional[str]]:
         return {}, "cannot read %s: %s" % (path, error)
     if not isinstance(state, dict):
         return {}, "cannot read %s: not a JSON object" % path
+    shape = _state_shape_problem(state)
+    if shape:
+        return {}, "cannot read %s: %s" % (path, shape)
     return state, None
+
+
+def _state_shape_problem(state: dict) -> Optional[str]:
+    for section in ("odoo", "pg"):
+        entries = state.get(section, {})
+        if not isinstance(entries, dict):
+            return "'%s' is not an object" % section
+        for key, entry in entries.items():
+            if (not isinstance(entry, dict) or entry.get("status") not in ("accepted", "hand")
+                    or not isinstance(entry.get("known"), list)
+                    or not all(isinstance(v, str) for v in entry["known"])):
+                return "invalid entry %s.%s" % (section, key)
+    return None
 
 
 def save_state(build_dir: str, state: dict) -> Optional[str]:
@@ -554,9 +570,7 @@ def _remember(state: dict, section: str, decision: KeyDecision) -> None:
         if decision.action != "write":
             return
         entry["status"] = "accepted"     # an override replaced the hand value
-    known = entry.setdefault("known", [])
-    if decision.recommended not in known:
-        known.append(decision.recommended)
+    entry["known"] = [decision.recommended]   # only the value now in the file
 
 
 def sync_odoo_conf(build_dir: str, recommended: Dict[str, str], overrides: Set[str],
@@ -567,7 +581,7 @@ def sync_odoo_conf(build_dir: str, recommended: Dict[str, str], overrides: Set[s
         with open(path, encoding="utf8") as handle:
             original = handle.read()
         mode = os.stat(path).st_mode & 0o7777
-    except OSError as error:
+    except (OSError, ValueError) as error:
         return ConfSync(False, [], "cannot read %s: %s" % (path, error), None)
 
     state, problem = load_state(build_dir)

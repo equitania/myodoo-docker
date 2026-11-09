@@ -195,6 +195,53 @@ class TestSync(Base):
         self.assertEqual(os.stat(self.conf).st_mode & 0o777, 0o640)
 
 
+class TestReview(Base):
+    def test_known_holds_only_the_value_in_the_file(self):
+        self.write(CONF.replace("workers = 3", "workers = 8"))
+        self.seed_state({"odoo": {"workers": {"status": "accepted", "known": ["8"]}}, "pg": {}})
+        self.sync()
+        rec = dict(recommended())
+        rec["workers"] = "6"
+        self.sync(rec)
+        self.assertEqual(sz.parse_conf_values(self.read())["workers"], "6")
+        state, _ = sz.load_state(self.dir)
+        self.assertEqual(state["odoo"]["workers"]["known"], ["6"])
+        self.write(self.read().replace("workers = 6", "workers = 5"))
+        result = self.sync(rec)
+        self.assertEqual(sz.parse_conf_values(self.read())["workers"], "5")
+        self.assertEqual([d.action for d in result.decisions if d.key == "workers"], ["keep"])
+
+    def test_non_utf8_conf_is_an_error(self):
+        raw = CONF.encode() + b"# caf\xe9\n"
+        with open(self.conf, "wb") as handle:
+            handle.write(raw)
+        result = self.sync()
+        self.assertTrue(result.error)
+        self.assertFalse(result.changed)
+        with open(self.conf, "rb") as handle:
+            self.assertEqual(handle.read(), raw)
+        self.assertEqual(self.baks(), [])
+
+    def test_wrong_state_shapes_block_the_write(self):
+        shapes = [
+            {"odoo": ["workers"], "pg": {}},
+            {"odoo": "workers"},
+            {"odoo": {"workers": {"status": "accepted", "known": "88"}}},
+            {"odoo": {"workers": {"status": "accepted", "known": None}}},
+            {"odoo": {"workers": {"status": "weird", "known": []}}},
+            {"odoo": {"workers": "accepted"}},
+            [],
+        ]
+        for shape in shapes:
+            self.seed_state(shape)
+            self.assertEqual(sz.load_state(self.dir)[0], {})
+            self.assertTrue(sz.load_state(self.dir)[1], shape)
+            result = self.sync()
+            self.assertIn("state", result.error)
+            self.assertEqual(self.read(), CONF)
+            self.assertEqual(self.baks(), [])
+
+
 class TestRegressionAndState(Base):
     def test_conf_regression_refuses_a_changed_foreign_key(self):
         patched = CONF.replace("db_password = secret", "db_password = other")
