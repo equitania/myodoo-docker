@@ -309,8 +309,12 @@ def show_value(key, text):
 class FakeDocker:
     """Records argv lists and answers like docker would; no real process is started."""
 
-    def __init__(self, pgdata, conf_path, ready=None, show=None, inspect_rc=0):
+    def __init__(self, pgdata, conf_path, ready=None, show=None, inspect_rc=0,
+                 running="true", settings="", raise_on_restart=False):
         self.calls = []
+        self.running = running
+        self.settings = settings
+        self.raise_on_restart = raise_on_restart
         self.pgdata = pgdata
         self.conf_path = conf_path
         self.ready = ready or (lambda n: 0)     # n-th pg_isready call (1-based) -> rc
@@ -320,6 +324,10 @@ class FakeDocker:
 
     def __call__(self, argv):
         self.calls.append(list(argv))
+        if argv[:2] == ["docker", "inspect"] and "{{.State.Running}}" in argv:
+            return (0, self.running + "\n") if self.running else (1, "")
+        if argv[:2] == ["docker", "restart"] and self.raise_on_restart:
+            raise RuntimeError("timed out")
         if argv[:2] == ["docker", "inspect"]:
             if self.inspect_rc:
                 return self.inspect_rc, "Error: No such object"
@@ -328,6 +336,10 @@ class FakeDocker:
         if "pg_isready" in argv:
             self.isready_calls += 1
             return self.ready(self.isready_calls), ""
+        if "psql" in argv and "pg_settings" in argv[-1]:
+            return 0, self.settings
+        if "psql" in argv and argv[-1] == "CHECKPOINT":
+            return 0, "CHECKPOINT\n"
         if "psql" in argv:
             key = argv[-1].split()[1]
             if self.show and key in self.show:
@@ -338,7 +350,7 @@ class FakeDocker:
         return 0, ""
 
     def verbs(self):
-        return [c[1] for c in self.calls if c[0] == "docker"]
+        return [c[1] for c in self.calls if c[0] == "docker" and not (c[1] == "inspect" and "{{.State.Running}}" in c)]
 
 
 class PgBase(unittest.TestCase):
@@ -426,7 +438,7 @@ class TestPgSync(PgBase):
     def test_restart_keys_restart_and_other_keys_only_reload(self):
         result = self.sync()
         self.assertTrue(result.restarted)
-        self.assertIn(["docker", "restart", "live-db"], self.docker.calls)
+        self.assertIn(["docker", "restart", "-t", "120", "live-db"], self.docker.calls)
         self.assertNotIn(["docker", "kill", "--signal=HUP", "live-db"], self.docker.calls)
 
     def test_only_reload_keys_send_hup(self):
@@ -434,7 +446,7 @@ class TestPgSync(PgBase):
         result = self.sync(rec=rec)
         self.assertFalse(result.restarted)
         self.assertIn(["docker", "kill", "--signal=HUP", "live-db"], self.docker.calls)
-        self.assertNotIn(["docker", "restart", "live-db"], self.docker.calls)
+        self.assertNotIn(["docker", "restart", "-t", "120", "live-db"], self.docker.calls)
         self.assertTrue(result.verified)
 
     def test_verification_reads_show_for_each_changed_key(self):
@@ -452,7 +464,8 @@ class TestPgSync(PgBase):
         result = self.sync(rec={"shared_buffers": "4GB"})
         self.assertEqual(result.decisions[0].action, "same")
         self.assertFalse(result.changed)
-        self.assertEqual(self.docker.verbs(), ["inspect"])
+        self.assertNotIn("restart", self.docker.verbs())
+        self.assertNotIn("kill", self.docker.verbs())
 
     def test_a_hand_value_is_kept_and_reported(self):
         text = PG_CONF.replace("work_mem = 16MB", "work_mem = 99MB")
@@ -473,7 +486,7 @@ class TestPgSync(PgBase):
     def test_database_that_does_not_come_up_is_rolled_back(self):
         # first restart: never ready (6 tries); rollback restart: ready
         result = self.sync(docker=FakeDocker(self.dir, self.conf,
-                                             ready=lambda n: 1 if n <= 6 else 0))
+                                             ready=lambda n: 1 if n <= 6 else 0), retries=6)
         self.assertTrue(result.rolled_back)
         self.assertFalse(result.changed)
         self.assertEqual(self.read(), PG_CONF)
@@ -483,7 +496,7 @@ class TestPgSync(PgBase):
         self.assertTrue(all(s == 5 for s in self.sleeps) and self.sleeps)
 
     def test_a_database_that_stays_down_after_rollback_is_reported(self):
-        result = self.sync(docker=FakeDocker(self.dir, self.conf, ready=lambda n: 1))
+        result = self.sync(docker=FakeDocker(self.dir, self.conf, ready=lambda n: 1), retries=6)
         self.assertTrue(result.rolled_back)
         self.assertEqual(self.read(), PG_CONF)
         self.assertIn("rolled back", result.error)
@@ -525,3 +538,58 @@ class TestPgSync(PgBase):
         reason = sz.conf_regression(PG_CONF, patched, {"work_mem"},
                                     values_of=sz.parse_pg_conf_values)
         self.assertIn("random_page_cost", reason)
+
+
+class TestPgReview(PgBase):
+    def test_checkpoint_precedes_a_long_timeout_restart(self):
+        self.sync()
+        calls = self.docker.calls
+        checkpoint = ["docker", "exec", "live-db", "psql", "-U", "odoo", "-d", "postgres",
+                      "-tAc", "CHECKPOINT"]
+        restart = ["docker", "restart", "-t", "120", "live-db"]
+        self.assertLess(calls.index(checkpoint), calls.index(restart))
+
+    def test_rollback_restart_uses_the_long_timeout_too(self):
+        self.sync(docker=FakeDocker(self.dir, self.conf, show={"shared_buffers": "4GB"}))
+        restarts = [c for c in self.docker.calls if c[1:2] == ["restart"]]
+        self.assertEqual(len(restarts), 2)
+        self.assertTrue(all(c[:4] == ["docker", "restart", "-t", "120"] for c in restarts))
+
+    def test_default_retries_is_sixty(self):
+        import inspect
+        self.assertEqual(inspect.signature(sz.sync_postgres).parameters["retries"].default, 60)
+
+    def test_auto_conf_setting_is_kept(self):
+        with open(os.path.join(self.dir, "postgresql.auto.conf"), "w", encoding="utf8") as h:
+            h.write("# Do not edit\nshared_buffers = '2GB'\n")
+        result = self.sync(rec={"shared_buffers": "3GB", "work_mem": "32MB"})
+        by_key = {d.key: d for d in result.decisions}
+        self.assertEqual(by_key["shared_buffers"].action, "keep")
+        self.assertIn("outside postgresql.conf", by_key["shared_buffers"].note)
+        self.assertEqual(by_key["work_mem"].action, "write")
+        self.assertFalse(result.restarted)
+        self.assertEqual(sz.parse_pg_conf_values(self.read())["shared_buffers"], "4GB")
+
+    def test_command_line_source_is_kept(self):
+        dock = FakeDocker(self.dir, self.conf,
+                          settings="max_connections|command line\nwork_mem|configuration file\n")
+        result = self.sync(rec={"max_connections": "250", "work_mem": "32MB"}, docker=dock)
+        by_key = {d.key: d for d in result.decisions}
+        self.assertEqual(by_key["max_connections"].action, "keep")
+        self.assertEqual(by_key["work_mem"].action, "write")
+        self.assertFalse(result.restarted)
+
+    def test_exception_from_run_after_the_replace_is_rolled_back(self):
+        result = self.sync(docker=FakeDocker(self.dir, self.conf, raise_on_restart=True))
+        self.assertTrue(result.rolled_back)
+        self.assertEqual(self.read(), PG_CONF)
+        self.assertIn("RuntimeError", result.error)
+
+    def test_a_stopped_container_is_skipped(self):
+        for running in ("false", ""):
+            result = self.sync(docker=FakeDocker(self.dir, self.conf, running=running))
+            self.assertEqual(result.skipped, "database container not running")
+            self.assertIsNone(result.error)
+            self.assertEqual(self.read(), PG_CONF)
+            self.assertEqual(self.baks(), [])
+            self.assertNotIn("restart", self.docker.verbs())

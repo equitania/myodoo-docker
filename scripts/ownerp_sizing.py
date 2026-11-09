@@ -809,9 +809,33 @@ def _verify(db: str, db_user: str, changes: Dict[str, str], run: Runner, sleep,
     return False
 
 
+def _outside_conf_keys(pgdata: str, keys, db: str, db_user: str, run: Runner) -> Set[str]:
+    """Keys set by ALTER SYSTEM (postgresql.auto.conf) or the command line: SHOW would
+    never show a value written to postgresql.conf for them."""
+    found: Set[str] = set()
+    try:
+        with open(os.path.join(pgdata, "postgresql.auto.conf"), encoding="utf8") as handle:
+            found.update(k for k in parse_pg_conf_values(handle.read()) if k in keys)
+    except (OSError, ValueError):
+        pass
+    try:
+        names = ", ".join("'%s'" % k for k in keys)
+        code, out = run(["docker", "exec", db, "psql", "-U", db_user, "-d", "postgres", "-tAc",
+                         "SELECT name, source FROM pg_settings WHERE name IN (%s)" % names])
+        if code == 0:
+            for line in out.splitlines():
+                name, _, source = line.partition("|")
+                if source.strip() not in ("", "configuration file", "default") \
+                        and name.strip() in keys:
+                    found.add(name.strip())
+    except Exception:
+        pass
+    return found
+
+
 def sync_postgres(db_container: str, recommended: Dict[str, str], overrides: Set[str],
                   state_entry: dict, run: Runner, db_user: str, now=None,
-                  sleep=time.sleep, retries: int = 6) -> PgSync:
+                  sleep=time.sleep, retries: int = 60) -> PgSync:
     """Bring the recommended settings into the database container's postgresql.conf.
 
     state_entry is the "pg" section of the state file; it is updated IN PLACE after
@@ -824,6 +848,8 @@ def sync_postgres(db_container: str, recommended: Dict[str, str], overrides: Set
     pgdata = find_pgdata(out) if code == 0 else None
     if pgdata is None:
         return PgSync(False, [], False, None, False, None, "db_host is not a local container")
+    if not container_running(db_container, run):
+        return PgSync(False, [], False, None, False, None, "database container not running")
     path = os.path.join(pgdata, PG_CONF_NAME)
     try:
         with open(path, "rb") as handle:
@@ -840,9 +866,15 @@ def sync_postgres(db_container: str, recommended: Dict[str, str], overrides: Set
         return fail("state unusable, nothing written: %s" % problem)
 
     current = parse_pg_conf_values(original)
+    outside = _outside_conf_keys(pgdata, recommended, db_container, db_user, run)
     decisions = []
     for key, value in recommended.items():
         have = current.get(key)
+        if key in outside:
+            decisions.append(KeyDecision(
+                key, "keep", have, value,
+                "set outside postgresql.conf (ALTER SYSTEM or command line) - unchanged"))
+            continue
         entry = state_entry.get(key)
         is_default = have is not None and any(
             pg_equal(key, have, known) for known in PG_PROFILE_VALUES.get(key, ()))
@@ -877,13 +909,23 @@ def sync_postgres(db_container: str, recommended: Dict[str, str], overrides: Set
         return fail("cannot write %s: %s" % (path, error), decisions)
 
     restart = any(key in PG_RESTART_KEYS for key in changes)
-    if restart:
-        applied, _ = run(["docker", "restart", db_container])
-    else:
-        applied, _ = run(["docker", "kill", "--signal=HUP", db_container])
-    good = applied == 0 and _wait_ready(db_container, db_user, run, sleep, retries)
-    if good:
-        good = _verify(db_container, db_user, changes, run, sleep, 1 if restart else 4)
+    problem = None
+    good = False
+    try:
+        if restart:
+            try:      # shorten the shutdown checkpoint; failure is not fatal
+                run(["docker", "exec", db_container, "psql", "-U", db_user, "-d", "postgres",
+                     "-tAc", "CHECKPOINT"])
+            except Exception:
+                pass
+            applied, _ = run(["docker", "restart", "-t", "120", db_container])
+        else:
+            applied, _ = run(["docker", "kill", "--signal=HUP", db_container])
+        good = applied == 0 and _wait_ready(db_container, db_user, run, sleep, retries)
+        if good:
+            good = _verify(db_container, db_user, changes, run, sleep, 1 if restart else 4)
+    except Exception as error:
+        problem = "%s: %s" % (type(error).__name__, error)
     if good:
         remember()
         return PgSync(True, decisions, restart, True, False, None, None)
@@ -895,12 +937,18 @@ def sync_postgres(db_container: str, recommended: Dict[str, str], overrides: Set
         return PgSync(False, decisions, restart, False, False,
                       "new settings were not accepted and the backup could not be restored "
                       "(%s); restore %s by hand" % (error, backup), None)
-    run(["docker", "restart", db_container])
-    up = _wait_ready(db_container, db_user, run, sleep, retries)
+    try:
+        run(["docker", "restart", "-t", "120", db_container])
+        up = _wait_ready(db_container, db_user, run, sleep, retries)
+    except Exception as error:
+        up = False
+        problem = "%s (rollback restart: %s: %s)" % (problem or "settings not accepted",
+                                                     type(error).__name__, error)
+    cause = " (%s)" % problem if problem else ""
     if up:
-        message = ("the database did not accept the new settings; rolled back, "
-                   "the old values are active again")
+        message = ("the database did not accept the new settings%s; rolled back, "
+                   "the old values are active again" % cause)
     else:
-        message = ("the database did not accept the new settings; rolled back to the old "
-                   "postgresql.conf, but the database is not answering - check it")
+        message = ("the database did not accept the new settings%s; rolled back to the old "
+                   "postgresql.conf, but the database is not answering - check it" % cause)
     return PgSync(False, decisions, restart, False, True, message, None)
