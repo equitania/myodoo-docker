@@ -684,6 +684,101 @@ class FormTest(ConsoleFixture):
                 self.assertTrue(field.help, f"{kind}.{field.name}")
 
 
+class SizingFormTest(ConsoleFixture):
+    """Role and users are flat questions that fold into the sizing block."""
+
+    def open_form(self, then=None):
+        async def body(app, pilot):
+            app._open_form(self.console.wizard.UPDATE, 0)
+            await pilot.pause()
+            labels = [str(l.render()) for l in
+                      app.screen.query(".form-label")]
+            values = {n: app.screen.query_one(f"#f-{n}").value
+                      for n in ("sizing_profile", "sizing_users")}
+            if then:
+                then(app.screen)
+                app.screen.action_save()
+                await pilot.pause()
+            return labels, values
+        return self.run_app(body)
+
+    def test_update_form_offers_role_and_users(self):
+        labels, values = self.open_form()
+        self.assertIn("Role", labels)
+        self.assertIn("Concurrent users", labels)
+        self.assertEqual(values, {"sizing_profile": "", "sizing_users": ""})
+
+    def test_update_form_is_prefilled_from_the_block(self):
+        self.write("docker2update.yaml", UPDATE_CONFIG.replace(
+            '    translate: Y\n',
+            '    sizing: {profile: "live", users: 20, workers: 6}\n'
+            '    translate: Y\n'))
+        _labels, values = self.open_form()
+        self.assertEqual(values,
+                         {"sizing_profile": "live", "sizing_users": "20"})
+
+    def test_the_backup_form_has_no_sizing_questions(self):
+        async def body(app, pilot):
+            app._open_form(self.console.wizard.BACKUP, 0)
+            await pilot.pause()
+            return [str(l.render()) for l in app.screen.query(".form-label")]
+        self.assertNotIn("Role", self.run_app(body))
+
+    def test_saving_the_sizing_fields_writes_the_block(self):
+        def fill(screen):
+            screen.query_one("#f-sizing_profile").value = "live"
+            screen.query_one("#f-sizing_users").value = "30"
+        self.open_form(fill)
+        entry = self.parsed("docker2update.yaml")["containers"][0]
+        self.assertEqual(entry["sizing"], {"profile": "live", "users": 30})
+        self.assertEqual(
+            len([f for f in os.listdir(self.home) if ".bak-" in f]), 1)
+
+    def test_saving_keeps_override_keys_and_clearing_users_drops_only_users(self):
+        self.write("docker2update.yaml", UPDATE_CONFIG.replace(
+            '    translate: Y\n',
+            '    sizing: {profile: "live", users: 20, workers: 6}\n'
+            '    translate: Y\n'))
+
+        def clear(screen):
+            screen.query_one("#f-sizing_users").value = ""
+        self.open_form(clear)
+        entry = self.parsed("docker2update.yaml")["containers"][0]
+        self.assertEqual(entry["sizing"], {"profile": "live", "workers": 6})
+
+    def test_an_invalid_role_writes_nothing(self):
+        with open(os.path.join(self.home, "docker2update.yaml"),
+                  encoding="utf-8") as handle:
+            before = handle.read()
+
+        def fill(screen):
+            screen.query_one("#f-sizing_profile").value = "prod"
+        self.open_form(fill)
+        with open(os.path.join(self.home, "docker2update.yaml"),
+                  encoding="utf-8") as handle:
+            self.assertEqual(handle.read(), before)
+
+    def test_a_sizing_change_points_to_the_review(self):
+        notes = []
+
+        async def body(app, pilot):
+            app.notify = lambda message, **kw: notes.append(message)
+            app._save_changes(self.console.wizard.UPDATE, 0,
+                              {"sizing_profile": "test"})
+            await pilot.pause()
+        self.run_app(body)
+        self.assertTrue(any("dosize --review test-odoo" in n for n in notes),
+                        notes)
+
+    def test_leaving_the_sizing_fields_empty_leaves_the_file_alone(self):
+        def touch(screen):
+            screen.query_one("#f-delay_time").value = "11"
+        self.open_form(touch)
+        entry = self.parsed("docker2update.yaml")["containers"][0]
+        self.assertNotIn("sizing", entry)
+        self.assertEqual(entry["delay_time"], 11)
+
+
 class NewEntryTest(ConsoleFixture):
     """Adding an entry, and the suggestions that make it bearable."""
 

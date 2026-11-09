@@ -5,8 +5,8 @@
 # Description:      Guided editing of docker2update.yaml and
 #                   container2backup.yaml - add an entry, change a field.
 #                   Validates before it replaces anything.
-# Version:          1.2.0
-# Date:             14.08.2026
+# Version:          1.3.0
+# Date:             09.11.2026
 # Author:           Equitania Software GmbH
 # ==============================================================================
 #
@@ -16,10 +16,12 @@
 # and only then os.replace(). A rejected result leaves the original byte for
 # byte as it was.
 #
-# It edits scalar fields only. pre_build_files and proxy are a list and a
-# mapping - a value that spans lines has no single line to replace, and
-# guessing at one is how a config file gets quietly corrupted. Those stay with
-# mcedit, and so does removing an entry.
+# It edits scalar fields only, plus one exception: the sizing block, a mapping
+# that is written and replaced as a single-line flow mapping. pre_build_files
+# and proxy are a list and a mapping - a value that spans lines has no single
+# line to replace, and guessing at one is how a config file gets quietly
+# corrupted. Those stay with mcedit, and so does removing an entry and a
+# sizing block written over several lines.
 #
 ##############################################################################
 import os
@@ -32,6 +34,13 @@ import argparse
 import datetime
 import collections
 
+# The sizing module is optional here: without it the review step only prints
+# the command to run later.
+try:
+    import ownerp_sizing
+except ImportError:  # pragma: no cover - depends on the installation
+    ownerp_sizing = None
+
 # The validator is not optional here. A wizard that cannot check its own
 # output must not write, so there is nothing to degrade to - unlike the runner,
 # which keeps a built-in check when the validator is missing.
@@ -40,8 +49,8 @@ try:
 except ImportError:  # pragma: no cover - depends on the installation
     validator = None
 
-SCRIPT_VERSION = "1.2.0"
-SCRIPT_DATE = "14.08.2026"
+SCRIPT_VERSION = "1.3.0"
+SCRIPT_DATE = "09.11.2026"
 
 DEFAULT_UPDATE_CONFIG = os.path.join(os.path.expanduser("~"), "docker2update.yaml")
 DEFAULT_BACKUP_CONFIG = os.path.join(os.path.expanduser("~"),
@@ -95,6 +104,12 @@ def format_value(value):
         return "true" if value else "false"
     if isinstance(value, int):
         return str(value)
+    if isinstance(value, dict):
+        # One-line flow mapping: it has a single line to find and replace,
+        # which is the only reason a mapping may be written here at all.
+        inner = ", ".join(f"{key}: {format_value(item)}"
+                          for key, item in value.items())
+        return "{" + inner + "}"
     return json.dumps(str(value))
 
 
@@ -626,6 +641,18 @@ def duplicate_of(data, entry, kind=UPDATE, skip=None):
     return None
 
 
+def is_flow_line(lines, line_number):
+    """Whether the key on this 1-based line holds a complete {...} mapping."""
+    if not line_number or line_number > len(lines):
+        return False
+    code, _comment = split_comment(lines[line_number - 1])
+    match = KEY_RE.match(code)
+    if not match:
+        return False
+    rest = code[match.end():].strip()
+    return rest.startswith("{") and rest.endswith("}")
+
+
 def set_fields(path, index, changes, kind=UPDATE, now=None):
     """Change several scalar fields of one entry in a SINGLE write.
 
@@ -654,7 +681,10 @@ def set_fields(path, index, changes, kind=UPDATE, now=None):
     prepared = []
     for field, value in changes.items():
         existing = current.get(field)
-        if isinstance(existing, (list, dict)):
+        if isinstance(existing, dict) and isinstance(value, dict) \
+                and is_flow_line(lines, validator.line_of(current, field)):
+            pass  # a one-line mapping has one line to replace
+        elif isinstance(existing, (list, dict)):
             # A value spanning several lines has no single line to replace,
             # and guessing at one is how a configuration gets quietly
             # corrupted.
@@ -737,6 +767,54 @@ def patch_field(lines, data, index, field, value):
 MASK = "********"
 
 
+SIZING_ROLES = ("live", "test", "demo")
+
+# Pseudo fields of the update form: two flat answers that fold into the one
+# `sizing` mapping of the file. Not in UPDATE_FORM - the schema has no such
+# keys, and the field-by-field editor must not offer them.
+SIZING_FORM = [
+    Field("sizing_profile", "Role", "live, test or demo", None),
+    Field("sizing_users", "Concurrent users",
+          "empty = from hardware (live only)", None),
+]
+
+
+def flatten_sizing(entry):
+    """A copy of `entry` with sizing_profile/sizing_users read from the block."""
+    flat = dict(entry)
+    block = entry.get("sizing")
+    if isinstance(block, dict):
+        for key in ("profile", "users"):
+            if block.get(key) is not None:
+                flat["sizing_" + key] = block[key]
+    return flat
+
+
+def fold_sizing(entry, changes):
+    """`changes` with the two sizing pseudo keys replaced by a `sizing` dict.
+
+    Keys already in the block (workers: 6 ...) stay. A users value of None
+    drops the users key ("from hardware"). Without a sizing change the
+    changes come back untouched, so an untouched form leaves the block alone.
+    """
+    if "sizing_profile" not in changes and "sizing_users" not in changes:
+        return changes
+    folded = {k: v for k, v in changes.items()
+              if k not in ("sizing_profile", "sizing_users")}
+    existing = entry.get("sizing")
+    block = dict(existing) if isinstance(existing, dict) else {}
+    if changes.get("sizing_profile") is not None:
+        block["profile"] = changes["sizing_profile"]
+    if "sizing_users" in changes:
+        if changes["sizing_users"] is None:
+            block.pop("users", None)
+        else:
+            block["users"] = changes["sizing_users"]
+    if block:
+        folded["sizing"] = block
+    return folded
+
+
 def coerce(field_name, text, kind=UPDATE):
     """Turn prompt text into the type the schema expects for that field.
 
@@ -744,6 +822,10 @@ def coerce(field_name, text, kind=UPDATE):
     through to text on purpose: every shipped template writes it quoted, and
     picking one half of the tuple would silently change the file's style.
     """
+    if field_name == "sizing_users":
+        return int(text.strip()) if text.strip() else None
+    if field_name == "sizing_profile":
+        return text.strip().lower()
     rule = KINDS[kind]["fields"]().get(field_name, {})
     if rule.get("type") is bool:
         return text.strip().lower() in ("true", "yes", "y", "1", "ja", "j")
@@ -975,6 +1057,94 @@ def edit_field(path, lines, data, kind=UPDATE):
     return 1
 
 
+def _default_review(name, path, out=print):
+    """The per-value review of ownerp_sizing, or the command to run later."""
+    if ownerp_sizing is None:
+        out(f"  Review later with: dosize --review {name}")
+        return 0
+    return ownerp_sizing.main(["--review", name, "--config", path])
+
+
+def ask_sizing(path, index, ask=input, out=print, review=None):
+    """The wizup flow for the sizing block of one entry. Returns an exit code.
+
+    Writes through set_fields like every other change. `ask` and `out` are
+    injectable so a test needs no terminal; `review` defaults to the per-value
+    review of ownerp_sizing, which refuses without a terminal by itself.
+    """
+    lines, data, error = load_config(path)
+    if error:
+        out(f"  {error}")
+        return 2
+    entries = entries_of(data, UPDATE)
+    if not 0 <= index < len(entries):
+        out(f"  There is no entry {index} in {path}")
+        return 2
+    current = entries[index]
+    name = current.get("container_name", "?")
+    block = current.get("sizing") if isinstance(current.get("sizing"), dict) else {}
+
+    default = block.get("profile")
+    hint = f" [{default}]" if default else ""
+    while True:
+        role = ask(f"  Role? (live/test/demo){hint}: ").strip().lower() or default
+        if role in SIZING_ROLES:
+            break
+        out("    Enter live, test or demo.")
+
+    changes = {"sizing_profile": role}
+    if role == "live":
+        while True:
+            text = ask("  Concurrent users (empty = from hardware)? ").strip()
+            if not text:
+                changes["sizing_users"] = None
+                break
+            if text.isdigit() and int(text) >= 1:
+                changes["sizing_users"] = int(text)
+                break
+            out("    Enter a whole number of at least 1, or leave it empty.")
+
+    result = set_fields(path, index, fold_sizing(current, changes), UPDATE)
+    if result.error:
+        out(f"\n  Not written: {result.error}")
+        return 1
+    if not result.ok:
+        out("\n  Not written - the result would be invalid:")
+        for finding in result.findings:
+            out(f"  {finding.severity}  {finding.path}: {finding.message}")
+        out(f"  {path} is unchanged.")
+        return 1
+
+    users = changes.get("sizing_users")
+    detail = f", {users} concurrent users" if users else ""
+    out(f"\n  Sizing role set to {role}{detail} for {name}.")
+    out(f"  Written to {path}\n  Backup:    {result.backup}")
+    out("  The values take effect with the next doup. Preview: dosize")
+
+    answer = ask("  Review the single values now? (Y/n): ").strip().lower()
+    if answer in ("", "y", "yes", "j", "ja"):
+        if review is None:
+            _default_review(name, path, out)
+        else:
+            review(name, path)
+    return 0
+
+
+def edit_sizing(path, data):
+    """Pick an entry, then run the sizing questions on it."""
+    entries = entries_of(data, UPDATE)
+    if not entries:
+        print("No entries to edit.")
+        return 0
+    for number, existing in enumerate(entries, 1):
+        print(f"  {number:>2}) {existing.get('container_name', '?')}")
+    choice = input("  Entry number: ").strip()
+    if not choice.isdigit() or not 1 <= int(choice) <= len(entries):
+        print("Cancelled.")
+        return 0
+    return ask_sizing(path, int(choice) - 1)
+
+
 def parse_arguments(argv):
     parser = argparse.ArgumentParser(
         prog="ownerp_wizard.py",
@@ -1035,13 +1205,16 @@ def main(argv=None):
           "fallback.")
 
     label = KINDS[kind]["label"]
+    sizing_line = "\n  3) Set role/sizing" if kind == UPDATE else ""
     print(f"\n  1) Add a{'n' if label[0] in 'aeiou' else ''} {label}"
-          f"\n  2) Change a field\n  q) Quit")
+          f"\n  2) Change a field{sizing_line}\n  q) Quit")
     choice = input("\n  Choice [1]: ").strip() or "1"
     if choice == "1":
         return add_container(path, lines, data, kind)
     if choice == "2":
         return edit_field(path, lines, data, kind)
+    if choice == "3" and kind == UPDATE:
+        return edit_sizing(path, data)
     return 0
 
 

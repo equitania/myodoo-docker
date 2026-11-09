@@ -1104,3 +1104,147 @@ class GenericCollectionTest(ConfigFixture):
                                kind=wiz.BACKUP)
         self.assertFalse(result.ok)
         self.assertIn("databases", result.error)
+
+
+class SizingBlockTest(ConfigFixture):
+    """The sizing block is a mapping; set_fields writes it as one flow line."""
+
+    def test_format_value_renders_a_flow_mapping(self):
+        self.assertEqual(wiz.format_value({"profile": "live", "users": 30}),
+                         '{profile: "live", users: 30}')
+
+    def test_set_fields_adds_a_sizing_block_in_one_line_and_validates(self):
+        result = wiz.set_fields(self.update, 0,
+                                {"sizing": {"profile": "live", "users": 30}})
+        self.assertTrue(result.ok, result.error or result.findings)
+        entry = self.parsed(self.update)["containers"][0]
+        self.assertEqual(entry["sizing"], {"profile": "live", "users": 30})
+        backups = [f for f in os.listdir(self.dir) if ".bak-" in f]
+        self.assertEqual(len(backups), 1)
+        self.assertEqual(self.read(os.path.join(self.dir, backups[0])),
+                         UPDATE_CONFIG)
+        added = [l for l in self.read(self.update).split("\n")
+                 if "sizing" in l]
+        self.assertEqual(added, ['    sizing: {profile: "live", users: 30}'])
+        self.assertEqual(self.read(self.update).replace(added[0] + "\n", ""),
+                         UPDATE_CONFIG)
+
+    def _with_block(self):
+        text = UPDATE_CONFIG.replace(
+            '    translate: Y\n',
+            '    sizing: {profile: "live", users: 20, workers: 6}  # keep\n'
+            '    translate: Y\n')
+        self.write("docker2update.yaml", text)
+
+    def test_set_fields_replaces_a_one_line_sizing_block_and_keeps_overrides(self):
+        self._with_block()
+        entry = wiz.entries_of(wiz.load_config(self.update)[1])[0]
+        changes = wiz.fold_sizing(entry, {"sizing_users": 40})
+        result = wiz.set_fields(self.update, 0, changes)
+        self.assertTrue(result.ok, result.error or result.findings)
+        entry = self.parsed(self.update)["containers"][0]
+        self.assertEqual(entry["sizing"],
+                         {"profile": "live", "users": 40, "workers": 6})
+        self.assertIn("# keep", self.read(self.update))
+
+    def test_set_fields_refuses_a_multi_line_sizing_block(self):
+        text = UPDATE_CONFIG.replace(
+            '    translate: Y\n',
+            '    sizing:\n      profile: live\n    translate: Y\n')
+        self.write("docker2update.yaml", text)
+        result = wiz.set_fields(self.update, 0,
+                                {"sizing": {"profile": "test"}})
+        self.assertIn("not a scalar", result.error)
+        self.assertEqual(self.read(self.update), text)
+
+    def test_an_invalid_role_is_rejected_by_the_validator_and_nothing_is_written(self):
+        result = wiz.set_fields(self.update, 0, {"sizing": {"profile": "prod"}})
+        self.assertFalse(result.ok)
+        self.assertEqual(self.read(self.update), UPDATE_CONFIG)
+        self.assertEqual([f for f in os.listdir(self.dir) if ".bak-" in f], [])
+
+    def test_a_sizing_block_and_an_absent_scalar_land_together(self):
+        result = wiz.set_fields(self.update, 0, {
+            "sizing": {"profile": "test"}, "delay_time": 99})
+        self.assertTrue(result.ok, result.error or result.findings)
+        entry = self.parsed(self.update)["containers"][0]
+        self.assertEqual((entry["delay_time"], entry["sizing"]["profile"]),
+                         (99, "test"))
+
+    def test_flatten_and_fold_roundtrip(self):
+        entry = {"container_name": "live-odoo",
+                 "sizing": {"profile": "live", "users": 20, "workers": 6}}
+        flat = wiz.flatten_sizing(entry)
+        self.assertEqual((flat["sizing_profile"], flat["sizing_users"]),
+                         ("live", 20))
+        self.assertNotIn("sizing_profile", entry)
+        folded = wiz.fold_sizing(entry, {"sizing_users": 25, "delay_time": 5})
+        self.assertEqual(folded, {"delay_time": 5, "sizing": {
+            "profile": "live", "users": 25, "workers": 6}})
+        # untouched sizing fields leave the block alone entirely
+        self.assertEqual(wiz.fold_sizing(entry, {"delay_time": 5}),
+                         {"delay_time": 5})
+        # users cleared -> key dropped, overrides kept
+        self.assertEqual(
+            wiz.fold_sizing(entry, {"sizing_users": None})["sizing"],
+            {"profile": "live", "workers": 6})
+        self.assertEqual(wiz.coerce("sizing_users", " 30 "), 30)
+        self.assertIsNone(wiz.coerce("sizing_users", "  "))
+        self.assertEqual(wiz.coerce("sizing_profile", " Live "), "live")
+
+    def _ask(self, answers, review=None, index=0):
+        script = iter(answers)
+        out = []
+        calls = []
+        code = wiz.ask_sizing(
+            self.update, index, ask=lambda prompt: next(script),
+            out=out.append,
+            review=review or (lambda name, path: calls.append((name, path)) or 0))
+        return code, "\n".join(out), calls
+
+    def test_ask_sizing_flow(self):
+        code, text, calls = self._ask(["live", "30", "n"])
+        self.assertEqual(code, 0)
+        self.assertEqual(self.parsed(self.update)["containers"][0]["sizing"],
+                         {"profile": "live", "users": 30})
+        self.assertIn("role", text)
+        self.assertIn("next doup", text)
+        self.assertEqual(calls, [])
+
+    def test_ask_sizing_runs_the_review_on_yes(self):
+        code, _text, calls = self._ask(["live", "", "y"])
+        self.assertEqual(code, 0)
+        self.assertEqual(self.parsed(self.update)["containers"][0]["sizing"],
+                         {"profile": "live"})
+        self.assertEqual(calls, [("live-odoo", self.update)])
+
+    def test_ask_sizing_skips_users_for_test_and_demo(self):
+        # Only two answers are scripted: role and the review question.
+        code, _text, _calls = self._ask(["test", "n"])
+        self.assertEqual(code, 0)
+        self.assertEqual(self.parsed(self.update)["containers"][0]["sizing"],
+                         {"profile": "test"})
+
+    def test_ask_sizing_asks_again_for_a_bad_role_and_bad_users(self):
+        code, text, _calls = self._ask(["prod", "live", "many", "0", "8", "n"])
+        self.assertEqual(code, 0)
+        self.assertEqual(self.parsed(self.update)["containers"][0]["sizing"],
+                         {"profile": "live", "users": 8})
+
+    def test_ask_sizing_without_the_sizing_module_prints_the_command(self):
+        script = iter(["live", "", "y"])
+        out = []
+        with mock.patch.object(wiz, "ownerp_sizing", None):
+            wiz.ask_sizing(self.update, 0, ask=lambda p: next(script),
+                           out=out.append)
+        self.assertIn("dosize --review live-odoo", "\n".join(out))
+
+    def test_ask_sizing_reports_a_refused_write(self):
+        text = UPDATE_CONFIG.replace(
+            '    translate: Y\n',
+            '    sizing:\n      profile: live\n    translate: Y\n')
+        self.write("docker2update.yaml", text)
+        code, out, _calls = self._ask(["test", "n"])
+        self.assertEqual(code, 1)
+        self.assertIn("not a scalar", out)
+        self.assertEqual(self.read(self.update), text)

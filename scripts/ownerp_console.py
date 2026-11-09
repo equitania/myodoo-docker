@@ -4,7 +4,7 @@
 # Title:            ownerp_console.py
 # Description:      The ownERP console: server state, and the configuration
 #                   editing that used to mean hand-writing YAML.
-# Version:          1.2.0
+# Version:          1.3.0
 # Date:             21.08.2026
 # Author:           Equitania Software GmbH
 # ==============================================================================
@@ -53,8 +53,8 @@
 import os
 import sys
 
-SCRIPT_VERSION = "1.2.0"
-SCRIPT_DATE = "21.08.2026"
+SCRIPT_VERSION = "1.3.0"
+SCRIPT_DATE = "09.11.2026"
 
 # The dependencies, in one place. Textual is pinned to a major version: it
 # moves fast and a widget API is not a stable interface across majors.
@@ -383,6 +383,11 @@ class EntryForm(ModalScreen):
                     changes[field.name] = text
                 continue
             if not self.creating and text == _as_text(self.current.get(field.name)):
+                continue
+            if (field.name == "sizing_users" and not text.strip()
+                    and not self.creating):
+                # Empty users means "from hardware": the key is dropped.
+                changes[field.name] = None
                 continue
             if not text.strip() and not self.creating:
                 bad = bad or f"{field.label} cannot be emptied here."
@@ -816,6 +821,11 @@ class Console(App):
         # Scalars only: a list or a mapping has no single line to replace.
         fields = [f for f in wizard.KINDS[kind]["form"]
                   if not isinstance(current.get(f.name), (list, dict))]
+        if kind == wizard.UPDATE:
+            # Role and users are two flat questions that fold into the sizing
+            # block when saved (see _save_changes).
+            fields += list(wizard.SIZING_FORM)
+            current = wizard.flatten_sizing(current)
         label = current.get(wizard.KINDS[kind]["unique"][0], "entry")
         self.push_screen(
             EntryForm(f"{wizard.KINDS[kind]['label']} · {label}",
@@ -825,8 +835,22 @@ class Console(App):
     def _save_changes(self, kind, index, changes) -> None:
         if not changes:
             return
+        sizing = kind == wizard.UPDATE and any(
+            key in changes for key in ("sizing_profile", "sizing_users"))
+        name = None
+        if sizing:
+            entries = self._load(kind)
+            if entries is None or not 0 <= index < len(entries):
+                return
+            name = entries[index].get("container_name")
+            changes = wizard.fold_sizing(entries[index], changes)
         result = wizard.set_fields(self._path_for(kind), index, changes, kind)
         self._report(result, f"{len(changes)} field(s) changed")
+        if sizing and result.ok:
+            # The per-value review asks questions and needs a terminal; the
+            # console only says where to run it.
+            self.notify(f"Role set - confirm the single values: "
+                        f"dosize --review {name}")
 
     def _toggle(self, kind, index, field, label) -> None:
         entries = self._load(kind)
