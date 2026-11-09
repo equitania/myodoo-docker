@@ -1390,8 +1390,8 @@ class SizingStepsTest(unittest.TestCase):
         self.assertIn("workers = 2", self.conf_of(live))
         self.assertIn("over budget", out)
         levels = [level for _, level, _ in udo.RUN_ISSUES]
-        self.assertEqual(levels, ["WARNING"])
-        self.assertEqual(counts[1], 1)
+        self.assertTrue(levels and set(levels) == {"WARNING"})
+        self.assertEqual(counts[1], len(levels))
 
     def test_unreadable_conf_is_an_error_line_not_an_abort(self):
         bad = b"[options]\nworkers = \xff\xfe\n"
@@ -1452,10 +1452,11 @@ class SizingStepsTest(unittest.TestCase):
         udo.RUN_ISSUES.clear()
         return live, pgdata, FakeDocker(pgdata, **kwargs)
 
-    def run_pg(self, container, runner):
+    def run_pg(self, container, runner, everything=None):
         out = io.StringIO()
         with contextlib.redirect_stdout(out):
-            counts = udo.run_sizing_postgres(container, "odoo", runner=runner)
+            counts = udo.run_sizing_postgres(container, "odoo", runner=runner,
+                                             all_containers=everything)
         return counts, out.getvalue()
 
     def test_postgres_step_never_restarts_while_odoo_still_runs(self):
@@ -1517,6 +1518,97 @@ class SizingStepsTest(unittest.TestCase):
         code, text = udo.default_runner(["docker-does-not-exist-xyz", "ps"])
         self.assertNotEqual(code, 0)
         self.assertTrue(text)
+
+    # --- final fix wave ----------------------------------------------------
+
+    def test_a_shared_database_container_is_left_unchanged_with_one_warning(self):
+        pgdata = os.path.join(self.tmp, "pgdata")
+        os.makedirs(pgdata, exist_ok=True)
+        with open(os.path.join(pgdata, "postgresql.conf"), "w", encoding="utf8") as fh:
+            fh.write("shared_buffers = 1GB\nmax_connections = 100\n")
+        for active in (True, False):
+            udo.RUN_ISSUES.clear()
+            udo.SIZING_PLAN.clear()
+            live = self.container("live-odoo", {"profile": "live"})
+            test = self.container("test-odoo", {"profile": "test"}, active=active,
+                                  db_host="live-db")
+            counts, out = self.run_odoo(live, [live, test])
+            self.assertEqual(counts[2], 0)
+            self.assertIn("written", out)                     # odoo.conf step still runs
+            udo.RUN_ISSUES.clear()
+            docker = FakeDocker(pgdata)
+            counts, out = self.run_pg(live, docker, [live, test])
+            self.assertEqual(docker.restarted(), [], active)
+            self.assertFalse([c for c in docker.calls if c[:2] == ["docker", "kill"]])
+            self.assertEqual(counts, (0, 1, 0))
+            self.assertEqual(udo.SIZING_ERRORS, 0)
+            self.assertIn("database container live-db is shared with test-odoo - "
+                          "PostgreSQL left unchanged", out)
+            self.assertEqual([level for _, level, _ in udo.RUN_ISSUES], ["WARNING"])
+            self.assertIn("shared_buffers = 1GB", read(os.path.join(pgdata, "postgresql.conf")))
+
+    def test_a_rollback_is_recorded_as_hand_and_the_next_doup_does_not_restart(self):
+        live, pgdata, docker = self.pg_setup(show="bogus")
+        counts, out = self.run_pg(live, docker)
+        self.assertEqual(counts[2], 1)
+        self.assertIn("dosize --review live-odoo", out)
+        state = self.sizing.load_state(live["dockerfile_path"])[0]
+        self.assertEqual(state["pg"]["shared_buffers"], {"status": "hand", "known": ["1GB"]})
+        udo.RUN_ISSUES.clear()
+        again = FakeDocker(pgdata)
+        counts, _ = self.run_pg(live, again)
+        self.assertEqual(again.restarted(), [])
+        self.assertEqual(counts[2], 0)
+
+    def test_postgres_without_root_is_an_info_line_not_an_error(self):
+        live, pgdata, docker = self.pg_setup()
+        conf = os.path.join(pgdata, "postgresql.conf")
+        real_open = open
+
+        def guarded(path, *args, **kwargs):
+            if path == conf:
+                raise PermissionError(13, "Permission denied", path)
+            return real_open(path, *args, **kwargs)
+
+        with mock.patch("builtins.open", side_effect=guarded):
+            counts, out = self.run_pg(live, docker)
+        self.assertEqual(counts, (1, 0, 0))
+        self.assertEqual(udo.SIZING_ERRORS, 0)
+        self.assertIn("PostgreSQL settings need root", out)
+        self.assertEqual(udo.RUN_ISSUES, [])
+
+    def test_plan_warnings_are_printed_with_their_own_text(self):
+        live = self.container("live-odoo", {"profile": "live", "workers": 40})
+        test = self.container("test-odoo", {"profile": "test"})
+        counts, out = self.run_odoo(live, [live, test])
+        self.assertIn("WARNING: Override exceeds the RAM budget", out)
+        self.assertNotIn("minimal staffing", out)
+        self.assertIn("WARNING: 43 processes > 9 (2 x CPU + 1)", out)
+        self.assertEqual(counts[1], 2)
+        self.assertEqual(udo.SIZING_ERRORS, 0)
+
+    def test_a_block_without_a_valid_profile_is_a_warning_pointing_at_doval(self):
+        for block in ({"profile": "prod"}, {"users": 20}):
+            udo.RUN_ISSUES.clear()
+            live = self.container("live-odoo", block)
+            before = self.conf_of(live)
+            counts, out = self.run_odoo(live, [live])
+            self.assertEqual(counts, (0, 1, 0), block)
+            self.assertIn("live-odoo", out)
+            self.assertIn("doval", out)
+            self.assertEqual(self.conf_of(live), before)
+            self.assertEqual(udo.SIZING_ERRORS, 0)
+
+    def test_the_template_is_found_for_a_dotted_odoo_version(self):
+        live = self.container("live-odoo", {"profile": "live"})
+        live["odoo_version"] = "18.0"
+        self.run_odoo(live, [live])
+        self.assertIn("workers = 8", self.conf_of(live))
+
+    def test_the_postgres_step_receives_all_containers(self):
+        source = inspect.getsource(udo._process_container)
+        self.assertIn("run_sizing_postgres(container, db_user, all_containers=all_containers)",
+                      source)
 
     def test_a_sizing_error_alone_makes_the_exit_status_one(self):
         self.assertEqual(udo.exit_code_for(0, 1), 1)

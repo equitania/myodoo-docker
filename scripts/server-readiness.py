@@ -2108,10 +2108,17 @@ def check_odoo_sizing(ctx: HealthContext) -> Finding:
         parts.append(f"{inst.name} {workers} workers + {cron} cron")
 
     deviations, problems = [], []
-    templates_dir = os.path.join(ctx.repo, "Dockerfiles")
+    # the same template folder doup compares against (defaults.dockerfiles_source)
+    defaults = (config or {}).get("defaults")
+    source = defaults.get("dockerfiles_source") if isinstance(defaults, dict) else None
+    templates_dir = (os.path.expandvars(os.path.expanduser(str(source))) if source
+                     else os.path.join(ctx.repo, "Dockerfiles"))
     for inst, result in zip(instances, plan.results):
         if not result.sized:
             continue
+        db, others = module.shared_db_partners(containers, inst.name)
+        if others:
+            deviations.append(f"{inst.name}: {module.shared_db_note(db, others)}")
         state, state_problem = module.load_state(inst.build_dir)
         if state_problem:
             problems.append(f"{inst.name}: {state_problem}")

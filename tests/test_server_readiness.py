@@ -1365,6 +1365,36 @@ class OdooSizingTest(unittest.TestCase):
         self.assertEqual(finding.severity, sr.Severity.SKIP)
         self.assertIn("PyYAML", finding.detail)
 
+    def test_a_shared_database_container_is_named_in_the_note(self):
+        self.live_and_test(4, 16)
+        path = os.path.join(self.tmp.name, sr.UPDATE_CONFIG)
+        with open(path) as handle:
+            text = handle.read()
+        with open(path, "w") as handle:
+            handle.write(text.replace("db_host: live--db", "db_host: shared-db")
+                         .replace("db_host: test--db", "db_host: shared-db"))
+        finding = self.check()
+        self.assertEqual(finding.severity, sr.Severity.OK, finding.detail)
+        self.assertIn("live-odoo: database container shared-db is shared with test-odoo",
+                      finding.note)
+        self.assertIn("test-odoo: database container shared-db is shared with live-odoo",
+                      finding.note)
+
+    def test_templates_come_from_defaults_dockerfiles_source(self):
+        self.live_and_test(4, 16)
+        self.set_value("live-odoo", "workers", 3)
+        source = os.path.join(self.tmp.name, "elsewhere", "Dockerfiles")
+        os.makedirs(os.path.join(source, "v18-odoo"))
+        with open(os.path.join(source, "v18-odoo", "odoo.conf"), "w") as handle:
+            handle.write("[options]\nworkers = 3\n")
+        path = os.path.join(self.tmp.name, sr.UPDATE_CONFIG)
+        with open(path) as handle:
+            text = handle.read()
+        with open(path, "w") as handle:
+            handle.write(f"defaults:\n  dockerfiles_source: {source}\n" + text)
+        finding = self.check()
+        self.assertIn("workers: 3 -> 5 (written by the next doup)", finding.note)
+
     def test_check_is_registered_after_the_capacity_check(self):
         self.assertEqual(sr.CHECKS.index(sr.check_odoo_sizing),
                          sr.CHECKS.index(sr.check_odoo_capacity) + 1)

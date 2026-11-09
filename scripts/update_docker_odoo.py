@@ -2079,14 +2079,21 @@ def run_sizing_odoo(container, all_containers, path, dockerfiles_source, hardwar
         plan = sizing.compute_plan(hw, instances)
         result = next((r for r in plan.results if r.name == name), None)
         if result is None or not result.sized:
-            return 0, 0, 0               # block without a usable profile: nothing to apply
+            # a block without a usable profile: nothing to apply, but say so
+            warnings += 1
+            print_step(label, "skipped")
+            _sizing_problem("WARNING", f"{name}: the sizing block has no valid profile "
+                                       "(live, test or demo) and is ignored; check it with doval")
+            return info, warnings, errors
         pg_overrides = sizing.override_conf_keys(result, "pg")
         SIZING_PLAN[name] = (result, pg_overrides)
 
-        version = container.get('odoo_version')
-        template_path = join(dockerfiles_source or DEFAULT_DOCKERFILES_SOURCE,
-                             f"v{version}-odoo", "odoo.conf")
-        template = sizing.parse_conf_values(sizing.read_text(template_path) or "")
+        major = sizing.odoo_major(container.get('odoo_version'))   # "18.0" -> 18, as dosize/chk
+        template = {}
+        if major is not None:
+            template_path = join(dockerfiles_source or DEFAULT_DOCKERFILES_SOURCE,
+                                 f"v{major}-odoo", "odoo.conf")
+            template = sizing.parse_conf_values(sizing.read_text(template_path) or "")
         sync = sizing.sync_odoo_conf(path, result.odoo,
                                      sizing.override_conf_keys(result, "odoo"),
                                      template)
@@ -2105,11 +2112,9 @@ def run_sizing_odoo(container, all_containers, path, dockerfiles_source, hardwar
                 _sizing_line(f"backup {sync.backup}")
         for text in result.warnings:
             _sizing_line(f"note: {text}")
-        if plan.over_budget:
+        for text in plan.warnings:       # over budget, overrides, process count: the plan's own words
             warnings += 1
-            _sizing_problem(
-                "WARNING", f"over budget: the instances on this host need {plan.need_mib} MiB, "
-                f"the budget is {plan.budget_mib} MiB; the minimal staffing is applied")
+            _sizing_problem("WARNING", text)
     except Exception as error:
         errors += 1
         print_step(label, "FAILED")
@@ -2132,10 +2137,13 @@ def _odoo_container_down(name, runner):
     return code != 0 and "no such" in out.lower()
 
 
-def run_sizing_postgres(container, db_user, runner=None):
+def run_sizing_postgres(container, db_user, runner=None, all_containers=None):
     """Write the recommended settings into the database container's postgresql.conf.
 
-    Runs while Odoo is stopped (between the stop block and the build).
+    Runs while Odoo is stopped (between the stop block and the build). A database
+    container that another entry of docker2update.yaml (active or parked) also
+    uses is left alone: only this instance's Odoo is down, and the plan's values
+    would fit this instance only.
     Returns (info, warnings, errors). Never raises.
     """
     global SIZING_ERRORS, CURRENT_STEP
@@ -2153,6 +2161,12 @@ def run_sizing_postgres(container, db_user, runner=None):
         if sizing is None:
             return 0, 0, 0                # the odoo step has already reported it
         runner = runner or default_runner
+        db, others = sizing.shared_db_partners(all_containers or [container], name)
+        if others:
+            warnings += 1
+            print_step(label, "skipped")
+            _sizing_problem("WARNING", sizing.shared_db_note(db, others))
+            return info, warnings, errors
         if not _odoo_container_down(name, runner):
             warnings += 1
             print_step(label, "skipped")
@@ -2182,7 +2196,9 @@ def run_sizing_postgres(container, db_user, runner=None):
         elif sync.error:
             errors += 1
             print_step(label, "FAILED")
-            _sizing_problem("ERROR", f"{sync.error}; update continues")
+            hint = (f"; the refused values are kept as hand values until accepted in "
+                    f"dosize --review {name}" if sync.rolled_back else "")
+            _sizing_problem("ERROR", f"{sync.error}{hint}; update continues")
         else:
             written = sum(1 for d in sync.decisions if d.action == "write") if sync.changed else 0
             print_step(label, f"{written} written, {len(sync.decisions) - written} unchanged")
@@ -2509,7 +2525,7 @@ def _process_container(container, proxy_settings=None, dockerfiles_source=None,
 
     # Sizing: Odoo is down for the whole build, so a PostgreSQL restart costs
     # no extra downtime. Never fatal.
-    info, warn, err = run_sizing_postgres(container, db_user)
+    info, warn, err = run_sizing_postgres(container, db_user, all_containers=all_containers)
     total_info += info
     total_warnings += warn
     total_errors += err
