@@ -56,6 +56,10 @@ databases:
   frei bleiben. Sonst scheitert der Eintrag mit ERROR, seine alten Archive
   bleiben erhalten und der Lauf endet mit Exit `1`. Beide auf `0` schaltet die
   Prüfung ab.
+- **RAM-Disk (seit 4.13.0).** Debian 13 legt `/tmp` als `tmpfs` in den
+  Arbeitsspeicher. Ohne `temp_path` wird dann in `/var/tmp` zwischengespeichert,
+  und auf einer RAM-Disk gilt nur `min_free_percent`. `temp_path` nie unterhalb
+  von `backup_path` legen, sonst lädt rsync die Zwischendateien mit hoch.
 - **`exclude:` je Dienst.** Glob-Muster relativ zu `source_path`. Für den
   Dienst `docker_builds` gilt standardmäßig `["*/zips"]` (Release-Archive,
   per Hardlink aus `/opt/odoo-build-cache`, jederzeit neu erzeugbar).
@@ -210,6 +214,10 @@ databases:
   `defaults.min_free_gb` (5): before every database and service backup the
   larger of the two must stay free. Otherwise the item fails with an ERROR,
   its old archives are kept and the run exits `1`. `0` for both disables it.
+- **RAM disk (since 4.13.0).** Debian 13 mounts `/tmp` as `tmpfs` in memory.
+  Without `temp_path` staging then moves to `/var/tmp`, and on a RAM disk only
+  `min_free_percent` applies. Never put `temp_path` below `backup_path`, or
+  rsync uploads the staging files.
 - **`exclude:` per service.** Glob patterns relative to `source_path`. For
   the service `docker_builds` the default is `["*/zips"]` (release archives,
   hardlinked from `/opt/odoo-build-cache`, regenerable). `exclude: []`

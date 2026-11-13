@@ -3,8 +3,8 @@
 # ==============================================================================
 # Title:            container2backup.py
 # Description:      Script to backup Odoo database including FileStore under Docker
-# Version:          4.12.0
-# Date:             09.11.2026
+# Version:          4.13.0
+# Date:             13.11.2026
 # Author:           Equitania Software GmbH
 # ==============================================================================
 # Feature Overview:
@@ -30,6 +30,8 @@
 #     write; a refused item counts as failed and keeps its old archives
 #   - Run lock (flock): a second concurrent run stops without touching anything
 #   - Unique temp directory per database run (mkdtemp)
+#   - No staging on a RAM disk: without temp_path a tmpfs /tmp (Debian 13)
+#     is replaced by /var/tmp; on a RAM disk only min_free_percent applies
 # ==============================================================================
 #    Copyright (C) 2014-now Equitania Software GmbH(<http://www.equitania.de>).
 #
@@ -71,8 +73,8 @@ import fnmatch
 # Single source of truth for the version banner printed at runtime. Keep these
 # in sync with the header comment above. The __main__ banner is derived from
 # these constants so it cannot silently drift out of date again.
-SCRIPT_VERSION = "4.12.0"
-SCRIPT_DATE = "09.11.2026"
+SCRIPT_VERSION = "4.13.0"
+SCRIPT_DATE = "13.11.2026"
 
 # Every name an archive written here can end in. Retention deletes only files
 # with one of these, and server-readiness.py (BACKUP_ARCHIVE_SUFFIXES) and
@@ -649,21 +651,80 @@ def check_free_reserve(label, writes, defaults):
             usage = shutil.disk_usage(probe)
         except OSError:
             continue
-        pool = pools.setdefault(dev, {'path': probe, 'usage': usage, 'estimate': 0})
+        pool = pools.setdefault(dev, {'path': probe, 'usage': usage, 'estimate': 0,
+                                      'ram': is_ram_disk(probe)})
         pool['estimate'] += int(estimate or 0)
 
     for pool in pools.values():
         usage = pool['usage']
-        reserve = max(usage.total * percent / 100.0, gb * _GIB)
+        # A RAM disk (Debian 13 mounts /tmp as tmpfs, half the RAM) is often
+        # smaller than min_free_gb in total - the absolute floor would refuse
+        # every backup. It protects a root disk; on a RAM disk only the
+        # percentage applies (4.13.0, 13.11.2026).
+        if pool['ram']:
+            reserve = usage.total * percent / 100.0
+            basis = f"min_free_percent {percent}, RAM disk: min_free_gb not applied"
+        else:
+            reserve = max(usage.total * percent / 100.0, gb * _GIB)
+            basis = f"min_free_percent {percent}, min_free_gb {gb}"
         if usage.free - pool['estimate'] < reserve:
             return False, (
                 f"{label}: not enough free space on {pool['path']} - "
                 f"free {_human(usage.free)}, this backup needs ~{_human(pool['estimate'])}, "
                 f"reserve to keep {_human(reserve)} "
-                f"(min_free_percent {percent}, min_free_gb {gb}). Nothing was written. "
-                f"Lower retention_days, move backup_path to a larger mount, "
-                f"or free space.")
+                f"({basis}). Nothing was written. "
+                f"Lower retention_days, move backup_path or temp_path to a larger "
+                f"mount, or free space.")
     return True, "ok"
+
+
+# Filesystem types that live in memory. Staging a dump there takes RAM away
+# from Odoo and PostgreSQL, and without swap it ends in the OOM killer.
+RAM_FSTYPES = ('tmpfs', 'ramfs')
+
+
+def mount_fstype(path):
+    """Filesystem type of the mount that holds ``path``; None when unknown.
+
+    Longest matching mount point in /proc/self/mounts wins. Not Linux, or
+    the file is unreadable -> None (callers then behave as before).
+    """
+    probe = os.path.realpath(_existing_parent(path))
+    best, fstype = None, None
+    try:
+        with open('/proc/self/mounts', encoding='utf-8', errors='replace') as handle:
+            for line in handle:
+                parts = line.split()
+                if len(parts) < 3:
+                    continue
+                mount = parts[1].replace('\\040', ' ')
+                prefix = mount.rstrip('/') + '/'
+                if probe == mount or probe.startswith(prefix):
+                    if best is None or len(mount) > len(best):
+                        best, fstype = mount, parts[2]
+    except OSError:
+        return None
+    return fstype
+
+
+def is_ram_disk(path):
+    return mount_fstype(path) in RAM_FSTYPES
+
+
+def system_temp_base():
+    """Where to stage when no usable temp_path is configured.
+
+    Returns (directory_or_None, note_or_None). None means the system default
+    of tempfile. On Debian 13 that default /tmp is a tmpfs: a dump staged
+    there competes with Odoo for RAM and the free-space reserve may refuse
+    every backup. /var/tmp is on disk there, so it is used instead.
+    """
+    default = tempfile.gettempdir()
+    if (is_ram_disk(default) and os.path.isdir('/var/tmp')
+            and not is_ram_disk('/var/tmp')):
+        return '/var/tmp', (f"{default} is a RAM disk (tmpfs) - staging in /var/tmp "
+                            f"instead. Set defaults.temp_path to choose another place.")
+    return None, None
 
 
 def backup_write_estimates(db_size, filestore_size, streaming, only_sql_dump):
@@ -972,9 +1033,12 @@ def create_backup(db_name, db_user, sql_container, data_container, backup_path, 
         print(f"Using configured temporary directory: {temp_dir}")
         custom_temp = True
     else:
-        # Use system default temp directory
-        temp_dir = tempfile.mkdtemp()
+        # Use the system default temp directory - unless it is a RAM disk
+        fallback_base, note = system_temp_base()
+        temp_dir = tempfile.mkdtemp(dir=fallback_base)
         custom_temp = False
+        if note:
+            print(note)
         print(f"Using system temporary directory: {temp_dir}")
     
     try:

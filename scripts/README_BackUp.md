@@ -111,6 +111,12 @@ rsync:
 >   zweiten Lauf mit Exit 1 enden, ohne etwas zu schreiben. Ein gescheitertes Dienst-Backup
 >   überspringt dessen Aufbewahrung und macht den Lauf zu Exit 1.
 
+> **RAM-Disk als Zwischenablage (seit v4.13.0):** Debian 13 legt `/tmp` als `tmpfs` in den
+> Arbeitsspeicher (halbe RAM-Größe). Ist kein `temp_path` gesetzt und `/tmp` eine RAM-Disk,
+> wird stattdessen in `/var/tmp` zwischengespeichert. Auf einer RAM-Disk gilt nur
+> `min_free_percent`, nicht `min_free_gb` — sonst würde eine 3,8-GiB-RAM-Disk jedes Backup
+> ablehnen. `temp_path` nie unterhalb von `backup_path` legen: rsync lädt es sonst mit hoch.
+
 ### Konfiguration für SQL-Dump-Only Backups
 
 Jede Datenbank kann mit der Option `only_sql_dump` konfiguriert werden:
@@ -666,6 +672,11 @@ rsync:
 > - An exclusive lock (`/run/lock/container2backup.lock`, fallback `temp_path`) makes a second run
 >   exit 1 without writing anything. A failed service backup skips that service's retention and
 >   makes the run exit 1.
+
+> **RAM disk as staging area (since v4.13.0):** Debian 13 mounts `/tmp` as `tmpfs` in memory
+> (half the RAM). With no `temp_path` set and `/tmp` on a RAM disk, staging moves to `/var/tmp`.
+> On a RAM disk only `min_free_percent` applies, not `min_free_gb` — otherwise a 3.8 GiB RAM disk
+> refuses every backup. Never put `temp_path` below `backup_path`: rsync would upload it.
 
 ### Configuration for SQL Dump Only Backups
 

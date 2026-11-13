@@ -271,7 +271,14 @@ in this repository, stay in `CLAUDE.md`.
   - Detects Hetzner DNS issues with DigitalOcean
   - Supports systemd-resolved, resolvconf, and direct DNS config
 
-#### 2. container2backup.py (v4.12.0)
+#### 2. container2backup.py (v4.13.0)
+- **No staging on a RAM disk** (v4.13.0, 13.11.2026): Debian 13 mounts `/tmp`
+  as tmpfs (half the RAM). The 5 GiB floor of the reserve refused every
+  database backup on a host with 7.6 GiB RAM, even a 37 MiB one. Now: without
+  a usable `temp_path`, a tmpfs `/tmp` is replaced by `/var/tmp` (if that is on
+  disk), and on a RAM disk the reserve is `min_free_percent` only. The refusal
+  names `temp_path` as a remedy. Template and `ownerp_migrate.py` 1.6.1 write
+  `temp_path: /var/tmp/odoo_backup`.
 - **Excludes, free-space reserve and a run lock** (v4.12.0, 09.11.2026):
   - Per-service `exclude:` — glob list relative to `source_path` (a pattern
     without `/` matches at any depth). The built-in default for the service
@@ -727,7 +734,9 @@ in this repository, stay in `CLAUDE.md`.
   `setup-maintenance-cron.sh` restores the repository schedule and discards the
   customisation — that is its job, and the tool says so before it writes
 
-#### 9. ownerp_migrate.py (v1.6.0)
+#### 9. ownerp_migrate.py (v1.6.1)
+- **v1.6.1 (13.11.2026):** the generated `container2backup.yaml` stages in
+  `/var/tmp/odoo_backup` instead of the tmpfs `/tmp` of Debian 13.
 - **v1.6.0 (27.10.2026):** Docker present but no container at all is a fresh
   server waiting for its first instance: the no-CSV/no-YAML path prints
   `No Odoo instance yet — create the first one with: wizup` instead of the

@@ -746,6 +746,21 @@ class FreeReserveTest(unittest.TestCase):
                        "reserve to keep 100.0 GiB", "retention_days", "backup_path"):
             self.assertIn(needle, msg)
 
+    def test_a_ram_disk_smaller_than_min_free_gb_is_not_refused(self):
+        # 13.11.2026: Debian 13 tmpfs /tmp, 3.8 GiB total and free. The 5 GiB
+        # floor refused even a 37 MiB backup; on a RAM disk only 10 % applies.
+        usage = types.SimpleNamespace(total=int(3.8 * self.GIB), used=0,
+                                      free=int(3.8 * self.GIB))
+        with mock.patch.object(c2b, "is_ram_disk", return_value=True):
+            self.assertTrue(self.check([("a", 0)], usage, {})[0])
+            ok, msg = self.check([("a", 4)], usage, {})
+        self.assertFalse(ok)
+        self.assertIn("RAM disk", msg)
+        self.assertIn("temp_path", msg)
+        # the same numbers on a real disk keep the 5 GiB floor
+        with mock.patch.object(c2b, "is_ram_disk", return_value=False):
+            self.assertFalse(self.check([("a", 0)], usage, {})[0])
+
     def test_same_mount_writes_are_summed(self):
         usage = self.usage(1000, 150)
         # each alone leaves 120 >= 100, together 150 - 60 = 90 < 100
@@ -840,6 +855,70 @@ class ServiceFailureTest(unittest.TestCase):
             _, out = self.run_service(name="docker_builds", cfg=cfg)
         self.assertEqual(compress.call_args.kwargs["exclude"], [])
         self.assertNotIn("Excluding", out)
+
+
+class RamDiskTempTest(unittest.TestCase):
+    MOUNTS = ("/dev/sda1 / ext4 rw 0 0\n"
+              "tmpfs /tmp tmpfs rw,nosuid 0 0\n"
+              "tmpfs /run tmpfs rw 0 0\n")
+
+    def fstype(self, path, mounts=None):
+        opener = mock.mock_open(read_data=mounts or self.MOUNTS)
+        with mock.patch("builtins.open", opener), \
+             mock.patch.object(c2b, "_existing_parent", side_effect=lambda p: p), \
+             mock.patch.object(c2b.os.path, "realpath", side_effect=lambda p: p):
+            return c2b.mount_fstype(path)
+
+    def test_longest_mount_point_wins(self):
+        self.assertEqual(self.fstype("/tmp/tmpabc"), "tmpfs")
+        self.assertEqual(self.fstype("/tmp"), "tmpfs")
+        self.assertEqual(self.fstype("/var/tmp"), "ext4")
+        self.assertEqual(self.fstype("/tmpfoo"), "ext4")
+
+    def test_unreadable_mounts_mean_unknown(self):
+        with mock.patch("builtins.open", side_effect=OSError("no /proc")):
+            self.assertIsNone(c2b.mount_fstype("/tmp"))
+        with mock.patch("builtins.open", side_effect=OSError("no /proc")):
+            self.assertFalse(c2b.is_ram_disk("/tmp"))
+
+    def ram(self, *ram_paths):
+        return mock.patch.object(c2b, "is_ram_disk", side_effect=lambda p: p in ram_paths)
+
+    def test_tmpfs_tmp_is_replaced_by_var_tmp(self):
+        with mock.patch.object(c2b.tempfile, "gettempdir", return_value="/tmp"), \
+             mock.patch.object(c2b.os.path, "isdir", return_value=True), \
+             self.ram("/tmp"):
+            base, note = c2b.system_temp_base()
+        self.assertEqual(base, "/var/tmp")
+        self.assertIn("RAM disk", note)
+
+    def test_a_disk_tmp_keeps_the_system_default(self):
+        with mock.patch.object(c2b.tempfile, "gettempdir", return_value="/tmp"), \
+             self.ram():
+            self.assertEqual(c2b.system_temp_base(), (None, None))
+
+    def test_no_fallback_when_var_tmp_is_a_ram_disk_too(self):
+        with mock.patch.object(c2b.tempfile, "gettempdir", return_value="/tmp"), \
+             mock.patch.object(c2b.os.path, "isdir", return_value=True), \
+             self.ram("/tmp", "/var/tmp"):
+            self.assertEqual(c2b.system_temp_base(), (None, None))
+
+    def test_create_backup_without_temp_path_stages_in_the_fallback(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            base = os.path.join(tmp, "disk")
+            os.makedirs(base)
+            with mock.patch.object(c2b, "config", {"defaults": {}}, create=True), \
+                 mock.patch.object(c2b, "get_database_data_size_bytes", return_value=1), \
+                 mock.patch.object(c2b, "system_temp_base",
+                                   return_value=(base, "/tmp is a RAM disk (tmpfs)")), \
+                 mock.patch.object(c2b, "check_free_reserve",
+                                   return_value=(False, "x")) as check, \
+                 mock.patch("sys.stdout", new=io.StringIO()) as out:
+                c2b.create_backup("live_db", "u", "live-db", "live-odoo",
+                                  os.path.join(tmp, "bk"), "ts", only_sql_dump=True)
+            temp_written = check.call_args[0][1][0][0]
+            self.assertTrue(temp_written.startswith(base + os.sep))
+            self.assertIn("RAM disk", out.getvalue())
 
 
 class DatabaseBackupGuardsTest(unittest.TestCase):

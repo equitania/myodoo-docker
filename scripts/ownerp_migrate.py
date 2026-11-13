@@ -3,8 +3,8 @@
 # ==============================================================================
 # Title:            ownerp_migrate.py
 # Description:      Convert the legacy CSV configurations to YAML, once, safely.
-# Version:          1.6.0
-# Date:             27.10.2026
+# Version:          1.6.1
+# Date:             13.11.2026
 # Author:           Equitania Software GmbH
 # ==============================================================================
 # Why this exists:
@@ -83,8 +83,8 @@ import time
 from dataclasses import dataclass, field
 from typing import List, NamedTuple, Optional, Tuple
 
-SCRIPT_VERSION = "1.6.0"
-SCRIPT_DATE = "27.10.2026"
+SCRIPT_VERSION = "1.6.1"
+SCRIPT_DATE = "13.11.2026"
 
 BACKUP_CSV = "container2backup.csv"
 BACKUP_PATH_CSV = "container2backup_path.csv"
@@ -321,7 +321,7 @@ def render_backup_yaml(rows: List[Row], backup_path: Optional[str],
     if shared_user:
         out.append(f"  db_user: {shared_user}")
     out.append(f"  backup_path: {backup_path or '/opt/backups'}")
-    out.append("  temp_path: /tmp/odoo_backup")
+    out.append("  temp_path: /var/tmp/odoo_backup")
     out.append("  stream: false")
     out.append("  compression:")
     out.append('    format: "7z"')
