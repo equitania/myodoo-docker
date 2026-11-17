@@ -108,6 +108,29 @@ class FastReportTagTests(unittest.TestCase):
         text = FR.read_text(encoding="utf-8")
         self.assertLess(text.index("GitLab Registry Token"), text.index('Image-Tag ['))
 
+    def base_path(self, tag):
+        result = source_and_run(FR, "FR_DEPLOY_NO_MAIN", f'_container_base_path "{tag}"')
+        return result.stdout.strip()
+
+    def test_base_path_does_not_expire_with_the_year(self):
+        # The rule was "tag contains 2026": every 2027 image got the legacy
+        # mount path and died on a missing appsettings.json.
+        for tag in ("2026.2.8-3.3.2", "2027.1.3-3.4.3", "2030.1.0-4.0.0"):
+            self.assertEqual(self.base_path(tag), "/app/wwwroot", tag)
+
+    def test_base_path_legacy_only_for_images_before_2026(self):
+        for tag in ("2025.2.11", "2024.1.0-2.9.0"):
+            self.assertEqual(self.base_path(tag), "/app/fr_api/wwwroot", tag)
+
+    def test_base_path_of_an_unversioned_tag_is_the_current_layout(self):
+        for tag in ("latest", "main", "test-2026"):
+            self.assertEqual(self.base_path(tag), "/app/wwwroot", tag)
+
+    def test_main_flow_uses_the_helper(self):
+        text = FR.read_text(encoding="utf-8")
+        self.assertNotIn("*2026*", text)
+        self.assertIn('container_base_path="$(_container_base_path "$fr_version")"', text)
+
 
 @unittest.skipUnless(shutil.which("bash"), "bash missing")
 class HostUserTests(unittest.TestCase):

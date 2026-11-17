@@ -291,6 +291,20 @@ _newest_release_tag() {  # tags on stdin (sort -V order)
     grep -E '^[0-9][0-9A-Za-z_.-]*$' | sort -V | tail -n1
 }
 
+# Mount-Basis im Container. Images vor 2026 arbeiten in /app/fr_api, alle
+# späteren in /app. Nur ein Tag mit führender Jahreszahl < 2026 bekommt den
+# alten Pfad; alles andere (neuere Jahre, latest, Branch-Tags) den aktuellen.
+# Die frühere Regel "Tag enthält 2026" schickte jedes 2027er-Image auf den
+# alten Pfad — der Container fand seine appsettings.json nicht.
+_container_base_path() {  # tag
+    local year="${1%%.*}"
+    if [[ "$year" =~ ^[0-9]{4}$ ]] && [ "$year" -lt 2026 ]; then
+        echo "/app/fr_api/wwwroot"
+    else
+        echo "/app/wwwroot"
+    fi
+}
+
 _jwt_hint() {
     _err "Konnte JWT für Registry-Auth nicht beziehen ($GITLAB_JWT_AUTH)."
     echo "  Token korrekt? Hat das PAT 'read_registry' Scope?"
@@ -452,12 +466,7 @@ fr_jwt_key="$(_read_pwd_twice "JWT-Key (raw String)")"
 # ── Step 3: Container-Path-Auflösung ─────────────────────────────────────────
 _hr
 _info "Step 3: Container-Path-Auflösung"
-# Logik 1:1 aus pb_fr_docker_start.yaml:9
-if [[ "$fr_version" == *2026* ]]; then
-    container_base_path="/app/wwwroot"
-else
-    container_base_path="/app/fr_api/wwwroot"
-fi
+container_base_path="$(_container_base_path "$fr_version")"
 _ok "Container Base-Path: $container_base_path"
 
 # ── Step 4: Volume-Verzeichnisse ─────────────────────────────────────────────

@@ -1,5 +1,29 @@
 # Release Notes
 
+## FastReport Deploy: 2027 Images Got the Legacy Mount Path (16.11.2026)
+
+*scripts/fr-local-deploy.sh · tests/test_deploy_scripts.py*
+
+A container deployed from a `2027.x` image died at start with
+"The configuration file 'wwwroot/App_Data/settings/appsettings.json' was not
+found". The script chose the mount path by the rule "tag contains 2026";
+every other tag fell into the branch for the old images and was mounted under
+`/app/fr_api/wwwroot`, while the image reads `/app/wwwroot`. Changing the tag
+in the generated `docker-compose.yml` by hand kept the wrong paths.
+
+### Fixed
+
+- **Mount path no longer expires with the year.** Only a tag with a leading
+  year before 2026 gets `/app/fr_api/wwwroot`; newer years and unversioned
+  tags (`latest`, branch tags) get `/app/wwwroot`.
+
+### Repairing an affected instance
+
+In `/opt/fast-report/<name>/docker-compose.yml` replace `/app/fr_api/wwwroot/`
+by `/app/wwwroot/` in the five volume lines, then recreate the container with
+`docker compose -f /opt/fast-report/<name>/docker-compose.yml up -d`. The data
+on the host is untouched.
+
 ## Backups: No Staging on a RAM Disk (13.11.2026)
 
 *container2backup.py v4.13.0 · ownerp_migrate.py v1.6.1 ·
