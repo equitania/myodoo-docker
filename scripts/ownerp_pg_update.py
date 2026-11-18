@@ -139,8 +139,35 @@ def _need(name: str):
     return module
 
 
+QUICK_TIMEOUT = 60       # seconds for a question to Docker or to the server
+SLOW_TIMEOUT = 3600      # seconds for a pull, a build, a stop with its checkpoint, a start
+_SLOW_DOCKER = {"pull", "build", "stop", "start", "run"}
+
+
+def _timeout_for(argv: List[str]) -> int:
+    """`docker stop -t 120` alone outlasts a short limit, and cutting it off would be read
+    as a failed stop while the daemon goes on stopping the server."""
+    if argv[:1] == ["docker-compose"] or argv[:2] == ["docker", "compose"]:
+        return QUICK_TIMEOUT if argv[-1:] == ["version"] else SLOW_TIMEOUT
+    if argv[:1] == ["docker"] and len(argv) > 1 and argv[1] in _SLOW_DOCKER:
+        return SLOW_TIMEOUT
+    return QUICK_TIMEOUT
+
+
 def default_runner(argv: List[str]) -> Tuple[int, str]:
-    return _need("ownerp_sizing").default_runner(argv)
+    """Run a command; (exit code, output, stderr added on failure). Never raises."""
+    limit = _timeout_for(argv)
+    try:
+        done = subprocess.run(argv, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+                              universal_newlines=True, timeout=limit)
+    except subprocess.TimeoutExpired:
+        return 124, "timed out after %d s: %s" % (limit, " ".join(argv))
+    except (OSError, ValueError) as error:
+        return 127, "cannot run %s: %s" % (argv[0] if argv else "command", error)
+    output = done.stdout or ""
+    if done.returncode != 0:
+        output += done.stderr or ""
+    return done.returncode, output
 
 
 # --- server version, user, base -----------------------------------------------

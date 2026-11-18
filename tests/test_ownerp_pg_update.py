@@ -2633,5 +2633,54 @@ class MainTest(unittest.TestCase):
         self.assertNotIn("Select (", pg.render_overview(rows, prompt=False))
 
 
+class DefaultRunnerTest(unittest.TestCase):
+    """The real runner: slow Docker commands must not be cut off after a few seconds."""
+
+    def timeout_of(self, argv):
+        seen = {}
+
+        def fake_run(command, **kw):
+            seen.update(kw)
+            return mock.Mock(returncode=0, stdout="ok\n", stderr="")
+
+        with mock.patch.object(pg.subprocess, "run", fake_run):
+            self.assertEqual(pg.default_runner(argv), (0, "ok\n"))
+        return seen["timeout"]
+
+    def test_slow_commands_get_the_long_timeout(self):
+        for argv in (["docker", "pull", "postgres:16.16-bookworm"],
+                     ["docker", "build", "-t", "x", "."],
+                     ["docker", "stop", "-t", "120", "live-db"],
+                     ["docker", "start", "live-odoo"],
+                     ["docker", "compose", "-f", "c.yml", "up", "-d", "--no-deps", "postgres"],
+                     ["docker-compose", "-f", "c.yml", "up", "-d", "--no-deps", "postgres"],
+                     ["docker", "run", "--rm", "--entrypoint", "sh", "postgres:16.16", "-c", "x"]):
+            self.assertEqual(self.timeout_of(argv), pg.SLOW_TIMEOUT, argv)
+        self.assertGreater(pg.SLOW_TIMEOUT, 10 * pg.STOP_TIMEOUT)
+
+    def test_queries_keep_a_short_timeout(self):
+        for argv in (["docker", "ps", "-aq"], ["docker", "inspect", "live-db"],
+                     ["docker", "exec", "live-db", "psql", "-Atc", "SHOW server_version"],
+                     ["docker", "compose", "version"]):
+            self.assertEqual(self.timeout_of(argv), pg.QUICK_TIMEOUT, argv)
+
+    def test_timeout_and_missing_binary_are_answers_not_exceptions(self):
+        def expired(command, **kw):
+            raise pg.subprocess.TimeoutExpired(command, kw["timeout"])
+
+        with mock.patch.object(pg.subprocess, "run", expired):
+            code, text = pg.default_runner(["docker", "ps", "-aq"])
+        self.assertEqual(code, 124)
+        self.assertIn("timed out", text)
+        with mock.patch.object(pg.subprocess, "run", mock.Mock(side_effect=OSError("no docker"))):
+            self.assertEqual(pg.default_runner(["docker", "ps"])[0], 127)
+
+    def test_stderr_is_part_of_a_failed_answer(self):
+        failed = mock.Mock(returncode=1, stdout="", stderr="Error: No such container: x\n")
+        with mock.patch.object(pg.subprocess, "run", mock.Mock(return_value=failed)):
+            self.assertEqual(pg.default_runner(["docker", "inspect", "x"]),
+                             (1, "Error: No such container: x\n"))
+
+
 if __name__ == "__main__":
     unittest.main()
