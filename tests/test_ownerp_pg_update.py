@@ -6,7 +6,9 @@ Run from the repository root:
     python3 -m unittest tests.test_ownerp_pg_update -v
 """
 
+import contextlib
 import datetime
+import io
 import json
 import os
 import shutil
@@ -2384,6 +2386,251 @@ class RollbackTest(UpdateCase):
         self.host.versions["postgres:16.8"] = "16.1"
         self.assertEqual(self.rollback(), 2)
         self.assertFalse(self.started("live-odoo"))
+
+
+class FakeStdin(io.StringIO):
+    """Typed answers, one per line; `tty` says whether it claims to be a terminal."""
+
+    def __init__(self, text="", tty=True):
+        super().__init__(text)
+        self.tty = tty
+
+    def isatty(self):
+        return self.tty
+
+
+DIFFERS = pg.SizingView({"shared_buffers": "4GB"}, {"shared_buffers": "1GB"},
+                        {"shared_buffers": ("1GB", "4GB")}, None)
+ROLE_UNKNOWN = pg.SizingView({}, {}, {}, "role unknown")
+
+
+class MainTest(unittest.TestCase):
+    """The mode table of main(); discovery, phase 1 and phase 2 are replaced by recorders."""
+
+    def setUp(self):
+        self.lines = []
+        self.targets = [target(name="live-db", base=BOOKWORM, kind="legacy"),
+                        target(name="test-db", base=BOOKWORM)]
+        self.view = NO_SIZING
+        self.views = {}                 # role -> view the fake prepare answers with
+        self.problems = {}              # container name -> problems of its plan
+        self.codes = {}                 # container name -> exit code of its update
+        self.prepared = []              # (name, opts) of every prepare call
+        self.updated = []               # (name, opts) of every update_one call
+        self.rolled_back = []
+        self.rollback_code = 0
+        self.run = FakeRunner(host_answers([]))
+        for name, value in (("discover", lambda run, cfg, user=None: list(self.targets)),
+                            ("hub_tags", lambda major, fetch=None: {"16.16-bookworm"}),
+                            ("_configs", lambda opts: ({}, None)),
+                            ("sizing_view", lambda *a, **k: self.view),
+                            ("prepare", self.fake_prepare),
+                            ("update_one", self.fake_update),
+                            ("rollback", self.fake_rollback)):
+            patcher = mock.patch.object(pg, name, value)
+            patcher.start()
+            self.addCleanup(patcher.stop)
+
+    def fake_prepare(self, tgt, choice, opts, run, **kw):
+        self.prepared.append((tgt.name, opts))
+        return pg.UpdatePlan(
+            target=tgt, choice=choice, deploy_dir="/d", compose_file="/d/compose.yml",
+            compose_text=None, databases=[], listed=[], unlisted=[], stop_odoo=[],
+            sizing=self.views.get(opts.role, self.view), parked_name=None,
+            problems=([choice.blocked] if choice.blocked else [])
+            + list(self.problems.get(tgt.name, [])))
+
+    def fake_update(self, plan, opts, run, stream, out, **kw):
+        self.updated.append((plan.target.name, opts))
+        return self.codes.get(plan.target.name, 0)
+
+    def fake_rollback(self, name, opts, run, out, **kw):
+        self.rolled_back.append((name, opts, kw.get("ask")))
+        return self.rollback_code
+
+    def main(self, *argv, stdin="", tty=True, run=None):
+        return pg.main(list(argv), run=run or self.run, stream=FakeRunner(),
+                       fetch=lambda url: None, stdin=FakeStdin(stdin, tty),
+                       out=self.lines.append)
+
+    def text(self):
+        return "\n".join(self.lines)
+
+    def names(self, calls):
+        return [name for name, _ in calls]
+
+    def test_json_mode_prints_one_document_and_runs_nothing(self):
+        self.assertEqual(self.main("--json"), 0)
+        document = json.loads(self.text())
+        self.assertEqual([c["name"] for c in document["containers"]], ["live-db", "test-db"])
+        self.assertEqual((self.prepared, self.updated), ([], []))
+        self.assertFalse([c for c in self.run.calls
+                          if c[:2] in (["docker", "stop"], ["docker", "pull"])])
+
+    def test_json_mode_filters_by_container(self):
+        self.assertEqual(self.main("--json", "--container", "test-db"), 0)
+        document = json.loads(self.text())
+        self.assertEqual([c["name"] for c in document["containers"]], ["test-db"])
+        self.assertEqual(self.updated, [])
+
+    def test_docker_that_cannot_be_asked_is_exit_2(self):
+        with contextlib.redirect_stderr(io.StringIO()) as err:
+            self.assertEqual(self.main("--json", run=FakeRunner()), 2)
+        self.assertEqual(self.lines, [])            # no half document on stdout
+        self.assertIn("Docker", err.getvalue())
+        self.assertEqual(self.main(run=FakeRunner()), 2)
+        self.assertIn("Docker", self.text())
+
+    def test_bare_call_without_terminal_prints_the_overview(self):
+        self.assertEqual(self.main(tty=False), 0)
+        self.assertIn("PostgreSQL", self.lines[-1].splitlines()[0])
+        self.assertNotIn("Select (", self.text())
+        self.assertEqual((self.prepared, self.updated), ([], []))
+
+    def test_bare_call_without_containers_says_so(self):
+        self.targets = []
+        self.assertEqual(self.main(), 0)
+        self.assertIn("No running PostgreSQL container", self.text())
+
+    def test_interactive_selection_runs_the_selected_in_order(self):
+        self.assertEqual(self.main(stdin="2,1\ny\n"), 0)
+        self.assertEqual(self.names(self.prepared), ["test-db", "live-db"])
+        self.assertEqual(self.names(self.updated), ["test-db", "live-db"])
+
+    def test_selection_asks_again_until_it_understands(self):
+        self.assertEqual(self.main(stdin="x\n9\n1\ny\n"), 0)
+        self.assertEqual(self.names(self.updated), ["live-db"])
+
+    def test_empty_selection_leaves(self):
+        self.assertEqual(self.main(stdin="\n"), 0)
+        self.assertEqual((self.prepared, self.updated), ([], []))
+
+    def test_a_selects_the_containers_with_an_update(self):
+        self.targets[1] = target(name="test-db", base=BOOKWORM, version=(16, 16),
+                                 image="postgres:16.16-bookworm")
+        self.assertEqual(self.main(stdin="a\ny\n"), 0)
+        self.assertEqual(self.names(self.updated), ["live-db"])
+
+    def test_declined_confirmation_changes_nothing(self):
+        self.assertEqual(self.main(stdin="1\nn\n"), 0)
+        self.assertEqual(self.updated, [])
+        self.assertIn("Nothing was changed", self.text())
+
+    def test_series_ends_at_the_first_failure(self):
+        self.codes["live-db"] = 1
+        code = self.main("--container", "live-db", "--container", "test-db", "--no-input")
+        self.assertEqual(code, 1)
+        self.assertEqual(self.names(self.updated), ["live-db"])
+        self.assertIn("Not started: test-db", self.text())
+
+    def test_a_problem_in_any_plan_starts_nothing(self):
+        self.problems["test-db"] = ["cannot list the databases of test-db"]
+        code = self.main("--container", "live-db", "--container", "test-db", "--no-input")
+        self.assertEqual(code, 2)
+        self.assertEqual(self.updated, [])
+        self.assertIn("cannot list the databases of test-db", self.text())
+        self.assertIn("Nothing was started", self.text())
+
+    def test_a_current_container_is_skipped_and_the_rest_runs(self):
+        self.problems["live-db"] = ["nothing to do"]
+        code = self.main("--container", "live-db", "--container", "test-db", "--no-input")
+        self.assertEqual(code, 0)
+        self.assertEqual(self.names(self.updated), ["test-db"])
+        self.assertIn("live-db: nothing to do", self.text())
+
+    def test_container_without_no_input_and_without_terminal_exits_2(self):
+        self.assertEqual(self.main("--container", "live-db", tty=False), 2)
+        self.assertEqual(self.updated, [])
+        self.assertIn("needs --no-input to run without a terminal", self.text())
+
+    def test_container_on_a_terminal_asks_once(self):
+        self.assertEqual(self.main("--container", "live-db", stdin="y\n"), 0)
+        self.assertEqual(self.names(self.updated), ["live-db"])
+
+    def test_dry_run_prints_the_plans_and_runs_nothing(self):
+        self.assertEqual(self.main("--container", "live-db", "--dry-run", tty=False), 0)
+        self.assertEqual(self.names(self.prepared), ["live-db"])
+        self.assertTrue(self.prepared[0][1].dry_run)
+        self.assertEqual(self.updated, [])
+        self.assertIn("live-db: 16.8 -> 16.16", self.text())
+
+    def test_to_with_two_containers_is_rejected(self):
+        with contextlib.redirect_stderr(io.StringIO()), self.assertRaises(SystemExit) as caught:
+            self.main("--container", "live-db", "--container", "test-db", "--to", "16.12")
+        self.assertEqual(caught.exception.code, 2)
+        self.assertEqual(self.prepared, [])
+
+    def test_to_reaches_the_choice(self):
+        self.assertEqual(self.main("--container", "live-db", "--to", "17.1", "--no-input"), 2)
+        self.assertEqual(self.updated, [])
+        self.assertIn("major upgrades are not supported", self.text())
+
+    def test_dialog_yes_applies_sizing_and_no_input_never_asks(self):
+        self.view = DIFFERS
+        self.assertEqual(self.main(stdin="1\ny\ny\n"), 0)
+        self.assertEqual(self.updated[0][1].sizing, "apply")
+        self.assertIn("Apply the recommended memory settings? (y/N)", self.text())
+        self.lines.clear()
+        self.updated.clear()
+        self.assertEqual(self.main("--container", "live-db", "--no-input"), 0)
+        self.assertEqual(self.updated[0][1].sizing, "show")
+        self.assertNotIn("Apply the recommended", self.text())
+
+    def test_dialog_does_not_ask_when_sizing_was_given(self):
+        self.view = DIFFERS
+        self.assertEqual(self.main("--container", "live-db", "--sizing", "show", stdin="y\n"), 0)
+        self.assertEqual(self.updated[0][1].sizing, "show")
+        self.assertNotIn("Apply the recommended", self.text())
+
+    def test_role_answer_prepares_the_plan_again(self):
+        self.view = ROLE_UNKNOWN
+        self.views["live"] = DIFFERS
+        self.assertEqual(self.main(stdin="1\nlive\nn\ny\n"), 0)
+        self.assertEqual([opts.role for _, opts in self.prepared], [None, "live"])
+        self.assertIn("Role of live-db (live/test/demo, Enter to skip):", self.text())
+        self.assertEqual(self.updated[0][1].role, "live")
+        self.assertEqual(self.updated[0][1].sizing, "show")     # answered n to applying
+
+    def test_role_question_can_be_skipped(self):
+        self.view = ROLE_UNKNOWN
+        self.assertEqual(self.main(stdin="1\n\ny\n"), 0)
+        self.assertEqual(len(self.prepared), 1)
+        self.assertEqual(self.names(self.updated), ["live-db"])
+
+    def test_unknown_container_lists_the_known_ones(self):
+        self.assertEqual(self.main("--container", "nope", "--no-input"), 2)
+        self.assertEqual(self.prepared, [])
+        self.assertIn("nope", self.text())
+        self.assertIn("live-db, test-db", self.text())
+
+    def test_rollback_mode_returns_the_code_of_rollback(self):
+        self.rollback_code = 2
+        self.assertEqual(self.main("--rollback", "live-db", "--force"), 2)
+        name, opts, ask = self.rolled_back[0]
+        self.assertEqual((name, opts.force), ("live-db", True))
+        self.assertIsNotNone(ask)
+        self.main("--rollback", "live-db", tty=False)
+        self.assertIsNone(self.rolled_back[1][2])       # nobody to ask without a terminal
+
+    def test_flags_reach_the_options(self):
+        self.main("--container", "live-db", "--no-input", "--sizing", "skip", "--role", "test",
+                  "--db-user", "ownerp", "--skip-backup", "--config", "/x/docker2update.yaml")
+        opts = self.updated[0][1]
+        self.assertEqual((opts.sizing, opts.role, opts.db_user, opts.skip_backup, opts.no_input,
+                          opts.update_config),
+                         ("skip", "test", "ownerp", True, True, "/x/docker2update.yaml"))
+
+    def test_version_flag(self):
+        with contextlib.redirect_stdout(io.StringIO()) as shown, \
+                self.assertRaises(SystemExit) as caught:
+            self.main("--version")
+        self.assertEqual(caught.exception.code, 0)
+        self.assertIn(pg.SCRIPT_VERSION, shown.getvalue())
+
+    def test_overview_line_can_leave_the_prompt_out(self):
+        rows = [(self.targets[0], CURRENT, [])]
+        self.assertIn("Select (", pg.render_overview(rows))
+        self.assertNotIn("Select (", pg.render_overview(rows, prompt=False))
 
 
 if __name__ == "__main__":

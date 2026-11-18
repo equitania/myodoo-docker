@@ -15,7 +15,11 @@
 #   16.9 on. A base change alters text collation, so this tool always pins the
 #   base the running container already has.
 #
-# This part finds the PostgreSQL containers, reads the running server version
+# Called bare on a terminal it shows every PostgreSQL container with a
+# recommendation and asks which ones to update; `--json` prints the same facts
+# for an agent; `--container NAME --no-input` runs without questions.
+#
+# The code finds the PostgreSQL containers, reads the running server version
 # and the base, pairs them with their Odoo containers and chooses the tag to
 # update to. Phase 1 (prepare) checks one target and pulls or builds the image;
 # backup writes the dumps. Neither changes a container. Phase 2 (update_one)
@@ -26,6 +30,7 @@
 # System Python 3 with python3-yaml only, like the other delivered scripts.
 # ==============================================================================
 
+import argparse
 import datetime
 import importlib.util
 import json
@@ -595,7 +600,10 @@ def _odoo_cell(target: PgTarget) -> str:
     return ", ".join(cells) + (" (shared)" if target.shared else "")
 
 
-def render_overview(rows: List[Row]) -> str:
+SELECT_PROMPT = "Select (e.g. 1,3 - a for all recommended - Enter to leave):"
+
+
+def render_overview(rows: List[Row], prompt: bool = True) -> str:
     header = ("#", "PostgreSQL", "Version", "Update", "Kind", "Odoo")
     body = [(str(n), t.name, _version_text(t.version) or "?", _update_cell(c), t.kind,
              _odoo_cell(t)) for n, (t, c, _) in enumerate(rows, 1)]
@@ -609,7 +617,8 @@ def render_overview(rows: List[Row]) -> str:
     out = [line(header)] + [line(r) for r in body] + [""]
     for n, (_, _, recs) in enumerate(rows, 1):
         out.append(" %d  %s" % (n, "; ".join(r.text for r in recs) if recs else "nothing to do"))
-    out += ["", "Select (e.g. 1,3 - a for all recommended - Enter to leave):"]
+    if prompt:
+        out += ["", SELECT_PROMPT]
     return "\n".join(out)
 
 
@@ -2261,3 +2270,250 @@ def rollback(name: str, opts: Options, run: Runner, out, now=None, ask=None,
     if state.get("sizing_applied"):
         out("The memory settings in postgresql.conf were not reverted.")
     return 0
+
+
+# --- command line -------------------------------------------------------------------
+
+ROLES = ("live", "test", "demo")
+NOTHING_TO_DO = "nothing to do"
+
+
+def build_parser() -> argparse.ArgumentParser:
+    parser = argparse.ArgumentParser(
+        prog="pgup",
+        description="Update PostgreSQL containers to the newest patch release of their major "
+                    "version. Without options on a terminal: overview and selection.")
+    parser.add_argument("--container", action="append", default=[], metavar="NAME",
+                        help="database container to update (repeatable, updated in this order)")
+    parser.add_argument("--to", metavar="VERSION",
+                        help="update to this release (X.Y) instead of the newest; one container")
+    parser.add_argument("--dry-run", action="store_true",
+                        help="run every check and print the plan; change nothing")
+    parser.add_argument("--json", action="store_true",
+                        help="print the overview as JSON; change nothing")
+    parser.add_argument("--no-input", action="store_true",
+                        help="never ask; needed to run without a terminal")
+    parser.add_argument("--sizing", choices=("apply", "show", "skip"),
+                        help="memory settings: write them, only show them (default) or leave "
+                             "them out")
+    parser.add_argument("--role", choices=ROLES,
+                        help="role for the memory calculation when docker2update.yaml names none")
+    parser.add_argument("--db-user", metavar="USER", help="database superuser to connect as")
+    parser.add_argument("--skip-backup", action="store_true",
+                        help="update without a dump (there is nothing to restore from then)")
+    parser.add_argument("--rollback", metavar="NAME",
+                        help="go back to the server the last update of NAME replaced")
+    parser.add_argument("--force", action="store_true",
+                        help="with --rollback: do not ask when the update is older than %d days"
+                             % CONFIRM_AFTER.days)
+    parser.add_argument("--config", metavar="PATH",
+                        help="docker2update.yaml to read (default: ~/docker2update.yaml)")
+    parser.add_argument("--version", action="version",
+                        version="ownerp_pg_update %s (%s)" % (SCRIPT_VERSION, SCRIPT_DATE))
+    return parser
+
+
+def default_stream(argv: List[str]) -> Tuple[int, str]:
+    """Run a command with its output going straight to the terminal; (exit code, "")."""
+    try:
+        return subprocess.run(argv).returncode, ""
+    except OSError:
+        return 127, ""
+
+
+def build_rows(targets: List[PgTarget], opts: Options, run: Runner, fetch: Optional[Fetch],
+               today: datetime.date, to: Optional[str] = None) -> List[Row]:
+    """One overview row per target: the update choice and the recommendations. Read-only."""
+    update_cfg, backup_cfg = _configs(opts)
+    tags_of: Dict[int, Optional[Set[str]]] = {}
+    rows: List[Row] = []
+    for target in targets:
+        tags = None
+        if target.version is not None and not target.foreign:
+            major = target.version[0]
+            if major not in tags_of:
+                tags_of[major] = hub_tags(major, fetch) if fetch else hub_tags(major)
+            tags = tags_of[major]
+        choice = choose(target, tags, to)
+        if opts.sizing == "skip":
+            sizing = SizingView({}, {}, {}, "skipped")
+        else:
+            try:
+                sizing = sizing_view(target, update_cfg, opts.role, run)
+            except Exception as error:      # the overview must not die on the calculation
+                sizing = SizingView({}, {}, {}, "sizing unavailable: %s" % error)
+        _, unlisted = backup_routes(_list_databases(target, run) or [], backup_cfg, target.name)
+        rows.append((target, choice, recommend(target, choice, sizing, unlisted, today,
+                                               collation_mismatches(target, run))))
+    return rows
+
+
+def _plan_text(plan: UpdatePlan, dry_run: bool) -> str:
+    if plan.problems == [NOTHING_TO_DO]:
+        return "%s: nothing to do, the newest patch release is running" % plan.target.name
+    return render_plan(plan, dry_run=dry_run)
+
+
+def _run_series(chosen: List[Tuple[PgTarget, Choice]], opts: Options, sizing_given: bool,
+                interactive: bool, run: Runner, stream: Runner, out, ask_line) -> int:
+    """Phase 1 for every chosen container, one confirmation, then phase 2 in the given order."""
+    items = [[prepare(target, choice, opts, run), opts] for target, choice in chosen]
+
+    def show(item) -> None:
+        out("")
+        out(_plan_text(item[0], opts.dry_run))
+
+    for item in items:
+        show(item)
+    dialog = interactive and not opts.no_input and not opts.dry_run
+    if dialog:
+        for item in items:
+            plan = item[0]
+            if plan.problems or opts.role or plan.sizing.skipped != "role unknown":
+                continue
+            answer = ask_line("Role of %s (%s, Enter to skip):"
+                              % (plan.target.name, "/".join(ROLES))).strip().lower()
+            if answer in ROLES:
+                item[1] = replace(opts, role=answer)
+                item[0] = prepare(plan.target, plan.choice, item[1], run)
+                show(item)
+
+    broken = [plan.target.name for plan, _ in items
+              if plan.problems and plan.problems != [NOTHING_TO_DO]]
+    if broken:
+        out("")
+        out("Nothing was started: %s cannot be updated (see above). Solve that or leave the "
+            "container out." % ", ".join(broken))
+        return 2
+    todo = [(plan, item_opts) for plan, item_opts in items if not plan.problems]
+    if opts.dry_run or not todo:
+        return 0
+    if not interactive and not opts.no_input:
+        out("")
+        out("Nothing was started: this call needs --no-input to run without a terminal.")
+        return 2
+    if dialog:
+        out("")
+        if not sizing_given and any(plan.sizing.differs for plan, _ in todo):
+            if ask_line("Apply the recommended memory settings? (y/N)").strip().lower() in (
+                    "y", "yes"):
+                todo = [(plan, replace(item_opts, sizing="apply")) for plan, item_opts in todo]
+        names = ", ".join(plan.target.name for plan, _ in todo)
+        if ask_line("Update %s now? (y/N)" % names).strip().lower() not in ("y", "yes"):
+            out("Nothing was changed.")
+            return 0
+
+    for index, (plan, item_opts) in enumerate(todo):
+        out("")
+        code = update_one(plan, item_opts, run, stream, out)
+        if code != 0:
+            waiting = [later.target.name for later, _ in todo[index + 1:]]
+            if waiting:
+                out("")
+                out("Not started: %s" % ", ".join(waiting))
+            return code
+    return 0
+
+
+def main(argv=None, run: Optional[Runner] = None, stream: Optional[Runner] = None,
+         fetch: Optional[Fetch] = None, stdin=None, out=print) -> int:
+    parser = build_parser()
+    args = parser.parse_args(argv)
+    if args.to and len(args.container) != 1:
+        parser.error("--to needs exactly one --container")
+    run = run or default_runner
+    stream = stream or default_stream
+    stdin = stdin if stdin is not None else sys.stdin
+    try:
+        interactive = bool(stdin.isatty())
+    except (AttributeError, ValueError):
+        interactive = False
+    opts = Options(to=args.to, dry_run=args.dry_run, no_input=args.no_input,
+                   sizing=args.sizing or "show", role=args.role, db_user=args.db_user,
+                   skip_backup=args.skip_backup, force=args.force,
+                   update_config=args.config or "")
+
+    def problem(text: str) -> None:
+        # --json promises one document on stdout, so its errors go to stderr.
+        if args.json:
+            sys.stderr.write(text + "\n")
+        else:
+            out(text)
+
+    def ask_line(question: str) -> str:
+        out(question)
+        try:
+            return stdin.readline()
+        except (OSError, ValueError):
+            return ""
+
+    if not args.json and hasattr(os, "geteuid") and os.geteuid() != 0:
+        out("Note: not running as root; the memory settings and the check of the data "
+            "directory need root.")
+
+    if args.rollback:
+        ask = None
+        if interactive and not args.no_input:
+            def ask(question: str) -> bool:
+                return ask_line(question + " (y/N)").strip().lower() in ("y", "yes")
+        return rollback(args.rollback, opts, run, out, ask=ask)
+
+    code, _ = run(["docker", "ps", "-aq"])
+    if code != 0:
+        problem("ERROR: Docker cannot be asked (docker ps failed); nothing was changed.")
+        return 2
+    try:
+        update_cfg, _ = _configs(opts)
+        targets = discover(run, update_cfg, opts.db_user)
+    except RuntimeError as error:
+        problem("ERROR: %s" % error)
+        return 2
+    by_name = {target.name: target for target in targets}
+    unknown = [name for name in args.container if name not in by_name]
+    if unknown:
+        problem("No running PostgreSQL container named %s. Found: %s"
+                % (", ".join(unknown), ", ".join(sorted(by_name)) or "none"))
+        return 2
+    wanted: List[PgTarget] = []
+    for name in args.container:
+        if by_name[name] not in wanted:
+            wanted.append(by_name[name])
+    today = datetime.date.today()
+
+    if args.json:
+        out(json.dumps(overview_json(build_rows(wanted or targets, opts, run, fetch, today)),
+                       indent=2))
+        return 0
+    if wanted:
+        rows = build_rows(wanted, opts, run, fetch, today, to=opts.to)
+        return _run_series([(target, choice) for target, choice, _ in rows], opts,
+                           args.sizing is not None, interactive, run, stream, out, ask_line)
+
+    if not targets:
+        out("No running PostgreSQL container found.")
+        return 0
+    rows = build_rows(targets, opts, run, fetch, today)
+    if not interactive or args.no_input:
+        out(render_overview(rows, prompt=False))
+        return 0
+    recommended = {number for number, (_, choice, _) in enumerate(rows, 1) if choice.tag}
+    out(render_overview(rows, prompt=False))
+    out("")
+    while True:
+        picked = parse_selection(ask_line(SELECT_PROMPT), len(rows), recommended)
+        if picked is not None:
+            break
+        out("Not understood.")
+    if not picked:
+        return 0
+    return _run_series([(rows[number - 1][0], rows[number - 1][1]) for number in picked], opts,
+                       args.sizing is not None, interactive, run, stream, out, ask_line)
+
+
+if __name__ == "__main__":
+    try:
+        sys.exit(main())
+    except KeyboardInterrupt:
+        # update_one and rollback handle Ctrl-C themselves; this is a prompt or a check.
+        print("\nInterrupted; nothing was changed by this step.")
+        sys.exit(130)
