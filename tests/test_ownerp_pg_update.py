@@ -366,6 +366,28 @@ class SizingViewTest(unittest.TestCase):
         view = pg.sizing_view(target(base=BOOKWORM), {}, None, run, _hardware())
         self.assertEqual(view.skipped, "role unknown")
 
+    def test_entry_without_sizing_block_is_not_counted_twice(self):
+        sizing = pg._need("ownerp_sizing")
+        cfg = {"containers": [{"container_name": "live-odoo", "db_host": "live-db"}]}
+        seen = []
+        real = sizing.compute_plan
+
+        def recorder(hw, instances):
+            seen.append([(i.name, i.db_container, i.role) for i in instances])
+            return real(hw, instances)
+
+        sizing.compute_plan = recorder
+        try:
+            run = FakeRunner({PSQL_SETTINGS: pg_settings({"shared_buffers": "128MB"})})
+            view = pg.sizing_view(target(base=BOOKWORM), cfg, "live", run, _hardware())
+        finally:
+            sizing.compute_plan = real
+        self.assertEqual(seen, [[("live-odoo", "live-db", "live")]])
+        self.assertIsNone(view.skipped)
+        # entry without a profile and no usable role: unknown
+        view = pg.sizing_view(target(base=BOOKWORM), cfg, None, run, _hardware())
+        self.assertEqual(view.skipped, "role unknown")
+
     def test_unreadable_current_values_are_skipped(self):
         view = pg.sizing_view(target(base=BOOKWORM), self.CFG, "live", FakeRunner(), _hardware())
         self.assertEqual(view.skipped, "current values unreadable")

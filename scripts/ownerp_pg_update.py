@@ -454,14 +454,18 @@ def sizing_view(target: PgTarget, update_cfg: dict, role: Optional[str], run: Ru
     sizing = _need("ownerp_sizing")
     containers = [c for c in (update_cfg or {}).get("containers") or [] if isinstance(c, dict)]
     instances = sizing.instances_from_config(containers)
-    match = next((i for i in instances
-                  if i.db_container == target.name and i.role in sizing.PG_WEIGHTS), None)
+    # Same selection as ownerp_sizing._run_pg: match on db_container alone.
+    match = next((i for i in instances if i.db_container == target.name), None)
     if match is None:
         if role not in sizing.PG_WEIGHTS:
             return SizingView({}, {}, {}, "role unknown")
         match = sizing.Instance(name=target.name, version=None, role=role, users=None,
                                 overrides={}, db_container=target.name, build_dir="", conf={})
         instances.append(match)
+    elif match.role not in sizing.PG_WEIGHTS:       # no usable profile: the role fills in
+        if role not in sizing.PG_WEIGHTS:
+            return SizingView({}, {}, {}, "role unknown")
+        match.role = role
     current = sizing.pg_current_values(target.name, run, target.db_user or "postgres")
     if current is None:
         return SizingView({}, {}, {}, "current values unreadable")
@@ -566,6 +570,7 @@ def render_overview(rows: List[Row]) -> str:
     header = ("#", "PostgreSQL", "Version", "Update", "Kind", "Odoo")
     body = [(str(n), t.name, _version_text(t.version) or "?", _update_cell(c), t.kind,
              _odoo_cell(t)) for n, (t, c, _) in enumerate(rows, 1)]
+    # Only the first five columns are padded; the Odoo column is last and stays ragged.
     widths = [max(len(r[i]) for r in [header] + body) for i in range(5)]
 
     def line(cells) -> str:
@@ -612,7 +617,7 @@ def parse_selection(text: str, count: int, recommended: Set[int]) -> Optional[Li
         return sorted(recommended)
     chosen: List[int] = []
     for token in re.split(r"[,\s]+", text):
-        if not token.isdigit() or not 1 <= int(token) <= count:
+        if not token.isdecimal() or not 1 <= int(token) <= count:
             return None
         if int(token) not in chosen:
             chosen.append(int(token))
