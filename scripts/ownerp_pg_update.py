@@ -22,6 +22,7 @@
 # System Python 3 standard library only (yaml is read by the caller).
 # ==============================================================================
 
+import datetime
 import importlib.util
 import json
 import os
@@ -422,3 +423,197 @@ def choose(target: PgTarget, tags: Optional[Set[str]], to: Optional[str]) -> Cho
                       "%d.%d -> %d.%d; no pinned tag found, confirm the base after the pull"
                       % (major, minor, major, k))
     return Choice(None, None, "current")
+
+
+# --- recommendations ----------------------------------------------------------
+
+# First month in which a major no longer gets fixes ("MM/YYYY").
+EOL = {12: "11/2024", 13: "11/2025", 14: "11/2026", 15: "11/2027",
+       16: "11/2028", 17: "11/2029", 18: "11/2030"}
+
+
+@dataclass
+class Rec:
+    id: str
+    text: str
+
+
+@dataclass
+class SizingView:
+    recommended: Dict[str, str]
+    current: Dict[str, str]
+    differs: Dict[str, Tuple[str, str]]     # key -> (current, recommended)
+    skipped: Optional[str]                  # e.g. "shared container", "role unknown"
+
+
+def sizing_view(target: PgTarget, update_cfg: dict, role: Optional[str], run: Runner,
+                hardware=None) -> SizingView:
+    """Calculated PostgreSQL memory values against the running ones; informs only."""
+    if target.shared:
+        return SizingView({}, {}, {}, "shared container")
+    sizing = _need("ownerp_sizing")
+    containers = [c for c in (update_cfg or {}).get("containers") or [] if isinstance(c, dict)]
+    instances = sizing.instances_from_config(containers)
+    match = next((i for i in instances
+                  if i.db_container == target.name and i.role in sizing.PG_WEIGHTS), None)
+    if match is None:
+        if role not in sizing.PG_WEIGHTS:
+            return SizingView({}, {}, {}, "role unknown")
+        match = sizing.Instance(name=target.name, version=None, role=role, users=None,
+                                overrides={}, db_container=target.name, build_dir="", conf={})
+        instances.append(match)
+    current = sizing.pg_current_values(target.name, run, target.db_user or "postgres")
+    if current is None:
+        return SizingView({}, {}, {}, "current values unreadable")
+    try:
+        plan = sizing.compute_plan(hardware if hardware is not None else sizing.probe_hardware(),
+                                   instances)
+    except sizing.SizingError as exc:
+        return SizingView({}, current, {}, "sizing unavailable: %s" % exc)
+    recommended = dict(plan.results[instances.index(match)].pg)
+    differs = {key: (current[key], value) for key, value in recommended.items()
+               if key in current and not sizing.pg_equal(key, current[key], value)}
+    return SizingView(recommended, current, differs, None)
+
+
+def backup_routes(databases: List[str], backup_cfg: Optional[dict],
+                  container: str) -> Tuple[List[str], List[str]]:
+    """(listed, unlisted): databases container2backup.yaml covers via this container."""
+    covered = {str(e.get("name")) for e in (backup_cfg or {}).get("databases") or []
+               if isinstance(e, dict) and e.get("sql_container") == container}
+    return ([d for d in databases if d in covered],
+            [d for d in databases if d not in covered])
+
+
+def collation_mismatches(target: PgTarget, run: Runner) -> List[str]:
+    """Databases whose recorded collation version differs from the library's (major >= 15)."""
+    if target.version is None or target.version[0] < 15:
+        return []
+    code, out = run(["docker", "exec", target.name, "psql", "-U", target.db_user or "postgres",
+                     "-d", "postgres", "-Atqc",
+                     "SELECT datname FROM pg_database WHERE datcollversion IS DISTINCT FROM "
+                     "pg_database_collation_actual_version(oid) AND datcollversion IS NOT NULL"])
+    if code != 0:
+        return []
+    return [line.strip() for line in out.splitlines() if line.strip()]
+
+
+def _eol_month(major: int) -> Optional[datetime.date]:
+    match = re.match(r"^(\d{2})/(\d{4})$", EOL.get(major) or "")
+    return datetime.date(int(match.group(2)), int(match.group(1)), 1) if match else None
+
+
+def recommend(target: PgTarget, choice: Choice, sizing: SizingView, unlisted: List[str],
+              today: datetime.date, collation_mismatch: List[str]) -> List[Rec]:
+    """Fixed set of hints in a fixed order; nothing here runs anything."""
+    recs: List[Rec] = []
+    if target.foreign and choice.blocked:
+        recs.append(Rec("foreign_image", "foreign image %s: this tool cannot update it"
+                        % target.image))
+    eol = _eol_month(target.version[0]) if target.version else None
+    if eol is not None and eol <= today:
+        recs.append(Rec("major_eol", "PostgreSQL %d is out of support since %s; plan a major "
+                        "upgrade separately" % (target.version[0], EOL[target.version[0]])))
+    if choice.tag:
+        codename = target.base.codename if target.base else None
+        stays = " (stays on %s)" % codename if codename and choice.tag.endswith("-" + codename) else ""
+        recs.append(Rec("patch_update", "patch update available: %s%s" % (choice.tag, stays)))
+    if target.kind == "legacy":
+        recs.append(Rec("convert_compose", "convert to a compose-managed container"))
+    if sizing.differs:
+        listing = ", ".join("%s %s -> %s" % (key, cur, rec)
+                            for key, (cur, rec) in sorted(sizing.differs.items()))
+        recs.append(Rec("sizing_differs", "memory settings differ from the calculation: " + listing))
+    if target.shared:
+        recs.append(Rec("shared_db", "database container is shared; memory settings stay"))
+    if unlisted:
+        recs.append(Rec("backup_missing", "not covered by container2backup.yaml: "
+                        + ", ".join(unlisted)))
+    if collation_mismatch:
+        recs.append(Rec("collation_mismatch", "collation version already mismatched in: "
+                        + ", ".join(collation_mismatch)))
+    return recs
+
+
+# --- overview, JSON, selection --------------------------------------------------
+
+Row = Tuple[PgTarget, Choice, List[Rec]]
+
+
+def _version_text(version: Optional[Tuple[int, int]]) -> Optional[str]:
+    return "%d.%d" % version if version else None
+
+
+def _update_cell(choice: Choice) -> str:
+    if choice.tag:
+        return choice.tag.partition(":")[2] or choice.tag
+    return choice.note
+
+
+def _odoo_cell(target: PgTarget) -> str:
+    if not target.odoo:
+        return "-"
+    cells = []
+    for info in target.odoo:
+        parts = [p for p in (info.version,
+                             "db %s" % info.database if info.database else None,
+                             "%d workers" % info.workers if info.workers is not None else None) if p]
+        cells.append("%s (%s)" % (info.name, ", ".join(parts)) if parts else info.name)
+    return ", ".join(cells) + (" (shared)" if target.shared else "")
+
+
+def render_overview(rows: List[Row]) -> str:
+    header = ("#", "PostgreSQL", "Version", "Update", "Kind", "Odoo")
+    body = [(str(n), t.name, _version_text(t.version) or "?", _update_cell(c), t.kind,
+             _odoo_cell(t)) for n, (t, c, _) in enumerate(rows, 1)]
+    widths = [max(len(r[i]) for r in [header] + body) for i in range(5)]
+
+    def line(cells) -> str:
+        return " " + "  ".join(cells[i].rjust(widths[i]) if i == 0 else cells[i].ljust(widths[i])
+                               for i in range(5)) + "  " + cells[5]
+
+    out = [line(header)] + [line(r) for r in body] + [""]
+    for n, (_, _, recs) in enumerate(rows, 1):
+        out.append(" %d  %s" % (n, "; ".join(r.text for r in recs) if recs else "nothing to do"))
+    out += ["", "Select (e.g. 1,3 - a for all recommended - Enter to leave):"]
+    return "\n".join(out)
+
+
+def overview_json(rows: List[Row]) -> dict:
+    containers = []
+    for target, choice, recs in rows:
+        containers.append({
+            "name": target.name,
+            "image": target.image,
+            "version": _version_text(target.version),
+            "base": {"libc": target.base.libc, "codename": target.base.codename}
+            if target.base else None,
+            "kind": target.kind,
+            "compose_file": target.compose_file,
+            "update": {"available": bool(choice.tag), "image": choice.tag,
+                       "version": _version_text(choice.version), "note": choice.note,
+                       "blocked": choice.blocked},
+            "odoo": [{"name": o.name, "image": o.image, "running": o.running,
+                      "version": o.version, "database": o.database, "workers": o.workers,
+                      "has_sizing": o.has_sizing} for o in target.odoo],
+            "other_clients": list(target.others),
+            "shared": target.shared,
+            "recommendations": [{"id": r.id, "text": r.text} for r in recs],
+        })
+    return {"tool": "ownerp_pg_update", "version": SCRIPT_VERSION, "containers": containers}
+
+
+def parse_selection(text: str, count: int, recommended: Set[int]) -> Optional[List[int]]:
+    """1-based numbers from `1,3` / `1 3`, `a` for all recommended, `` for none; else None."""
+    text = text.strip().lower()
+    if not text:
+        return []
+    if text == "a":
+        return sorted(recommended)
+    chosen: List[int] = []
+    for token in re.split(r"[,\s]+", text):
+        if not token.isdigit() or not 1 <= int(token) <= count:
+            return None
+        if int(token) not in chosen:
+            chosen.append(int(token))
+    return chosen

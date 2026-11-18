@@ -6,6 +6,7 @@ Run from the repository root:
     python3 -m unittest tests.test_ownerp_pg_update -v
 """
 
+import datetime
 import json
 import os
 import sys
@@ -293,6 +294,247 @@ class ChooseTest(unittest.TestCase):
     def test_unknown_running_version_is_blocked(self):
         c = pg.choose(target(version=None, base=BOOKWORM), {"16.16-bookworm"}, None)
         self.assertIsNotNone(c.blocked)
+
+
+def _hardware():
+    return pg._need("ownerp_sizing").Hardware(cpus=8, ram_mib=16384)
+
+
+def pg_settings(values):
+    return (0, "\n".join("%s|%s" % kv for kv in values.items()) + "\n")
+
+
+PSQL_SETTINGS = ("docker", "exec", "live-db", "psql", "-U", "postgres", "-d", "postgres", "-tAc")
+
+
+def odoo_info(**kw):
+    values = dict(name="live-odoo", image="eq/odoo:18", running=True, version="18.0",
+                  database="live_db", workers=4, has_sizing=True)
+    values.update(kw)
+    return pg.OdooInfo(**values)
+
+
+TODAY = datetime.date(2026, 11, 18)
+NO_SIZING = pg.SizingView({}, {}, {}, None)
+UPDATE_16 = pg.Choice("postgres:16.16-bookworm", (16, 16), "16.8 -> 16.16 (base bookworm kept)")
+CURRENT = pg.Choice(None, None, "current")
+
+
+def rec_ids(t, c, sizing=NO_SIZING, unlisted=(), today=TODAY, collation=()):
+    return [r.id for r in pg.recommend(t, c, sizing, list(unlisted), today, list(collation))]
+
+
+class SizingViewTest(unittest.TestCase):
+    CFG = {"containers": [{"container_name": "live-odoo", "db_host": "live-db",
+                           "sizing": {"profile": "live"}}]}
+
+    def test_shared_container_keeps_sizing_out(self):
+        t = target(base=BOOKWORM, shared=True, odoo=[odoo_info(), odoo_info(name="x-odoo")])
+        view = pg.sizing_view(t, self.CFG, "live", FakeRunner(), _hardware())
+        self.assertEqual(view.skipped, "shared container")
+        self.assertEqual(view.differs, {})
+        ids = rec_ids(t, CURRENT, view)
+        self.assertNotIn("sizing_differs", ids)
+        self.assertIn("shared_db", ids)
+
+    def test_differing_value_is_reported_with_both_sides(self):
+        run = FakeRunner({PSQL_SETTINGS: pg_settings({"shared_buffers": "128MB"})})
+        view = pg.sizing_view(target(base=BOOKWORM), self.CFG, "live", run, _hardware())
+        self.assertIsNone(view.skipped)
+        self.assertIn("shared_buffers", view.differs)
+        cur, rec = view.differs["shared_buffers"]
+        self.assertEqual(cur, "128MB")
+        self.assertEqual(rec, view.recommended["shared_buffers"])
+
+    def test_equal_sizes_in_other_units_do_not_differ(self):
+        sizing = pg._need("ownerp_sizing")
+        first = pg.sizing_view(target(base=BOOKWORM), self.CFG, "live",
+                               FakeRunner({PSQL_SETTINGS: pg_settings({"shared_buffers": "1MB"})}),
+                               _hardware())
+        rec = first.recommended["shared_buffers"]
+        in_kb = "%dkB" % (sizing.pg_size_mib(rec) * 1024)
+        self.assertNotEqual(rec, in_kb)
+        run = FakeRunner({PSQL_SETTINGS: pg_settings({"shared_buffers": in_kb})})
+        view = pg.sizing_view(target(base=BOOKWORM), self.CFG, "live", run, _hardware())
+        self.assertNotIn("shared_buffers", view.differs)
+
+    def test_no_block_uses_the_role_and_unknown_role_is_skipped(self):
+        run = FakeRunner({PSQL_SETTINGS: pg_settings({"shared_buffers": "128MB"})})
+        view = pg.sizing_view(target(base=BOOKWORM), {}, "test", run, _hardware())
+        self.assertIsNone(view.skipped)
+        self.assertTrue(view.recommended)
+        view = pg.sizing_view(target(base=BOOKWORM), {}, None, run, _hardware())
+        self.assertEqual(view.skipped, "role unknown")
+
+    def test_unreadable_current_values_are_skipped(self):
+        view = pg.sizing_view(target(base=BOOKWORM), self.CFG, "live", FakeRunner(), _hardware())
+        self.assertEqual(view.skipped, "current values unreadable")
+        self.assertEqual(view.differs, {})
+
+
+class RecommendTest(unittest.TestCase):
+    def test_recommendation_order_and_ids(self):
+        t = target(base=BOOKWORM, kind="legacy")
+        view = pg.SizingView({"shared_buffers": "4GB"}, {"shared_buffers": "1GB"},
+                             {"shared_buffers": ("1GB", "4GB")}, None)
+        recs = pg.recommend(t, UPDATE_16, view, [], TODAY, [])
+        self.assertEqual([r.id for r in recs], ["patch_update", "convert_compose", "sizing_differs"])
+        self.assertIn("postgres:16.16-bookworm", recs[0].text)
+        self.assertIn("stays on bookworm", recs[0].text)
+        self.assertIn("shared_buffers 1GB -> 4GB", recs[2].text)
+
+    def test_full_order(self):
+        t = target(version=(14, 3), image="postgres:14.3", base=BOOKWORM, kind="legacy",
+                   shared=True, foreign=True)
+        blocked = pg.Choice(None, None, "x", blocked="foreign")
+        self.assertEqual(rec_ids(t, blocked, unlisted=["a"], collation=["live_db"]),
+                         ["foreign_image", "major_eol", "convert_compose", "shared_db",
+                          "backup_missing", "collation_mismatch"])
+        both = target(base=BOOKWORM, kind="legacy", shared=True)
+        view = pg.SizingView({"work_mem": "8MB"}, {"work_mem": "4MB"},
+                             {"work_mem": ("4MB", "8MB")}, None)
+        self.assertEqual(rec_ids(both, UPDATE_16, view, ["a"], collation=["d"]),
+                         ["patch_update", "convert_compose", "sizing_differs", "shared_db",
+                          "backup_missing", "collation_mismatch"])
+
+    def test_major_eol_on_and_after_the_month(self):
+        t14 = target(version=(14, 3), image="postgres:14.3", base=BOOKWORM)
+        self.assertIn("major_eol", rec_ids(t14, CURRENT))
+        self.assertIn("major_eol", rec_ids(t14, CURRENT, today=datetime.date(2027, 3, 1)))
+        self.assertNotIn("major_eol", rec_ids(t14, CURRENT, today=datetime.date(2026, 10, 31)))
+        text = [r.text for r in pg.recommend(t14, CURRENT, NO_SIZING, [], TODAY, [])
+                if r.id == "major_eol"][0]
+        self.assertIn("11/2026", text)
+        self.assertIn("plan a major upgrade separately", text)
+        t15 = target(version=(15, 6), image="postgres:15.6", base=BOOKWORM)
+        self.assertNotIn("major_eol", rec_ids(t15, CURRENT))
+        t99 = target(version=(99, 1), image="postgres:99.1", base=BOOKWORM)
+        self.assertNotIn("major_eol", rec_ids(t99, CURRENT))
+
+    def test_nothing_to_do_has_no_recommendation(self):
+        self.assertEqual(rec_ids(target(base=BOOKWORM), CURRENT), [])
+
+    def test_unpinned_text_has_no_stays_on(self):
+        c = pg.Choice("postgres:16.16", (16, 16), "n")
+        recs = pg.recommend(target(base=None), c, NO_SIZING, [], TODAY, [])
+        self.assertNotIn("stays on", recs[0].text)
+
+
+class BackupRoutesTest(unittest.TestCase):
+    def test_backup_routes_split(self):
+        cfg = {"databases": [{"name": "a", "sql_container": "live-db"},
+                             {"name": "b", "sql_container": "other-db"}]}
+        self.assertEqual(pg.backup_routes(["a", "b"], cfg, "live-db"), (["a"], ["b"]))
+        self.assertEqual(pg.backup_routes(["a", "b"], None, "live-db"), ([], ["a", "b"]))
+
+
+class CollationTest(unittest.TestCase):
+    def test_old_major_is_not_asked(self):
+        run = FakeRunner()
+        self.assertEqual(pg.collation_mismatches(target(version=(14, 3), base=BOOKWORM), run), [])
+        self.assertEqual(run.calls, [])
+
+    def test_new_major_lists_mismatched_databases(self):
+        run = FakeRunner({("docker", "exec", "live-db", "psql"): (0, "live_db\nother\n")})
+        self.assertEqual(pg.collation_mismatches(target(base=BOOKWORM), run), ["live_db", "other"])
+        self.assertIn("pg_database_collation_actual_version", run.calls[0][-1])
+        self.assertEqual(pg.collation_mismatches(target(base=BOOKWORM), FakeRunner()), [])
+
+
+def sample_rows():
+    live = target(base=BOOKWORM, kind="legacy", odoo=[odoo_info()])
+    test = target(name="test-db", version=(16, 16), image="postgres:16.16-bookworm",
+                  base=BOOKWORM, odoo=[odoo_info(name="test-odoo", database="test_db",
+                                                 workers=None, has_sizing=False)])
+    demo = target(name="demo-db", version=(15, 6), image="postgres:15.6", base=BOOKWORM,
+                  kind="legacy", shared=True,
+                  odoo=[odoo_info(name="demo-odoo", version=None, database=None, workers=None),
+                        odoo_info(name="demo2-odoo", version=None, database=None, workers=None)])
+    unknown = pg.Choice(None, None, "unknown (no registry access)")
+    return [(live, UPDATE_16, pg.recommend(live, UPDATE_16, NO_SIZING, [], TODAY, [])),
+            (test, CURRENT, []),
+            (demo, unknown, pg.recommend(demo, unknown, NO_SIZING, [], TODAY, []))]
+
+
+class OverviewTest(unittest.TestCase):
+    def test_overview_text_shows_pairing(self):
+        text = pg.render_overview(sample_rows())
+        lines = text.splitlines()
+        self.assertEqual(lines[0].split(), ["#", "PostgreSQL", "Version", "Update", "Kind", "Odoo"])
+        live_line = [l for l in lines if "live-db" in l and "live-odoo" in l][0]
+        self.assertIn("live-odoo (18.0, db live_db, 4 workers)", live_line)
+        self.assertIn("16.8", live_line)
+        self.assertIn("16.16-bookworm", live_line)
+        self.assertIn("legacy", live_line)
+        test_line = [l for l in lines if "test-db" in l][0]
+        self.assertIn("test-odoo (18.0, db test_db)", test_line)
+        self.assertIn("current", test_line)
+        demo_line = [l for l in lines if "demo-db" in l][0]
+        self.assertIn("demo-odoo, demo2-odoo (shared)", demo_line)
+        self.assertIn(" 2  nothing to do", text)
+        self.assertIn("Select", text)
+
+    def test_odoo_cell_omits_unknown_parts(self):
+        no_workers = target(name="x-db", odoo=[odoo_info(workers=None)])
+        bare = target(name="z-db", odoo=[odoo_info(name="bare", version=None, database=None,
+                                                   workers=None)])
+        none = target(name="y-db", odoo=[])
+        text = pg.render_overview([(no_workers, CURRENT, []), (bare, CURRENT, []),
+                                   (none, CURRENT, [])])
+        self.assertIn("live-odoo (18.0, db live_db)", text)
+        z_line = [l for l in text.splitlines() if "z-db" in l][0]
+        self.assertTrue(z_line.rstrip().endswith("bare"))
+        y_line = [l for l in text.splitlines() if "y-db" in l][0]
+        self.assertTrue(y_line.rstrip().endswith("-"))
+
+    def test_json_carries_version_update_recommendation_and_odoo(self):
+        doc = pg.overview_json(sample_rows())
+        self.assertEqual(doc["tool"], "ownerp_pg_update")
+        self.assertEqual(doc["version"], pg.SCRIPT_VERSION)
+        live, test, demo = doc["containers"]
+        self.assertEqual(live["name"], "live-db")
+        self.assertEqual(live["image"], "postgres:16.8")
+        self.assertEqual(live["version"], "16.8")
+        self.assertEqual(live["base"], {"libc": "glibc 2.36", "codename": "bookworm"})
+        self.assertEqual(live["kind"], "legacy")
+        self.assertIsNone(live["compose_file"])
+        self.assertEqual(live["update"], {"available": True, "image": "postgres:16.16-bookworm",
+                                          "version": "16.16", "note": UPDATE_16.note,
+                                          "blocked": None})
+        self.assertEqual(live["odoo"], [{"name": "live-odoo", "image": "eq/odoo:18",
+                                         "running": True, "version": "18.0",
+                                         "database": "live_db", "workers": 4,
+                                         "has_sizing": True}])
+        self.assertEqual(live["other_clients"], [])
+        self.assertFalse(live["shared"])
+        self.assertEqual([r["id"] for r in live["recommendations"]],
+                         ["patch_update", "convert_compose"])
+        self.assertTrue(all(set(r) == {"id", "text"} for r in live["recommendations"]))
+        self.assertFalse(test["update"]["available"])
+        self.assertIsNone(test["update"]["image"])
+        self.assertIsNone(test["update"]["version"])
+        self.assertEqual(test["recommendations"], [])
+        self.assertTrue(demo["shared"])
+        json.dumps(doc)
+
+    def test_json_without_version_or_base(self):
+        doc = pg.overview_json([(target(version=None, base=None), CURRENT, [])])
+        c = doc["containers"][0]
+        self.assertIsNone(c["version"])
+        self.assertIsNone(c["base"])
+
+
+class SelectionTest(unittest.TestCase):
+    def test_parse_selection(self):
+        self.assertEqual(pg.parse_selection("1,3", 3, {1}), [1, 3])
+        self.assertEqual(pg.parse_selection("1 3", 3, {1}), [1, 3])
+        self.assertEqual(pg.parse_selection("3,1,3", 3, {1}), [3, 1])
+        self.assertEqual(pg.parse_selection("a", 3, {1, 3}), [1, 3])
+        self.assertEqual(pg.parse_selection("", 3, {1}), [])
+        self.assertIsNone(pg.parse_selection("4", 3, set()))
+        self.assertIsNone(pg.parse_selection("0", 3, set()))
+        self.assertIsNone(pg.parse_selection("x", 3, set()))
+        self.assertIsNone(pg.parse_selection("1,x", 3, set()))
 
 
 class SiblingTest(unittest.TestCase):
