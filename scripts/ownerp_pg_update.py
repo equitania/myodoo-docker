@@ -15,9 +15,10 @@
 #   16.9 on. A base change alters text collation, so this tool always pins the
 #   base the running container already has.
 #
-# This part is read-only: it finds the PostgreSQL containers, reads the running
-# server version and the base, pairs them with their Odoo containers and
-# chooses the tag to update to. It never changes a container.
+# This part finds the PostgreSQL containers, reads the running server version
+# and the base, pairs them with their Odoo containers and chooses the tag to
+# update to. Phase 1 (prepare) checks one target and pulls or builds the image;
+# backup writes the dumps. Neither changes a container.
 #
 # System Python 3 with python3-yaml only, like the other delivered scripts.
 # ==============================================================================
@@ -27,6 +28,8 @@ import importlib.util
 import json
 import os
 import re
+import shutil
+import subprocess
 import sys
 import tempfile
 import urllib.request
@@ -600,7 +603,9 @@ def overview_json(rows: List[Row]) -> dict:
             "compose_file": target.compose_file,
             "update": {"available": bool(choice.tag), "image": choice.tag,
                        "version": _version_text(choice.version), "note": choice.note,
-                       "blocked": choice.blocked},
+                       "blocked": choice.blocked,
+                       "release_notes": release_note_links(target.version, choice.version)
+                       if choice.tag and target.version and choice.version else []},
             "odoo": [{"name": o.name, "image": o.image, "running": o.running,
                       "version": o.version, "database": o.database, "workers": o.workers,
                       "has_sizing": o.has_sizing} for o in target.odoo],
@@ -1043,3 +1048,415 @@ def patch_compose_image(text: str, service: str, new_image: str,
     if after != expected:
         raise ValueError("the patched compose file differs in more than the new image")
     return patched
+
+
+# ── Phase 1: plan, image pull, guards, backup ────────────────────────────────
+
+RELEASE_NOTES_URL = "https://www.postgresql.org/docs/release/%d.%d/"
+RELEASE_NOTES_HEADING = ("Release notes to read first (a patch release can require a manual "
+                         "step afterwards):")
+DEFAULT_BACKUP_PATH = "/opt/backups"
+DiskUsage = Callable[[str], object]
+
+
+@dataclass
+class Options:
+    to: Optional[str] = None
+    dry_run: bool = False
+    no_input: bool = False
+    sizing: str = "show"            # "apply" | "show" | "skip"
+    role: Optional[str] = None
+    db_user: Optional[str] = None
+    skip_backup: bool = False
+    force: bool = False
+    home: str = os.path.expanduser("~")
+    update_config: str = ""         # default <home>/docker2update.yaml
+    backup_config: str = ""         # default <home>/container2backup.yaml
+
+
+@dataclass
+class UpdatePlan:
+    target: PgTarget
+    choice: Choice
+    deploy_dir: str
+    compose_file: str
+    compose_text: Optional[str]            # legacy: new file; compose: patched text
+    databases: List[str]
+    listed: List[str]
+    unlisted: List[str]
+    stop_odoo: List[str]                   # running Odoo containers only
+    sizing: SizingView
+    parked_name: Optional[str]             # legacy: "<name>-pre-<M.n>"
+    problems: List[str]                    # non-empty -> the update must not start
+
+
+def release_note_links(current: Tuple[int, int], target: Tuple[int, int]) -> List[str]:
+    """One release-notes URL per release from current (exclusive) to target, newest first."""
+    if target[0] != current[0] or target[1] <= current[1]:
+        return []
+    return [RELEASE_NOTES_URL % (target[0], k) for k in range(target[1], current[1], -1)]
+
+
+def compose_cmd(run: Runner) -> Optional[List[str]]:
+    for candidate in (["docker", "compose"], ["docker-compose"]):
+        code, _ = run(candidate + ["version"])
+        if code == 0:
+            return candidate
+    return None
+
+
+def _load_yaml(path: str) -> Optional[dict]:
+    try:
+        with open(path, encoding="utf-8") as handle:
+            data = yaml.safe_load(handle)
+    except (OSError, UnicodeError, yaml.YAMLError):
+        return None
+    return data if isinstance(data, dict) else None
+
+
+def _configs(opts: Options) -> Tuple[dict, Optional[dict]]:
+    update = _load_yaml(opts.update_config or os.path.join(opts.home, "docker2update.yaml"))
+    backup = _load_yaml(opts.backup_config or os.path.join(opts.home, "container2backup.yaml"))
+    return update or {}, backup
+
+
+def _mkdir_private(path: str) -> None:
+    """Create a directory (and its missing parents) that only the owner may enter."""
+    if os.path.isdir(path):
+        return
+    parent = os.path.dirname(path)
+    if parent and parent != path:
+        _mkdir_private(parent)
+    os.mkdir(path, 0o700)
+    os.chmod(path, 0o700)
+
+
+def _gib(size: float) -> str:
+    return "%.1f GiB" % (size / 1024 ** 3)
+
+
+def _nearest_existing(path: str) -> str:
+    while path and not os.path.exists(path):
+        parent = os.path.dirname(path)
+        if parent == path:
+            break
+        path = parent
+    return path or "/"
+
+
+def _data_path(target: PgTarget) -> Optional[str]:
+    """The host directory that holds PG_VERSION (PGDATA may be a subdirectory of the mount)."""
+    if not target.pgdata:
+        return None
+    for entry in (target.inspect.get("Config") or {}).get("Env") or []:
+        key, _, value = entry.partition("=")
+        if key == "PGDATA" and value.startswith(DEFAULT_PGDATA + "/"):
+            return os.path.join(target.pgdata, value[len(DEFAULT_PGDATA) + 1:])
+    return target.pgdata
+
+
+def _list_databases(target: PgTarget, run: Runner) -> Optional[List[str]]:
+    migrate = _need("ownerp_migrate")
+    code, out = run(["docker", "exec", target.name, "psql", "-U", target.db_user or "postgres",
+                     "-d", "postgres", "-Atqc",
+                     "SELECT datname FROM pg_database WHERE datistemplate = false"])
+    if code != 0:
+        return None
+    return [line.strip() for line in out.splitlines()
+            if line.strip() and line.strip() not in migrate.SYSTEM_DATABASES]
+
+
+def _database_size(target: PgTarget, database: str, run: Runner) -> Optional[int]:
+    code, out = run(["docker", "exec", target.name, "psql", "-U", target.db_user or "postgres",
+                     "-d", "postgres", "-Atqc",
+                     "SELECT pg_database_size('%s')" % database.replace("'", "''")])
+    try:
+        return int(out.strip()) if code == 0 else None
+    except ValueError:
+        return None
+
+
+def _tail(output: str) -> str:
+    lines = [line for line in output.strip().splitlines() if line.strip()]
+    return lines[-1].strip() if lines else "no output"
+
+
+def prepare(target: PgTarget, choice: Choice, opts: Options, run: Runner,
+            disk_usage: DiskUsage = shutil.disk_usage, hardware=None) -> UpdatePlan:
+    """Every read-only check for one target; only `docker pull` / `docker build` change anything."""
+    update_cfg, backup_cfg = _configs(opts)
+    plan = UpdatePlan(
+        target=target, choice=choice, deploy_dir="", compose_file="", compose_text=None,
+        databases=[], listed=[], unlisted=[],
+        stop_odoo=[o.name for o in target.odoo if o.running],
+        sizing=SizingView({}, {}, {}, "not calculated"), parked_name=None, problems=[])
+    problems = plan.problems
+    only_conversion = (target.kind == "legacy" and choice.tag is None and not choice.blocked
+                       and choice.note == "current")
+
+    # Facts every later step needs.
+    if choice.blocked:
+        problems.append(choice.blocked)
+    elif choice.tag is None and not only_conversion:
+        problems.append("nothing to do" if choice.note == "current"
+                        else "no update available (%s)" % choice.note)
+    data = _data_path(target)
+    if target.pgdata is None:
+        problems.append("data directory not found (PGDATA is not at %s)" % DEFAULT_PGDATA)
+    else:
+        try:
+            if not os.path.isfile(os.path.join(data, "PG_VERSION")):
+                problems.append("PG_VERSION not found in %s; this is not a PostgreSQL data "
+                                "directory" % data)
+        except OSError:
+            problems.append("cannot read the data directory %s (needs root)" % data)
+    if not target.db_user:
+        problems.append("no database user accepted by the server")
+    if not _is_running(target.inspect):
+        problems.append("container %s is not running" % target.name)
+    if not problems and compose_cmd(run) is None:
+        problems.append("docker compose is not installed")
+    if problems:
+        return plan
+
+    new_image = choice.tag or target.image
+    vector = target.vector
+    pg_version = new_image.partition(":")[2] if vector else None
+
+    # Where the compose file lives.
+    if target.kind == "compose":
+        if not target.compose_file:
+            problems.append("cannot read the compose file: its path is unknown")
+            return plan
+        plan.compose_file = target.compose_file
+        plan.deploy_dir = os.path.dirname(os.path.abspath(target.compose_file))
+    else:
+        data_mount = next((m for m in target.inspect.get("Mounts") or []
+                           if _dest(m.get("Destination", "")) == DEFAULT_PGDATA), {})
+        plan.deploy_dir = deploy_dir_for(target.name, data_mount, opts.home)
+        plan.compose_file = os.path.join(plan.deploy_dir, "docker-compose.yml")
+    context = os.path.join(plan.deploy_dir, "pgvector")
+
+    # The compose text: a new file for a legacy container, a patched one otherwise.
+    if target.kind == "legacy":
+        plan.parked_name = "%s-pre-%s" % (
+            target.name, "%d.%d" % target.version if target.version else "unknown")
+        code, out = run(["docker", "image", "inspect", target.image])
+        image_inspect = None
+        if code == 0:
+            try:
+                found = json.loads(out)
+                image_inspect = found[0] if isinstance(found, list) and found else None
+            except ValueError:
+                image_inspect = None
+        if not isinstance(image_inspect, dict):
+            problems.append("cannot inspect the running image %s" % target.image)
+        else:
+            document, blockers = compose_from_inspect(
+                target.inspect, image_inspect, new_image, target.db_user,
+                vector_context=context if vector else None)
+            problems.extend(blockers)
+            if document is not None:
+                plan.compose_text = render_compose(document, target.name)
+        if run(["docker", "inspect", plan.parked_name])[0] == 0:
+            problems.append("%s exists from an earlier update; remove it or roll back first"
+                            % plan.parked_name)
+    else:
+        try:
+            with open(target.compose_file, encoding="utf-8") as handle:
+                original = handle.read()
+        except (OSError, UnicodeError) as error:
+            problems.append("cannot read the compose file %s: %s" % (target.compose_file, error))
+        else:
+            try:
+                plan.compose_text = patch_compose_image(
+                    original, target.compose_service or SERVICE, new_image, pg_version)
+            except ValueError as error:
+                problems.append("compose file %s cannot be patched: %s"
+                                % (target.compose_file, error))
+
+    # Databases and their backup route.
+    databases = _list_databases(target, run)
+    if databases is None:
+        problems.append("cannot list the databases of %s" % target.name)
+    else:
+        plan.databases = databases
+        plan.listed, plan.unlisted = backup_routes(databases, backup_cfg, target.name)
+        if not opts.skip_backup and plan.unlisted:
+            free = disk_usage(_nearest_existing(plan.deploy_dir)).free
+            for database in plan.unlisted:
+                size = _database_size(target, database, run)
+                if size is None:
+                    problems.append("cannot read the size of database %s" % database)
+                elif free < size:
+                    problems.append("not enough free space in %s for the dump of %s: needs "
+                                    "%s, free %s" % (plan.deploy_dir, database, _gib(size),
+                                                     _gib(free)))
+    plan.sizing = (SizingView({}, {}, {}, "skipped") if opts.sizing == "skip"
+                   else sizing_view(target, update_cfg, opts.role, run, hardware))
+    if problems or only_conversion:
+        return plan
+
+    # The only changes: pull or build, then the base guard on what arrived.
+    if vector:
+        dockerfile = os.path.join(context, "Dockerfile")
+        try:
+            if not os.path.exists(dockerfile):
+                _mkdir_private(plan.deploy_dir)
+                os.makedirs(context, exist_ok=True)
+                with open(dockerfile, "w", encoding="utf-8") as handle:
+                    handle.write(VECTOR_DOCKERFILE)
+        except OSError as error:
+            problems.append("cannot write %s: %s" % (dockerfile, error))
+            return plan
+        code, out = run(["docker", "build", "--build-arg", "PG_VERSION=%s" % pg_version,
+                         "-t", choice.tag, context])
+        if code != 0:
+            problems.append("docker build of %s failed: %s" % (choice.tag, _tail(out)))
+            return plan
+    else:
+        code, out = run(["docker", "pull", choice.tag])
+        if code != 0:
+            problems.append("docker pull of %s failed: %s" % (choice.tag, _tail(out)))
+            return plan
+    new_base = base_of_image(choice.tag, run)
+    if target.base is None or new_base is None:
+        problems.append("cannot compare the base system of %s with the running container"
+                        % choice.tag)
+    elif new_base.libc != target.base.libc:
+        major = choice.version[0] if choice.version else (target.version or (0, 0))[0]
+        problems.append("base system would change (%s -> %s) and no %d.x-%s image exists"
+                        % (target.base.libc, new_base.libc, major,
+                           target.base.codename or "<same base>"))
+    return plan
+
+
+def _compose_warnings(plan: UpdatePlan) -> List[str]:
+    if plan.target.kind != "legacy" or not plan.compose_text:
+        return []
+    try:
+        document = yaml.safe_load(plan.compose_text)
+    except yaml.YAMLError:
+        return []
+    found = document.get("x-pgup-warnings") if isinstance(document, dict) else None
+    return [str(item) for item in found] if isinstance(found, list) else []
+
+
+def render_plan(plan: UpdatePlan, dry_run: bool = False) -> str:
+    target, choice = plan.target, plan.choice
+    if plan.problems:
+        return "\n".join(["Cannot update %s:" % target.name]
+                         + ["  - %s" % problem for problem in plan.problems])
+    current = _version_text(target.version) or "?"
+    lines = []
+    if choice.tag:
+        lines.append("%s: %s -> %s (%s)" % (target.name, current, _version_text(choice.version),
+                                            choice.tag))
+    else:
+        lines.append("%s: conversion to compose only, version stays %s" % (target.name, current))
+    if target.base:
+        lines.append("Base system: %s%s, unchanged" % (
+            target.base.libc, " (%s)" % target.base.codename if target.base.codename else ""))
+    if plan.stop_odoo:
+        lines.append("Odoo containers stopped during the switch: %s" % ", ".join(plan.stop_odoo))
+    if target.others:
+        lines.append("Other clients that lose their connection for a moment: %s"
+                     % ", ".join(target.others))
+    if plan.databases:
+        lines.append("Backup before the switch:")
+        for database in plan.databases:
+            route = ("container2backup (listed)" if database in plan.listed
+                     else "own dump below %s" % os.path.join(plan.deploy_dir, "pre-update"))
+            lines.append("  %s: %s" % (database, route))
+    lines.append("Compose file: %s" % plan.compose_file)
+    for warning in _compose_warnings(plan):
+        lines.append("  Warning: %s" % warning)
+    if dry_run and plan.compose_text and target.kind == "legacy":
+        lines.append("--- %s (passwords masked) ---" % plan.compose_file)
+        lines.append(mask_compose(plan.compose_text).rstrip("\n"))
+        lines.append("---")
+    sizing = plan.sizing
+    if sizing.skipped:
+        lines.append("Memory settings: %s" % sizing.skipped)
+    elif sizing.differs:
+        lines.append("Memory settings differ from the calculation:")
+        for key, (cur, rec) in sorted(sizing.differs.items()):
+            lines.append("  %s: %s -> %s" % (key, cur, rec))
+    if choice.tag and target.version and choice.version:
+        links = release_note_links(target.version, choice.version)
+        if links:
+            lines.append(RELEASE_NOTES_HEADING)
+            lines.extend("  %s" % link for link in links)
+    lines.append("Rollback: pgup --rollback %s" % target.name)
+    return "\n".join(lines)
+
+
+# --- backup -------------------------------------------------------------------
+
+def _dump_to_file(argv: List[str], path: str) -> int:
+    """Run a command with its binary stdout written to `path`; the exit code.
+
+    The caller creates `path` (mode 0600) first; this only fills it.
+    """
+    try:
+        with open(path, "wb") as handle:
+            return subprocess.run(argv, stdout=handle).returncode
+    except OSError:
+        return 127
+
+
+def backup(plan: UpdatePlan, opts: Options, run: Runner, stream: Runner, out
+           ) -> Tuple[bool, List[str]]:
+    """Dumps before the switch (Odoo already stopped); (ok, where the dumps are)."""
+    if opts.skip_backup:
+        out("WARNING: backup skipped on request; there is no dump to go back to")
+        return True, []
+    target = plan.target
+    user = target.db_user or "postgres"
+    locations: List[str] = []
+    if plan.listed:
+        script = os.path.join(opts.home, "container2backup.py")
+        argv = [sys.executable, script, "--sql-only"]
+        for database in plan.listed:
+            argv += ["--only-db", database]
+        code, _ = stream(argv)
+        if code != 0:
+            out("ERROR: container2backup failed (exit %d); the update stops here" % code)
+            return False, locations
+        _, backup_cfg = _configs(opts)
+        defaults = (backup_cfg or {}).get("defaults") or {}
+        locations.append(str(defaults.get("backup_path") or DEFAULT_BACKUP_PATH))
+    stamp = datetime.datetime.now().strftime("%Y%m%d-%H%M%S")
+    folder = os.path.join(plan.deploy_dir, "pre-update", stamp)
+    try:
+        _mkdir_private(folder if plan.unlisted else plan.deploy_dir)
+    except OSError as error:
+        out("ERROR: cannot create the backup directory: %s" % error)
+        return False, locations
+    for database in plan.unlisted:
+        path = os.path.join(folder, database.replace(os.sep, "_") + ".dump")
+        try:
+            os.close(os.open(path, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600))
+        except OSError as error:
+            out("ERROR: cannot create %s: %s" % (path, error))
+            return False, locations
+        code = _dump_to_file(["docker", "exec", target.name, "pg_dump", "-U", user, "-Fc",
+                              "-d", database], path)
+        if code != 0:
+            out("ERROR: pg_dump of %s failed (exit %d); the partial file %s is kept"
+                % (database, code, path))
+            return False, locations
+        locations.append(path)
+    code, text = run(["docker", "exec", target.name, "pg_dumpall", "-U", user,
+                      "--globals-only"])
+    if code != 0:
+        out("ERROR: pg_dumpall --globals-only failed: %s" % _tail(text))
+        return False, locations
+    path = os.path.join(plan.deploy_dir, "globals-%s.sql" % stamp)
+    try:
+        write_private(path, text)
+    except OSError as error:
+        out("ERROR: cannot write %s: %s" % (path, error))
+        return False, locations
+    locations.append(path)
+    return True, locations

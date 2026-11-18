@@ -9,6 +9,7 @@ Run from the repository root:
 import datetime
 import json
 import os
+import shutil
 import sys
 import tempfile
 import unittest
@@ -525,7 +526,10 @@ class OverviewTest(unittest.TestCase):
         self.assertIsNone(live["compose_file"])
         self.assertEqual(live["update"], {"available": True, "image": "postgres:16.16-bookworm",
                                           "version": "16.16", "note": UPDATE_16.note,
-                                          "blocked": None})
+                                          "blocked": None,
+                                          "release_notes": [
+                                              "https://www.postgresql.org/docs/release/16.%d/" % k
+                                              for k in range(16, 8, -1)]})
         self.assertEqual(live["odoo"], [{"name": "live-odoo", "image": "eq/odoo:18",
                                          "running": True, "version": "18.0",
                                          "database": "live_db", "workers": 4,
@@ -1050,6 +1054,430 @@ class VectorDockerfileTest(unittest.TestCase):
         start = text.index("ARG PG_VERSION\n")
         end = text.index("EOF_PGVECTOR", start)
         self.assertEqual(pg.VECTOR_DOCKERFILE, text[start:end])
+
+
+# ── Phase 1: plan, pull, guards, backup ──────────────────────────────────────
+
+GIB = 1024 ** 3
+UPDATE_CHOICE = pg.Choice("postgres:16.16-bookworm", (16, 16), "16.8 -> 16.16")
+NEW_BASE = DEBIAN_12 + "ldd (Debian GLIBC 2.36-9+deb12u10) 2.36\n"
+LIST_DBS = ("docker", "exec", "live-db", "psql", "-U", "ownerp", "-d", "postgres", "-Atqc",
+            "SELECT datname FROM pg_database WHERE datistemplate = false")
+
+
+def size_query(db):
+    return ("docker", "exec", "live-db", "psql", "-U", "ownerp", "-d", "postgres", "-Atqc",
+            "SELECT pg_database_size('%s')" % db)
+
+
+class Phase1Case(unittest.TestCase):
+    """A tempdir with a data directory (PG_VERSION inside) and a legacy target on it."""
+
+    def setUp(self):
+        self.tmp = tempfile.mkdtemp(prefix="pgup-test-")
+        self.addCleanup(shutil.rmtree, self.tmp, ignore_errors=True)
+        self.data = os.path.join(self.tmp, "live-db")
+        os.makedirs(self.data)
+        with open(os.path.join(self.data, "PG_VERSION"), "w") as handle:
+            handle.write("16\n")
+        self.deploy = os.path.join(self.tmp, "live-db-deploy")
+        self.opts = pg.Options(home=self.tmp, update_config=os.path.join(self.tmp, "nope.yaml"),
+                               backup_config=os.path.join(self.tmp, "nope2.yaml"))
+
+    def inspect(self, **changes):
+        changes.setdefault("State", {"Running": True})
+        changes.setdefault("Mounts", [{"Type": "bind", "Source": self.data,
+                                       "Destination": "/var/lib/postgresql/data", "RW": True}])
+        return legacy(**changes)
+
+    def legacy_target(self, **kw):
+        values = dict(kind="legacy", base=BOOKWORM, inspect=self.inspect(), pgdata=self.data,
+                      db_user="ownerp", odoo=[odoo_info()])
+        values.update(kw)
+        return target(**values)
+
+    def answers(self, extra=None):
+        base = {
+            ("docker", "compose", "version"): (0, "Docker Compose version v2.29"),
+            ("docker", "image", "inspect", "postgres:16.8"): (0, json.dumps([IMAGE])),
+            ("docker", "pull"): (0, ""),
+            ("docker", "run", "--rm", "--entrypoint", "sh"): (0, NEW_BASE),
+            LIST_DBS: (0, "postgres\nlive_db\n"),
+            size_query("live_db"): (0, "1000\n"),
+        }
+        base.update(extra or {})
+        return base
+
+    def runner(self, extra=None):
+        return FakeRunner(self.answers(extra))
+
+    def free(self, nbytes):
+        return lambda path: type("Usage", (), {"free": nbytes, "total": 10 * nbytes,
+                                               "used": 0})()
+
+    def prepare(self, tgt=None, choice=UPDATE_CHOICE, run=None, free=100 * GIB, opts=None):
+        run = run or self.runner()
+        plan = pg.prepare(tgt or self.legacy_target(), choice, opts or self.opts, run,
+                          disk_usage=self.free(free))
+        return plan, run
+
+
+class PrepareTest(Phase1Case):
+    def test_unknown_pgdata_blocks_before_anything_stops(self):
+        run = self.runner()
+        plan = pg.prepare(self.legacy_target(pgdata=None), UPDATE_CHOICE, self.opts, run,
+                          disk_usage=self.free(GIB))
+        self.assertIn("data directory not found", plan.problems[0])
+        self.assertFalse(any(c[:2] == ["docker", "stop"] for c in run.calls))
+        self.assertFalse(any(c[:2] == ["docker", "pull"] for c in run.calls))
+
+    def test_missing_pg_version_file_is_a_problem(self):
+        os.unlink(os.path.join(self.data, "PG_VERSION"))
+        plan, _ = self.prepare()
+        self.assertTrue(any("PG_VERSION" in p for p in plan.problems))
+
+    def test_unreadable_data_directory_asks_for_root(self):
+        original = os.path.isfile
+
+        def denied(path):
+            if str(path).endswith("PG_VERSION"):
+                raise PermissionError(13, "denied")
+            return original(path)
+
+        os.path.isfile = denied
+        try:
+            plan, _ = self.prepare()
+        finally:
+            os.path.isfile = original
+        self.assertTrue(any("needs root" in p for p in plan.problems))
+
+    def test_blocked_choice_and_stopped_container_are_problems(self):
+        plan, _ = self.prepare(choice=pg.Choice(None, None, "x",
+                                                blocked="major upgrades are not supported"))
+        self.assertIn("major upgrades are not supported", plan.problems)
+        plan, _ = self.prepare(tgt=self.legacy_target(
+            inspect=self.inspect(State={"Running": False})))
+        self.assertTrue(any("not running" in p for p in plan.problems))
+
+    def test_image_is_pulled_in_phase_one(self):
+        plan, run = self.prepare()
+        self.assertEqual(plan.problems, [])
+        self.assertIn(["docker", "pull", "postgres:16.16-bookworm"], run.calls)
+        self.assertEqual(plan.compose_file, os.path.join(self.deploy, "docker-compose.yml"))
+        self.assertEqual(plan.parked_name, "live-db-pre-16.8")
+        self.assertEqual(plan.databases, ["live_db"])
+        self.assertIn("postgres:16.16-bookworm", plan.compose_text)
+        # nothing was written to the host
+        self.assertFalse(os.path.exists(self.deploy))
+
+    def test_pull_failure_is_a_problem(self):
+        plan, _ = self.prepare(run=self.runner({("docker", "pull"): (1, "denied")}))
+        self.assertTrue(any("pull" in p for p in plan.problems))
+
+    def test_libc_change_is_a_problem(self):
+        newer = DEBIAN_12.replace("bookworm", "trixie") + "ldd (Debian GLIBC 2.41-1) 2.41\n"
+        plan, _ = self.prepare(run=self.runner({
+            ("docker", "run", "--rm", "--entrypoint", "sh"): (0, newer)}))
+        self.assertEqual(len(plan.problems), 1)
+        self.assertIn("base system would change (glibc 2.36 -> glibc 2.41)", plan.problems[0])
+        self.assertIn("16.x-bookworm", plan.problems[0])
+
+    def test_libc_guard_also_covers_a_verbatim_to_tag(self):
+        newer = "ldd (Debian GLIBC 2.41-1) 2.41\n"
+        plan, _ = self.prepare(choice=pg.Choice("postgres:16.16", (16, 16), "requested"),
+                               run=self.runner({("docker", "run", "--rm", "--entrypoint",
+                                                 "sh"): (0, newer)}))
+        self.assertTrue(any("base system would change" in p for p in plan.problems))
+
+    def test_missing_compose_is_a_problem(self):
+        run = self.runner({("docker", "compose", "version"): (1, "")})
+        plan, run = self.prepare(run=run)
+        self.assertIn("docker compose is not installed", plan.problems)
+        self.assertFalse(any(c[:2] == ["docker", "pull"] for c in run.calls))
+
+    def test_old_docker_compose_binary_is_found(self):
+        run = self.runner({("docker", "compose", "version"): (1, ""),
+                           ("docker-compose", "version"): (0, "1.29")})
+        self.assertEqual(pg.compose_cmd(run), ["docker-compose"])
+        self.assertEqual(pg.compose_cmd(self.runner()), ["docker", "compose"])
+        self.assertIsNone(pg.compose_cmd(FakeRunner()))
+
+    def test_existing_parked_container_is_a_problem(self):
+        run = self.runner({("docker", "inspect", "live-db-pre-16.8"): (0, "[{}]")})
+        plan, _ = self.prepare(run=run)
+        self.assertIn("live-db-pre-16.8 exists from an earlier update; remove it or roll "
+                      "back first", plan.problems)
+
+    def test_conversion_blockers_become_problems(self):
+        tgt = self.legacy_target(inspect=self.inspect(HostConfig__Privileged=True))
+        plan, _ = self.prepare(tgt=tgt)
+        self.assertTrue(any("Privileged" in p for p in plan.problems))
+        self.assertIsNone(plan.compose_text)
+
+    def test_current_legacy_container_gets_a_conversion_only_plan(self):
+        plan, run = self.prepare(choice=CURRENT)
+        self.assertEqual(plan.problems, [])
+        self.assertFalse(any(c[:2] == ["docker", "pull"] for c in run.calls))
+        self.assertFalse(any(c[:2] == ["docker", "run"] for c in run.calls))
+        self.assertIn("image: postgres:16.8", plan.compose_text)
+        self.assertIn("conversion to compose only, version stays 16.8", pg.render_plan(plan))
+
+    def test_current_compose_container_has_nothing_to_do(self):
+        compose = os.path.join(self.tmp, "docker-compose.yml")
+        tgt = self.legacy_target(kind="compose", compose_file=compose, compose_service="postgres")
+        plan, _ = self.prepare(tgt=tgt, choice=CURRENT)
+        self.assertEqual(plan.problems, ["nothing to do"])
+
+    def test_compose_managed_target_gets_a_patched_file(self):
+        compose = os.path.join(self.tmp, "docker-compose.yml")
+        with open(compose, "w") as handle:
+            handle.write("services:\n  postgres:\n    image: postgres:16.8\n")
+        tgt = self.legacy_target(kind="compose", compose_file=compose, compose_service="postgres")
+        plan, _ = self.prepare(tgt=tgt)
+        self.assertEqual(plan.problems, [])
+        self.assertIn("postgres:16.16-bookworm", plan.compose_text)
+        self.assertIsNone(plan.parked_name)
+        self.assertEqual(plan.compose_file, compose)
+        self.assertEqual(plan.deploy_dir, self.tmp)
+
+    def test_unreadable_or_unpatchable_compose_file_is_a_problem(self):
+        compose = os.path.join(self.tmp, "docker-compose.yml")
+        tgt = self.legacy_target(kind="compose", compose_file=compose, compose_service="postgres")
+        plan, _ = self.prepare(tgt=tgt)
+        self.assertTrue(any("cannot read" in p for p in plan.problems))
+        with open(compose, "w") as handle:
+            handle.write("services:\n  other:\n    image: x\n")
+        plan, _ = self.prepare(tgt=tgt)
+        self.assertTrue(any("service postgres not found" in p for p in plan.problems))
+
+    def test_only_running_odoo_is_listed_for_stop(self):
+        tgt = self.legacy_target(odoo=[odoo_info(), odoo_info(name="old-odoo", running=False)])
+        plan, _ = self.prepare(tgt=tgt)
+        self.assertEqual(plan.stop_odoo, ["live-odoo"])
+
+    def test_free_space_rule_for_own_dump(self):
+        run = self.runner({size_query("live_db"): (0, "%d\n" % (10 * GIB))})
+        plan, _ = self.prepare(run=run, free=5 * GIB)
+        self.assertEqual(len(plan.problems), 1)
+        self.assertIn("live_db", plan.problems[0])
+        self.assertIn("10.0 GiB", plan.problems[0])
+        self.assertIn("5.0 GiB", plan.problems[0])
+        skipping = pg.Options(home=self.tmp, skip_backup=True,
+                              update_config=self.opts.update_config,
+                              backup_config=self.opts.backup_config)
+        plan, _ = self.prepare(run=run, free=5 * GIB, opts=skipping)
+        self.assertEqual(plan.problems, [])
+
+    def test_listed_databases_need_no_space_check(self):
+        cfg = os.path.join(self.tmp, "backup.yaml")
+        with open(cfg, "w") as handle:
+            yaml.safe_dump({"defaults": {"backup_path": "/opt/backups"},
+                            "databases": [{"name": "live_db", "sql_container": "live-db"}]},
+                           handle)
+        opts = pg.Options(home=self.tmp, update_config=self.opts.update_config, backup_config=cfg)
+        run = self.runner({size_query("live_db"): (0, "%d\n" % (10 * GIB))})
+        plan, _ = self.prepare(run=run, free=GIB, opts=opts)
+        self.assertEqual(plan.problems, [])
+        self.assertEqual((plan.listed, plan.unlisted), (["live_db"], []))
+
+    def test_pgvector_dockerfile_is_written_when_missing(self):
+        tgt = self.legacy_target(vector=True, image="postgres-pgvector:16.8-bookworm")
+        choice = pg.Choice("postgres-pgvector:16.16-bookworm", (16, 16), "x")
+        run = self.runner({
+            ("docker", "image", "inspect", "postgres-pgvector:16.8-bookworm"):
+                (0, json.dumps([IMAGE])),
+            ("docker", "build"): (0, "")})
+        plan, run = self.prepare(tgt=tgt, choice=choice, run=run)
+        self.assertEqual(plan.problems, [])
+        dockerfile = os.path.join(self.deploy, "pgvector", "Dockerfile")
+        with open(dockerfile) as handle:
+            self.assertEqual(handle.read(), pg.VECTOR_DOCKERFILE)
+        build = next(c for c in run.calls if c[:2] == ["docker", "build"])
+        self.assertEqual(build, ["docker", "build", "--build-arg", "PG_VERSION=16.16-bookworm",
+                                 "-t", "postgres-pgvector:16.16-bookworm",
+                                 os.path.join(self.deploy, "pgvector")])
+        self.assertFalse(any(c[:2] == ["docker", "pull"] for c in run.calls))
+        # an existing Dockerfile is left alone
+        with open(dockerfile, "w") as handle:
+            handle.write("custom\n")
+        self.prepare(tgt=tgt, choice=choice, run=run)
+        with open(dockerfile) as handle:
+            self.assertEqual(handle.read(), "custom\n")
+
+    def test_failed_build_is_a_problem(self):
+        tgt = self.legacy_target(vector=True, image="postgres-pgvector:16.8-bookworm")
+        run = self.runner({
+            ("docker", "image", "inspect", "postgres-pgvector:16.8-bookworm"):
+                (0, json.dumps([IMAGE])),
+            ("docker", "build"): (1, "boom")})
+        plan, _ = self.prepare(tgt=tgt, run=run, choice=pg.Choice(
+            "postgres-pgvector:16.16-bookworm", (16, 16), "x"))
+        self.assertTrue(any("build" in p for p in plan.problems))
+
+
+class RenderPlanTest(Phase1Case):
+    def test_dry_run_plan_masks_the_password(self):
+        plan, _ = self.prepare()
+        self.assertIn("pa$$word", plan.compose_text)
+        text = pg.render_plan(plan, dry_run=True)
+        self.assertNotIn("pa$$word", text)
+        self.assertNotIn("pa$word", text)
+        self.assertIn("POSTGRES_PASSWORD", text)
+        self.assertNotIn("pa$$word", pg.render_plan(plan))
+
+    def test_plan_lists_the_steps_in_order(self):
+        tgt = self.legacy_target(others=["adminer"])
+        plan, _ = self.prepare(tgt=tgt)
+        text = pg.render_plan(plan)
+        order = ["live-db", "glibc 2.36", "live-odoo", "adminer", "live_db",
+                 plan.compose_file, "pgup --rollback live-db"]
+        positions = [text.index(item) for item in order]
+        self.assertEqual(positions, sorted(positions))
+
+    def test_problems_come_first_and_nothing_promises_the_update(self):
+        plan, _ = self.prepare(tgt=self.legacy_target(pgdata=None))
+        text = pg.render_plan(plan)
+        self.assertTrue(text.startswith("Cannot update live-db:"))
+        self.assertNotIn("pgup --rollback", text)
+
+    def test_plan_and_json_carry_the_release_notes(self):
+        choice = pg.Choice("postgres:16.10-bookworm", (16, 10), "x")
+        plan, _ = self.prepare(choice=choice)
+        text = pg.render_plan(plan)
+        self.assertIn("Release notes to read first (a patch release can require a manual "
+                      "step afterwards):", text)
+        self.assertIn("https://www.postgresql.org/docs/release/16.10/", text)
+        self.assertLess(text.index("Release notes to read first"),
+                        text.index("pgup --rollback"))
+        rows = [(plan.target, choice, [])]
+        self.assertEqual(pg.overview_json(rows)["containers"][0]["update"]["release_notes"],
+                         ["https://www.postgresql.org/docs/release/16.10/",
+                          "https://www.postgresql.org/docs/release/16.9/"])
+        none = pg.overview_json([(plan.target, CURRENT, [])])
+        self.assertEqual(none["containers"][0]["update"]["release_notes"], [])
+
+    def test_release_note_links(self):
+        self.assertEqual(pg.release_note_links((16, 8), (16, 10)),
+                         ["https://www.postgresql.org/docs/release/16.10/",
+                          "https://www.postgresql.org/docs/release/16.9/"])
+        self.assertEqual(pg.release_note_links((16, 10), (16, 10)), [])
+        self.assertEqual(pg.release_note_links((16, 10), (16, 8)), [])
+
+
+class BackupTest(Phase1Case):
+    def make_plan(self, listed, unlisted, **kw):
+        values = dict(target=self.legacy_target(), choice=UPDATE_CHOICE, deploy_dir=self.deploy,
+                      compose_file=os.path.join(self.deploy, "docker-compose.yml"),
+                      compose_text="", databases=listed + unlisted, listed=listed,
+                      unlisted=unlisted, stop_odoo=[], sizing=NO_SIZING, parked_name=None,
+                      problems=[])
+        values.update(kw)
+        return pg.UpdatePlan(**values)
+
+    def backup(self, plan, run=None, stream=None, dump=None, opts=None):
+        run = run or FakeRunner({("docker", "exec", "live-db", "pg_dumpall"):
+                                 (0, "CREATE ROLE ownerp;\n")})
+        stream = stream or FakeRunner({(sys.executable,): (0, "")})
+        dumped = []
+
+        def fake_dump(argv, path):
+            dumped.append((list(argv), path))
+            with open(path, "wb") as handle:
+                handle.write(b"PGDMP")
+            return 0
+
+        original = pg._dump_to_file
+        pg._dump_to_file = dump or fake_dump
+        self.addCleanup(setattr, pg, "_dump_to_file", original)
+        lines = []
+        result = pg.backup(plan, opts or self.opts, run, stream, lines.append)
+        return result, run, stream, dumped, lines
+
+    def test_backup_uses_dobk_for_listed_and_dump_for_unlisted(self):
+        cfg = os.path.join(self.tmp, "backup.yaml")
+        with open(cfg, "w") as handle:
+            yaml.safe_dump({"defaults": {"backup_path": "/opt/backups"}}, handle)
+        opts = pg.Options(home=self.tmp, update_config=self.opts.update_config, backup_config=cfg)
+        plan = self.make_plan(["a"], ["b"])
+        (ok, locations), run, stream, dumped, _ = self.backup(plan, opts=opts)
+        self.assertTrue(ok)
+        self.assertEqual(stream.calls, [[sys.executable,
+                                         os.path.join(self.tmp, "container2backup.py"),
+                                         "--sql-only", "--only-db", "a"]])
+        self.assertIn("/opt/backups", locations)
+        self.assertEqual(dumped[0][0], ["docker", "exec", "live-db", "pg_dump", "-U", "ownerp",
+                                        "-Fc", "-d", "b"])
+        dump = dumped[0][1]
+        self.assertTrue(dump.startswith(os.path.join(self.deploy, "pre-update") + os.sep))
+        self.assertTrue(dump.endswith(os.sep + "b.dump"))
+        self.assertTrue(os.path.isfile(dump))
+        self.assertEqual(os.stat(dump).st_mode & 0o777, 0o600)
+        self.assertEqual(os.stat(os.path.dirname(dump)).st_mode & 0o777, 0o700)
+        self.assertEqual(os.stat(os.path.join(self.deploy, "pre-update")).st_mode & 0o777, 0o700)
+        self.assertIn(dump, locations)
+
+    def test_globals_are_always_dumped_with_mode_0600(self):
+        plan = self.make_plan([], [])
+        (ok, locations), run, stream, dumped, _ = self.backup(plan)
+        self.assertTrue(ok)
+        self.assertEqual(stream.calls, [])
+        self.assertEqual(dumped, [])
+        self.assertIn(["docker", "exec", "live-db", "pg_dumpall", "-U", "ownerp",
+                       "--globals-only"], run.calls)
+        files = [f for f in os.listdir(self.deploy) if f.startswith("globals-")
+                 and f.endswith(".sql")]
+        self.assertEqual(len(files), 1)
+        path = os.path.join(self.deploy, files[0])
+        self.assertEqual(os.stat(path).st_mode & 0o777, 0o600)
+        with open(path) as handle:
+            self.assertEqual(handle.read(), "CREATE ROLE ownerp;\n")
+        self.assertIn(path, locations)
+
+    def test_dump_to_file_writes_binary_stdout(self):
+        path = os.path.join(self.tmp, "x.dump")
+        code = pg._dump_to_file([sys.executable, "-c",
+                                 "import sys; sys.stdout.buffer.write(b'PG\\xff\\x00')"], path)
+        self.assertEqual(code, 0)
+        with open(path, "rb") as handle:
+            self.assertEqual(handle.read(), b"PG\xff\x00")
+        self.assertEqual(pg._dump_to_file([sys.executable, "-c", "raise SystemExit(3)"], path), 3)
+
+    def test_failed_dobk_fails_the_backup(self):
+        plan = self.make_plan(["a"], ["b"])
+        (ok, _), run, stream, dumped, lines = self.backup(
+            plan, stream=FakeRunner({(sys.executable,): (2, "")}))
+        self.assertFalse(ok)
+        self.assertEqual(dumped, [])
+        self.assertFalse(any("pg_dumpall" in c for c in run.calls))
+
+    def test_failed_dump_fails_and_keeps_what_was_written(self):
+        written = []
+
+        def failing(argv, path):
+            with open(path, "wb") as handle:
+                handle.write(b"half")
+            written.append(path)
+            return 1
+
+        plan = self.make_plan([], ["b"])
+        (ok, _), _, _, _, lines = self.backup(plan, dump=failing)
+        self.assertFalse(ok)
+        self.assertEqual(len(os.listdir(os.path.dirname(written[0]))), 1)   # nothing deleted
+        self.assertTrue(lines)
+
+    def test_failed_globals_dump_fails_the_backup(self):
+        plan = self.make_plan([], [])
+        (ok, _), *_ = self.backup(plan, run=FakeRunner())
+        self.assertFalse(ok)
+
+    def test_skip_backup_warns_and_does_nothing(self):
+        opts = pg.Options(home=self.tmp, skip_backup=True)
+        plan = self.make_plan(["a"], ["b"])
+        (ok, locations), run, stream, dumped, lines = self.backup(plan, opts=opts)
+        self.assertEqual((ok, locations), (True, []))
+        self.assertEqual((run.calls, stream.calls, dumped), ([], [], []))
+        self.assertEqual(len(lines), 1)
+        self.assertIn("WARNING", lines[0])
 
 
 if __name__ == "__main__":
