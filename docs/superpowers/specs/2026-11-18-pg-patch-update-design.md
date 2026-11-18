@@ -198,6 +198,10 @@ do, 1 failed and rolled back, 2 failed and needs the operator.
    `docker compose` (or `docker-compose`) must be present.
 8. Backup route per database and free space for it (see "Backup").
 9. Sizing: show current versus recommended values.
+   Release notes: link the notes of every skipped patch release
+   (`https://www.postgresql.org/docs/release/<version>/`). A patch release can
+   require a manual step afterwards, for example a reindex, and the tool cannot
+   detect that. The links are also part of the JSON output.
 10. Print the plan, including the expected order and the rollback command. Ask once
     (or continue with `--no-input`).
 

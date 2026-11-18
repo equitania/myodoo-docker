@@ -377,6 +377,7 @@ class UpdatePlan:
     parked_name: Optional[str]             # legacy: "<name>-pre-<M.n>"
     problems: List[str]                    # non-empty -> the update must not start
 
+def release_note_links(current: Tuple[int, int], target: Tuple[int, int]) -> List[str]
 def compose_cmd(run: Runner) -> Optional[List[str]]          # ["docker","compose"] | ["docker-compose"] | None
 def prepare(target: PgTarget, choice: Choice, opts: Options, run: Runner) -> UpdatePlan
 def render_plan(plan: UpdatePlan) -> str
@@ -394,6 +395,8 @@ def backup(plan: UpdatePlan, opts: Options, run: Runner, stream: Runner, out) ->
 
 Conversion without an update: a legacy target whose `choice.note` is `"current"` is still a valid plan. `prepare` then keeps the running image reference as `new_image`, skips pull and base comparison, and `render_plan` starts with `conversion to compose only, version stays <M.n>`. A compose-managed target that is current yields the problem `"nothing to do"`.
 - Own-dump free space: for every unlisted database, free bytes of `<deploy_dir>` must be ≥ `pg_database_size(db)`; otherwise a problem naming the database and both sizes. Skipped with `opts.skip_backup`.
+
+Release notes (added 18.11.2026 on the Captain's request): a patch release can require a manual step afterwards, for example a reindex of one index type, and the tool cannot detect that. `release_note_links((16, 8), (16, 11))` returns one URL per skipped release, newest first: `https://www.postgresql.org/docs/release/16.11/`, `…/16.10/`, `…/16.9/`; same or lower target → `[]`. `render_plan` prints them before the confirmation under the line `Release notes to read first (a patch release can require a manual step afterwards):`. `overview_json` gets the same list as `update.release_notes` (empty list when there is no update).
 
 `backup` (called in phase 2, Odoo already stopped):
 
@@ -421,6 +424,12 @@ def test_pgvector_dockerfile_is_written_when_missing(self): ...
 def test_backup_uses_dobk_for_listed_and_dump_for_unlisted(self): ...   # stream called with --only-db a; dump file for b exists, mode 0600
 def test_failed_dobk_fails_the_backup(self): ...
 def test_dry_run_plan_masks_the_password(self): ...              # render_plan output has no password
+def test_release_note_links(self):
+    self.assertEqual(pg.release_note_links((16, 8), (16, 10)),
+                     ["https://www.postgresql.org/docs/release/16.10/",
+                      "https://www.postgresql.org/docs/release/16.9/"])
+    self.assertEqual(pg.release_note_links((16, 10), (16, 10)), [])
+def test_plan_and_json_carry_the_release_notes(self): ...        # render_plan contains the 16.10 URL; overview_json update.release_notes lists both
 ```
 
 - [ ] **Step 2: Run** — expected: failures.
