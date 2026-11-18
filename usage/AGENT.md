@@ -200,7 +200,8 @@ terminal it prints the overview and exits 0. On a terminal `--container` and `--
 before they change anything; without a terminal both need `--no-input` (otherwise: nothing is
 changed, exit 2). `--rollback` cannot be combined with `--dry-run`, `--json` or `--container`.
 `--json` never changes anything (exit 0; 2 when Docker cannot be asked or a named container is
-unknown). The tool
+unknown). A lost terminal (SIGHUP) or SIGTERM ends the run like Ctrl-C: Odoo is started again or the old
+server is put back; the remaining output is in `~/pg-deploy/state/pgup-lost-terminal.log`. The tool
 **never removes** the parked `<name>-pre-<version>` container; the operator does that later, by
 name, after checking. The base image is pinned to the Debian release the container runs on.
 

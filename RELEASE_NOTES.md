@@ -18,7 +18,11 @@ after the new server is verified. A failed update is rolled back
 (exit 1); `pgup --rollback NAME` goes back later: it asks once on a terminal,
 needs `--no-input` without one, and for an update older than 7 days asks again
 or needs `--force`. If any named container has a problem nothing is started
-(exit 2). The `pgup` alias and a row in the login overview come with it;
+(exit 2). A dropped SSH session or a `kill` ends the run like Ctrl-C (Odoo is
+started again or the old server is put back); what could no longer be printed
+is in `~/pg-deploy/state/pgup-lost-terminal.log`. A compose file that already
+lies in the deploy directory of a legacy container is kept as
+`docker-compose.yml.replaced-<time>`. The `pgup` alias and a row in the login overview come with it;
 `getScripts.py` 9.39.0 delivers the script, also in the restricted Docker tier;
 `chk` (`server-readiness.py` 1.18.1) reports an outdated copy on a server.
 

@@ -1426,5 +1426,9 @@ in this repository, stay in `CLAUDE.md`.
   stopped during the switch and started after verification
 - **Legacy containers**: converted to a compose file; the old container is
   renamed `<name>-pre-<version>` (restart=no) and never removed by the tool
+  (service named after the container; a compose file already in the deploy
+  directory is kept as `docker-compose.yml.replaced-<time>`)
+- **Lost terminal**: SIGHUP and SIGTERM end the run like Ctrl-C; output that
+  could not be printed goes to `~/pg-deploy/state/pgup-lost-terminal.log`
 - **Exit codes**: 0 done or nothing to do, 1 failed and rolled back, 2 failed or
   needs the operator

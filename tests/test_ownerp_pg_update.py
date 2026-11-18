@@ -12,6 +12,7 @@ import io
 import json
 import os
 import shutil
+import signal
 import sys
 import tempfile
 import unittest
@@ -2728,6 +2729,122 @@ class DefaultRunnerTest(unittest.TestCase):
         with mock.patch.object(pg.subprocess, "run", mock.Mock(return_value=failed)):
             self.assertEqual(pg.default_runner(["docker", "inspect", "x"]),
                              (1, "Error: No such container: x\n"))
+
+
+class ExistingComposeFileTest(UpdateCase):
+    """A compose file that already lies in the deploy directory is not lost."""
+
+    FOREIGN = "services:\n  something-else:\n    image: busybox\n"
+
+    def put(self, plan, text):
+        os.makedirs(plan.deploy_dir, exist_ok=True)
+        with open(plan.compose_file, "w") as handle:
+            handle.write(text)
+
+    def copies(self, plan):
+        folder = os.path.dirname(plan.compose_file)
+        return sorted(n for n in os.listdir(folder) if ".replaced-" in n)
+
+    def test_a_foreign_file_is_kept_as_a_private_copy(self):
+        plan = self.plan()
+        self.put(plan, self.FOREIGN)
+        self.assertIn("is kept as a copy", pg.render_plan(plan))
+        self.assertEqual(self.update(plan), 0)
+        copies = self.copies(plan)
+        self.assertEqual(len(copies), 1)
+        self.assertTrue(copies[0].startswith("docker-compose.yml.replaced-"))
+        path = os.path.join(os.path.dirname(plan.compose_file), copies[0])
+        with open(path) as handle:
+            self.assertEqual(handle.read(), self.FOREIGN)
+        self.assertEqual(os.stat(path).st_mode & 0o777, 0o600)
+        self.assertIn(path, self.text())
+        with open(plan.compose_file) as handle:
+            self.assertEqual(handle.read(), plan.compose_text)
+
+    def test_a_file_this_tool_wrote_is_replaced_without_a_copy(self):
+        plan = self.plan()
+        self.put(plan, plan.compose_text)            # e.g. left by an update that was undone
+        self.assertNotIn("is kept as a copy", pg.render_plan(plan))
+        self.assertEqual(self.update(plan), 0)
+        self.assertEqual(self.copies(plan), [])
+
+    def test_no_file_no_copy(self):
+        plan = self.plan()
+        self.assertEqual(self.update(plan), 0)
+        self.assertEqual(self.copies(plan), [])
+
+    def test_a_copy_that_cannot_be_written_undoes_the_switch(self):
+        plan = self.plan()
+        self.put(plan, self.FOREIGN)
+        real = pg.write_private
+
+        def failing(path, text):
+            if ".replaced-" in path:
+                raise OSError("disk full")
+            return real(path, text)
+
+        self.patch(pg, "write_private", failing)
+        self.assertEqual(self.update(plan), 1)
+        self.assert_old_server_back()
+        with open(plan.compose_file) as handle:
+            self.assertEqual(handle.read(), self.FOREIGN)      # untouched
+
+
+class LostTerminalTest(UpdateCase):
+    """A dropped SSH session must end like Ctrl-C, and what was said must not be lost."""
+
+    def test_hangup_and_terminate_become_one_interrupt(self):
+        with mock.patch.object(pg.signal, "signal") as register:
+            pg.install_signal_handlers()
+            handlers = {call.args[0]: call.args[1] for call in register.call_args_list}
+            self.assertEqual(set(handlers), {signal.SIGHUP, signal.SIGTERM})
+            register.reset_mock()
+            with self.assertRaises(KeyboardInterrupt):
+                handlers[signal.SIGHUP](signal.SIGHUP, None)
+            # the recovery that follows must not be interrupted by a second signal
+            self.assertEqual({call.args for call in register.call_args_list},
+                             {(signal.SIGHUP, signal.SIG_IGN), (signal.SIGTERM, signal.SIG_IGN)})
+
+    def test_safe_out_prints_and_flushes(self):
+        log = os.path.join(self.tmp, "state", "lost.log")
+        with mock.patch("builtins.print") as shown:
+            pg.SafeOut(log)("hello")
+        shown.assert_called_once_with("hello", flush=True)
+        self.assertFalse(os.path.exists(log))
+
+    def test_safe_out_writes_to_a_private_file_once_the_terminal_is_gone(self):
+        log = os.path.join(self.tmp, "state", "lost.log")
+        out = pg.SafeOut(log)
+        with mock.patch("builtins.print", side_effect=OSError(5, "Input/output error")) as shown:
+            out("first")
+            out("second")
+            self.assertEqual(shown.call_count, 1)       # no second try on a dead terminal
+        with open(log) as handle:
+            text = handle.read()
+        self.assertIn("first\nsecond\n", text)
+        self.assertIn("terminal was lost", text.splitlines()[0])
+        self.assertEqual(os.stat(log).st_mode & 0o777, 0o600)
+
+    def test_safe_out_never_raises_when_even_the_file_fails(self):
+        out = pg.SafeOut(os.path.join(self.tmp, "PG_VERSION_is_no_dir", "x", "lost.log"))
+        open(os.path.join(self.tmp, "PG_VERSION_is_no_dir"), "w").close()
+        with mock.patch("builtins.print", side_effect=ValueError("closed file")):
+            out("line")
+
+    def test_update_interrupted_on_a_dead_terminal_restarts_odoo_and_leaves_a_record(self):
+        def hung_up(plan, opts, run, stream, out):
+            raise KeyboardInterrupt        # what the SIGHUP handler raises
+
+        self.patch(pg, "backup", hung_up)
+        log = os.path.join(self.tmp, "pg-deploy", "state", pg.LOST_TERMINAL_LOG)
+        out = pg.SafeOut(log)
+        with mock.patch("builtins.print", side_effect=OSError(5, "Input/output error")):
+            code = pg.update_one(self.plan(), self.opts, self.host, FakeRunner(), out,
+                                 sleep=lambda seconds: None)
+        self.assertEqual(code, 1)
+        self.assertTrue(self.started("live-odoo"))
+        with open(log) as handle:
+            self.assertIn("nothing was changed on the database", handle.read())
 
 
 if __name__ == "__main__":
