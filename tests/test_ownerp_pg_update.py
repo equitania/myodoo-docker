@@ -841,6 +841,112 @@ class ComposeFromInspectTest(unittest.TestCase):
         self.assertEqual(pg.deploy_dir_for("live-db", vol, "/root"), "/root/pg-deploy/live-db")
 
 
+REAL_HOSTCONFIG = {
+    "Binds": ["/opt/pg/live-db:/var/lib/postgresql/data"], "ContainerIDFile": "",
+    "LogConfig": {"Type": "json-file", "Config": {}}, "NetworkMode": "live-db-net",
+    "PortBindings": {}, "RestartPolicy": {"Name": "always", "MaximumRetryCount": 0},
+    "AutoRemove": False, "VolumeDriver": "", "VolumesFrom": None, "ConsoleSize": [0, 0],
+    "CapAdd": None, "CapDrop": None, "CgroupnsMode": "private", "Dns": [], "DnsOptions": [],
+    "DnsSearch": [], "ExtraHosts": None, "GroupAdd": None, "IpcMode": "private",
+    "Cgroup": "", "Links": None, "OomScoreAdj": 0, "PidMode": "", "Privileged": False,
+    "PublishAllPorts": False, "ReadonlyRootfs": False, "SecurityOpt": None,
+    "UTSMode": "", "UsernsMode": "", "ShmSize": 67108864, "Runtime": "runc",
+    "Isolation": "", "CpuShares": 0, "Memory": 0, "NanoCpus": 0, "CgroupParent": "",
+    "BlkioWeight": 0, "BlkioWeightDevice": [], "BlkioDeviceReadBps": [],
+    "BlkioDeviceWriteBps": [], "BlkioDeviceReadIOps": [], "BlkioDeviceWriteIOps": [],
+    "CpuPeriod": 0, "CpuQuota": 0, "CpuRealtimePeriod": 0, "CpuRealtimeRuntime": 0,
+    "CpusetCpus": "", "CpusetMems": "", "Devices": [], "DeviceCgroupRules": None,
+    "DeviceRequests": None, "KernelMemory": 0, "KernelMemoryTCP": 0, "MemoryReservation": 0,
+    "MemorySwap": 0, "MemorySwappiness": None, "OomKillDisable": False, "PidsLimit": None,
+    "Ulimits": [], "CpuCount": 0, "CpuPercent": 0, "IOMaximumIOps": 0,
+    "IOMaximumBandwidth": 0, "MaskedPaths": ["/proc/kcore", "/proc/keys"],
+    "ReadonlyPaths": ["/proc/bus"], "Init": None, "Tmpfs": None, "Sysctls": None,
+    "StorageOpt": None, "Annotations": None,
+}
+
+
+class HostConfigFailClosedTest(unittest.TestCase):
+    def test_default_hostconfig_of_a_plain_container_has_no_blockers(self):
+        doc, blockers = convert(legacy(HostConfig=json.loads(json.dumps(REAL_HOSTCONFIG))))
+        self.assertEqual(blockers, [])
+        self.assertIsNotNone(doc)
+
+    def test_unknown_hostconfig_key_blocks(self):
+        hostconfig = dict(REAL_HOSTCONFIG, FutureSetting="yes", Annotations={"a": "b"},
+                          PidsLimit=100)
+        doc, blockers = convert(legacy(HostConfig=hostconfig))
+        self.assertIsNone(doc)
+        self.assertEqual(len(blockers), 3)
+        for key in ("FutureSetting", "Annotations", "PidsLimit"):
+            self.assertEqual(len([b for b in blockers if b.startswith(key + " ")]), 1)
+        # an unknown key with an empty value is no setting
+        doc, blockers = convert(legacy(HostConfig=dict(REAL_HOSTCONFIG, FutureSetting=None)))
+        self.assertEqual(blockers, [])
+
+    def test_memoryswap_default_double_of_memory_is_not_a_blocker(self):
+        gib = 1073741824
+        doc, blockers = convert(legacy(HostConfig=dict(REAL_HOSTCONFIG, Memory=gib,
+                                                       MemorySwap=2 * gib)))
+        self.assertEqual(blockers, [])
+        self.assertEqual(doc["services"]["postgres"]["mem_limit"], gib)
+        doc, blockers = convert(legacy(HostConfig=dict(REAL_HOSTCONFIG, Memory=gib,
+                                                       MemorySwap=3 * gib)))
+        self.assertIsNone(doc)
+        self.assertTrue(blockers[0].startswith("MemorySwap "))
+
+    def test_init_sysctls_groupadd_readonly_are_carried(self):
+        doc, blockers = convert(legacy(HostConfig=dict(
+            REAL_HOSTCONFIG, Init=True, Sysctls={"net.core.somaxconn": "1024"},
+            GroupAdd=["staff"], ReadonlyRootfs=True, CpuShares=512, CpusetCpus="0-1")))
+        svc = doc["services"]["postgres"]
+        self.assertEqual(blockers, [])
+        self.assertIs(svc["init"], True)
+        self.assertEqual(svc["sysctls"], {"net.core.somaxconn": "1024"})
+        self.assertEqual(svc["group_add"], ["staff"])
+        self.assertIs(svc["read_only"], True)
+        self.assertEqual(svc["cpu_shares"], 512)
+        self.assertEqual(svc["cpuset"], "0-1")
+
+    def test_stop_signal_only_when_different_from_image(self):
+        image = json.loads(json.dumps(IMAGE))
+        image["Config"]["StopSignal"] = "SIGINT"
+        image["Config"]["WorkingDir"] = ""
+        same = legacy()
+        same["Config"]["StopSignal"] = "SIGINT"
+        doc, _ = pg.compose_from_inspect(same, image, "postgres:16.16-bookworm", "ownerp")
+        self.assertNotIn("stop_signal", doc["services"]["postgres"])
+        other = legacy()
+        other["Config"].update({"StopSignal": "SIGTERM", "StopTimeout": 120,
+                                "WorkingDir": "/srv"})
+        doc, _ = pg.compose_from_inspect(other, image, "postgres:16.16-bookworm", "ownerp")
+        svc = doc["services"]["postgres"]
+        self.assertEqual(svc["stop_signal"], "SIGTERM")
+        self.assertEqual(svc["stop_grace_period"], "120s")
+        self.assertEqual(svc["working_dir"], "/srv")
+
+    def test_selinux_mount_mode_is_kept(self):
+        inspect = legacy(Mounts=[{"Type": "bind", "Source": "/opt/pg/live-db",
+                                  "Destination": "/var/lib/postgresql/data", "RW": True,
+                                  "Mode": "z", "Propagation": "rprivate"}])
+        doc, blockers = convert(inspect)
+        self.assertEqual(blockers, [])
+        self.assertEqual(doc["services"]["postgres"]["volumes"],
+                         ["/opt/pg/live-db:/var/lib/postgresql/data:z"])
+        inspect["Mounts"][0].update({"Mode": "ro,z", "RW": False})
+        doc, _ = convert(inspect)
+        self.assertEqual(doc["services"]["postgres"]["volumes"],
+                         ["/opt/pg/live-db:/var/lib/postgresql/data:ro,z"])
+        inspect["Mounts"][0].update({"Mode": "rw", "RW": True, "Propagation": "shared"})
+        doc, blockers = convert(inspect)
+        self.assertIsNone(doc)
+        self.assertEqual(len(blockers), 1)
+
+    def test_ipv6_host_ip_is_bracketed(self):
+        doc, _ = convert(legacy(HostConfig__PortBindings={
+            "5432/tcp": [{"HostIp": "::1", "HostPort": "5433"}]}))
+        self.assertEqual(doc["services"]["postgres"]["ports"], ["[::1]:5433:5432/tcp"])
+
+
 class ComposeFileTest(unittest.TestCase):
     def test_written_file_is_0600(self):
         with tempfile.TemporaryDirectory() as tmp:

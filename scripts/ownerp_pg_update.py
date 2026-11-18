@@ -703,8 +703,32 @@ def _healthcheck_of(config: dict, db_user: str) -> dict:
     return result
 
 
-def _is_set(value) -> bool:
-    return bool(value)
+# HostConfig keys the conversion writes into the compose file (or checks itself).
+_HOST_CARRIED = {"RestartPolicy", "ShmSize", "Memory", "NanoCpus", "PortBindings",
+                 "ExtraHosts", "Dns", "DnsSearch", "LogConfig", "NetworkMode", "Init",
+                 "Sysctls", "GroupAdd", "ReadonlyRootfs", "CpuShares", "CpusetCpus"}
+# Keys whose value never matters (covered elsewhere, or only runtime hints).
+_HOST_ANYTHING = {"Binds", "ContainerIDFile", "ConsoleSize", "MaskedPaths", "ReadonlyPaths"}
+# Keys that may hold these values and still mean "docker's default". Empty values
+# (None, False, 0, "", [], {}) are always the default and need no entry.
+_HOST_DEFAULTS = {
+    "Runtime": ("runc",),
+    "CgroupnsMode": ("private", "host"),
+    "PidMode": ("private", "shareable"),
+    "IpcMode": ("private", "shareable"),
+    "MemorySwappiness": (-1,),
+    "PidsLimit": (-1,),
+}
+
+
+def _mount_suffix(mount: dict) -> str:
+    """The `:mode` part of a volume string; an unusual mode (SELinux `z`) is kept as given."""
+    mode = mount.get("Mode") or ""
+    if mode in ("", "rw", "ro"):
+        return "" if mount.get("RW", True) else ":ro"
+    if not mount.get("RW", True) and "ro" not in mode.split(","):
+        mode += ",ro"
+    return ":" + mode
 
 
 def compose_from_inspect(inspect: dict, image_inspect: dict, new_image: str,
@@ -722,21 +746,21 @@ def compose_from_inspect(inspect: dict, image_inspect: dict, new_image: str,
     blockers: List[str] = []
     warnings: List[str] = []
 
-    for key, label in (("Links", "links"), ("VolumesFrom", "volumes-from"),
-                       ("Devices", "devices"), ("CapAdd", "added capabilities"),
-                       ("CapDrop", "dropped capabilities"), ("Privileged", "privileged mode"),
-                       ("SecurityOpt", "security options"), ("Tmpfs", "tmpfs mounts"),
-                       ("Ulimits", "ulimits")):
-        if _is_set(host.get(key)):
-            blockers.append("HostConfig.%s (%s) is set and cannot be carried over to the "
-                            "compose file." % (key, label))
-    for key in ("PidMode", "IpcMode", "UTSMode"):
-        if host.get(key) not in (None, "", "private", "shareable"):
-            blockers.append("HostConfig.%s is '%s' and cannot be carried over to the "
-                            "compose file." % (key, host.get(key)))
+    # Fail closed: every HostConfig key is carried, a known default, or a blocker.
+    for key, value in host.items():
+        if key in _HOST_CARRIED or key in _HOST_ANYTHING:
+            continue
+        if key == "MemorySwap":
+            memory = host.get("Memory") or 0
+            if value in (None, 0, -1) or (memory and value == 2 * memory):
+                continue
+        elif not value or value in _HOST_DEFAULTS.get(key, ()):
+            continue
+        blockers.append("%s is set (%s) and cannot be carried over to the compose file."
+                        % (key, value))
     network_mode = host.get("NetworkMode") or ""
     if network_mode == "host" or network_mode.startswith("container:"):
-        blockers.append("HostConfig.NetworkMode is '%s' and cannot be carried over to the "
+        blockers.append("NetworkMode is set (%s) and cannot be carried over to the "
                         "compose file." % network_mode)
 
     # Environment: what the container has on top of the image.
@@ -773,7 +797,10 @@ def compose_from_inspect(inspect: dict, image_inspect: dict, new_image: str,
             continue
         if destination == pgdata:
             data_found = True
-        volumes.append("%s:%s%s" % (source, destination, "" if mount.get("RW", True) else ":ro"))
+        if kind == "bind" and mount.get("Propagation") not in (None, "", "rprivate"):
+            blockers.append("Mount propagation '%s' of %s is set and cannot be carried over "
+                            "to the compose file." % (mount.get("Propagation"), destination))
+        volumes.append("%s:%s%s" % (source, destination, _mount_suffix(mount)))
     if not data_found:
         blockers.append("There is no data mount found at %s; the new container would "
                         "start an empty database." % pgdata)
@@ -817,13 +844,34 @@ def compose_from_inspect(inspect: dict, image_inspect: dict, new_image: str,
         service["mem_limit"] = host["Memory"]
     if host.get("NanoCpus"):
         service["cpus"] = host["NanoCpus"] / 1e9
+    if host.get("CpuShares"):
+        service["cpu_shares"] = host["CpuShares"]
+    if host.get("CpusetCpus"):
+        service["cpuset"] = host["CpusetCpus"]
+    if host.get("Init"):
+        service["init"] = True
+    if host.get("ReadonlyRootfs"):
+        service["read_only"] = True
+    if host.get("Sysctls"):
+        service["sysctls"] = dict(host["Sysctls"])
+    if host.get("GroupAdd"):
+        service["group_add"] = list(host["GroupAdd"])
+    if config.get("StopSignal") and config["StopSignal"] != image_config.get("StopSignal"):
+        service["stop_signal"] = config["StopSignal"]
+    if config.get("StopTimeout") is not None:
+        service["stop_grace_period"] = "%ds" % config["StopTimeout"]
+    if config.get("WorkingDir") and config["WorkingDir"] != image_config.get("WorkingDir"):
+        service["working_dir"] = config["WorkingDir"]
     service["environment"] = env_out
     service["volumes"] = volumes
 
     ports: List[str] = []
     for container_port, bindings in (host.get("PortBindings") or {}).items():
         for binding in bindings or []:
-            parts = [binding.get("HostIp") or "", binding.get("HostPort") or "", container_port]
+            host_ip = binding.get("HostIp") or ""
+            if ":" in host_ip:
+                host_ip = "[%s]" % host_ip
+            parts = [host_ip, binding.get("HostPort") or "", container_port]
             ports.append(":".join(part for part in parts if part))
     if ports:
         service["ports"] = ports
