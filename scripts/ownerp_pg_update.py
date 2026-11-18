@@ -18,7 +18,10 @@
 # This part finds the PostgreSQL containers, reads the running server version
 # and the base, pairs them with their Odoo containers and chooses the tag to
 # update to. Phase 1 (prepare) checks one target and pulls or builds the image;
-# backup writes the dumps. Neither changes a container.
+# backup writes the dumps. Neither changes a container. Phase 2 (update_one)
+# switches to the new image, verifies it and undoes the switch on any failure;
+# rollback goes back to the parked old server later. The old container is only
+# ever renamed, never removed.
 #
 # System Python 3 with python3-yaml only, like the other delivered scripts.
 # ==============================================================================
@@ -32,8 +35,9 @@ import shutil
 import subprocess
 import sys
 import tempfile
+import time
 import urllib.request
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from typing import Callable, Dict, List, Optional, Set, Tuple
 
 import yaml
@@ -450,6 +454,7 @@ class SizingView:
     current: Dict[str, str]
     differs: Dict[str, Tuple[str, str]]     # key -> (current, recommended)
     skipped: Optional[str]                  # e.g. "shared container", "role unknown"
+    overrides: Set[str] = field(default_factory=set)    # settings an applied override pins
 
 
 def sizing_view(target: PgTarget, update_cfg: dict, role: Optional[str], run: Runner,
@@ -483,7 +488,8 @@ def sizing_view(target: PgTarget, update_cfg: dict, role: Optional[str], run: Ru
     recommended = dict(plan.results[instances.index(match)].pg)
     differs = {key: (current[key], value) for key, value in recommended.items()
                if key in current and not sizing.pg_equal(key, current[key], value)}
-    return SizingView(recommended, current, differs, None)
+    return SizingView(recommended, current, differs, None,
+                      sizing.override_conf_keys(plan.results[instances.index(match)], "pg"))
 
 
 def backup_routes(databases: List[str], backup_cfg: Optional[dict],
@@ -1156,8 +1162,12 @@ def _data_path(target: PgTarget) -> Optional[str]:
 
 
 def _list_databases(target: PgTarget, run: Runner) -> Optional[List[str]]:
+    return _databases_of(target.name, target.db_user or "postgres", run)
+
+
+def _databases_of(name: str, user: str, run: Runner) -> Optional[List[str]]:
     migrate = _need("ownerp_migrate")
-    code, out = run(["docker", "exec", target.name, "psql", "-U", target.db_user or "postgres",
+    code, out = run(["docker", "exec", name, "psql", "-U", user,
                      "-d", "postgres", "-Atqc",
                      "SELECT datname FROM pg_database WHERE datistemplate = false"])
     if code != 0:
@@ -1284,14 +1294,20 @@ def prepare(target: PgTarget, choice: Choice, opts: Options, run: Runner,
         plan.listed, plan.unlisted = backup_routes(databases, backup_cfg, target.name)
         if not opts.skip_backup and plan.unlisted:
             free = disk_usage(_nearest_existing(plan.deploy_dir)).free
+            total = 0
+            readable = True
             for database in plan.unlisted:
                 size = _database_size(target, database, run)
                 if size is None:
+                    readable = False
                     problems.append("cannot read the size of database %s" % database)
-                elif free < size:
-                    problems.append("not enough free space in %s for the dump of %s: needs "
-                                    "%s, free %s" % (plan.deploy_dir, database, _gib(size),
-                                                     _gib(free)))
+                else:
+                    total += size
+            # All dumps land in the same directory, so the sum has to fit.
+            if readable and free < total:
+                problems.append("not enough free space in %s for the dumps of %s: needs "
+                                "%s, free %s" % (plan.deploy_dir, ", ".join(plan.unlisted),
+                                                 _gib(total), _gib(free)))
     plan.sizing = (SizingView({}, {}, {}, "skipped") if opts.sizing == "skip"
                    else sizing_view(target, update_cfg, opts.role, run, hardware))
     if problems or only_conversion:
@@ -1441,7 +1457,7 @@ def backup(plan: UpdatePlan, opts: Options, run: Runner, stream: Runner, out
             out("ERROR: cannot create %s: %s" % (path, error))
             return False, locations
         code = _dump_to_file(["docker", "exec", target.name, "pg_dump", "-U", user, "-Fc",
-                              "-d", database], path)
+                              "--dbname=%s" % database], path)
         if code != 0:
             out("ERROR: pg_dump of %s failed (exit %d); the partial file %s is kept"
                 % (database, code, path))
@@ -1460,3 +1476,613 @@ def backup(plan: UpdatePlan, opts: Options, run: Runner, stream: Runner, out
         return False, locations
     locations.append(path)
     return True, locations
+
+
+# ── Phase 2: switch, verify, undo, rollback ──────────────────────────────────
+
+STATE_DIR = "pg-deploy/state"
+CONFIRM_AFTER = datetime.timedelta(days=7)
+READY_RETRIES = 60
+
+
+def state_path(home: str, name: str) -> str:
+    return os.path.join(home, STATE_DIR, name + ".json")
+
+
+def facts(name: str, user: str, pgdata: Optional[str], run: Runner) -> dict:
+    """What a verification compares: version, databases (sorted) and data directory owner.
+
+    A value that cannot be read is None; the owner is None when the data
+    directory cannot be stat-ed (not root).
+    """
+    owner = None
+    if pgdata:
+        try:
+            info = os.stat(pgdata)
+            owner = "%d:%d" % (info.st_uid, info.st_gid)
+        except OSError:
+            owner = None
+    databases = _databases_of(name, user, run)
+    return {"version": server_version(name, user, run),
+            "databases": sorted(databases) if databases is not None else None,
+            "owner": owner}
+
+
+def wait_ready(name: str, user: str, run: Runner, sleep=time.sleep,
+               retries: int = READY_RETRIES) -> bool:
+    for attempt in range(retries):
+        code, _ = run(["docker", "exec", name, "pg_isready", "-U", user, "-d", "postgres"])
+        if code == 0:
+            return True
+        if attempt < retries - 1:
+            sleep(5)
+    return False
+
+
+def _checked(run: Runner, argv: List[str], out, what: str) -> bool:
+    """Run a command that changes something; a non-zero exit is reported and returned."""
+    code, text = run(argv)
+    if code != 0:
+        out("ERROR: %s failed (exit %d): %s" % (what, code, _tail(text)))
+        return False
+    return True
+
+
+def _start_odoo(names: List[str], run: Runner, out) -> bool:
+    ok = True
+    for odoo in names:
+        out("Starting %s" % odoo)
+        ok = _checked(run, ["docker", "start", odoo], out, "docker start %s" % odoo) and ok
+    return ok
+
+
+def _lookup(name: str, run: Runner) -> Tuple[Optional[bool], Optional[dict]]:
+    """(found, inspect): found is False when the container does not exist, None when
+    docker could not tell."""
+    code, text = run(["docker", "inspect", "--type", "container", name])
+    if code == 0:
+        try:
+            data = json.loads(text)
+        except ValueError:
+            return None, None
+        if isinstance(data, list) and data and isinstance(data[0], dict):
+            return True, data[0]
+        return None, None
+    if "no such" in text.lower():
+        return False, None
+    return None, None
+
+
+def _state_text(name: str, run: Runner) -> str:
+    found, info = _lookup(name, run)
+    if found is None:
+        return "state unknown (docker did not answer)"
+    if not found:
+        return "does not exist"
+    return "%s, image %s" % ("running" if (info.get("State") or {}).get("Running") else "stopped",
+                             (info.get("Config") or {}).get("Image") or "?")
+
+
+def _undo_legacy(state: dict, cmd: List[str], run: Runner, out) -> bool:
+    name, parked = state["name"], state.get("parked_name")
+    named, info = _lookup(name, run)
+    park, parked_info = _lookup(parked, run) if parked else (False, None)
+    if named is None or park is None:
+        out("ERROR: docker does not tell whether %s and %s exist" % (name, parked))
+        return False
+    if park:
+        if named:
+            # Two containers: the one on the original name is the one this tool created.
+            compose_file = state["compose_file"]
+            if not os.path.isfile(compose_file):
+                out("ERROR: %s holds the new server but %s is gone; it cannot be removed "
+                    "the safe way" % (name, compose_file))
+                return False
+            if not _checked(run, cmd + ["-f", compose_file, "down"], out,
+                            "%s -f %s down" % (" ".join(cmd), compose_file)):
+                return False
+            named, _ = _lookup(name, run)
+            if named is not False:
+                out("ERROR: %s still exists after down" % name)
+                return False
+        if not _checked(run, ["docker", "rename", parked, name], out,
+                        "docker rename %s %s" % (parked, name)):
+            return False
+        if not _checked(run, ["docker", "update", "--restart=%s" % (state.get("parked_restart")
+                                                                    or "no"), name],
+                        out, "docker update --restart on %s" % name):
+            return False
+        running = bool((parked_info.get("State") or {}).get("Running"))
+    else:
+        if not named:
+            out("ERROR: neither %s nor %s exists" % (name, parked))
+            return False
+        image = (info.get("Config") or {}).get("Image")
+        if image != state.get("old_image"):
+            out("ERROR: %s was never parked but runs %s instead of %s" % (name, image,
+                                                                            state.get("old_image")))
+            return False
+        running = bool((info.get("State") or {}).get("Running"))
+    if not running:
+        return _checked(run, ["docker", "start", name], out, "docker start %s" % name)
+    return True
+
+
+def _undo_compose(state: dict, cmd: List[str], run: Runner, out) -> bool:
+    compose_file, backup_file = state["compose_file"], state.get("compose_backup")
+    # No backup yet means the file was never touched; `up -d` then only starts the container.
+    if backup_file and os.path.isfile(backup_file):
+        try:
+            with open(backup_file, encoding="utf-8") as handle:
+                write_private(compose_file, handle.read())
+        except (OSError, UnicodeError) as error:
+            out("ERROR: cannot restore %s from %s: %s" % (compose_file, backup_file, error))
+            return False
+    return _checked(run, cmd + ["-f", compose_file, "up", "-d"], out,
+                    "%s -f %s up -d" % (" ".join(cmd), compose_file))
+
+
+def _undo(state: dict, cmd: List[str], run: Runner, out) -> bool:
+    """Put the old server back from whatever state the host is really in."""
+    if state.get("kind") == "legacy":
+        return _undo_legacy(state, cmd, run, out)
+    return _undo_compose(state, cmd, run, out)
+
+
+def _archive_state(path: str, label: str, stamp: str, out) -> None:
+    try:
+        os.replace(path, "%s.%s-%s" % (path, label, stamp))
+    except OSError as error:
+        out("WARNING: cannot rename the state file %s: %s" % (path, error))
+
+
+def _stranded(state: dict, path: str, run: Runner) -> List[str]:
+    lines = ["ERROR: the old server could not be brought back automatically. "
+             "Odoo stays stopped."]
+    for container in (state["name"], state.get("parked_name")):
+        if container:
+            lines.append("  %s: %s" % (container, _state_text(container, run)))
+    lines.append("  State file (kept): %s" % path)
+    if state.get("stopped_odoo"):
+        lines.append("  When a PostgreSQL server answers again, start Odoo: %s"
+                     % "; ".join("docker start %s" % o for o in state["stopped_odoo"]))
+    return lines
+
+
+def _recover(plan: UpdatePlan, state: dict, path: str, cmd: List[str], user: str,
+             before_version, run: Runner, out, sleep) -> int:
+    out("Going back to the old server")
+    ok = False
+    try:
+        ok = _undo(state, cmd, run, out)
+    except (Exception, KeyboardInterrupt) as error:
+        out("ERROR: the undo stopped unexpectedly: %s" % (error or type(error).__name__))
+    if ok and not wait_ready(state["name"], user, run, sleep):
+        out("ERROR: the old server does not answer")
+        ok = False
+    elif ok and server_version(state["name"], user, run) != before_version:
+        out("ERROR: the server on %s does not report the old version %s"
+            % (state["name"], _version_text(before_version)))
+        ok = False
+    if not ok:
+        for line in _stranded(state, path, run):
+            out(line)
+        return 2
+    _start_odoo(plan.stop_odoo, run, out)
+    _archive_state(path, "undone", datetime.datetime.now().strftime("%Y%m%d-%H%M%S"), out)
+    out("The old server (%s) is running again and Odoo is back on it; nothing was lost."
+        % _version_text(before_version))
+    return 1
+
+
+def _switch(plan: UpdatePlan, state: dict, cmd: List[str], user: str, pgdata: Optional[str],
+            before: dict, expected, run: Runner, out, sleep) -> Optional[str]:
+    """Steps 5 to 8; None when the new server is up and verified, else the reason."""
+    target = plan.target
+    name = target.name
+    out("Stopping %s" % name)
+    if not _checked(run, ["docker", "stop", name], out, "docker stop %s" % name):
+        return "could not stop %s" % name
+    if target.kind == "legacy":
+        parked = plan.parked_name
+        out("Parking the old container as %s" % parked)
+        if not _checked(run, ["docker", "rename", name, parked], out,
+                        "docker rename %s %s" % (name, parked)):
+            return "could not rename %s" % name
+        if not _checked(run, ["docker", "update", "--restart=no", parked], out,
+                        "docker update --restart=no %s" % parked):
+            return "could not set the restart policy of %s" % parked
+        _mkdir_private(plan.deploy_dir)
+        write_private(plan.compose_file, plan.compose_text)
+    else:
+        with open(plan.compose_file, encoding="utf-8") as handle:
+            write_private(state["compose_backup"], handle.read())
+        write_private(plan.compose_file, plan.compose_text)
+    out("Starting the new server (%s)" % state["new_image"])
+    if not _checked(run, cmd + ["-f", plan.compose_file, "up", "-d"], out,
+                    "%s -f %s up -d" % (" ".join(cmd), plan.compose_file)):
+        return "the new server did not start"
+    if not wait_ready(name, user, run, sleep):
+        return "the new server does not become ready"
+    after = facts(name, user, pgdata, run)
+    if after["version"] != expected:
+        return "the new server reports version %s, expected %s" % (
+            _version_text(after["version"]) or "nothing", _version_text(expected))
+    if after["databases"] != before["databases"]:
+        return "the databases differ: before %s, after %s" % (before["databases"],
+                                                              after["databases"])
+    if before["owner"] is None or after["owner"] is None:
+        out("Data directory owner not compared (cannot read %s without root)" % pgdata)
+    elif before["owner"] != after["owner"]:
+        return "the data directory owner changed from %s to %s" % (before["owner"],
+                                                                   after["owner"])
+    return None
+
+
+def _sizing_state_io(plan: UpdatePlan, opts: Options):
+    """(load, save) for the sizing state: the instance's build dir, else pg-deploy/state."""
+    sizing = _need("ownerp_sizing")
+    update_cfg, _ = _configs(opts)
+    entry = next((e for e in update_cfg.get("containers") or []
+                  if isinstance(e, dict) and e.get("db_host") == plan.target.name
+                  and isinstance(e.get("sizing"), dict) and e.get("dockerfile_path")), None)
+    if entry is not None:
+        build_dir = os.path.expandvars(os.path.expanduser(str(entry["dockerfile_path"])))
+
+        def save_managed(state):
+            problem = sizing.save_state(build_dir, state)
+            sizing.ensure_dockerignore(build_dir)
+            return problem
+
+        return (lambda: sizing.load_state(build_dir)), save_managed
+    path = os.path.join(opts.home, STATE_DIR, plan.target.name + ".sizing.json")
+
+    def load():
+        if not os.path.exists(path):
+            return {}, None
+        try:
+            with open(path, encoding="utf-8") as handle:
+                state = json.load(handle)
+        except (OSError, ValueError) as error:
+            return {}, "cannot read %s: %s" % (path, error)
+        if not isinstance(state, dict) or not isinstance(state.get("pg", {}), dict):
+            return {}, "cannot read %s: unexpected content" % path
+        return state, None
+
+    def save(state):
+        try:
+            _mkdir_private(os.path.dirname(path))
+            write_private(path, json.dumps(state, indent=2, sort_keys=True) + "\n")
+        except OSError as error:
+            return "cannot write %s: %s" % (path, error)
+        return None
+
+    return load, save
+
+
+def _apply_sizing(plan: UpdatePlan, opts: Options, user: str, run: Runner, out, sleep) -> None:
+    """Memory settings on the new server. The outcome is a report line, never an exit code."""
+    label = "Memory settings"
+    try:
+        sizing = _need("ownerp_sizing")
+        if not plan.sizing.recommended:
+            out("%s: nothing calculated, left alone" % label)
+            return
+        load, save = _sizing_state_io(plan, opts)
+        state, problem = load()
+        if problem:
+            out("%s: ERROR %s; not changed" % (label, problem))
+            return
+        pg_state = state.setdefault("pg", {})
+        before = json.dumps(pg_state, sort_keys=True)
+        sync = sizing.sync_postgres(plan.target.name, plan.sizing.recommended,
+                                    plan.sizing.overrides, pg_state, run, user, sleep=sleep)
+        if json.dumps(pg_state, sort_keys=True) != before:
+            problem = save(state)
+            if problem:
+                out("%s: ERROR state not saved: %s" % (label, problem))
+        if sync.skipped:
+            out("%s: skipped (%s)" % (label, sync.skipped))
+        elif sync.error:
+            hint = ("; the refused values are kept as hand values until accepted in dosize "
+                    "--review" if sync.rolled_back else "")
+            out("%s: ERROR %s%s; the update continues" % (label, sync.error, hint))
+        else:
+            written = sum(1 for d in sync.decisions if d.action == "write") if sync.changed else 0
+            out("%s: %d written, %d unchanged" % (label, written, len(sync.decisions) - written))
+            for decision in sync.decisions:
+                if decision.action == "keep" or (decision.action == "write" and sync.changed):
+                    out("  " + sizing.format_decision(decision))
+            if sync.restarted and sync.verified:
+                out("  database restarted, new values verified with SHOW")
+    except Exception as error:
+        out("%s: ERROR %s: %s; the update continues" % (label, type(error).__name__, error))
+
+
+def _version_key(text: str) -> Tuple[int, ...]:
+    return tuple(int(part) for part in re.findall(r"\d+", text))
+
+
+def _vector_hints(plan: UpdatePlan, user: str, run: Runner) -> List[str]:
+    """Databases whose pgvector extension is older than the one the new image ships."""
+    name = plan.target.name
+    code, text = run(["docker", "exec", name, "psql", "-U", user, "-d", "postgres", "-Atqc",
+                      "SELECT default_version FROM pg_available_extensions WHERE name='vector'"])
+    if code != 0 or not text.strip():
+        return []
+    default = text.strip().splitlines()[0]
+    hints = []
+    for database in plan.databases:
+        code, text = run(["docker", "exec", name, "psql", "-U", user, "-d", database, "-Atqc",
+                          "SELECT extversion FROM pg_extension WHERE extname='vector'"])
+        installed = text.strip().splitlines()[0] if code == 0 and text.strip() else ""
+        if installed and _version_key(installed) < _version_key(default):
+            hints.append("%s: pgvector %s, the new image has %s: docker exec %s psql -U %s -d %s "
+                         "-c \"ALTER EXTENSION vector UPDATE\""
+                         % (database, installed, default, name, user, database))
+    return hints
+
+
+def _size_text(size: int) -> str:
+    value = float(size)
+    for unit in ("B", "KiB", "MiB", "GiB"):
+        if value < 1024 or unit == "GiB":
+            return "%.1f %s" % (value, unit) if unit != "B" else "%d B" % size
+        value /= 1024
+    return "%d B" % size
+
+
+def _older_backups(plan: UpdatePlan, locations: List[str]) -> Optional[str]:
+    root = os.path.join(plan.deploy_dir, "pre-update")
+    try:
+        folders = [os.path.join(root, entry) for entry in sorted(os.listdir(root))
+                   if os.path.isdir(os.path.join(root, entry))]
+    except OSError:
+        return None
+    current = {os.path.dirname(location) for location in locations}
+    older = [folder for folder in folders if folder not in current]
+    if not older:
+        return None
+    total = 0
+    for folder in older:
+        for base, _, files in os.walk(folder):
+            for item in files:
+                try:
+                    total += os.path.getsize(os.path.join(base, item))
+                except OSError:
+                    pass
+    return ("%d older backup director%s in %s, %s in total; this tool deletes none"
+            % (len(older), "y" if len(older) == 1 else "ies", root, _size_text(total)))
+
+
+def update_one(plan: UpdatePlan, opts: Options, run: Runner, stream: Runner, out,
+               sleep=time.sleep) -> int:
+    """Switch one database container to the new image. 0 done, 1 undone, 2 needs the operator."""
+    if plan.problems:
+        out(render_plan(plan))
+        return 2
+    if opts.dry_run:
+        out(render_plan(plan, dry_run=True))
+        return 0
+    target, choice = plan.target, plan.choice
+    name = target.name
+    user = target.db_user or "postgres"
+    pgdata = _data_path(target)
+    cmd = compose_cmd(run)
+    if cmd is None:
+        out("ERROR: docker compose is not installed; nothing was changed")
+        return 2
+
+    for odoo in plan.stop_odoo:
+        out("Stopping %s" % odoo)
+        if not _checked(run, ["docker", "stop", odoo], out, "docker stop %s" % odoo):
+            out("The update stops here; no database container was touched.")
+            _start_odoo(plan.stop_odoo, run, out)
+            return 1
+
+    ok, locations = backup(plan, opts, run, stream, out)
+    if not ok:
+        out("The update stops here; no database container was touched.")
+        _start_odoo(plan.stop_odoo, run, out)
+        return 1
+
+    before = facts(name, user, pgdata, run)
+    if before["version"] is None or before["databases"] is None:
+        out("ERROR: cannot read the version and databases of %s; the update stops here" % name)
+        _start_odoo(plan.stop_odoo, run, out)
+        return 1
+    before_collation = set(collation_mismatches(target, run))
+    expected = (choice.version if choice.tag else None) or before["version"]
+    now = datetime.datetime.now().replace(microsecond=0)
+    stamp = now.strftime("%Y%m%d-%H%M%S")
+    state = {
+        "name": name, "kind": target.kind,
+        "old_image": target.image, "new_image": choice.tag or target.image,
+        "old_version": _version_text(before["version"]), "new_version": _version_text(expected),
+        "parked_name": plan.parked_name,
+        "parked_restart": _restart_of((target.inspect.get("HostConfig") or {}).get(
+            "RestartPolicy")),
+        "compose_file": plan.compose_file,
+        "compose_backup": ("%s.bak-%s" % (plan.compose_file, stamp)
+                           if target.kind == "compose" else None),
+        "stopped_odoo": list(plan.stop_odoo),
+        "time": now.isoformat(),
+        "db_user": user,
+    }
+    path = state_path(opts.home, name)
+    try:
+        _mkdir_private(os.path.dirname(path))
+        write_private(path, json.dumps(state, indent=2, sort_keys=True) + "\n")
+    except OSError as error:
+        out("ERROR: cannot write the state file %s: %s; the update stops here" % (path, error))
+        _start_odoo(plan.stop_odoo, run, out)
+        return 1
+
+    try:
+        error = _switch(plan, state, cmd, user, pgdata, before, expected, run, out, sleep)
+    except (Exception, KeyboardInterrupt) as exc:
+        error = ("interrupted" if isinstance(exc, KeyboardInterrupt)
+                 else "unexpected %s: %s" % (type(exc).__name__, exc))
+    if error:
+        out("ERROR: %s" % error)
+        return _recover(plan, state, path, cmd, user, before["version"], run, out, sleep)
+
+    out("The new server runs %s and the databases match." % _version_text(expected))
+    new_collation = [d for d in collation_mismatches(replace(target, version=expected), run)
+                     if d not in before_collation]
+    if new_collation:
+        out("ERROR: the collation version no longer matches in: %s" % ", ".join(new_collation))
+        out("Odoo stays stopped. Two ways forward:")
+        out("  1. Go back to the old server:  pgup --rollback %s" % name)
+        out("  2. Keep the new server, rebuild the indexes and record the new collation "
+            "version, for each database:")
+        for database in new_collation:
+            out('       docker exec %s psql -U %s -d %s -c "REINDEX DATABASE %s"'
+                % (name, user, database, database))
+            out('       docker exec %s psql -U %s -d %s -c "ALTER DATABASE %s REFRESH '
+                'COLLATION VERSION"' % (name, user, database, database))
+        if plan.stop_odoo:
+            out("     then start Odoo: %s" % "; ".join("docker start %s" % o
+                                                      for o in plan.stop_odoo))
+        return 2
+
+    if opts.sizing == "apply" and plan.sizing.skipped is None:
+        _apply_sizing(plan, opts, user, run, out, sleep)
+        if not wait_ready(name, user, run, sleep):
+            out("ERROR: %s does not answer after the memory settings; Odoo stays stopped. "
+                "Go back with: pgup --rollback %s" % (name, name))
+            return 2
+
+    code = 0
+    if not _start_odoo(plan.stop_odoo, run, out):
+        out("ERROR: not every Odoo container could be started")
+        code = 2
+    hints = _vector_hints(plan, user, run) if target.vector else []
+
+    if choice.tag:
+        out("Done: %s %s -> %s (%s)" % (name, _version_text(before["version"]),
+                                        _version_text(expected), choice.tag))
+    else:
+        out("Done: %s now runs from a compose file, version stays %s"
+            % (name, _version_text(before["version"])))
+    for location in locations:
+        out("Backup: %s" % location)
+    out("Compose file: %s" % plan.compose_file)
+    if target.kind == "compose":
+        out("Previous compose file: %s" % state["compose_backup"])
+    if plan.parked_name:
+        out("The old container is parked as %s (stopped, restart policy no)." % plan.parked_name)
+        out("Once you are satisfied, remove it:  docker rm %s" % plan.parked_name)
+    for hint in hints:
+        out("pgvector: %s" % hint)
+    older = _older_backups(plan, locations)
+    if older:
+        out(older)
+    out("Rollback: pgup --rollback %s" % name)
+    return code
+
+
+def _paired_running(name: str, state: dict, opts: Options, run: Runner) -> List[str]:
+    """Odoo containers that are running now and belong to this database container."""
+    update_cfg, _ = _configs(opts)
+    try:
+        for found in discover(run, update_cfg, opts.db_user or state.get("db_user")):
+            if found.name == name:
+                return [o.name for o in found.odoo if o.running]
+    except Exception:
+        pass
+    # The server is not found as a running PostgreSQL container: use what the update stopped.
+    running = []
+    for candidate in state.get("stopped_odoo") or []:
+        _, info = _lookup(candidate, run)
+        if info and (info.get("State") or {}).get("Running"):
+            running.append(candidate)
+    return running
+
+
+def rollback(name: str, opts: Options, run: Runner, out, now=None, ask=None,
+             sleep=time.sleep) -> int:
+    """Go back to the server the last update replaced. 0 done, 2 not possible or not verified."""
+    now = now or datetime.datetime.now()
+    path = state_path(opts.home, name)
+    try:
+        with open(path, encoding="utf-8") as handle:
+            state = json.load(handle)
+    except (OSError, ValueError):
+        out("No update state found for %s (%s); there is nothing to roll back." % (name, path))
+        return 2
+    if (not isinstance(state, dict) or state.get("name") != name
+            or state.get("kind") not in ("legacy", "compose")):
+        out("The state file %s is not usable; nothing was changed." % path)
+        return 2
+    cmd = compose_cmd(run)
+    if cmd is None:
+        out("ERROR: docker compose is not installed; nothing was changed")
+        return 2
+    user = state.get("db_user") or opts.db_user or "postgres"
+    if state["kind"] == "legacy":
+        found, _ = _lookup(state.get("parked_name") or "", run)
+        if not found:
+            out("Cannot roll back: the parked container %s %s; nothing was changed."
+                % (state.get("parked_name"), "is missing" if found is False
+                   else "could not be looked up"))
+            return 2
+    elif not state.get("compose_backup") or not os.path.isfile(state["compose_backup"]):
+        out("Cannot roll back: the previous compose file %s is missing; nothing was changed."
+            % state.get("compose_backup"))
+        return 2
+
+    try:
+        made = datetime.datetime.fromisoformat(state.get("time") or "")
+    except ValueError:
+        made = None
+    if made is None or now - made > CONFIRM_AFTER:
+        days = "an unknown time" if made is None else "%d days" % (now - made).days
+        if not opts.force:
+            question = ("The update of %s was made %s ago (limit %d days); data written since "
+                        "stays on the data directory but the old server may not accept it. "
+                        "Roll back anyway?" % (name, days, CONFIRM_AFTER.days))
+            if opts.no_input or ask is None:
+                out("%s Use --force to roll back without asking." % question)
+                return 2
+            if not ask(question):
+                out("Rollback cancelled; nothing was changed.")
+                return 2
+
+    odoo = _paired_running(name, state, opts, run)
+    stopped: List[str] = []
+    for container in odoo:
+        out("Stopping %s" % container)
+        if not _checked(run, ["docker", "stop", container], out, "docker stop %s" % container):
+            out("Rollback stops here; the database container was not touched.")
+            _start_odoo(odoo, run, out)
+            return 2
+        stopped.append(container)
+
+    old = _version_key(state.get("old_version") or "")
+    ok = False
+    try:
+        ok = _undo(state, cmd, run, out)
+    except (Exception, KeyboardInterrupt) as error:
+        out("ERROR: the rollback stopped unexpectedly: %s" % (error or type(error).__name__))
+    if ok and not wait_ready(name, user, run, sleep):
+        out("ERROR: the old server does not answer")
+        ok = False
+    elif ok:
+        version = server_version(name, user, run)
+        if version is None or tuple(version) != old[:2]:
+            out("ERROR: the server on %s reports %s, expected %s"
+                % (name, _version_text(version) or "nothing", state.get("old_version")))
+            ok = False
+    if not ok:
+        for line in _stranded(state, path, run):
+            out(line)
+        return 2
+    _start_odoo(stopped, run, out)
+    _archive_state(path, "rolled-back", now.strftime("%Y%m%d-%H%M%S"), out)
+    out("Rolled back: %s runs %s again (%s)." % (name, state.get("old_version"),
+                                                  state.get("old_image")))
+    if state["kind"] == "legacy":
+        out("The compose file %s stays on disk; the new image stays in the local image store."
+            % state["compose_file"])
+    return 0
