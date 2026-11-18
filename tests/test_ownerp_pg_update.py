@@ -669,7 +669,7 @@ TWO_SERVICES = """services:
 class ComposeFromInspectTest(unittest.TestCase):
     def test_roundtrip_of_a_plain_legacy_container(self):
         doc, blockers = convert()
-        svc = doc["services"]["postgres"]
+        svc = doc["services"]["live-db"]
         self.assertEqual(blockers, [])
         self.assertEqual(svc["image"], "postgres:16.16-bookworm")
         self.assertEqual(svc["container_name"], "live-db")
@@ -685,14 +685,14 @@ class ComposeFromInspectTest(unittest.TestCase):
 
     def test_image_environment_is_not_copied(self):
         doc, _ = convert()
-        env = doc["services"]["postgres"]["environment"]
+        env = doc["services"]["live-db"]["environment"]
         for key in ("PG_MAJOR", "PATH", "GOSU_VERSION", "LANG"):
             self.assertNotIn(key, env)
         self.assertEqual(env["POSTGRES_USER"], "ownerp")
 
     def test_dollar_in_environment_is_escaped(self):
         doc, _ = convert()
-        self.assertEqual(doc["services"]["postgres"]["environment"]["POSTGRES_PASSWORD"],
+        self.assertEqual(doc["services"]["live-db"]["environment"]["POSTGRES_PASSWORD"],
                          "pa$$word")
 
     def test_pgdata_follows_the_containers_own_setting(self):
@@ -700,7 +700,7 @@ class ComposeFromInspectTest(unittest.TestCase):
                                   "Destination": "/data/pg/", "RW": True}])
         inspect["Config"]["Env"].append("PGDATA=/data/pg/")
         doc, blockers = convert(inspect)
-        svc = doc["services"]["postgres"]
+        svc = doc["services"]["live-db"]
         self.assertEqual(blockers, [])
         self.assertEqual(svc["environment"]["PGDATA"], "/data/pg")
         self.assertEqual(svc["volumes"], ["/opt/pg/x:/data/pg"])
@@ -725,7 +725,7 @@ class ComposeFromInspectTest(unittest.TestCase):
         inspect["Config"]["Labels"]["owner"] = "ops"
         inspect["Config"]["Labels"]["com.docker.compose.project"] = "x"
         doc, blockers = convert(inspect)
-        svc = doc["services"]["postgres"]
+        svc = doc["services"]["live-db"]
         self.assertEqual(blockers, [])
         self.assertEqual(svc["volumes"], ["/opt/pg/live-db:/var/lib/postgresql/data",
                                           "/etc/ssl/pg:/certs:ro"])
@@ -745,7 +745,7 @@ class ComposeFromInspectTest(unittest.TestCase):
 
     def test_restart_policy_no_is_a_string(self):
         doc, _ = convert(legacy(HostConfig__RestartPolicy={"Name": "", "MaximumRetryCount": 0}))
-        self.assertEqual(doc["services"]["postgres"]["restart"], "no")
+        self.assertEqual(doc["services"]["live-db"]["restart"], "no")
 
     def test_named_volume_becomes_external(self):
         inspect = legacy(Mounts=[{"Type": "volume", "Name": "live-db-data",
@@ -753,7 +753,7 @@ class ComposeFromInspectTest(unittest.TestCase):
                                   "Destination": "/var/lib/postgresql/data", "RW": True}])
         doc, blockers = convert(inspect)
         self.assertEqual(blockers, [])
-        self.assertEqual(doc["services"]["postgres"]["volumes"],
+        self.assertEqual(doc["services"]["live-db"]["volumes"],
                          ["live-db-data:/var/lib/postgresql/data"])
         self.assertEqual(doc["volumes"], {"live-db-data": {"external": True}})
         self.assertNotIn("x-pgup-warnings", doc)
@@ -765,7 +765,7 @@ class ComposeFromInspectTest(unittest.TestCase):
                                   "Destination": "/var/lib/postgresql/data", "RW": True}])
         doc, blockers = convert(inspect)
         self.assertEqual(blockers, [])
-        self.assertEqual(doc["services"]["postgres"]["volumes"],
+        self.assertEqual(doc["services"]["live-db"]["volumes"],
                          [name + ":/var/lib/postgresql/data"])
         self.assertEqual(doc["volumes"], {name: {"external": True}})
         self.assertEqual(len(doc["x-pgup-warnings"]), 1)
@@ -822,12 +822,12 @@ class ComposeFromInspectTest(unittest.TestCase):
         inspect["NetworkSettings"]["Networks"]["live-db-net"]["IPAMConfig"] = {
             "IPv4Address": "192.0.2.10"}
         doc, _ = convert(inspect)
-        self.assertEqual(doc["services"]["postgres"]["networks"]["live-db-net"],
+        self.assertEqual(doc["services"]["live-db"]["networks"]["live-db-net"],
                          {"aliases": ["db"], "ipv4_address": "192.0.2.10"})
 
     def test_missing_healthcheck_gets_ours(self):
         doc, _ = convert()
-        hc = doc["services"]["postgres"]["healthcheck"]
+        hc = doc["services"]["live-db"]["healthcheck"]
         self.assertEqual(hc["test"], ["CMD-SHELL", "pg_isready -U ownerp -d postgres"])
         self.assertEqual((hc["interval"], hc["timeout"], hc["retries"], hc["start_period"]),
                          ("10s", "5s", 5, "30s"))
@@ -837,14 +837,14 @@ class ComposeFromInspectTest(unittest.TestCase):
         inspect["Config"]["Healthcheck"] = {"Test": ["CMD-SHELL", "true"],
                                             "Interval": 30000000000, "Retries": 3}
         doc, _ = convert(inspect)
-        hc = doc["services"]["postgres"]["healthcheck"]
+        hc = doc["services"]["live-db"]["healthcheck"]
         self.assertEqual(hc["test"], ["CMD-SHELL", "true"])
         self.assertEqual(hc["interval"], "30s")
         self.assertEqual(hc["retries"], 3)
 
     def test_vector_context_adds_build(self):
         doc, _ = convert(vector_context="/opt/pg/live-db-deploy/pgvector")
-        svc = doc["services"]["postgres"]
+        svc = doc["services"]["live-db"]
         self.assertEqual(svc["build"], {"context": "/opt/pg/live-db-deploy/pgvector",
                                         "args": {"PG_VERSION": "16.16-bookworm"}})
 
@@ -879,6 +879,22 @@ REAL_HOSTCONFIG = {
 }
 
 
+class ServiceNameTest(unittest.TestCase):
+    """Compose makes the service name a DNS alias on every network of the container."""
+
+    def test_generated_service_is_named_after_the_container(self):
+        doc, problems = convert()
+        self.assertEqual(problems, [])
+        self.assertEqual(list(doc["services"]), ["live-db"])
+
+    def test_no_postgres_alias_appears_on_a_shared_network(self):
+        # Another instance may reach ITS database as "postgres" on the same network.
+        doc, _ = convert()
+        self.assertNotIn("postgres", doc["services"])
+        aliases = doc["services"]["live-db"]["networks"]["live-db-net"].get("aliases", [])
+        self.assertNotIn("postgres", aliases)
+
+
 class HostConfigFailClosedTest(unittest.TestCase):
     def test_default_hostconfig_of_a_plain_container_has_no_blockers(self):
         doc, blockers = convert(legacy(HostConfig=json.loads(json.dumps(REAL_HOSTCONFIG))))
@@ -902,35 +918,35 @@ class HostConfigFailClosedTest(unittest.TestCase):
         doc, blockers = convert(legacy(HostConfig=dict(REAL_HOSTCONFIG, Memory=gib,
                                                        MemorySwap=2 * gib)))
         self.assertEqual(blockers, [])
-        self.assertEqual(doc["services"]["postgres"]["mem_limit"], gib)
-        self.assertNotIn("memswap_limit", doc["services"]["postgres"])
+        self.assertEqual(doc["services"]["live-db"]["mem_limit"], gib)
+        self.assertNotIn("memswap_limit", doc["services"]["live-db"])
         doc, blockers = convert(legacy(HostConfig=dict(REAL_HOSTCONFIG, Memory=gib,
                                                        MemorySwap=3 * gib)))
         self.assertEqual(blockers, [])
-        self.assertEqual(doc["services"]["postgres"]["memswap_limit"], 3 * gib)
+        self.assertEqual(doc["services"]["live-db"]["memswap_limit"], 3 * gib)
 
     def test_unlimited_swap_with_memory_limit_is_carried(self):
         gib = 1073741824
         doc, _ = convert(legacy(HostConfig=dict(REAL_HOSTCONFIG, Memory=gib, MemorySwap=-1)))
-        self.assertEqual(doc["services"]["postgres"]["memswap_limit"], -1)
+        self.assertEqual(doc["services"]["live-db"]["memswap_limit"], -1)
         doc, _ = convert(legacy(HostConfig=dict(REAL_HOSTCONFIG, Memory=0, MemorySwap=-1)))
-        self.assertNotIn("memswap_limit", doc["services"]["postgres"])
+        self.assertNotIn("memswap_limit", doc["services"]["live-db"])
 
     def test_explicit_swappiness_zero_is_carried(self):
         for value, expected in ((0, 0), (60, 60)):
             doc, blockers = convert(legacy(HostConfig=dict(REAL_HOSTCONFIG,
                                                            MemorySwappiness=value)))
             self.assertEqual(blockers, [])
-            self.assertEqual(doc["services"]["postgres"]["mem_swappiness"], expected)
+            self.assertEqual(doc["services"]["live-db"]["mem_swappiness"], expected)
         for value in (None, -1):
             doc, _ = convert(legacy(HostConfig=dict(REAL_HOSTCONFIG, MemorySwappiness=value)))
-            self.assertNotIn("mem_swappiness", doc["services"]["postgres"])
+            self.assertNotIn("mem_swappiness", doc["services"]["live-db"])
 
     def test_init_sysctls_groupadd_readonly_are_carried(self):
         doc, blockers = convert(legacy(HostConfig=dict(
             REAL_HOSTCONFIG, Init=True, Sysctls={"net.core.somaxconn": "1024"},
             GroupAdd=["staff"], ReadonlyRootfs=True, CpuShares=512, CpusetCpus="0-1")))
-        svc = doc["services"]["postgres"]
+        svc = doc["services"]["live-db"]
         self.assertEqual(blockers, [])
         self.assertIs(svc["init"], True)
         self.assertEqual(svc["sysctls"], {"net.core.somaxconn": "1024"})
@@ -946,12 +962,12 @@ class HostConfigFailClosedTest(unittest.TestCase):
         same = legacy()
         same["Config"]["StopSignal"] = "SIGINT"
         doc, _ = pg.compose_from_inspect(same, image, "postgres:16.16-bookworm", "ownerp")
-        self.assertNotIn("stop_signal", doc["services"]["postgres"])
+        self.assertNotIn("stop_signal", doc["services"]["live-db"])
         other = legacy()
         other["Config"].update({"StopSignal": "SIGTERM", "StopTimeout": 120,
                                 "WorkingDir": "/srv"})
         doc, _ = pg.compose_from_inspect(other, image, "postgres:16.16-bookworm", "ownerp")
-        svc = doc["services"]["postgres"]
+        svc = doc["services"]["live-db"]
         self.assertEqual(svc["stop_signal"], "SIGTERM")
         self.assertEqual(svc["stop_grace_period"], "120s")
         self.assertEqual(svc["working_dir"], "/srv")
@@ -962,11 +978,11 @@ class HostConfigFailClosedTest(unittest.TestCase):
                                   "Mode": "z", "Propagation": "rprivate"}])
         doc, blockers = convert(inspect)
         self.assertEqual(blockers, [])
-        self.assertEqual(doc["services"]["postgres"]["volumes"],
+        self.assertEqual(doc["services"]["live-db"]["volumes"],
                          ["/opt/pg/live-db:/var/lib/postgresql/data:z"])
         inspect["Mounts"][0].update({"Mode": "ro,z", "RW": False})
         doc, _ = convert(inspect)
-        self.assertEqual(doc["services"]["postgres"]["volumes"],
+        self.assertEqual(doc["services"]["live-db"]["volumes"],
                          ["/opt/pg/live-db:/var/lib/postgresql/data:ro,z"])
         inspect["Mounts"][0].update({"Mode": "rw", "RW": True, "Propagation": "shared"})
         doc, blockers = convert(inspect)
@@ -976,7 +992,7 @@ class HostConfigFailClosedTest(unittest.TestCase):
     def test_ipv6_host_ip_is_bracketed(self):
         doc, _ = convert(legacy(HostConfig__PortBindings={
             "5432/tcp": [{"HostIp": "::1", "HostPort": "5433"}]}))
-        self.assertEqual(doc["services"]["postgres"]["ports"], ["[::1]:5433:5432/tcp"])
+        self.assertEqual(doc["services"]["live-db"]["ports"], ["[::1]:5433:5432/tcp"])
 
 
 class ComposeFileTest(unittest.TestCase):
@@ -1005,7 +1021,7 @@ class ComposeFileTest(unittest.TestCase):
         self.assertIn("pa$$word", text)
         masked = pg.mask_compose(text)
         self.assertNotIn("pa$$word", masked)
-        self.assertEqual(yaml.safe_load(masked)["services"]["postgres"]["environment"]
+        self.assertEqual(yaml.safe_load(masked)["services"]["live-db"]["environment"]
                          ["POSTGRES_PASSWORD"], "***")
         self.assertIn("POSTGRES_USER: ownerp", masked)
 
@@ -1016,7 +1032,7 @@ class ComposeFileTest(unittest.TestCase):
         self.assertTrue(text.startswith("#"))
         self.assertIn("live-db", text.splitlines()[0])
         self.assertIn("docker compose -f docker-compose.yml up -d", text)
-        self.assertEqual(yaml.safe_load(text)["services"]["postgres"]["restart"], "no")
+        self.assertEqual(yaml.safe_load(text)["services"]["live-db"]["restart"], "no")
 
 
 class PatchComposeTest(unittest.TestCase):
@@ -1599,7 +1615,7 @@ class Host(FakeRunner):
                 return 0, self.collation_switched if self.switched else ""
         return 1, ""
 
-    SERVICE_CONTAINER = {"postgres": "live-db", "odoo": "live-odoo"}
+    SERVICE_CONTAINER = {"postgres": "live-db", "live-db": "live-db", "odoo": "live-odoo"}
 
     def simulate_compose(self, rest):
         """`docker compose [-p P] -f FILE up|down ...`: a service named on the command line
@@ -1729,7 +1745,7 @@ class UpdateOneTest(UpdateCase):
             ["docker", "stop", "-t", "120", "live-db"],
             ["docker", "rename", "live-db", "live-db-pre-16.8"],
             ["docker", "update", "--restart=no", "live-db-pre-16.8"],
-            ["docker", "compose", "-f", plan.compose_file, "up", "-d", "--no-deps", "postgres"],
+            ["docker", "compose", "-f", plan.compose_file, "up", "-d", "--no-deps", "live-db"],
             ["docker", "start", "live-odoo"]])
         with open(plan.compose_file) as handle:
             self.assertEqual(handle.read(), plan.compose_text)
@@ -1801,7 +1817,7 @@ class UpdateOneTest(UpdateCase):
         self.assertEqual(self.host.changes()[3:], [
             ["docker", "rename", "live-db", "live-db-pre-16.8"],
             ["docker", "update", "--restart=no", "live-db-pre-16.8"],
-            ["docker", "compose", "-f", plan.compose_file, "up", "-d", "--no-deps", "postgres"],
+            ["docker", "compose", "-f", plan.compose_file, "up", "-d", "--no-deps", "live-db"],
             ["docker", "stop", "-t", "120", "live-db"],
             ["docker", "compose", "-f", plan.compose_file, "down", "-t", "120"],
             ["docker", "rename", "live-db-pre-16.8", "live-db"],
@@ -1890,7 +1906,7 @@ class UpdateOneTest(UpdateCase):
         self.assertTrue(ups)
         for call in ups:
             self.assertEqual(call, ["docker", "compose", "-f", plan.compose_file, "up", "-d",
-                                    "--no-deps", "postgres"])
+                                    "--no-deps", "live-db"])
         # compose-managed: the project of the container is passed on every compose call
         tgt, compose, _ = self.compose_target(project="live")
         self.host.not_ready.add("postgres:16.16-bookworm")
@@ -2605,12 +2621,39 @@ class MainTest(unittest.TestCase):
 
     def test_rollback_mode_returns_the_code_of_rollback(self):
         self.rollback_code = 2
-        self.assertEqual(self.main("--rollback", "live-db", "--force"), 2)
+        self.assertEqual(self.main("--rollback", "live-db", "--force", stdin="y\n"), 2)
         name, opts, ask = self.rolled_back[0]
         self.assertEqual((name, opts.force), ("live-db", True))
         self.assertIsNotNone(ask)
-        self.main("--rollback", "live-db", tty=False)
+        self.main("--rollback", "live-db", "--no-input", tty=False)
         self.assertIsNone(self.rolled_back[1][2])       # nobody to ask without a terminal
+
+    def test_rollback_cannot_be_combined_with_a_mode_that_changes_nothing(self):
+        for extra in (["--dry-run"], ["--json"], ["--container", "test-db"]):
+            with contextlib.redirect_stderr(io.StringIO()), \
+                    self.assertRaises(SystemExit) as caught:
+                self.main("--rollback", "live-db", *extra, stdin="y\n")
+            self.assertEqual(caught.exception.code, 2, extra)
+        self.assertEqual(self.rolled_back, [])
+
+    def test_rollback_asks_once_on_a_terminal(self):
+        self.assertEqual(self.main("--rollback", "live-db", stdin="n\n"), 0)
+        self.assertEqual(self.rolled_back, [])
+        self.assertIn("Roll back live-db to the server the last update replaced? (y/N)",
+                      self.text())
+        self.assertIn("Nothing was changed", self.text())
+        self.assertEqual(self.main("--rollback", "live-db", stdin="y\n"), 0)
+        self.assertEqual(len(self.rolled_back), 1)
+
+    def test_rollback_with_no_input_does_not_ask(self):
+        self.assertEqual(self.main("--rollback", "live-db", "--no-input"), 0)
+        self.assertEqual(len(self.rolled_back), 1)
+        self.assertNotIn("(y/N)", self.text())
+
+    def test_rollback_without_terminal_needs_no_input(self):
+        self.assertEqual(self.main("--rollback", "live-db", tty=False), 2)
+        self.assertEqual(self.rolled_back, [])
+        self.assertIn("needs --no-input to run without a terminal", self.text())
 
     def test_flags_reach_the_options(self):
         self.main("--container", "live-db", "--no-input", "--sizing", "skip", "--role", "test",
@@ -2657,6 +2700,11 @@ class DefaultRunnerTest(unittest.TestCase):
                      ["docker", "run", "--rm", "--entrypoint", "sh", "postgres:16.16", "-c", "x"]):
             self.assertEqual(self.timeout_of(argv), pg.SLOW_TIMEOUT, argv)
         self.assertGreater(pg.SLOW_TIMEOUT, 10 * pg.STOP_TIMEOUT)
+
+    def test_the_restart_of_the_memory_settings_is_a_slow_command(self):
+        # ownerp_sizing.sync_postgres restarts the server with a 120 s grace period.
+        self.assertEqual(self.timeout_of(["docker", "restart", "-t", "120", "live-db"]),
+                         pg.SLOW_TIMEOUT)
 
     def test_queries_keep_a_short_timeout(self):
         for argv in (["docker", "ps", "-aq"], ["docker", "inspect", "live-db"],

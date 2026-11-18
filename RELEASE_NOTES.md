@@ -15,8 +15,9 @@ database is backed up: databases listed in `container2backup.yaml` through
 container is renamed to `<name>-pre-<version>` and is never removed by the tool.
 Odoo containers on the database are stopped during the switch and started only
 after the new server is verified. A failed update is rolled back
-(exit 1); `pgup --rollback NAME` goes back later (after 7 days it asks, or
-needs `--force`). If any named container has a problem nothing is started
+(exit 1); `pgup --rollback NAME` goes back later: it asks once on a terminal,
+needs `--no-input` without one, and for an update older than 7 days asks again
+or needs `--force`. If any named container has a problem nothing is started
 (exit 2). The `pgup` alias and a row in the login overview come with it;
 `getScripts.py` 9.39.0 delivers the script, also in the restricted Docker tier;
 `chk` (`server-readiness.py` 1.18.1) reports an outdated copy on a server.

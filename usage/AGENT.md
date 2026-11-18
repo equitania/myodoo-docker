@@ -193,11 +193,14 @@ pgup --container live-db --dry-run               # show the plan, change nothing
 pgup --container live-db --no-input              # execute; without a terminal --container NAME --no-input is required
 pgup --container live-db --container test-db --no-input   # series, in this order; stops at the first failure
 echo $status                                     # right after pgup: 0 done or nothing to do, 1 failed and rolled back, 2 needs the operator
-pgup --rollback live-db                          # back to the parked old container (after 7 days it asks, or needs --force)
+pgup --rollback live-db --no-input               # back to the parked old container; an update older than 7 days also needs --force
 ```
 Bare `pgup` on a terminal shows the overview and lets the operator pick by number; without a
-terminal it prints the overview and exits 0. Without `--no-input`, `--container` prints the plans
-and exits 2. `--json` never changes anything (exit 0, or 2 when Docker cannot be asked). The tool
+terminal it prints the overview and exits 0. On a terminal `--container` and `--rollback` ask once
+before they change anything; without a terminal both need `--no-input` (otherwise: nothing is
+changed, exit 2). `--rollback` cannot be combined with `--dry-run`, `--json` or `--container`.
+`--json` never changes anything (exit 0; 2 when Docker cannot be asked or a named container is
+unknown). The tool
 **never removes** the parked `<name>-pre-<version>` container; the operator does that later, by
 name, after checking. The base image is pinned to the Debian release the container runs on.
 

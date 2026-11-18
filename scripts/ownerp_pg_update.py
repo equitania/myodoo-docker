@@ -141,7 +141,7 @@ def _need(name: str):
 
 QUICK_TIMEOUT = 60       # seconds for a question to Docker or to the server
 SLOW_TIMEOUT = 3600      # seconds for a pull, a build, a stop with its checkpoint, a start
-_SLOW_DOCKER = {"pull", "build", "stop", "start", "run"}
+_SLOW_DOCKER = {"pull", "build", "stop", "start", "restart", "run"}
 
 
 def _timeout_for(argv: List[str]) -> int:
@@ -703,7 +703,7 @@ RUN apt-get update \\
 
 DEFAULT_PGDATA = "/var/lib/postgresql/data"
 DEFAULT_SHM_SIZE = 64 * 1024 * 1024
-SERVICE = "postgres"
+SERVICE = "postgres"        # fallback only; a generated file names its service after the container
 _ANONYMOUS_VOLUME = re.compile(r"^[0-9a-f]{64}$")
 _SECRET_KEY = re.compile(r"^(\s*)([A-Za-z0-9_.-]*(?:PASSWORD|SECRET|KEY)[A-Za-z0-9_.-]*)"
                          r"(\s*:\s*)(\S.*)$", re.IGNORECASE)
@@ -965,7 +965,10 @@ def compose_from_inspect(inspect: dict, image_inspect: dict, new_image: str,
     if labels:
         service["labels"] = labels
 
-    document: dict = {"services": {SERVICE: _escape(service)}}
+    # The service carries the container's name, never a fixed one: compose makes the service
+    # name a DNS alias on every network, and a second "postgres" on a shared network would
+    # catch connections meant for another instance's database.
+    document: dict = {"services": {service["container_name"]: _escape(service)}}
     if external_networks:
         document["networks"] = external_networks
     if external_volumes:
@@ -1768,7 +1771,8 @@ def _stranded(state: dict, path: str, run: Runner, cmd: Optional[List[str]] = No
     elif park is False and named is False:
         lines.append("  neither %s nor %s exists; the data directory is untouched. Start a "
                      "server on it from the compose file:" % (name, parked))
-        lines.append("  %s" % " ".join(_up_argv(cmd, None, state["compose_file"], SERVICE)))
+        lines.append("  %s" % " ".join(_up_argv(cmd, None, state["compose_file"],
+                                                 state.get("compose_service") or name)))
     else:
         lines.append("  docker did not answer; check with: docker ps -a")
     odoo = list(state.get("stopped_odoo") or [])
@@ -2080,7 +2084,7 @@ def _update_run(plan: UpdatePlan, opts: Options, run: Runner, stream: Runner, ou
         "compose_backup": ("%s.bak-%s" % (plan.compose_file, stamp)
                            if target.kind == "compose" else None),
         "compose_service": ((target.compose_service or SERVICE) if target.kind == "compose"
-                            else SERVICE),
+                            else name),
         "compose_project": target.compose_project if target.kind == "compose" else None,
         "stopped_odoo": list(plan.stop_odoo),
         "time": now.isoformat(),
@@ -2448,6 +2452,13 @@ def main(argv=None, run: Optional[Runner] = None, stream: Optional[Runner] = Non
     args = parser.parse_args(argv)
     if args.to and len(args.container) != 1:
         parser.error("--to needs exactly one --container")
+    if args.rollback:
+        # A rollback switches a production database; it must never run under a flag that
+        # reads as "only show me".
+        for flag, given in (("--dry-run", args.dry_run), ("--json", args.json),
+                            ("--container", args.container), ("--to", args.to)):
+            if given:
+                parser.error("--rollback cannot be combined with %s" % flag)
     run = run or default_runner
     stream = stream or default_stream
     stdin = stdin if stdin is not None else sys.stdin
@@ -2480,9 +2491,17 @@ def main(argv=None, run: Optional[Runner] = None, stream: Optional[Runner] = Non
 
     if args.rollback:
         ask = None
-        if interactive and not args.no_input:
+        if not args.no_input:
+            if not interactive:
+                out("Nothing was changed: --rollback needs --no-input to run without a terminal.")
+                return 2
+
             def ask(question: str) -> bool:
                 return ask_line(question + " (y/N)").strip().lower() in ("y", "yes")
+
+            if not ask("Roll back %s to the server the last update replaced?" % args.rollback):
+                out("Nothing was changed.")
+                return 0
         return rollback(args.rollback, opts, run, out, ask=ask)
 
     code, _ = run(["docker", "ps", "-aq"])
