@@ -19,7 +19,7 @@
 # server version and the base, pairs them with their Odoo containers and
 # chooses the tag to update to. It never changes a container.
 #
-# System Python 3 standard library only (yaml is read by the caller).
+# System Python 3 with python3-yaml only, like the other delivered scripts.
 # ==============================================================================
 
 import datetime
@@ -28,9 +28,12 @@ import json
 import os
 import re
 import sys
+import tempfile
 import urllib.request
 from dataclasses import dataclass, field
 from typing import Callable, Dict, List, Optional, Set, Tuple
+
+import yaml
 
 SCRIPT_VERSION = "1.0.0"
 SCRIPT_DATE = "18.11.2026"
@@ -622,3 +625,371 @@ def parse_selection(text: str, count: int, recommended: Set[int]) -> Optional[Li
         if int(token) not in chosen:
             chosen.append(int(token))
     return chosen
+
+
+# ── Compose file derived from a running container ────────────────────────────
+
+# Same text as the Dockerfile that pg-local-deploy.sh writes for pgvector.
+VECTOR_DOCKERFILE = """ARG PG_VERSION
+FROM postgres:${PG_VERSION}
+RUN apt-get update \\
+ && apt-get install -y --no-install-recommends "postgresql-${PG_MAJOR}-pgvector" \\
+ && rm -rf /var/lib/apt/lists/*
+"""
+
+DEFAULT_PGDATA = "/var/lib/postgresql/data"
+DEFAULT_SHM_SIZE = 64 * 1024 * 1024
+SERVICE = "postgres"
+_ANONYMOUS_VOLUME = re.compile(r"^[0-9a-f]{64}$")
+_SECRET_KEY = re.compile(r"^(\s*)([A-Za-z0-9_.-]*(?:PASSWORD|SECRET|KEY)[A-Za-z0-9_.-]*)"
+                         r"(\s*:\s*)(\S.*)$", re.IGNORECASE)
+
+
+def deploy_dir_for(name: str, pgdata_mount: dict, home: str) -> str:
+    """Where the compose file of a converted container lives."""
+    if pgdata_mount.get("Type") == "bind" and pgdata_mount.get("Source"):
+        source = str(pgdata_mount["Source"]).rstrip("/") or "/"
+        return os.path.join(os.path.dirname(source), name + "-deploy")
+    return os.path.join(home, "pg-deploy", name)
+
+
+def _dest(path: str) -> str:
+    return str(path).rstrip("/") or "/"
+
+
+def _escape(value):
+    """Compose interpolates `$` in every string value; `$$` keeps it literal."""
+    if isinstance(value, str):
+        return value.replace("$", "$$")
+    if isinstance(value, list):
+        return [_escape(item) for item in value]
+    if isinstance(value, dict):
+        return {key: _escape(item) for key, item in value.items()}
+    return value
+
+
+def _duration(nanoseconds: int) -> str:
+    if nanoseconds % 1000000000 == 0:
+        return "%ds" % (nanoseconds // 1000000000)
+    if nanoseconds % 1000000 == 0:
+        return "%dms" % (nanoseconds // 1000000)
+    return "%dns" % nanoseconds
+
+
+def _restart_of(policy: dict) -> str:
+    name = (policy or {}).get("Name") or "no"
+    retries = (policy or {}).get("MaximumRetryCount") or 0
+    if name == "on-failure" and retries:
+        return "on-failure:%d" % retries
+    return name
+
+
+def _healthcheck_of(config: dict, db_user: str) -> dict:
+    found = config.get("Healthcheck") or {}
+    test = found.get("Test") or []
+    if test == ["NONE"]:
+        return {"disable": True}
+    if not test:
+        return {"test": ["CMD-SHELL", "pg_isready -U %s -d postgres" % db_user],
+                "interval": "10s", "timeout": "5s", "retries": 5, "start_period": "30s"}
+    result = {"test": list(test)}
+    for source, target in (("Interval", "interval"), ("Timeout", "timeout"),
+                           ("StartPeriod", "start_period"),
+                           ("StartInterval", "start_interval")):
+        if found.get(source):
+            result[target] = _duration(int(found[source]))
+    if found.get("Retries"):
+        result["retries"] = int(found["Retries"])
+    return result
+
+
+def _is_set(value) -> bool:
+    return bool(value)
+
+
+def compose_from_inspect(inspect: dict, image_inspect: dict, new_image: str,
+                         db_user: str, vector_context: Optional[str] = None
+                         ) -> Tuple[Optional[dict], List[str]]:
+    """The compose document that recreates a running container with a new image.
+
+    Every setting is carried over; one this function cannot carry over is
+    returned as a blocker instead of being dropped. With blockers the document
+    is None.
+    """
+    config = inspect.get("Config") or {}
+    host = inspect.get("HostConfig") or {}
+    image_config = image_inspect.get("Config") or {}
+    blockers: List[str] = []
+    warnings: List[str] = []
+
+    for key, label in (("Links", "links"), ("VolumesFrom", "volumes-from"),
+                       ("Devices", "devices"), ("CapAdd", "added capabilities"),
+                       ("CapDrop", "dropped capabilities"), ("Privileged", "privileged mode"),
+                       ("SecurityOpt", "security options"), ("Tmpfs", "tmpfs mounts"),
+                       ("Ulimits", "ulimits")):
+        if _is_set(host.get(key)):
+            blockers.append("HostConfig.%s (%s) is set and cannot be carried over to the "
+                            "compose file." % (key, label))
+    for key in ("PidMode", "IpcMode", "UTSMode"):
+        if host.get(key) not in (None, "", "private", "shareable"):
+            blockers.append("HostConfig.%s is '%s' and cannot be carried over to the "
+                            "compose file." % (key, host.get(key)))
+    network_mode = host.get("NetworkMode") or ""
+    if network_mode == "host" or network_mode.startswith("container:"):
+        blockers.append("HostConfig.NetworkMode is '%s' and cannot be carried over to the "
+                        "compose file." % network_mode)
+
+    # Environment: what the container has on top of the image.
+    image_env = set(image_config.get("Env") or [])
+    environment: Dict[str, str] = {}
+    pgdata = DEFAULT_PGDATA
+    for entry in config.get("Env") or []:
+        key, _, value = entry.partition("=")
+        if key == "PGDATA":
+            pgdata = _dest(value) if value else DEFAULT_PGDATA
+        if entry in image_env or key == "PGDATA":
+            continue
+        environment[key] = value
+    env_out = dict([("PGDATA", pgdata)] + list(environment.items()))
+
+    # Mounts: the data mount decides everything, an empty database is the worst case.
+    volumes: List[str] = []
+    external_volumes: Dict[str, dict] = {}
+    data_found = False
+    for mount in inspect.get("Mounts") or []:
+        kind = mount.get("Type")
+        destination = _dest(mount.get("Destination", ""))
+        if kind == "bind":
+            source = mount.get("Source", "")
+        elif kind == "volume":
+            source = mount.get("Name", "")
+            external_volumes[source] = {"external": True}
+            if _ANONYMOUS_VOLUME.match(source):
+                warnings.append("Volume %s is anonymous; it is kept by its generated name "
+                                "and has no name you can recognise." % source)
+        else:
+            blockers.append("A mount of type '%s' at %s cannot be carried over to the "
+                            "compose file." % (kind, destination))
+            continue
+        if destination == pgdata:
+            data_found = True
+        volumes.append("%s:%s%s" % (source, destination, "" if mount.get("RW", True) else ":ro"))
+    if not data_found:
+        blockers.append("There is no data mount found at %s; the new container would "
+                        "start an empty database." % pgdata)
+
+    # Networks
+    networks: Dict[str, dict] = {}
+    external_networks: Dict[str, dict] = {}
+    own_names = {str(inspect.get("Name", "")).lstrip("/"), str(inspect.get("Id", ""))[:12],
+                 str(inspect.get("Id", ""))}
+    for net, settings in ((inspect.get("NetworkSettings") or {}).get("Networks") or {}).items():
+        if net in ("bridge", "none"):
+            blockers.append("The container is attached to the '%s' network, which cannot be "
+                            "declared in a compose file." % net)
+            continue
+        entry: dict = {}
+        aliases = [a for a in (settings.get("Aliases") or []) if a not in own_names]
+        if aliases:
+            entry["aliases"] = aliases
+        ipam = settings.get("IPAMConfig") or {}
+        if ipam.get("IPv4Address"):
+            entry["ipv4_address"] = ipam["IPv4Address"]
+        if ipam.get("IPv6Address"):
+            entry["ipv6_address"] = ipam["IPv6Address"]
+        networks[net] = entry
+        external_networks[net] = {"external": True}
+
+    if blockers:
+        return None, blockers
+
+    service: dict = {"image": new_image}
+    if vector_context:
+        pg_version = new_image.split(":", 1)[1] if ":" in new_image else new_image
+        service["build"] = {"context": vector_context, "args": {"PG_VERSION": pg_version}}
+    service["container_name"] = str(inspect.get("Name", "")).lstrip("/")
+    if config.get("User"):
+        service["user"] = config["User"]
+    service["restart"] = _restart_of(host.get("RestartPolicy"))
+    if host.get("ShmSize") and host["ShmSize"] != DEFAULT_SHM_SIZE:
+        service["shm_size"] = host["ShmSize"]
+    if host.get("Memory"):
+        service["mem_limit"] = host["Memory"]
+    if host.get("NanoCpus"):
+        service["cpus"] = host["NanoCpus"] / 1e9
+    service["environment"] = env_out
+    service["volumes"] = volumes
+
+    ports: List[str] = []
+    for container_port, bindings in (host.get("PortBindings") or {}).items():
+        for binding in bindings or []:
+            parts = [binding.get("HostIp") or "", binding.get("HostPort") or "", container_port]
+            ports.append(":".join(part for part in parts if part))
+    if ports:
+        service["ports"] = ports
+    if networks:
+        service["networks"] = networks
+    for key, target in (("ExtraHosts", "extra_hosts"), ("Dns", "dns"),
+                        ("DnsSearch", "dns_search")):
+        if host.get(key):
+            service[target] = list(host[key])
+
+    log = host.get("LogConfig") or {}
+    if (log.get("Type") or "json-file") != "json-file" or log.get("Config"):
+        service["logging"] = {"driver": log.get("Type") or "json-file"}
+        if log.get("Config"):
+            service["logging"]["options"] = dict(log["Config"])
+
+    for key, target in (("Cmd", "command"), ("Entrypoint", "entrypoint")):
+        if (config.get(key) or []) != (image_config.get(key) or []):
+            service[target] = list(config.get(key) or [])
+    service["healthcheck"] = _healthcheck_of(config, db_user)
+
+    image_labels = image_config.get("Labels") or {}
+    labels = {k: v for k, v in (config.get("Labels") or {}).items()
+              if image_labels.get(k) != v and not k.startswith("com.docker.compose.")}
+    if labels:
+        service["labels"] = labels
+
+    document: dict = {"services": {SERVICE: _escape(service)}}
+    if external_networks:
+        document["networks"] = external_networks
+    if external_volumes:
+        document["volumes"] = external_volumes
+    if warnings:
+        document["x-pgup-warnings"] = warnings
+    return document, []
+
+
+def render_compose(document: dict, name: str) -> str:
+    """The compose file text: a header with the control commands, then the YAML."""
+    header = [
+        '# Generated by ownerp_pg_update.py for container "%s".' % name,
+        "# Control (independent of the working directory, via -f):",
+        "#   docker compose -f docker-compose.yml up -d     # start / update",
+        "#   docker compose -f docker-compose.yml stop      # stop",
+        "#   docker compose -f docker-compose.yml start     # start again",
+        "#   docker compose -f docker-compose.yml down      # remove (the data directory stays)",
+    ]
+    body = yaml.safe_dump(document, sort_keys=False, default_flow_style=False,
+                          allow_unicode=True, width=1000000)
+    return "\n".join(header) + "\n" + body
+
+
+def mask_compose(text: str) -> str:
+    """The compose text with the value of every password, secret or key hidden."""
+    lines = []
+    for line in text.splitlines():
+        match = _SECRET_KEY.match(line)
+        if match:
+            line = '%s%s%s"***"' % match.group(1, 2, 3)
+        lines.append(line)
+    return "\n".join(lines) + ("\n" if text.endswith("\n") else "")
+
+
+def write_private(path: str, text: str) -> None:
+    """Write a file that holds a password: 0600 from the first byte on."""
+    directory = os.path.dirname(os.path.abspath(path))
+    handle, temp = tempfile.mkstemp(prefix=".pgup-", dir=directory)    # created 0600
+    try:
+        with os.fdopen(handle, "w", encoding="utf-8", newline="") as out:
+            out.write(text)
+            out.flush()
+            os.fsync(out.fileno())
+        os.replace(temp, path)
+    except BaseException:
+        try:
+            os.unlink(temp)
+        except OSError:
+            pass
+        raise
+
+
+def _indent(line: str) -> int:
+    return len(line) - len(line.lstrip(" "))
+
+
+def _is_content(line: str) -> bool:
+    stripped = line.strip()
+    return bool(stripped) and not stripped.startswith("#")
+
+
+def _replace_value(line: str, key: str, value: str) -> Optional[str]:
+    """`line` with the value of `key:` replaced; None when the line is not that key."""
+    match = re.match(r'^(\s*(?:-\s+)?%s:\s*)("[^"]*"|\'[^\']*\'|[^\s#]\S*)(.*)$'
+                     % re.escape(key), line)
+    if not match:
+        return None
+    quote = "'" if match.group(2).startswith("'") else '"'
+    return "%s%s%s%s%s" % (match.group(1), quote, value, quote, match.group(3))
+
+
+def patch_compose_image(text: str, service: str, new_image: str,
+                        pg_version: Optional[str]) -> str:
+    """Set the image (and the PG_VERSION build argument) of one service in place.
+
+    Only those lines change. The result is parsed and compared with the parsed
+    original, so anything this line-based edit did not follow raises ValueError.
+    """
+    lines = text.splitlines(keepends=True)
+    body = [line.rstrip("\r\n") for line in lines]
+    start = None
+    for number, line in enumerate(body):
+        if re.match(r"^services:\s*(#.*)?$", line):
+            start = number
+            break
+    if start is None:
+        raise ValueError("no services: section found")
+    child = None
+    first = None
+    for number in range(start + 1, len(body)):
+        if _is_content(body[number]):
+            if _indent(body[number]) == 0:
+                break
+            if child is None:
+                child = _indent(body[number])
+            if _indent(body[number]) == child and re.match(
+                    r"^\s*%s:\s*(#.*)?$" % re.escape(service), body[number]):
+                first = number
+                break
+    if first is None:
+        raise ValueError("service %s not found in the compose file" % service)
+    end = len(body)
+    for number in range(first + 1, len(body)):
+        if _is_content(body[number]) and _indent(body[number]) <= child:
+            end = number
+            break
+
+    block_indent = min((_indent(body[n]) for n in range(first + 1, end) if _is_content(body[n])),
+                       default=None)
+    if block_indent is None:
+        raise ValueError("service %s is empty" % service)
+    image_lines = [n for n in range(first + 1, end)
+                   if _indent(body[n]) == block_indent
+                   and re.match(r"^\s*image:", body[n])]
+    if len(image_lines) != 1:
+        raise ValueError("service %s has no single image: line" % service)
+    edits = {image_lines[0]: _replace_value(body[image_lines[0]], "image", new_image)}
+    if pg_version is not None:
+        arg_lines = [n for n in range(first + 1, end) if re.match(r"^\s*PG_VERSION:", body[n])]
+        if len(arg_lines) != 1:
+            raise ValueError("service %s has no single PG_VERSION: line" % service)
+        edits[arg_lines[0]] = _replace_value(body[arg_lines[0]], "PG_VERSION", pg_version)
+    if any(new is None for new in edits.values()):
+        raise ValueError("a line to patch is not a plain scalar value")
+    out = list(lines)
+    for number, new in edits.items():
+        out[number] = new + lines[number][len(body[number]):]
+    patched = "".join(out)
+
+    try:
+        after = yaml.safe_load(patched)
+        expected = yaml.safe_load(text)
+        expected["services"][service]["image"] = new_image
+        if pg_version is not None:
+            expected["services"][service]["build"]["args"]["PG_VERSION"] = pg_version
+    except (yaml.YAMLError, KeyError, TypeError, AttributeError) as error:
+        raise ValueError("compose file not understood: %s" % error)
+    if after != expected:
+        raise ValueError("the patched compose file differs in more than the new image")
+    return patched

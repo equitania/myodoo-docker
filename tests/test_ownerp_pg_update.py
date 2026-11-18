@@ -10,7 +10,10 @@ import datetime
 import json
 import os
 import sys
+import tempfile
 import unittest
+
+import yaml
 
 sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "scripts"))
 
@@ -563,6 +566,366 @@ class SiblingTest(unittest.TestCase):
     def test_load_sibling(self):
         self.assertIsNotNone(pg.load_sibling("ownerp_migrate"))
         self.assertIsNone(pg.load_sibling("no_such_script"))
+
+
+IMAGE = {
+    "Config": {
+        "Env": ["PATH=/usr/local/bin:/usr/bin", "PG_MAJOR=16", "GOSU_VERSION=1.17",
+                "LANG=en_US.utf8"],
+        "Labels": {"org.opencontainers.image.title": "postgres"},
+        "Cmd": ["postgres"],
+        "Entrypoint": ["docker-entrypoint.sh"],
+    }
+}
+
+INSPECT_LEGACY = {
+    "Id": "a" * 64,
+    "Name": "/live-db",
+    "Config": {
+        "User": "",
+        "Env": ["PATH=/usr/local/bin:/usr/bin", "PG_MAJOR=16", "GOSU_VERSION=1.17",
+                "LANG=en_US.utf8", "POSTGRES_PASSWORD=pa$word", "POSTGRES_USER=ownerp"],
+        "Labels": {"org.opencontainers.image.title": "postgres"},
+        "Cmd": ["postgres"],
+        "Entrypoint": ["docker-entrypoint.sh"],
+        "Healthcheck": None,
+    },
+    "HostConfig": {
+        "RestartPolicy": {"Name": "always", "MaximumRetryCount": 0},
+        "ShmSize": 67108864,
+        "Memory": 0,
+        "NanoCpus": 0,
+        "PortBindings": {},
+        "ExtraHosts": None,
+        "Dns": [],
+        "DnsSearch": [],
+        "LogConfig": {"Type": "json-file", "Config": {}},
+        "Links": None,
+        "VolumesFrom": None,
+        "Devices": [],
+        "CapAdd": None,
+        "CapDrop": None,
+        "Privileged": False,
+        "SecurityOpt": None,
+        "Tmpfs": {},
+        "Ulimits": [],
+        "PidMode": "",
+        "IpcMode": "private",
+        "UTSMode": "",
+        "NetworkMode": "live-db-net",
+    },
+    "Mounts": [{"Type": "bind", "Source": "/opt/pg/live-db",
+                "Destination": "/var/lib/postgresql/data", "RW": True}],
+    "NetworkSettings": {"Networks": {"live-db-net": {
+        "Aliases": ["live-db", "a" * 12, "db"], "IPAMConfig": None}}},
+}
+
+
+def legacy(**changes):
+    """A deep copy of INSPECT_LEGACY; a double underscore in a key descends one level."""
+    doc = json.loads(json.dumps(INSPECT_LEGACY))
+    for dotted, value in changes.items():
+        node = doc
+        parts = dotted.split("__")
+        for part in parts[:-1]:
+            node = node[part]
+        node[parts[-1]] = value
+    return doc
+
+
+def convert(inspect=None, **kwargs):
+    return pg.compose_from_inspect(inspect or INSPECT_LEGACY, IMAGE,
+                                   "postgres:16.16-bookworm", "ownerp", **kwargs)
+
+
+TWO_SERVICES = """services:
+  postgres:
+    image: postgres:16.15-bookworm
+    container_name: live-db
+    build:
+      context: ./pgvector
+      args:
+        PG_VERSION: "16.15-bookworm"
+  adminer:
+    image: adminer:4
+    restart: always
+"""
+
+
+class ComposeFromInspectTest(unittest.TestCase):
+    def test_roundtrip_of_a_plain_legacy_container(self):
+        doc, blockers = convert()
+        svc = doc["services"]["postgres"]
+        self.assertEqual(blockers, [])
+        self.assertEqual(svc["image"], "postgres:16.16-bookworm")
+        self.assertEqual(svc["container_name"], "live-db")
+        self.assertEqual(svc["restart"], "always")
+        self.assertEqual(svc["volumes"], ["/opt/pg/live-db:/var/lib/postgresql/data"])
+        self.assertEqual(svc["environment"]["PGDATA"], "/var/lib/postgresql/data")
+        self.assertEqual(doc["networks"], {"live-db-net": {"external": True}})
+        self.assertEqual(svc["networks"], {"live-db-net": {"aliases": ["db"]}})
+        self.assertNotIn("command", svc)
+        self.assertNotIn("entrypoint", svc)
+        self.assertNotIn("shm_size", svc)
+        self.assertNotIn("user", svc)
+
+    def test_image_environment_is_not_copied(self):
+        doc, _ = convert()
+        env = doc["services"]["postgres"]["environment"]
+        for key in ("PG_MAJOR", "PATH", "GOSU_VERSION", "LANG"):
+            self.assertNotIn(key, env)
+        self.assertEqual(env["POSTGRES_USER"], "ownerp")
+
+    def test_dollar_in_environment_is_escaped(self):
+        doc, _ = convert()
+        self.assertEqual(doc["services"]["postgres"]["environment"]["POSTGRES_PASSWORD"],
+                         "pa$$word")
+
+    def test_pgdata_follows_the_containers_own_setting(self):
+        inspect = legacy(Mounts=[{"Type": "bind", "Source": "/opt/pg/x",
+                                  "Destination": "/data/pg/", "RW": True}])
+        inspect["Config"]["Env"].append("PGDATA=/data/pg/")
+        doc, blockers = convert(inspect)
+        svc = doc["services"]["postgres"]
+        self.assertEqual(blockers, [])
+        self.assertEqual(svc["environment"]["PGDATA"], "/data/pg")
+        self.assertEqual(svc["volumes"], ["/opt/pg/x:/data/pg"])
+
+    def test_read_only_mount_and_other_settings(self):
+        inspect = legacy(
+            Mounts=[{"Type": "bind", "Source": "/opt/pg/live-db",
+                     "Destination": "/var/lib/postgresql/data/", "RW": True},
+                    {"Type": "bind", "Source": "/etc/ssl/pg", "Destination": "/certs",
+                     "RW": False}],
+            HostConfig__ShmSize=1073741824, HostConfig__Memory=2147483648,
+            HostConfig__NanoCpus=1500000000,
+            HostConfig__RestartPolicy={"Name": "on-failure", "MaximumRetryCount": 3},
+            HostConfig__PortBindings={"5432/tcp": [{"HostIp": "127.0.0.1",
+                                                    "HostPort": "5433"}]},
+            HostConfig__ExtraHosts=["registry:192.0.2.5"],
+            HostConfig__Dns=["192.0.2.53"], HostConfig__DnsSearch=["intra.example.com"],
+            HostConfig__LogConfig={"Type": "json-file",
+                                   "Config": {"max-size": "10m"}})
+        inspect["Config"]["User"] = "70"
+        inspect["Config"]["Cmd"] = ["postgres", "-c", "max_connections=300"]
+        inspect["Config"]["Labels"]["owner"] = "ops"
+        inspect["Config"]["Labels"]["com.docker.compose.project"] = "x"
+        doc, blockers = convert(inspect)
+        svc = doc["services"]["postgres"]
+        self.assertEqual(blockers, [])
+        self.assertEqual(svc["volumes"], ["/opt/pg/live-db:/var/lib/postgresql/data",
+                                          "/etc/ssl/pg:/certs:ro"])
+        self.assertEqual(svc["shm_size"], 1073741824)
+        self.assertEqual(svc["mem_limit"], 2147483648)
+        self.assertEqual(svc["cpus"], 1.5)
+        self.assertEqual(svc["restart"], "on-failure:3")
+        self.assertEqual(svc["ports"], ["127.0.0.1:5433:5432/tcp"])
+        self.assertEqual(svc["extra_hosts"], ["registry:192.0.2.5"])
+        self.assertEqual(svc["dns"], ["192.0.2.53"])
+        self.assertEqual(svc["dns_search"], ["intra.example.com"])
+        self.assertEqual(svc["logging"], {"driver": "json-file",
+                                          "options": {"max-size": "10m"}})
+        self.assertEqual(svc["user"], "70")
+        self.assertEqual(svc["command"], ["postgres", "-c", "max_connections=300"])
+        self.assertEqual(svc["labels"], {"owner": "ops"})
+
+    def test_restart_policy_no_is_a_string(self):
+        doc, _ = convert(legacy(HostConfig__RestartPolicy={"Name": "", "MaximumRetryCount": 0}))
+        self.assertEqual(doc["services"]["postgres"]["restart"], "no")
+
+    def test_named_volume_becomes_external(self):
+        inspect = legacy(Mounts=[{"Type": "volume", "Name": "live-db-data",
+                                  "Source": "/var/lib/docker/volumes/live-db-data/_data",
+                                  "Destination": "/var/lib/postgresql/data", "RW": True}])
+        doc, blockers = convert(inspect)
+        self.assertEqual(blockers, [])
+        self.assertEqual(doc["services"]["postgres"]["volumes"],
+                         ["live-db-data:/var/lib/postgresql/data"])
+        self.assertEqual(doc["volumes"], {"live-db-data": {"external": True}})
+        self.assertNotIn("x-pgup-warnings", doc)
+
+    def test_anonymous_data_volume_is_kept_by_name_with_warning(self):
+        name = "ab12" * 16
+        inspect = legacy(Mounts=[{"Type": "volume", "Name": name,
+                                  "Source": "/var/lib/docker/volumes/%s/_data" % name,
+                                  "Destination": "/var/lib/postgresql/data", "RW": True}])
+        doc, blockers = convert(inspect)
+        self.assertEqual(blockers, [])
+        self.assertEqual(doc["services"]["postgres"]["volumes"],
+                         [name + ":/var/lib/postgresql/data"])
+        self.assertEqual(doc["volumes"], {name: {"external": True}})
+        self.assertEqual(len(doc["x-pgup-warnings"]), 1)
+        self.assertIn("anonymous", doc["x-pgup-warnings"][0])
+
+    def test_unknown_settings_block_instead_of_being_dropped(self):
+        doc, blockers = convert(legacy(HostConfig__Links=["other:o"],
+                                       HostConfig__CapAdd=["SYS_NICE"]))
+        self.assertIsNone(doc)
+        self.assertEqual(len(blockers), 2)
+        self.assertTrue(any("Links" in b for b in blockers))
+        self.assertTrue(any("CapAdd" in b for b in blockers))
+
+    def test_unset_values_do_not_block(self):
+        doc, blockers = convert(legacy(HostConfig__Privileged=False, HostConfig__Tmpfs=None,
+                                       HostConfig__SecurityOpt=[], HostConfig__PidMode="",
+                                       HostConfig__IpcMode="shareable"))
+        self.assertEqual(blockers, [])
+        self.assertIsNotNone(doc)
+
+    def test_other_blockers(self):
+        for change in ({"HostConfig__Privileged": True}, {"HostConfig__PidMode": "host"},
+                       {"HostConfig__NetworkMode": "host"},
+                       {"HostConfig__NetworkMode": "container:abc"},
+                       {"HostConfig__Ulimits": [{"Name": "nofile"}]},
+                       {"HostConfig__Devices": [{"PathOnHost": "/dev/x"}]},
+                       {"HostConfig__VolumesFrom": ["x"]}, {"HostConfig__SecurityOpt": ["a"]},
+                       {"HostConfig__Tmpfs": {"/tmp": ""}}, {"HostConfig__CapDrop": ["ALL"]},
+                       {"HostConfig__IpcMode": "host"}, {"HostConfig__UTSMode": "host"}):
+            with self.subTest(change=change):
+                doc, blockers = convert(legacy(**change))
+                self.assertIsNone(doc)
+                self.assertEqual(len(blockers), 1)
+
+    def test_other_mount_type_and_missing_data_mount_block(self):
+        inspect = legacy()
+        inspect["Mounts"].append({"Type": "tmpfs", "Destination": "/scratch", "RW": True})
+        doc, blockers = convert(inspect)
+        self.assertIsNone(doc)
+        self.assertTrue(any("tmpfs" in b for b in blockers))
+        doc, blockers = convert(legacy(Mounts=[]))
+        self.assertIsNone(doc)
+        self.assertTrue(any("no data mount found" in b for b in blockers))
+
+    def test_default_bridge_blocks(self):
+        inspect = legacy(NetworkSettings__Networks={"bridge": {"Aliases": None}},
+                         HostConfig__NetworkMode="default")
+        doc, blockers = convert(inspect)
+        self.assertIsNone(doc)
+        self.assertTrue(any("bridge" in b for b in blockers))
+
+    def test_network_alias_and_address_are_kept(self):
+        inspect = legacy()
+        inspect["NetworkSettings"]["Networks"]["live-db-net"]["IPAMConfig"] = {
+            "IPv4Address": "192.0.2.10"}
+        doc, _ = convert(inspect)
+        self.assertEqual(doc["services"]["postgres"]["networks"]["live-db-net"],
+                         {"aliases": ["db"], "ipv4_address": "192.0.2.10"})
+
+    def test_missing_healthcheck_gets_ours(self):
+        doc, _ = convert()
+        hc = doc["services"]["postgres"]["healthcheck"]
+        self.assertEqual(hc["test"], ["CMD-SHELL", "pg_isready -U ownerp -d postgres"])
+        self.assertEqual((hc["interval"], hc["timeout"], hc["retries"], hc["start_period"]),
+                         ("10s", "5s", 5, "30s"))
+
+    def test_existing_healthcheck_is_kept(self):
+        inspect = legacy()
+        inspect["Config"]["Healthcheck"] = {"Test": ["CMD-SHELL", "true"],
+                                            "Interval": 30000000000, "Retries": 3}
+        doc, _ = convert(inspect)
+        hc = doc["services"]["postgres"]["healthcheck"]
+        self.assertEqual(hc["test"], ["CMD-SHELL", "true"])
+        self.assertEqual(hc["interval"], "30s")
+        self.assertEqual(hc["retries"], 3)
+
+    def test_vector_context_adds_build(self):
+        doc, _ = convert(vector_context="/opt/pg/live-db-deploy/pgvector")
+        svc = doc["services"]["postgres"]
+        self.assertEqual(svc["build"], {"context": "/opt/pg/live-db-deploy/pgvector",
+                                        "args": {"PG_VERSION": "16.16-bookworm"}})
+
+    def test_deploy_dir(self):
+        bind = {"Type": "bind", "Source": "/opt/pg/live-db"}
+        vol = {"Type": "volume", "Name": "v", "Source": "/var/lib/docker/volumes/v/_data"}
+        self.assertEqual(pg.deploy_dir_for("live-db", bind, "/root"), "/opt/pg/live-db-deploy")
+        self.assertEqual(pg.deploy_dir_for("live-db", vol, "/root"), "/root/pg-deploy/live-db")
+
+
+class ComposeFileTest(unittest.TestCase):
+    def test_written_file_is_0600(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            path = os.path.join(tmp, "docker-compose.yml")
+            pg.write_private(path, "secret: 1\n")
+            self.assertEqual(os.stat(path).st_mode & 0o777, 0o600)
+            with open(path, encoding="utf-8") as handle:
+                self.assertEqual(handle.read(), "secret: 1\n")
+
+    def test_write_over_a_world_readable_file_ends_0600(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            path = os.path.join(tmp, "docker-compose.yml")
+            with open(path, "w", encoding="utf-8") as handle:
+                handle.write("old\n")
+            os.chmod(path, 0o644)
+            pg.write_private(path, "new\n")
+            self.assertEqual(os.stat(path).st_mode & 0o777, 0o600)
+            with open(path, encoding="utf-8") as handle:
+                self.assertEqual(handle.read(), "new\n")
+
+    def test_mask_hides_passwords(self):
+        doc, _ = convert()
+        text = pg.render_compose(doc, "live-db")
+        self.assertIn("pa$$word", text)
+        masked = pg.mask_compose(text)
+        self.assertNotIn("pa$$word", masked)
+        self.assertEqual(yaml.safe_load(masked)["services"]["postgres"]["environment"]
+                         ["POSTGRES_PASSWORD"], "***")
+        self.assertIn("POSTGRES_USER: ownerp", masked)
+
+    def test_rendered_text_parses_back_to_the_document(self):
+        doc, _ = convert(legacy(HostConfig__RestartPolicy={"Name": "", "MaximumRetryCount": 0}))
+        text = pg.render_compose(doc, "live-db")
+        self.assertEqual(yaml.safe_load(text), doc)
+        self.assertTrue(text.startswith("#"))
+        self.assertIn("live-db", text.splitlines()[0])
+        self.assertIn("docker compose -f docker-compose.yml up -d", text)
+        self.assertEqual(yaml.safe_load(text)["services"]["postgres"]["restart"], "no")
+
+
+class PatchComposeTest(unittest.TestCase):
+    def test_patch_touches_one_service_only(self):
+        out = pg.patch_compose_image(TWO_SERVICES, "postgres", "postgres:16.16-bookworm", None)
+        changed = [b for a, b in zip(TWO_SERVICES.splitlines(), out.splitlines()) if a != b]
+        self.assertEqual(changed, ['    image: "postgres:16.16-bookworm"'])
+        self.assertEqual(len(out.splitlines()), len(TWO_SERVICES.splitlines()))
+
+    def test_patch_keeps_quote_style(self):
+        text = TWO_SERVICES.replace("image: postgres:16.15-bookworm",
+                                    "image: 'postgres:16.15-bookworm'")
+        out = pg.patch_compose_image(text, "postgres", "postgres:16.16-bookworm", None)
+        self.assertIn("    image: 'postgres:16.16-bookworm'\n", out)
+
+    def test_patch_also_sets_the_pgvector_build_argument(self):
+        out = pg.patch_compose_image(TWO_SERVICES, "postgres", "postgres:16.16-bookworm",
+                                     "16.16-bookworm")
+        changed = [b for a, b in zip(TWO_SERVICES.splitlines(), out.splitlines()) if a != b]
+        self.assertEqual(changed, ['    image: "postgres:16.16-bookworm"',
+                                   '        PG_VERSION: "16.16-bookworm"'])
+
+    def test_patch_keeps_line_endings(self):
+        text = TWO_SERVICES.replace("\n", "\r\n").rstrip("\r\n")
+        out = pg.patch_compose_image(text, "postgres", "postgres:16.16-bookworm", None)
+        self.assertNotIn("\r\n\r\n", out)
+        self.assertEqual(out.count("\r\n"), text.count("\r\n"))
+        self.assertFalse(out.endswith("\n"))
+
+    def test_patch_refuses_a_file_it_cannot_follow(self):
+        with self.assertRaises(ValueError):
+            pg.patch_compose_image(TWO_SERVICES, "missing", "postgres:16.16-bookworm", None)
+        with self.assertRaises(ValueError):
+            pg.patch_compose_image(TWO_SERVICES, "adminer", "adminer:5", "5")
+        with self.assertRaises(ValueError):
+            pg.patch_compose_image("services:\n  postgres:\n    restart: always\n",
+                                   "postgres", "y", None)
+
+
+class VectorDockerfileTest(unittest.TestCase):
+    def test_matches_the_deploy_script(self):
+        with open(os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "scripts",
+                               "pg-local-deploy.sh"), encoding="utf-8") as handle:
+            text = handle.read()
+        start = text.index("ARG PG_VERSION\n")
+        end = text.index("EOF_PGVECTOR", start)
+        self.assertEqual(pg.VECTOR_DOCKERFILE, text[start:end])
 
 
 if __name__ == "__main__":
