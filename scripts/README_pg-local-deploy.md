@@ -129,6 +129,8 @@ Odoo-Container an die Datenbank anbinden (DB-Host = Container-Name, Port 5432):
 docker network connect {name}-net <odoo-container>
 ```
 
+Eine bestehende Instanz auf das neueste Patch-Release ihrer PostgreSQL-Hauptversion zu bringen, übernimmt nicht dieses Skript, sondern `pgup` (`ownerp_pg_update.py`): mit Backup vor dem Umschalten, Prüfung danach und Rollback.
+
 ## Fehlerbehebung
 
 - **Container startet nach Conf-Update nicht:** `docker logs <name>` prüfen; Rollback durch Zurückkopieren von `postgresql.conf.bak-<timestamp>` in PGDATA.
@@ -261,6 +263,8 @@ Connect an Odoo container to the database (DB host = container name, port 5432):
 ```bash
 docker network connect {name}-net <odoo-container>
 ```
+
+To bring an existing instance to the newest patch release of its PostgreSQL major version, use `pgup` (`ownerp_pg_update.py`), not this script: it takes a backup before the switch, verifies afterwards and can roll back.
 
 ## Troubleshooting
 

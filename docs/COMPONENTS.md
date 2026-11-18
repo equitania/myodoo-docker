@@ -11,9 +11,10 @@ in this repository, stay in `CLAUDE.md`.
 
 ### Key Components
 
-#### 1. getScripts.py (v9.38.0)
+#### 1. getScripts.py (v9.39.0)
 - **Purpose**: Main installation and update script
 - **Features**:
+  - **Delivers `ownerp_pg_update.py`** (v9.39.0, 18.11.2026): in the `copy_scripts()` list and in `RESTRICTED_DOCKER_SCRIPTS`; fish alias `pgup` (`33-aliases-backup.fish`) and a row in the login overview
   - **Delivers `ownerp_sizing.py`** (v9.38.0, 09.11.2026): in the `copy_scripts()` list and in `RESTRICTED_DOCKER_SCRIPTS` (restricted Docker tier); fish alias `dosize` (`33-aliases-backup.fish` 2.1.0) and a row in the login overview
   - Legacy root-crontab lines neutralised on every run (v9.37.0, 09.11.2026):
     `neutralise_legacy_root_crontab()` calls
@@ -271,7 +272,11 @@ in this repository, stay in `CLAUDE.md`.
   - Detects Hetzner DNS issues with DigitalOcean
   - Supports systemd-resolved, resolvconf, and direct DNS config
 
-#### 2. container2backup.py (v4.13.0)
+#### 2. container2backup.py (v4.14.0)
+- **`--only-db NAME`** (v4.14.0, 18.11.2026): repeatable; backs up just the named
+  databases (no services). An unknown name is refused before the lock or any
+  file is created. `ownerp_pg_update.py` uses it for the backup before a
+  PostgreSQL switch.
 - **No staging on a RAM disk** (v4.13.0, 13.11.2026): Debian 13 mounts `/tmp`
   as tmpfs (half the RAM). The 5 GiB floor of the reserve refused every
   database backup on a host with 7.6 GiB RAM, even a 37 MiB one. Now: without
@@ -1400,3 +1405,25 @@ in this repository, stay in `CLAUDE.md`.
 - **`pg-local-deploy.sh` (v1.5.0)**: asks the role (German dialog) and takes the
   memory settings from `ownerp_sizing.py pg --json` as an override block after
   the base profile; any failure falls back to the four fixed profiles
+
+#### 21. ownerp_pg_update.py (v1.0.0)
+- **Purpose**: PostgreSQL patch update (`pgup`). Moves database containers to the
+  newest patch release of their major version, always on the Debian base the
+  container already runs (a base change alters text collation; the plain
+  `postgres:16.x` tag switched from bookworm to trixie with 16.9)
+- **Modes**: bare on a terminal = overview, recommendations, selection by number,
+  all plans shown, one confirmation; bare without a terminal = overview, exit 0;
+  `--json` = read-only, one JSON document (exit 0, or 2 when Docker cannot be
+  asked); `--container NAME` (repeatable) with `--no-input` = unattended;
+  `--dry-run`; `--to VERSION` (exactly one container); `--rollback NAME`
+  (`--force` after 7 days)
+- **Safety**: a problem in any named plan starts nothing (exit 2); a container
+  already on the newest release is skipped; a series ends at the first failure.
+  Backup first: databases in `container2backup.yaml` via
+  `container2backup.py --sql-only --only-db NAME`, others an own `pg_dump` below
+  `<deploy dir>/pre-update/` (never deleted). Odoo containers on the database are
+  stopped during the switch and started after verification
+- **Legacy containers**: converted to a compose file; the old container is
+  renamed `<name>-pre-<version>` (restart=no) and never removed by the tool
+- **Exit codes**: 0 done or nothing to do, 1 failed and rolled back, 2 failed or
+  needs the operator

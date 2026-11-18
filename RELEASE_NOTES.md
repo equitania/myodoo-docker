@@ -1,5 +1,34 @@
 # Release Notes
 
+## New: `pgup`, the PostgreSQL Patch Update (18.11.2026)
+
+*scripts/ownerp_pg_update.py 1.0.0 · scripts/container2backup.py 4.14.0 · getScripts.py 9.39.0 · fish/conf.d/33-aliases-backup.fish · usage/AGENT.md · docs*
+
+`pgup` moves a PostgreSQL container to the newest patch release of its major
+version. Bare `pgup` on a terminal shows an overview with recommendations and
+lets the operator pick containers by number; `pgup --json` is read-only;
+unattended runs need `--container NAME --no-input`. Before the switch the
+database is backed up: databases listed in `container2backup.yaml` through
+`container2backup.py`, all others with an own `pg_dump` below
+`<deploy dir>/pre-update/` (never deleted). A legacy container (started with
+`docker run` or `pg-local-deploy.sh`) is converted to a compose file; the old
+container is renamed to `<name>-pre-<version>` and is never removed by the tool.
+Odoo containers on the database are stopped during the switch and started only
+after the new server is verified. A failed update is rolled back
+(exit 1); `pgup --rollback NAME` goes back later (after 7 days it asks, or
+needs `--force`). If any named container has a problem nothing is started
+(exit 2). The `pgup` alias and a row in the login overview come with it;
+`getScripts.py` 9.39.0 delivers the script, also in the restricted Docker tier.
+
+`container2backup.py` 4.14.0 gains `--only-db NAME` (repeatable): only the named
+databases are backed up, no services; an unknown name is refused before
+anything starts.
+
+Docker Hub finding behind the base pinning: the plain `postgres:16.x` tag is
+the Debian bookworm image up to 16.8 and the trixie image from 16.9 on. A base
+change alters text collation, so `pgup` always pins the base the running
+container already has.
+
 ## FastReport Deploy: 2027 Images Got the Legacy Mount Path (16.11.2026)
 
 *scripts/fr-local-deploy.sh · tests/test_deploy_scripts.py*

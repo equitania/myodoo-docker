@@ -33,6 +33,13 @@ alias dostat='$HOME/ownerp_state.py'
 # (y / N / q) and needs a terminal. Exit 0 fits / 1 over budget or warnings / 2 broken.
 alias dosize='$HOME/ownerp_sizing.py'
 
+# PostgreSQL patch update: moves a database container to the newest patch
+# release of its major version, on the Debian base it already runs. Bare `pgup`
+# lists the containers; `pgup --json` reads only. Execution without a terminal
+# needs `--container NAME --no-input`; `pgup --rollback NAME` goes back.
+# Exit 0 done or nothing to do / 1 failed and rolled back / 2 needs the operator.
+alias pgup='$HOME/ownerp_pg_update.py'
+
 # The same facts, plus editing, in a full-screen interface. Starts nothing:
 # no updates, no backups, no container operations - `doup` and `dobk` stay
 # what they are. Needs Textual; without it, it names dostat/wiz/docron/doval

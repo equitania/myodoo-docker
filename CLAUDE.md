@@ -45,7 +45,8 @@ aliases and functions), `Dockerfiles/v16-odoo|v18-odoo|v19-odoo/` (build context
 |---|---|---|
 | `ups` | `getScripts.py` | fish function; runs the script via sudo with the proxy preserved; restarts itself once when the pull brings a newer version |
 | `doup` | `scripts/update_docker_odoo.py` | `-s NAME`, `--type M\|F\|N`, `--comment`, `--no-cache`, `--validate` |
-| `dobk` | `scripts/container2backup.py` | `--sql-only`, `--validate` — there is no `--dry-run` |
+| `dobk` | `scripts/container2backup.py` | `--sql-only`, `--only-db NAME` (repeatable), `--validate` — there is no `--dry-run` |
+| `pgup` | `scripts/ownerp_pg_update.py` | PostgreSQL patch update on the running Debian base; `--json` is read-only; unattended needs `--container NAME --no-input`; `--rollback NAME`; never removes the parked `<name>-pre-<version>` container |
 | `doval` | `ownerp_validate.py` | read-only; exit 0 clean, 1 errors, 2 unreadable |
 | `wiz` / `wizup` / `wizbk` | `ownerp_wizard.py` | the only tool that writes a customer YAML |
 | `docron` | `ownerp_cron.py` | bare on a terminal: menu; scripts and agents use flags or `--no-input`; `--disable container2backup` switches both backup lines |
