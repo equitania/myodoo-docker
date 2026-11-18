@@ -3,13 +3,15 @@
 # ==============================================================================
 # Title:            container2backup.py
 # Description:      Script to backup Odoo database including FileStore under Docker
-# Version:          4.13.0
-# Date:             13.11.2026
+# Version:          4.14.0
+# Date:             18.11.2026
 # Author:           Equitania Software GmbH
 # ==============================================================================
 # Feature Overview:
 #   - Database backup (SQL + Filestore) for multiple Odoo instances
 #   - Support for SQL-only backups (--sql-only parameter)
+#   - --only-db NAME (repeatable): back up just the named databases; services,
+#     off-site sync and retention cleanup are skipped
 #   - FastReport backup integration (a missing/misconfigured FastReport path
 #     warns and skips only that database's FastReport part; the DB dump and
 #     filestore still run — see check_paths())
@@ -73,8 +75,8 @@ import fnmatch
 # Single source of truth for the version banner printed at runtime. Keep these
 # in sync with the header comment above. The __main__ banner is derived from
 # these constants so it cannot silently drift out of date again.
-SCRIPT_VERSION = "4.13.0"
-SCRIPT_DATE = "13.11.2026"
+SCRIPT_VERSION = "4.14.0"
+SCRIPT_DATE = "18.11.2026"
 
 # Every name an archive written here can end in. Retention deletes only files
 # with one of these, and server-readiness.py (BACKUP_ARCHIVE_SUFFIXES) and
@@ -1710,12 +1712,30 @@ def run_external_validation(config_file):
     result = subprocess.run([sys.executable, validator, "--backup", config_file])
     return result.returncode
 
+def select_databases(databases, only):
+    """Split the configured databases by --only-db.
+
+    Returns (selected_entries, unknown_names). Selected entries keep the
+    config order; an empty `only` selects everything.
+    """
+    databases = databases or []
+    if not only:
+        return list(databases), []
+    known = {db.get('name') for db in databases}
+    unknown = [name for name in only if name not in known]
+    selected = [db for db in databases if db.get('name') in only]
+    return selected, unknown
+
+
 # Main script
 if __name__ == "__main__":
     # Parse command line arguments
     parser = argparse.ArgumentParser(description='Backup Odoo databases with Docker')
     parser.add_argument('--sql-only', action='store_true',
                         help='Force SQL dump only mode for all databases (overrides YAML settings)')
+    parser.add_argument('--only-db', action='append', default=[], metavar='NAME',
+                        help='Back up only the named database (repeatable); skips services, '
+                             'off-site sync and retention cleanup')
     parser.add_argument('--validate', action='store_true',
                         help='Only validate the configuration, then exit')
     args = parser.parse_args()
@@ -1755,7 +1775,14 @@ if __name__ == "__main__":
     try:
         with open(backup_config, 'r', encoding="utf8") as config_file:
             config = yaml.safe_load(config_file)
-        
+
+        # --only-db: refuse unknown names before the lock or anything else is created.
+        selected_databases, unknown_dbs = select_databases(
+            config.get('databases', []), args.only_db)
+        if unknown_dbs:
+            print(f"ERROR: --only-db: not in the databases section: {', '.join(unknown_dbs)}")
+            exit(1)
+
         # Run lock first, before anything is created or deleted: a second run
         # started in the same second (two cron sources, 09.11.2026) stops here.
         # The handle must stay referenced until the process ends.
@@ -1846,7 +1873,9 @@ if __name__ == "__main__":
         # rsync --delete the remote copy too), and the run exits 1.
         failed_databases = []
         host_containers = existing_container_names()
-        for db in config.get('databases', []):
+        if args.only_db:
+            print("--only-db: services, off-site sync and retention cleanup skipped")
+        for db in selected_databases:
             # Validate identifiers before any subprocess/filesystem use.
             # Invalid config entries are skipped rather than aborting the run.
             try:
@@ -1933,7 +1962,10 @@ if __name__ == "__main__":
                       f"Keeping all existing backups of {db_name}.")
                 failed_databases.append(f"{db_name} (backup failed, see above)")
                 continue
-            
+
+            if args.only_db:
+                continue
+
             # Clean up old backups for this database
             docker_backup_path = os.path.join(backup_path, 'docker')
             cutoff_timestamp = time.time() - (float(retention_days) * 86400)
@@ -1951,7 +1983,7 @@ if __name__ == "__main__":
         
         # Process additional backups
         timestamp = datetime.datetime.fromtimestamp(time.time()).strftime('%Y-%m-%d_%H-%M-%S')
-        additional_backups = config.get('services', {})
+        additional_backups = {} if args.only_db else config.get('services', {})
 
         failed_services = []
         for service_name, service_config in additional_backups.items():
@@ -1977,7 +2009,7 @@ if __name__ == "__main__":
             cleanup_backups(service_backup_path, service_cutoff)
         
         # Process rsync commands from YAML config
-        rsync_config = config.get('rsync', {})
+        rsync_config = {} if args.only_db else config.get('rsync', {})
         if rsync_config.get('enabled', False):
             print("Executing rsync commands...")
             import shlex

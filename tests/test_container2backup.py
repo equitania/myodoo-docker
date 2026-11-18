@@ -374,6 +374,23 @@ class RetentionCoversEveryFormatTest(unittest.TestCase):
             self.assertTrue(os.path.exists(keep))
 
 
+class OnlyDbTest(unittest.TestCase):
+    DBS = [{"name": "live_db", "sql_container": "live-db", "data_container": "live-odoo"},
+           {"name": "test_db", "sql_container": "test-db", "data_container": "test-odoo"}]
+
+    def test_selects_named_entries_in_config_order(self):
+        selected, unknown = c2b.select_databases(self.DBS, ["test_db", "live_db"])
+        self.assertEqual([d["name"] for d in selected], ["live_db", "test_db"])
+        self.assertEqual(unknown, [])
+
+    def test_unknown_name_is_reported(self):
+        selected, unknown = c2b.select_databases(self.DBS, ["nope"])
+        self.assertEqual((selected, unknown), ([], ["nope"]))
+
+    def test_empty_only_means_everything(self):
+        self.assertEqual(c2b.select_databases(self.DBS, [])[0], self.DBS)
+
+
 if __name__ == "__main__":
     unittest.main()
 
