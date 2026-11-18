@@ -889,10 +889,28 @@ class HostConfigFailClosedTest(unittest.TestCase):
                                                        MemorySwap=2 * gib)))
         self.assertEqual(blockers, [])
         self.assertEqual(doc["services"]["postgres"]["mem_limit"], gib)
+        self.assertNotIn("memswap_limit", doc["services"]["postgres"])
         doc, blockers = convert(legacy(HostConfig=dict(REAL_HOSTCONFIG, Memory=gib,
                                                        MemorySwap=3 * gib)))
-        self.assertIsNone(doc)
-        self.assertTrue(blockers[0].startswith("MemorySwap "))
+        self.assertEqual(blockers, [])
+        self.assertEqual(doc["services"]["postgres"]["memswap_limit"], 3 * gib)
+
+    def test_unlimited_swap_with_memory_limit_is_carried(self):
+        gib = 1073741824
+        doc, _ = convert(legacy(HostConfig=dict(REAL_HOSTCONFIG, Memory=gib, MemorySwap=-1)))
+        self.assertEqual(doc["services"]["postgres"]["memswap_limit"], -1)
+        doc, _ = convert(legacy(HostConfig=dict(REAL_HOSTCONFIG, Memory=0, MemorySwap=-1)))
+        self.assertNotIn("memswap_limit", doc["services"]["postgres"])
+
+    def test_explicit_swappiness_zero_is_carried(self):
+        for value, expected in ((0, 0), (60, 60)):
+            doc, blockers = convert(legacy(HostConfig=dict(REAL_HOSTCONFIG,
+                                                           MemorySwappiness=value)))
+            self.assertEqual(blockers, [])
+            self.assertEqual(doc["services"]["postgres"]["mem_swappiness"], expected)
+        for value in (None, -1):
+            doc, _ = convert(legacy(HostConfig=dict(REAL_HOSTCONFIG, MemorySwappiness=value)))
+            self.assertNotIn("mem_swappiness", doc["services"]["postgres"])
 
     def test_init_sysctls_groupadd_readonly_are_carried(self):
         doc, blockers = convert(legacy(HostConfig=dict(

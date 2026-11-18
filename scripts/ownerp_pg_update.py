@@ -706,7 +706,8 @@ def _healthcheck_of(config: dict, db_user: str) -> dict:
 # HostConfig keys the conversion writes into the compose file (or checks itself).
 _HOST_CARRIED = {"RestartPolicy", "ShmSize", "Memory", "NanoCpus", "PortBindings",
                  "ExtraHosts", "Dns", "DnsSearch", "LogConfig", "NetworkMode", "Init",
-                 "Sysctls", "GroupAdd", "ReadonlyRootfs", "CpuShares", "CpusetCpus"}
+                 "Sysctls", "GroupAdd", "ReadonlyRootfs", "CpuShares", "CpusetCpus",
+                 "MemorySwap", "MemorySwappiness"}
 # Keys whose value never matters (covered elsewhere, or only runtime hints).
 _HOST_ANYTHING = {"Binds", "ContainerIDFile", "ConsoleSize", "MaskedPaths", "ReadonlyPaths"}
 # Keys that may hold these values and still mean "docker's default". Empty values
@@ -716,7 +717,6 @@ _HOST_DEFAULTS = {
     "CgroupnsMode": ("private", "host"),
     "PidMode": ("private", "shareable"),
     "IpcMode": ("private", "shareable"),
-    "MemorySwappiness": (-1,),
     "PidsLimit": (-1,),
 }
 
@@ -750,11 +750,7 @@ def compose_from_inspect(inspect: dict, image_inspect: dict, new_image: str,
     for key, value in host.items():
         if key in _HOST_CARRIED or key in _HOST_ANYTHING:
             continue
-        if key == "MemorySwap":
-            memory = host.get("Memory") or 0
-            if value in (None, 0, -1) or (memory and value == 2 * memory):
-                continue
-        elif not value or value in _HOST_DEFAULTS.get(key, ()):
+        if not value or value in _HOST_DEFAULTS.get(key, ()):
             continue
         blockers.append("%s is set (%s) and cannot be carried over to the compose file."
                         % (key, value))
@@ -844,6 +840,12 @@ def compose_from_inspect(inspect: dict, image_inspect: dict, new_image: str,
         service["mem_limit"] = host["Memory"]
     if host.get("NanoCpus"):
         service["cpus"] = host["NanoCpus"] / 1e9
+    swap = host.get("MemorySwap")
+    memory = host.get("Memory") or 0
+    if swap not in (None, 0) and swap != 2 * memory and not (swap == -1 and memory == 0):
+        service["memswap_limit"] = swap
+    if host.get("MemorySwappiness") not in (None, -1):
+        service["mem_swappiness"] = host["MemorySwappiness"]
     if host.get("CpuShares"):
         service["cpu_shares"] = host["CpuShares"]
     if host.get("CpusetCpus"):
