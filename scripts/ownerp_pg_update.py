@@ -31,6 +31,7 @@ import importlib.util
 import json
 import os
 import re
+import shlex
 import shutil
 import subprocess
 import sys
@@ -90,6 +91,8 @@ class PgTarget:
     shared: bool = False
     vector: bool = False
     foreign: bool = False
+    compose_project: Optional[str] = None   # label com.docker.compose.project (compose kind)
+    compose_files: List[str] = field(default_factory=list)   # every file the project was read from
 
 
 @dataclass
@@ -238,6 +241,14 @@ def _compose_of(inspect: dict) -> Tuple[str, Optional[str], Optional[str]]:
     return "legacy", None, None
 
 
+def _compose_extra(inspect: dict) -> Tuple[Optional[str], List[str]]:
+    """(project name, all config files) from the compose labels; (None, []) for a plain container."""
+    labels = (inspect.get("Config") or {}).get("Labels") or {}
+    files = [f.strip() for f in (labels.get("com.docker.compose.project.config_files")
+                                 or "").split(",") if f.strip()]
+    return labels.get("com.docker.compose.project") or None, files
+
+
 def _first_database(name: str, user: str, run: Runner) -> Optional[str]:
     migrate = _need("ownerp_migrate")
     code, out = run(["docker", "exec", name, "psql", "-U", user, "-d", "postgres", "-Atqc",
@@ -291,6 +302,7 @@ def discover(run: Runner, update_cfg: dict, cli_user: Optional[str] = None) -> L
         repository = migrate._image_of(inspect)
         user = db_user_for(inspect, update_cfg, cli_user, run)
         kind, compose_file, compose_service = _compose_of(inspect)
+        compose_project, compose_files = _compose_extra(inspect)
         target = PgTarget(
             name=name,
             image=(inspect.get("Config") or {}).get("Image") or "",
@@ -302,6 +314,7 @@ def discover(run: Runner, update_cfg: dict, cli_user: Optional[str] = None) -> L
             pgdata=sizing.find_pgdata(json.dumps(inspect.get("Mounts") or [])),
             vector=repository == PGVECTOR_REPOSITORY,
             foreign=repository not in (POSTGRES_REPOSITORY, PGVECTOR_REPOSITORY),
+            compose_project=compose_project, compose_files=compose_files,
         )
         paired = [o for o in odoo_all if migrate._pair_database_container(o, pg_all) is inspect]
         entries = [e for e in update_cfg.get("containers") or []
@@ -501,8 +514,12 @@ def backup_routes(databases: List[str], backup_cfg: Optional[dict],
             [d for d in databases if d not in covered])
 
 
-def collation_mismatches(target: PgTarget, run: Runner) -> List[str]:
-    """Databases whose recorded collation version differs from the library's (major >= 15)."""
+def collation_mismatches(target: PgTarget, run: Runner) -> Optional[List[str]]:
+    """Databases whose recorded collation version differs from the library's (major >= 15).
+
+    [] means "no mismatch" (and, below major 15, "nothing to check"); None means the
+    query failed, so the state is unknown.
+    """
     if target.version is None or target.version[0] < 15:
         return []
     code, out = run(["docker", "exec", target.name, "psql", "-U", target.db_user or "postgres",
@@ -510,7 +527,7 @@ def collation_mismatches(target: PgTarget, run: Runner) -> List[str]:
                      "SELECT datname FROM pg_database WHERE datcollversion IS DISTINCT FROM "
                      "pg_database_collation_actual_version(oid) AND datcollversion IS NOT NULL"])
     if code != 0:
-        return []
+        return None
     return [line.strip() for line in out.splitlines() if line.strip()]
 
 
@@ -520,7 +537,7 @@ def _eol_month(major: int) -> Optional[datetime.date]:
 
 
 def recommend(target: PgTarget, choice: Choice, sizing: SizingView, unlisted: List[str],
-              today: datetime.date, collation_mismatch: List[str]) -> List[Rec]:
+              today: datetime.date, collation_mismatch: Optional[List[str]]) -> List[Rec]:
     """Fixed set of hints in a fixed order; nothing here runs anything."""
     recs: List[Rec] = []
     if target.foreign and choice.blocked:
@@ -1222,6 +1239,9 @@ def prepare(target: PgTarget, choice: Choice, opts: Options, run: Runner,
             problems.append("cannot read the data directory %s (needs root)" % data)
     if not target.db_user:
         problems.append("no database user accepted by the server")
+    if target.kind == "compose" and len(target.compose_files) > 1:
+        problems.append("container is defined by several compose files (%s); update it by hand"
+                        % ", ".join(target.compose_files))
     if not _is_running(target.inspect):
         problems.append("container %s is not running" % target.name)
     if not problems and compose_cmd(run) is None:
@@ -1483,6 +1503,7 @@ def backup(plan: UpdatePlan, opts: Options, run: Runner, stream: Runner, out
 STATE_DIR = "pg-deploy/state"
 CONFIRM_AFTER = datetime.timedelta(days=7)
 READY_RETRIES = 60
+STOP_TIMEOUT = 120      # seconds a database container gets to finish its shutdown checkpoint
 
 
 def state_path(home: str, name: str) -> str:
@@ -1563,6 +1584,27 @@ def _state_text(name: str, run: Runner) -> str:
                              (info.get("Config") or {}).get("Image") or "?")
 
 
+def _compose_base(cmd: List[str], project: Optional[str], compose_file: str) -> List[str]:
+    """`docker compose [-p PROJECT] -f FILE`; the project of a compose-managed container is
+    always passed so that compose finds the services it already runs."""
+    return cmd + (["-p", project] if project else []) + ["-f", compose_file]
+
+
+def _up_argv(cmd: List[str], project: Optional[str], compose_file: str, service: str
+             ) -> List[str]:
+    """Start exactly one service: never its dependencies and never a sibling (Odoo!)."""
+    return _compose_base(cmd, project, compose_file) + ["up", "-d", "--no-deps", service]
+
+
+def _stop_database(name: str, run: Runner, out) -> bool:
+    """Stop the database container with room for its shutdown checkpoint (when it runs)."""
+    found, info = _lookup(name, run)
+    if found and (info.get("State") or {}).get("Running"):
+        return _checked(run, ["docker", "stop", "-t", str(STOP_TIMEOUT), name], out,
+                        "docker stop %s" % name)
+    return True
+
+
 def _undo_legacy(state: dict, cmd: List[str], run: Runner, out) -> bool:
     name, parked = state["name"], state.get("parked_name")
     named, info = _lookup(name, run)
@@ -1578,8 +1620,13 @@ def _undo_legacy(state: dict, cmd: List[str], run: Runner, out) -> bool:
                 out("ERROR: %s holds the new server but %s is gone; it cannot be removed "
                     "the safe way" % (name, compose_file))
                 return False
-            if not _checked(run, cmd + ["-f", compose_file, "down"], out,
-                            "%s -f %s down" % (" ".join(cmd), compose_file)):
+            # The generated file holds the one service this tool created; `down` is only ever
+            # used on it, never on a compose file the operator owns.
+            if not _stop_database(name, run, out):
+                return False
+            if not _checked(run, _compose_base(cmd, None, compose_file) + ["down", "-t",
+                                                                           str(STOP_TIMEOUT)],
+                            out, "%s -f %s down" % (" ".join(cmd), compose_file)):
                 return False
             named, _ = _lookup(name, run)
             if named is not False:
@@ -1618,8 +1665,13 @@ def _undo_compose(state: dict, cmd: List[str], run: Runner, out) -> bool:
         except (OSError, UnicodeError) as error:
             out("ERROR: cannot restore %s from %s: %s" % (compose_file, backup_file, error))
             return False
-    return _checked(run, cmd + ["-f", compose_file, "up", "-d"], out,
-                    "%s -f %s up -d" % (" ".join(cmd), compose_file))
+    # Only the file is restored and only the database service is started again: the
+    # file may hold other services (Odoo) that must stay as they are, so no `down` here.
+    if not _stop_database(state["name"], run, out):
+        return False
+    argv = _up_argv(cmd, state.get("compose_project"), compose_file,
+                    state.get("compose_service") or SERVICE)
+    return _checked(run, argv, out, " ".join(argv))
 
 
 def _undo(state: dict, cmd: List[str], run: Runner, out) -> bool:
@@ -1636,16 +1688,58 @@ def _archive_state(path: str, label: str, stamp: str, out) -> None:
         out("WARNING: cannot rename the state file %s: %s" % (path, error))
 
 
-def _stranded(state: dict, path: str, run: Runner) -> List[str]:
-    lines = ["ERROR: the old server could not be brought back automatically. "
-             "Odoo stays stopped."]
-    for container in (state["name"], state.get("parked_name")):
+def _stranded(state: dict, path: str, run: Runner, cmd: Optional[List[str]] = None,
+              extra_odoo=(), undone: bool = False) -> List[str]:
+    """What the operator sees when the old server is not back: facts, then the next step.
+
+    `undone`: the undo itself completed (the state file is archived) but the old server was
+    not checked. Every command printed is a plain `docker ...` / `pgup ...` line.
+    """
+    name, parked = state["name"], state.get("parked_name")
+    lines = (["The old server was put back but not checked yet. Odoo stays stopped."] if undone
+             else ["ERROR: the old server could not be brought back automatically. "
+                   "Odoo stays stopped."])
+    for container in (name, parked):
         if container:
             lines.append("  %s: %s" % (container, _state_text(container, run)))
-    lines.append("  State file (kept): %s" % path)
-    if state.get("stopped_odoo"):
-        lines.append("  When a PostgreSQL server answers again, start Odoo: %s"
-                     % "; ".join("docker start %s" % o for o in state["stopped_odoo"]))
+    if not undone:
+        lines.append("  State file (kept): %s" % path)
+    cmd = cmd or ["docker", "compose"]
+    named, info = _lookup(name, run)
+    park = _lookup(parked, run)[0] if parked else False
+    backup_file = state.get("compose_backup")
+    lines.append("Next step:")
+    if undone:
+        lines.append("  docker exec %s pg_isready -U %s -d postgres"
+                     % (name, state.get("db_user") or "postgres"))
+    elif (state.get("kind") == "legacy" and park) or (
+            state.get("kind") == "compose" and backup_file and os.path.isfile(backup_file)):
+        lines.append("  pgup --rollback %s" % name)
+    elif state.get("kind") == "compose":
+        lines.append("  %s" % " ".join(_up_argv(cmd, state.get("compose_project"),
+                                                 state["compose_file"],
+                                                 state.get("compose_service") or SERVICE)))
+    elif named:
+        policy = _restart_of(((info or {}).get("HostConfig") or {}).get("RestartPolicy"))
+        wanted = state.get("parked_restart") or "no"
+        running = bool(((info or {}).get("State") or {}).get("Running"))
+        if policy != wanted:
+            lines.append("  docker update --restart=%s %s" % (wanted, name))
+        if not running:
+            lines.append("  docker start %s" % name)
+        if running and policy == wanted:
+            lines.append("  docker logs --tail 50 %s" % name)
+    elif park is False and named is False:
+        lines.append("  neither %s nor %s exists; the data directory is untouched. Start a "
+                     "server on it from the compose file:" % (name, parked))
+        lines.append("  %s" % " ".join(_up_argv(cmd, None, state["compose_file"], SERVICE)))
+    else:
+        lines.append("  docker did not answer; check with: docker ps -a")
+    odoo = list(state.get("stopped_odoo") or [])
+    odoo += [o for o in extra_odoo if o not in odoo]
+    if odoo:
+        lines.append("Then, once the database answers, start Odoo:")
+        lines.extend("  docker start %s" % o for o in odoo)
     return lines
 
 
@@ -1657,15 +1751,22 @@ def _recover(plan: UpdatePlan, state: dict, path: str, cmd: List[str], user: str
         ok = _undo(state, cmd, run, out)
     except (Exception, KeyboardInterrupt) as error:
         out("ERROR: the undo stopped unexpectedly: %s" % (error or type(error).__name__))
-    if ok and not wait_ready(state["name"], user, run, sleep):
-        out("ERROR: the old server does not answer")
-        ok = False
-    elif ok and server_version(state["name"], user, run) != before_version:
-        out("ERROR: the server on %s does not report the old version %s"
-            % (state["name"], _version_text(before_version)))
-        ok = False
+    interrupted = False
+    try:
+        if ok and not wait_ready(state["name"], user, run, sleep):
+            out("ERROR: the old server does not answer")
+            ok = False
+        elif ok and server_version(state["name"], user, run) != before_version:
+            out("ERROR: the server on %s does not report the old version %s"
+                % (state["name"], _version_text(before_version)))
+            ok = False
+    except KeyboardInterrupt:
+        # The undo itself is complete; only the check is missing. Close the books.
+        out("Interrupted while waiting for the old server.")
+        interrupted, ok = True, False
+        _archive_state(path, "undone", datetime.datetime.now().strftime("%Y%m%d-%H%M%S"), out)
     if not ok:
-        for line in _stranded(state, path, run):
+        for line in _stranded(state, path, run, cmd, undone=interrupted):
             out(line)
         return 2
     _start_odoo(plan.stop_odoo, run, out)
@@ -1681,7 +1782,8 @@ def _switch(plan: UpdatePlan, state: dict, cmd: List[str], user: str, pgdata: Op
     target = plan.target
     name = target.name
     out("Stopping %s" % name)
-    if not _checked(run, ["docker", "stop", name], out, "docker stop %s" % name):
+    if not _checked(run, ["docker", "stop", "-t", str(STOP_TIMEOUT), name], out,
+                    "docker stop %s" % name):
         return "could not stop %s" % name
     if target.kind == "legacy":
         parked = plan.parked_name
@@ -1699,8 +1801,8 @@ def _switch(plan: UpdatePlan, state: dict, cmd: List[str], user: str, pgdata: Op
             write_private(state["compose_backup"], handle.read())
         write_private(plan.compose_file, plan.compose_text)
     out("Starting the new server (%s)" % state["new_image"])
-    if not _checked(run, cmd + ["-f", plan.compose_file, "up", "-d"], out,
-                    "%s -f %s up -d" % (" ".join(cmd), plan.compose_file)):
+    argv = _up_argv(cmd, state["compose_project"], plan.compose_file, state["compose_service"])
+    if not _checked(run, argv, out, " ".join(argv)):
         return "the new server did not start"
     if not wait_ready(name, user, run, sleep):
         return "the new server does not become ready"
@@ -1760,23 +1862,27 @@ def _sizing_state_io(plan: UpdatePlan, opts: Options):
     return load, save
 
 
-def _apply_sizing(plan: UpdatePlan, opts: Options, user: str, run: Runner, out, sleep) -> None:
-    """Memory settings on the new server. The outcome is a report line, never an exit code."""
+def _apply_sizing(plan: UpdatePlan, opts: Options, user: str, run: Runner, out, sleep
+                  ) -> bool:
+    """Memory settings on the new server. The outcome is a report line, never an exit code;
+    the return value says whether postgresql.conf was changed (and stayed changed)."""
     label = "Memory settings"
+    changed = False
     try:
         sizing = _need("ownerp_sizing")
         if not plan.sizing.recommended:
             out("%s: nothing calculated, left alone" % label)
-            return
+            return False
         load, save = _sizing_state_io(plan, opts)
         state, problem = load()
         if problem:
             out("%s: ERROR %s; not changed" % (label, problem))
-            return
+            return False
         pg_state = state.setdefault("pg", {})
         before = json.dumps(pg_state, sort_keys=True)
         sync = sizing.sync_postgres(plan.target.name, plan.sizing.recommended,
                                     plan.sizing.overrides, pg_state, run, user, sleep=sleep)
+        changed = bool(sync.changed and not sync.rolled_back)
         if json.dumps(pg_state, sort_keys=True) != before:
             problem = save(state)
             if problem:
@@ -1797,6 +1903,7 @@ def _apply_sizing(plan: UpdatePlan, opts: Options, user: str, run: Runner, out, 
                 out("  database restarted, new values verified with SHOW")
     except Exception as error:
         out("%s: ERROR %s: %s; the update continues" % (label, type(error).__name__, error))
+    return changed
 
 
 def _version_key(text: str) -> Tuple[int, ...]:
@@ -1857,7 +1964,37 @@ def _older_backups(plan: UpdatePlan, locations: List[str]) -> Optional[str]:
 
 def update_one(plan: UpdatePlan, opts: Options, run: Runner, stream: Runner, out,
                sleep=time.sleep) -> int:
-    """Switch one database container to the new image. 0 done, 1 undone, 2 needs the operator."""
+    """Switch one database container to the new image. 0 done, 1 undone, 2 needs the operator.
+
+    Ctrl-C at any point ends in a defined state: before the state file exists nothing
+    was changed on the database, so Odoo simply starts again; afterwards the old server is
+    put back, unless Odoo is already being started on the verified new one.
+    """
+    progress: dict = {}
+    try:
+        return _update_run(plan, opts, run, stream, out, sleep, progress)
+    except KeyboardInterrupt:
+        pass
+    state = progress.get("state")
+    name = plan.target.name
+    if state is None:
+        out("Interrupted; nothing was changed on the database.")
+        _start_odoo(plan.stop_odoo, run, out)
+        return 1
+    if progress.get("odoo_starting"):
+        out("Interrupted while starting Odoo. The new server is verified and keeps running.")
+        out("Start the Odoo containers that are still stopped:")
+        for odoo in plan.stop_odoo:
+            out("  docker start %s" % odoo)
+        out("Go back to the old server instead:  pgup --rollback %s" % name)
+        return 2
+    out("Interrupted.")
+    return _recover(plan, state, progress["path"], progress["cmd"], progress["user"],
+                    progress["before_version"], run, out, sleep)
+
+
+def _update_run(plan: UpdatePlan, opts: Options, run: Runner, stream: Runner, out, sleep,
+                progress: dict) -> int:
     if plan.problems:
         out(render_plan(plan))
         return 2
@@ -1891,7 +2028,8 @@ def update_one(plan: UpdatePlan, opts: Options, run: Runner, stream: Runner, out
         out("ERROR: cannot read the version and databases of %s; the update stops here" % name)
         _start_odoo(plan.stop_odoo, run, out)
         return 1
-    before_collation = set(collation_mismatches(target, run))
+    # None (the query failed) adds nothing here, so every mismatch found later counts as new.
+    before_collation = set(collation_mismatches(target, run) or [])
     expected = (choice.version if choice.tag else None) or before["version"]
     now = datetime.datetime.now().replace(microsecond=0)
     stamp = now.strftime("%Y%m%d-%H%M%S")
@@ -1905,9 +2043,13 @@ def update_one(plan: UpdatePlan, opts: Options, run: Runner, stream: Runner, out
         "compose_file": plan.compose_file,
         "compose_backup": ("%s.bak-%s" % (plan.compose_file, stamp)
                            if target.kind == "compose" else None),
+        "compose_service": ((target.compose_service or SERVICE) if target.kind == "compose"
+                            else SERVICE),
+        "compose_project": target.compose_project if target.kind == "compose" else None,
         "stopped_odoo": list(plan.stop_odoo),
         "time": now.isoformat(),
         "db_user": user,
+        "sizing_applied": False,
     }
     path = state_path(opts.home, name)
     try:
@@ -1917,6 +2059,7 @@ def update_one(plan: UpdatePlan, opts: Options, run: Runner, stream: Runner, out
         out("ERROR: cannot write the state file %s: %s; the update stops here" % (path, error))
         _start_odoo(plan.stop_odoo, run, out)
         return 1
+    progress.update(state=state, path=path, cmd=cmd, user=user, before_version=before["version"])
 
     try:
         error = _switch(plan, state, cmd, user, pgdata, before, expected, run, out, sleep)
@@ -1928,8 +2071,22 @@ def update_one(plan: UpdatePlan, opts: Options, run: Runner, stream: Runner, out
         return _recover(plan, state, path, cmd, user, before["version"], run, out, sleep)
 
     out("The new server runs %s and the databases match." % _version_text(expected))
-    new_collation = [d for d in collation_mismatches(replace(target, version=expected), run)
-                     if d not in before_collation]
+    found = collation_mismatches(replace(target, version=expected), run)
+    if found is None:
+        out("ERROR: the collation check could not run on the new server; Odoo stays stopped.")
+        out("Two ways forward:")
+        out("  1. Go back to the old server:  pgup --rollback %s" % name)
+        out("  2. Keep the new server, look for a collation mismatch by hand (any line it "
+            "prints is a database to reindex):")
+        out("       docker exec %s psql -U %s -d postgres -Atc %s" % (name, user, shlex.quote(
+            "SELECT datname FROM pg_database WHERE datcollversion IS DISTINCT FROM "
+            "pg_database_collation_actual_version(oid)")))
+        if plan.stop_odoo:
+            out("     then start Odoo:")
+            for odoo in plan.stop_odoo:
+                out("       docker start %s" % odoo)
+        return 2
+    new_collation = [d for d in found if d not in before_collation]
     if new_collation:
         out("ERROR: the collation version no longer matches in: %s" % ", ".join(new_collation))
         out("Odoo stays stopped. Two ways forward:")
@@ -1937,23 +2094,30 @@ def update_one(plan: UpdatePlan, opts: Options, run: Runner, stream: Runner, out
         out("  2. Keep the new server, rebuild the indexes and record the new collation "
             "version, for each database:")
         for database in new_collation:
-            out('       docker exec %s psql -U %s -d %s -c "REINDEX DATABASE %s"'
-                % (name, user, database, database))
-            out('       docker exec %s psql -U %s -d %s -c "ALTER DATABASE %s REFRESH '
-                'COLLATION VERSION"' % (name, user, database, database))
+            quoted = '"%s"' % database.replace('"', '""')
+            for sql in ("REINDEX DATABASE %s" % quoted,
+                        "ALTER DATABASE %s REFRESH COLLATION VERSION" % quoted):
+                out("       docker exec %s psql -U %s -d %s -c %s"
+                    % (name, user, shlex.quote(database), shlex.quote(sql)))
         if plan.stop_odoo:
             out("     then start Odoo: %s" % "; ".join("docker start %s" % o
                                                       for o in plan.stop_odoo))
         return 2
 
     if opts.sizing == "apply" and plan.sizing.skipped is None:
-        _apply_sizing(plan, opts, user, run, out, sleep)
+        if _apply_sizing(plan, opts, user, run, out, sleep):
+            state["sizing_applied"] = True
+            try:
+                write_private(path, json.dumps(state, indent=2, sort_keys=True) + "\n")
+            except OSError as error:
+                out("WARNING: cannot record the memory settings in %s: %s" % (path, error))
         if not wait_ready(name, user, run, sleep):
             out("ERROR: %s does not answer after the memory settings; Odoo stays stopped. "
                 "Go back with: pgup --rollback %s" % (name, name))
             return 2
 
     code = 0
+    progress["odoo_starting"] = True
     if not _start_odoo(plan.stop_odoo, run, out):
         out("ERROR: not every Odoo container could be started")
         code = 2
@@ -2075,14 +2239,25 @@ def rollback(name: str, opts: Options, run: Runner, out, now=None, ask=None,
                 % (name, _version_text(version) or "nothing", state.get("old_version")))
             ok = False
     if not ok:
-        for line in _stranded(state, path, run):
+        for line in _stranded(state, path, run, cmd, extra_odoo=stopped):
             out(line)
         return 2
-    _start_odoo(stopped, run, out)
+    # What this run stopped, plus what the update stopped and nobody started again (an
+    # update that ended with exit 2 leaves Odoo down and sends the operator here).
+    to_start = list(stopped)
+    for candidate in state.get("stopped_odoo") or []:
+        if candidate in to_start:
+            continue
+        found, info = _lookup(candidate, run)
+        if found and not (info.get("State") or {}).get("Running"):
+            to_start.append(candidate)
+    _start_odoo(to_start, run, out)
     _archive_state(path, "rolled-back", now.strftime("%Y%m%d-%H%M%S"), out)
     out("Rolled back: %s runs %s again (%s)." % (name, state.get("old_version"),
                                                   state.get("old_image")))
     if state["kind"] == "legacy":
         out("The compose file %s stays on disk; the new image stays in the local image store."
             % state["compose_file"])
+    if state.get("sizing_applied"):
+        out("The memory settings in postgresql.conf were not reverted.")
     return 0

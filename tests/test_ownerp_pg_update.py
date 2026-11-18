@@ -465,7 +465,14 @@ class CollationTest(unittest.TestCase):
         run = FakeRunner({("docker", "exec", "live-db", "psql"): (0, "live_db\nother\n")})
         self.assertEqual(pg.collation_mismatches(target(base=BOOKWORM), run), ["live_db", "other"])
         self.assertIn("pg_database_collation_actual_version", run.calls[0][-1])
-        self.assertEqual(pg.collation_mismatches(target(base=BOOKWORM), FakeRunner()), [])
+        self.assertIsNone(pg.collation_mismatches(target(base=BOOKWORM), FakeRunner()))
+
+    def test_overview_survives_an_unknown_collation_state(self):
+        t = target(base=BOOKWORM)
+        recs = pg.recommend(t, CURRENT, NO_SIZING, [], TODAY, None)
+        self.assertNotIn("collation_mismatch", [r.id for r in recs])
+        text = pg.render_overview([(t, CURRENT, recs)])
+        self.assertIn("live-db", text)
 
 
 def sample_rows():
@@ -1327,6 +1334,18 @@ class PrepareTest(Phase1Case):
         self.assertTrue(any("build" in p for p in plan.problems))
 
 
+class SeveralComposeFilesTest(Phase1Case):
+    def test_several_compose_files_block_in_prepare(self):
+        first, second = os.path.join(self.tmp, "a.yml"), os.path.join(self.tmp, "b.yml")
+        tgt = self.legacy_target(kind="compose", compose_file=first, compose_service="postgres",
+                                 compose_files=[first, second])
+        plan, run = self.prepare(tgt=tgt)
+        self.assertIn("container is defined by several compose files (%s, %s); update it by hand"
+                      % (first, second), plan.problems)
+        self.assertFalse(any(c[:2] in (["docker", "pull"], ["docker", "build"])
+                             for c in run.calls))
+
+
 class RenderPlanTest(Phase1Case):
     def test_dry_run_plan_masks_the_password(self):
         plan, _ = self.prepare()
@@ -1518,6 +1537,7 @@ class Host(FakeRunner):
         self.collation_switched = ""        # collation query answer once it is up
         self.not_ready = set()              # images whose server never answers pg_isready
         self.switched = False
+        self.projects = []                  # the -p value of every compose call (None: absent)
         self.fail = {}
         self.hooks = []
 
@@ -1540,28 +1560,16 @@ class Host(FakeRunner):
     def simulate(self, argv):
         if argv[:3] == ["docker", "compose", "version"]:
             return 0, "v2"
-        if argv[:3] == ["docker", "compose", "-f"] and argv[4:] == ["up", "-d"]:
-            with open(argv[3]) as handle:
-                image = yaml.safe_load(handle)["services"]["postgres"]["image"]
-            existing = self.containers.get("live-db")
-            if existing and not existing["compose"]:
-                return 1, "Conflict. The container name /live-db is already in use"
-            self.containers["live-db"] = {"image": image, "running": True,
-                                          "restart": "always", "compose": True}
-            self.switched = True
-            return 0, ""
-        if argv[:3] == ["docker", "compose", "-f"] and argv[4:] == ["down"]:
-            if self.containers.get("live-db", {}).get("compose"):
-                del self.containers["live-db"]
-            return 0, ""
+        if argv[:2] == ["docker", "compose"]:
+            return self.simulate_compose(argv[2:])
         if argv[:2] == ["docker", "inspect"] and argv[2:4] == ["--type", "container"]:
             if argv[4] in self.containers:
                 return 0, self.inspect_json(argv[4])
             return 1, "Error: No such container: " + argv[4]
         if argv[:2] in (["docker", "stop"], ["docker", "start"]):
-            if argv[2] not in self.containers:
-                return 1, "Error: No such container: " + argv[2]
-            self.containers[argv[2]]["running"] = argv[1] == "start"
+            if argv[-1] not in self.containers:
+                return 1, "Error: No such container: " + argv[-1]
+            self.containers[argv[-1]]["running"] = argv[1] == "start"
             return 0, ""
         if argv[:2] == ["docker", "rename"]:
             if argv[2] not in self.containers or argv[3] in self.containers:
@@ -1589,6 +1597,40 @@ class Host(FakeRunner):
                 return 0, self.collation_switched if self.switched else ""
         return 1, ""
 
+    SERVICE_CONTAINER = {"postgres": "live-db", "odoo": "live-odoo"}
+
+    def simulate_compose(self, rest):
+        """`docker compose [-p P] -f FILE up|down ...`: a service named on the command line
+        is the only one touched; without one, every service in the file is."""
+        self.projects.append(None)
+        while rest and rest[0] in ("-p", "-f"):
+            if rest[0] == "-p":
+                self.projects[-1] = rest[1]
+            else:
+                path = rest[1]
+            rest = rest[2:]
+        if rest[0] == "down":
+            if self.containers.get("live-db", {}).get("compose"):
+                del self.containers["live-db"]
+            return 0, ""
+        if rest[0] != "up":
+            return 1, ""
+        with open(path) as handle:
+            services = yaml.safe_load(handle)["services"]
+        named = [a for a in rest[1:] if a in services]
+        for service in (named or list(services)):
+            name = self.SERVICE_CONTAINER[service]
+            if name != "live-db":
+                self.containers[name]["running"] = True
+                continue
+            existing = self.containers.get("live-db")
+            if existing and not existing["compose"]:
+                return 1, "Conflict. The container name /live-db is already in use"
+            self.containers["live-db"] = {"image": services[service]["image"], "running": True,
+                                          "restart": "always", "compose": True}
+            self.switched = True
+        return 0, ""
+
     def changes(self):
         """The calls that change something, in order (backup stub included)."""
         found = []
@@ -1596,7 +1638,7 @@ class Host(FakeRunner):
             if call[0] == "<backup>" or call[:2] in (["docker", "stop"], ["docker", "start"],
                                                     ["docker", "rename"], ["docker", "update"]):
                 found.append(call)
-            elif call[:3] == ["docker", "compose", "-f"] and call[4:] in (["up", "-d"], ["down"]):
+            elif call[:2] == ["docker", "compose"] and ("up" in call or "down" in call):
                 found.append(call)
         return found
 
@@ -1662,13 +1704,16 @@ class UpdateCase(Phase1Case):
         self.assertLess(started, asked)
         self.assertLess(asked, odoo)
 
-    def compose_target(self):
+    def compose_target(self, project=None, with_odoo=False):
         compose = os.path.join(self.tmp, "docker-compose.yml")
         original = "services:\n  postgres:\n    image: postgres:16.8\n"
+        if with_odoo:
+            original += "  odoo:\n    image: eq/odoo:18\n    depends_on:\n      - postgres\n"
         with open(compose, "w") as handle:
             handle.write(original)
         self.host = Host(compose_owned=True)
-        tgt = self.legacy_target(kind="compose", compose_file=compose, compose_service="postgres")
+        tgt = self.legacy_target(kind="compose", compose_file=compose, compose_service="postgres",
+                                 compose_project=project)
         return tgt, compose, original
 
 
@@ -1679,10 +1724,10 @@ class UpdateOneTest(UpdateCase):
         self.assertEqual(self.host.changes(), [
             ["docker", "stop", "live-odoo"],
             ["<backup>"],
-            ["docker", "stop", "live-db"],
+            ["docker", "stop", "-t", "120", "live-db"],
             ["docker", "rename", "live-db", "live-db-pre-16.8"],
             ["docker", "update", "--restart=no", "live-db-pre-16.8"],
-            ["docker", "compose", "-f", plan.compose_file, "up", "-d"],
+            ["docker", "compose", "-f", plan.compose_file, "up", "-d", "--no-deps", "postgres"],
             ["docker", "start", "live-odoo"]])
         with open(plan.compose_file) as handle:
             self.assertEqual(handle.read(), plan.compose_text)
@@ -1701,7 +1746,7 @@ class UpdateOneTest(UpdateCase):
         seen = {}
 
         def hook(argv):
-            if argv[:3] == ["docker", "stop", "live-db"]:
+            if argv[:5] == ["docker", "stop", "-t", "120", "live-db"]:
                 seen["before_stop"] = os.path.exists(self.state_file())
             if argv[:2] == ["docker", "rename"]:
                 path = self.state_file()
@@ -1737,14 +1782,14 @@ class UpdateOneTest(UpdateCase):
         self.assertEqual(self.update(self.plan()), 1)
         self.assertEqual(self.host.changes(), [
             ["docker", "stop", "live-odoo"], ["<backup>"], ["docker", "start", "live-odoo"]])
-        self.assertNotIn(["docker", "stop", "live-db"], self.host.calls)
+        self.assertNotIn(["docker", "stop", "-t", "120", "live-db"], self.host.calls)
         self.assertFalse(os.path.exists(self.state_file()))
 
     def test_failed_odoo_stop_starts_them_again_and_stops_there(self):
         self.host.fail[("docker", "stop", "live-odoo")] = (1, "timeout")
         self.assertEqual(self.update(self.plan()), 1)
         self.assertNotIn("<backup>", [c[0] for c in self.host.calls])
-        self.assertNotIn(["docker", "stop", "live-db"], self.host.calls)
+        self.assertNotIn(["docker", "stop", "-t", "120", "live-db"], self.host.calls)
         self.assertTrue(self.started("live-odoo"))
 
     def test_new_server_not_ready_is_undone(self):
@@ -1754,8 +1799,9 @@ class UpdateOneTest(UpdateCase):
         self.assertEqual(self.host.changes()[3:], [
             ["docker", "rename", "live-db", "live-db-pre-16.8"],
             ["docker", "update", "--restart=no", "live-db-pre-16.8"],
-            ["docker", "compose", "-f", plan.compose_file, "up", "-d"],
-            ["docker", "compose", "-f", plan.compose_file, "down"],
+            ["docker", "compose", "-f", plan.compose_file, "up", "-d", "--no-deps", "postgres"],
+            ["docker", "stop", "-t", "120", "live-db"],
+            ["docker", "compose", "-f", plan.compose_file, "down", "-t", "120"],
             ["docker", "rename", "live-db-pre-16.8", "live-db"],
             ["docker", "update", "--restart=always", "live-db"],
             ["docker", "start", "live-db"],
@@ -1786,7 +1832,7 @@ class UpdateOneTest(UpdateCase):
         self.assertTrue(self.started("live-odoo"))
 
     def test_failing_stop_of_the_database_is_undone_without_a_rename(self):
-        self.host.fail[("docker", "stop", "live-db")] = (1, "busy")
+        self.host.fail[("docker", "stop", "-t", "120", "live-db")] = (1, "busy")
         self.assertEqual(self.update(self.plan()), 1)
         self.assertFalse(any(c[:2] == ["docker", "rename"] for c in self.host.calls))
         self.assert_old_server_back()
@@ -1805,7 +1851,7 @@ class UpdateOneTest(UpdateCase):
         self.assertEqual(self.update(plan), 2)
         self.assertFalse(self.started("live-odoo"))
         text = self.text()
-        self.assertIn("live-db: running, image postgres:16.16-bookworm", text)
+        self.assertIn("live-db: stopped, image postgres:16.16-bookworm", text)
         self.assertIn("live-db-pre-16.8: stopped, image postgres:16.8", text)
         self.assertIn("Odoo stays stopped", text)
         self.assertTrue(os.path.exists(self.state_file()))
@@ -1816,8 +1862,9 @@ class UpdateOneTest(UpdateCase):
         self.assertFalse(self.started("live-odoo"))
         text = self.text()
         self.assertIn("pgup --rollback live-db", text)
-        self.assertIn("REFRESH COLLATION VERSION", text)
-        self.assertIn("REINDEX", text)
+        self.assertIn("-d live_db -c 'REINDEX DATABASE \"live_db\"'", text)
+        self.assertIn("-d live_db -c 'ALTER DATABASE \"live_db\" REFRESH COLLATION VERSION'",
+                      text)
         self.assertTrue(self.host.containers["live-db"]["running"])
         self.assertEqual(self.host.containers["live-db"]["image"], "postgres:16.16-bookworm")
 
@@ -1833,6 +1880,164 @@ class UpdateOneTest(UpdateCase):
         self.assertEqual(self.update(self.plan()), 0)
         self.assertTrue(self.started("live-odoo"))
 
+    def test_up_names_the_service_and_no_deps(self):
+        plan = self.plan()
+        self.host.not_ready.add("postgres:16.16-bookworm")      # also covers the undo
+        self.assertEqual(self.update(plan), 1)
+        ups = [c for c in self.host.calls if c[:2] == ["docker", "compose"] and "up" in c]
+        self.assertTrue(ups)
+        for call in ups:
+            self.assertEqual(call, ["docker", "compose", "-f", plan.compose_file, "up", "-d",
+                                    "--no-deps", "postgres"])
+        # compose-managed: the project of the container is passed on every compose call
+        tgt, compose, _ = self.compose_target(project="live")
+        self.host.not_ready.add("postgres:16.16-bookworm")
+        self.assertEqual(self.update(self.plan(tgt=tgt)), 1)
+        calls = [c for c in self.host.calls
+                 if c[:2] == ["docker", "compose"] and c[2:3] != ["version"]]
+        self.assertEqual(len(calls), 2)                          # switch and undo
+        for call in calls:
+            self.assertEqual(call, ["docker", "compose", "-p", "live", "-f", compose, "up", "-d",
+                                    "--no-deps", "postgres"])
+        self.assertFalse(any("down" in c for c in self.host.calls))
+
+    def test_state_keeps_the_service_and_project(self):
+        tgt, compose, _ = self.compose_target(project="live")
+        self.assertEqual(self.update(self.plan(tgt=tgt)), 0)
+        with open(self.state_file()) as handle:
+            state = json.load(handle)
+        self.assertEqual((state["compose_service"], state["compose_project"]),
+                         ("postgres", "live"))
+
+    def odoo_stays_down_until_verified(self, not_ready):
+        tgt, compose, original = self.compose_target(project="live", with_odoo=True)
+        if not_ready:
+            self.host.not_ready.add("postgres:16.16-bookworm")
+        seen = []
+
+        def hook(argv):
+            if argv[:2] == ["docker", "exec"]:
+                seen.append((self.host.containers["live-odoo"]["running"],
+                             ["docker", "start", "live-odoo"] in self.host.calls))
+
+        self.host.hooks.append(hook)
+        self.assertEqual(self.update(self.plan(tgt=tgt)), 1 if not_ready else 0)
+        self.assertTrue(seen)
+        # Odoo never ran while the database was being checked, and it was started by us.
+        self.assertFalse([1 for running, started in seen if running and not started])
+        self.assertTrue(self.started("live-odoo"))
+
+    def test_two_service_compose_file_never_starts_odoo_before_verification(self):
+        self.odoo_stays_down_until_verified(not_ready=False)
+
+    def test_two_service_compose_file_never_starts_odoo_before_the_old_server_is_checked(self):
+        self.odoo_stays_down_until_verified(not_ready=True)
+
+    def test_collation_query_failure_after_switch_keeps_odoo_down(self):
+        simulate = self.host.simulate
+
+        def answer(argv):
+            if (argv[:2] == ["docker", "exec"] and "datcollversion" in argv[-1]
+                    and self.host.switched):
+                return 1, "connection refused"
+            return simulate(argv)
+
+        self.host.simulate = answer
+        self.assertEqual(self.update(self.plan()), 2)
+        self.assertFalse(self.started("live-odoo"))
+        text = self.text()
+        self.assertIn("collation check could not run", text)
+        self.assertIn("pgup --rollback live-db", text)
+        self.assertIn("docker start live-odoo", text)
+
+    def test_collation_query_failure_before_the_switch_counts_every_mismatch_as_new(self):
+        simulate = self.host.simulate
+
+        def answer(argv):
+            if (argv[:2] == ["docker", "exec"] and "datcollversion" in argv[-1]
+                    and not self.host.switched):
+                return 1, "connection refused"
+            return simulate(argv)
+
+        self.host.simulate = answer
+        self.host.collation_switched = "live_db\n"
+        self.assertEqual(self.update(self.plan()), 2)
+        self.assertFalse(self.started("live-odoo"))
+
+    def test_interrupt_during_backup_restarts_odoo(self):
+        def interrupted(plan, opts, run, stream, out):
+            raise KeyboardInterrupt
+
+        self.patch(pg, "backup", interrupted)
+        self.assertEqual(self.update(self.plan()), 1)
+        self.assertTrue(self.started("live-odoo"))
+        self.assertNotIn(["docker", "stop", "-t", "120", "live-db"], self.host.calls)
+        self.assertFalse(os.path.exists(self.state_file()))
+        text = self.text()
+        self.assertIn("interrupted", text.lower())
+        self.assertIn("nothing was changed", text)
+
+    def test_interrupt_after_the_switch_goes_back_to_the_old_server(self):
+        simulate = self.host.simulate
+
+        def answer(argv):
+            if (argv[:2] == ["docker", "exec"] and "datcollversion" in argv[-1]
+                    and self.host.switched):
+                raise KeyboardInterrupt
+            return simulate(argv)
+
+        self.host.simulate = answer
+        self.assertEqual(self.update(self.plan()), 1)
+        self.assert_old_server_back()
+        self.assertTrue(self.started("live-odoo"))
+        self.assertFalse(os.path.exists(self.state_file()))
+
+    def test_interrupt_during_recover_prints_the_way_back(self):
+        self.host.not_ready.add("postgres:16.16-bookworm")
+        simulate = self.host.simulate
+
+        def answer(argv):
+            # Ctrl-C while the restored old server is awaited
+            if (argv[:3] == ["docker", "exec", "live-db"] and "pg_isready" in argv
+                    and self.host.containers["live-db"]["image"] == "postgres:16.8"):
+                raise KeyboardInterrupt
+            return simulate(argv)
+
+        self.host.simulate = answer
+        self.assertEqual(self.update(self.plan()), 2)
+        self.assertFalse(self.started("live-odoo"))
+        text = self.text()
+        self.assertIn("once the database answers", text)
+        self.assertIn("\n  docker start live-odoo", text)
+        # the undo had completed: the state file is archived, not left for a second undo
+        self.assertFalse(os.path.exists(self.state_file()))
+        self.assertTrue(any(f.startswith("live-db.json.undone-")
+                            for f in os.listdir(os.path.dirname(self.state_file()))))
+
+    def test_stranded_message_names_the_way_back(self):
+        plan = self.plan()
+        self.host.not_ready.add("postgres:16.16-bookworm")
+        self.host.fail[("docker", "compose", "-f", plan.compose_file, "down")] = (1, "stuck")
+        self.assertEqual(self.update(plan), 2)
+        lines = self.text().splitlines()
+        self.assertIn("  pgup --rollback live-db", lines)
+        self.assertIn("  docker start live-odoo", lines)
+        self.assertLess(lines.index("  pgup --rollback live-db"),
+                        lines.index("  docker start live-odoo"))
+        self.assertTrue(any("once the database answers" in line for line in lines))
+
+    def test_stranded_message_without_a_parked_container_gives_docker_lines(self):
+        state = {"name": "live-db", "kind": "legacy", "parked_name": "live-db-pre-16.8",
+                 "parked_restart": "always", "stopped_odoo": ["live-odoo"],
+                 "compose_file": "/opt/pg/live-db/docker-compose.yml"}
+        self.host.containers["live-db"].update(running=False, restart="no")
+        lines = pg._stranded(state, self.state_file(), self.host)
+        self.assertNotIn("  pgup --rollback live-db", lines)
+        self.assertIn("  docker update --restart=always live-db", lines)
+        self.assertIn("  docker start live-db", lines)
+        self.assertIn("  docker start live-odoo", lines)
+        self.assertTrue(all("$" not in line and "<<" not in line for line in lines))
+
     def test_compose_managed_path_backs_up_and_patches_the_file(self):
         tgt, compose, original = self.compose_target()
         plan = self.plan(tgt=tgt)
@@ -1840,8 +2045,8 @@ class UpdateOneTest(UpdateCase):
         self.assertEqual(self.host.changes(), [
             ["docker", "stop", "live-odoo"],
             ["<backup>"],
-            ["docker", "stop", "live-db"],
-            ["docker", "compose", "-f", compose, "up", "-d"],
+            ["docker", "stop", "-t", "120", "live-db"],
+            ["docker", "compose", "-f", compose, "up", "-d", "--no-deps", "postgres"],
             ["docker", "start", "live-odoo"]])
         with open(compose) as handle:
             self.assertEqual(handle.read(), plan.compose_text)
@@ -2053,7 +2258,8 @@ class RollbackTest(UpdateCase):
         compose_file = os.path.join(self.deploy, "docker-compose.yml")
         self.assertEqual(self.host.changes(), [
             ["docker", "stop", "live-odoo"],
-            ["docker", "compose", "-f", compose_file, "down"],
+            ["docker", "stop", "-t", "120", "live-db"],
+            ["docker", "compose", "-f", compose_file, "down", "-t", "120"],
             ["docker", "rename", "live-db-pre-16.8", "live-db"],
             ["docker", "update", "--restart=always", "live-db"],
             ["docker", "start", "live-db"],
@@ -2063,14 +2269,51 @@ class RollbackTest(UpdateCase):
         names = os.listdir(os.path.dirname(self.state_file()))
         self.assertEqual(names, ["live-db.json.rolled-back-20261118-120000"])
 
-    def test_rollback_does_not_start_an_odoo_that_was_stopped(self):
+    def test_rollback_does_not_start_an_odoo_the_update_never_stopped(self):
         self.updated()
         self.set_age(1)
-        self.host.containers["live-odoo"]["running"] = False
+        self.patch(pg, "discover", lambda run, cfg, user=None: [self.legacy_target(
+            odoo=[odoo_info(), odoo_info(name="old-odoo", running=False)])])
+        self.assertEqual(self.rollback(), 0)
+        self.assertTrue(self.started("live-odoo"))
+        self.assertFalse(self.started("old-odoo"))
+
+    def test_rollback_after_exit_2_starts_the_odoo_containers_the_update_stopped(self):
+        self.host.collation_switched = "live_db\n"
+        self.assertEqual(self.update(self.plan()), 2)       # Odoo stays down, rollback advised
+        self.assertFalse(self.host.containers["live-odoo"]["running"])
+        self.host.calls.clear()
+        self.lines.clear()
+        self.set_age(1)
         self.patch(pg, "discover", lambda run, cfg, user=None: [self.legacy_target(
             odoo=[odoo_info(running=False)])])
         self.assertEqual(self.rollback(), 0)
-        self.assertFalse(self.started("live-odoo"))
+        self.assertTrue(self.started("live-odoo"))
+        self.assert_old_server_checked_before_odoo()
+        self.assertIn("Starting live-odoo", self.text())
+
+    def test_rollback_says_when_the_memory_settings_were_not_reverted(self):
+        sizing = pg._need("ownerp_sizing")
+
+        def write(db, recommended, overrides, state_entry, run, user, **kw):
+            return sizing.PgSync(True, [], True, True, False, None, None)
+
+        self.patch(sizing, "sync_postgres", write)
+        plan = self.plan()
+        plan.sizing = pg.SizingView({"shared_buffers": "2GB"}, {}, {}, None)
+        self.assertEqual(self.update(plan, opts=self.options(sizing="apply")), 0)
+        with open(self.state_file()) as handle:
+            self.assertTrue(json.load(handle)["sizing_applied"])
+        self.lines.clear()
+        self.set_age(1)
+        self.assertEqual(self.rollback(), 0)
+        self.assertIn("postgresql.conf were not reverted", self.text())
+
+    def test_rollback_without_sizing_has_no_such_line(self):
+        self.updated()
+        self.set_age(1)
+        self.assertEqual(self.rollback(), 0)
+        self.assertNotIn("postgresql.conf", self.text())
 
     def test_rollback_without_state_says_so(self):
         self.assertEqual(self.rollback(), 2)
