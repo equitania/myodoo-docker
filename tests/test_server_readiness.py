@@ -1401,3 +1401,7 @@ class OdooSizingTest(unittest.TestCase):
 
     def test_delivered_scripts_lists_the_module(self):
         self.assertIn("ownerp_sizing.py", sr.DELIVERED_SCRIPTS)
+
+    def test_delivered_scripts_lists_the_pg_update_tool(self):
+        # An outdated pgup on a server must show up in the stale-tooling check.
+        self.assertIn("ownerp_pg_update.py", sr.DELIVERED_SCRIPTS)

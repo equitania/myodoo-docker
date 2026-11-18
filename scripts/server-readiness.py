@@ -4,8 +4,8 @@
 # Title:            server-readiness.py
 # Description:      Report whether this server matches the state myodoo-docker
 #                   expects, and name the exact command that closes each gap.
-# Version:          1.18.0
-# Date:             09.11.2026
+# Version:          1.18.1
+# Date:             18.11.2026
 # Author:           Equitania Software GmbH
 # ==============================================================================
 # Why this exists:
@@ -80,8 +80,8 @@ from dataclasses import dataclass
 from enum import Enum
 from typing import Callable, List, Optional, Tuple
 
-SCRIPT_VERSION = "1.18.0"
-SCRIPT_DATE = "09.11.2026"
+SCRIPT_VERSION = "1.18.1"
+SCRIPT_DATE = "18.11.2026"
 
 # Where nginx keeps its customer vhosts (mirrors nginx-cert-guard.py).
 NGINX_CONF_D = "etc/nginx/conf.d"
@@ -117,6 +117,7 @@ DELIVERED_SCRIPTS = (
     "server_hardening.py",
     "ownerp_pull_update.py",
     "ownerp_sizing.py",
+    "ownerp_pg_update.py",
 )
 
 # cron.d applies run-parts naming (cron(8)): a file whose name contains

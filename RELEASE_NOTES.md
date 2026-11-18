@@ -2,7 +2,7 @@
 
 ## New: `pgup`, the PostgreSQL Patch Update (18.11.2026)
 
-*scripts/ownerp_pg_update.py 1.0.0 · scripts/container2backup.py 4.14.0 · getScripts.py 9.39.0 · fish/conf.d/33-aliases-backup.fish · usage/AGENT.md · docs*
+*scripts/ownerp_pg_update.py 1.0.0 · scripts/container2backup.py 4.14.0 · getScripts.py 9.39.0 · scripts/server-readiness.py 1.18.1 · fish/conf.d/33-aliases-backup.fish · usage/AGENT.md · docs*
 
 `pgup` moves a PostgreSQL container to the newest patch release of its major
 version. Bare `pgup` on a terminal shows an overview with recommendations and
@@ -18,7 +18,8 @@ after the new server is verified. A failed update is rolled back
 (exit 1); `pgup --rollback NAME` goes back later (after 7 days it asks, or
 needs `--force`). If any named container has a problem nothing is started
 (exit 2). The `pgup` alias and a row in the login overview come with it;
-`getScripts.py` 9.39.0 delivers the script, also in the restricted Docker tier.
+`getScripts.py` 9.39.0 delivers the script, also in the restricted Docker tier;
+`chk` (`server-readiness.py` 1.18.1) reports an outdated copy on a server.
 
 `container2backup.py` 4.14.0 gains `--only-db NAME` (repeatable): only the named
 databases are backed up, no services; an unknown name is refused before

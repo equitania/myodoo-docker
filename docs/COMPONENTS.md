@@ -1084,7 +1084,8 @@ in this repository, stay in `CLAUDE.md`.
   risk an expiry would guard against — a mute nobody remembers — is already
   covered by the visible `[MUTED]` line and the count in every summary
 
-#### 16. server-readiness.py (v1.18.0)
+#### 16. server-readiness.py (v1.18.1)
+- **v1.18.1 (18.11.2026):** the stale-tooling check `script_versions` also compares `ownerp_pg_update.py` (`pgup`).
 - **`odoo_sizing`** (v1.18.0): only on hosts with a `sizing:` block (otherwise SKIP). FAIL when the current configuration plus PostgreSQL exceeds RAM; WARN when over budget, above budget or with plan warnings; OK with a note listing deviations. Fix line: `dosize`
 - **v1.17.0 (09.11.2026):** new check `backup_capacity` ("Backup growth").
   Projects each archive series at full retention (average of the recent
