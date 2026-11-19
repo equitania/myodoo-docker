@@ -290,6 +290,32 @@ Host-Benutzer 8069 nicht anlegt, weil `odoo` schon existiert. Das ist gewollt.
 groupmod -g 1001 odoo; usermod -u 1001 -g 1001 odoo
 ```
 
+<a id="de-nginx-aktuell"></a>
+### nginx aus nginx.org aktuell halten
+
+Unsere Server beziehen nginx aus dem Repository von nginx.org. Die
+Standard-Automatik der Distribution fasst dieses Repository nicht an, und ein
+Release-Upgrade (z. B. Ubuntu 22.04 auf 24.04) schaltet es ab. Darum prüft
+`ups` bei jedem Lauf als root:
+
+- Ist nginx die Distributionsversion (Version ohne `~`), wechselt `ups` nichts
+  und meldet in der Zusammenfassung, dass sie die HTTP/2-Lücken
+  (CVE-2026-123007, CVE-2026-123633) noch nicht behoben hat. Bis dahin
+  `http2 off;` in der `nginx.conf` setzen, `nginx -t`, neu laden.
+- Fehlt der nginx.org-Eintrag für das aktuelle Release, schreibt `ups`
+  `/etc/apt/sources.list.d/nginx.list` neu (Sicherung in
+  `/var/backups/myodoo-docker`; ein falscher Eintrag in einer anderen Datei wird
+  auskommentiert). Dateien wie `nginx.list.distUpgrade` liest apt nicht und
+  `ups` lässt sie liegen.
+- Gibt es eine neuere nginx-Version, aktualisiert `ups` nginx samt installierter
+  `nginx-module-*` in einem Schritt, prüft `nginx -t` und den Dienst und
+  installiert bei einem Fehler die vorherige Version zurück.
+
+Die nächtlichen Sicherheitsupdates (`server_hardening.py`, Bereich
+`auto_updates`) erlauben nginx.org ebenfalls und behalten die eigene
+`nginx.conf`. `chk` zeigt den Zustand als Prüfung `nginx_repo`; die Behebung ist
+immer `ups`.
+
 ---
 
 <a id="english"></a>
@@ -562,3 +588,26 @@ because `odoo` already exists. That is intended.
 # Move the host user from 8069 to e.g. 1001 (as root)
 groupmod -g 1001 odoo; usermod -u 1001 -g 1001 odoo
 ```
+
+<a id="en-nginx-current"></a>
+### Keeping nginx from nginx.org current
+
+Our servers install nginx from the nginx.org repository. The distribution's
+default automation ignores that repository, and a release upgrade (e.g. Ubuntu
+22.04 to 24.04) switches it off. So on every run as root `ups` checks:
+
+- If nginx is the distribution package (version without `~`), `ups` does not
+  switch it and reports in the summary that it does not have the HTTP/2 fixes
+  (CVE-2026-123007, CVE-2026-123633) yet. Until it does, set `http2 off;` in
+  `nginx.conf`, run `nginx -t` and reload.
+- If the nginx.org entry for the current release is missing, `ups` rewrites
+  `/etc/apt/sources.list.d/nginx.list` (backup in `/var/backups/myodoo-docker`;
+  a wrong entry in another file is commented out). Files such as
+  `nginx.list.distUpgrade` are not read by apt, and `ups` leaves them alone.
+- If a newer nginx version exists, `ups` upgrades nginx together with the
+  installed `nginx-module-*` packages in one step, checks `nginx -t` and the
+  service, and reinstalls the previous version if anything fails.
+
+The nightly security updates (`server_hardening.py`, area `auto_updates`) allow
+nginx.org as well and keep the local `nginx.conf`. `chk` shows the state as the
+`nginx_repo` check; the fix is always `ups`.

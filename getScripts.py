@@ -34,10 +34,11 @@ except ImportError:
     requests = None  # type: ignore[assignment]
 import sys
 import logging
+import glob
 import shutil
 import shlex
 import ipaddress
-from typing import Tuple, Optional, Dict, List, Any, Set
+from typing import Tuple, Optional, Dict, List, Any, Set, NamedTuple
 from functools import wraps, lru_cache
 import time
 import platform
@@ -147,8 +148,8 @@ if os.environ.get('GETSCRIPTS_DEBUG', '').lower() in ('1', 'true', 'yes'):
     logger.debug("Debug logging enabled")
 
 # Script version and date
-SCRIPT_VERSION = "9.39.0"
-SCRIPT_DATE = "18.11.2026"
+SCRIPT_VERSION = "9.40.0"
+SCRIPT_DATE = "19.11.2026"
 
 # Branch of myodoo-docker this server tracks - the single source of truth for
 # main() (update_repository() call) and self_update_and_reexec() (which must
@@ -4510,6 +4511,489 @@ def ensure_resolved_dnssec_off(path: str = RESOLVED_DROPIN) -> None:
     record_install(label, "updated", f"DNSSEC={match.group(1)} -> {RESOLVED_DNSSEC}")
 
 
+# ─────────────────────────────────────────────────────────────────────────────
+# nginx from nginx.org: keep the source alive and the package current
+# ─────────────────────────────────────────────────────────────────────────────
+# Two things leave nginx.org-nginx behind. unattended-upgrades only allows the
+# distribution's own origins, so nothing ever updates it (server_hardening.py
+# adds the origin for the nightly run, this step covers `ups`). And
+# do-release-upgrade switches third-party sources off: an Ubuntu host upgraded
+# 22.04 -> 24.04 kept nginx 1.30.2-1~jammy because the only files left were
+# nginx.list.distUpgrade and nginx.list~, which apt never reads. Two HTTP/2
+# CVEs (CVSS 9.2, fixed in nginx 1.30.7) made both gaps visible.
+#
+# The parsing and the decisions are pure functions; the subprocess work sits in
+# ensure_nginx_current() so the former can be tested without root or apt.
+NGINX_ORG_MARKER = "nginx.org/packages/"
+NGINX_KEYRING = "/usr/share/keyrings/nginx-archive-keyring.gpg"
+NGINX_KEY_URL = "https://nginx.org/keys/nginx_signing.key"
+NGINX_SOURCE_FILE = "/etc/apt/sources.list.d/nginx.list"
+NGINX_BACKUP_DIR = "/var/backups/myodoo-docker"
+NGINX_APT_TIMEOUT = 1800
+_APT_DEB_LINE = re.compile(r"^\s*deb\s+(?:\[[^\]]*\]\s*)?(\S+)\s+(\S+)")
+_HTTP2_ACTIVE = re.compile(
+    r"^\s*(?:http2\s+on\s*;|listen\b[^;#]*\bhttp2\b[^;#]*;)", re.MULTILINE)
+
+
+class NginxSource(NamedTuple):
+    path: str
+    kind: str      # "list" or "deb822"
+    suite: str
+    uri: str
+
+
+def parse_os_release(text: str) -> Dict[str, str]:
+    """KEY=value lines of /etc/os-release, quotes removed."""
+    values: Dict[str, str] = {}
+    for line in text.splitlines():
+        line = line.strip()
+        if not line or line.startswith("#") or "=" not in line:
+            continue
+        key, _, value = line.partition("=")
+        values[key.strip()] = value.strip().strip('"').strip("'")
+    return values
+
+
+def nginx_sources_in_list(text: str, path: str = "") -> List[NginxSource]:
+    """Active nginx.org `deb` lines of a one-line-style file (comments and
+    deb-src do not count)."""
+    found = []
+    for line in text.splitlines():
+        if line.lstrip().startswith("#"):
+            continue
+        match = _APT_DEB_LINE.match(line)
+        if match and NGINX_ORG_MARKER in match.group(1):
+            found.append(NginxSource(path, "list", match.group(2), match.group(1)))
+    return found
+
+
+def _deb822_paragraphs(text: str) -> List[Dict[str, str]]:
+    paragraphs = []
+    for block in re.split(r"\n[ \t]*\n", text):
+        fields: Dict[str, str] = {}
+        last = None
+        for line in block.splitlines():
+            if line.lstrip().startswith("#") or not line.strip():
+                continue
+            if line[0] in " \t" and last:
+                fields[last] += " " + line.strip()
+            elif ":" in line:
+                key, _, value = line.partition(":")
+                last = key.strip().lower()
+                fields[last] = value.strip()
+        if fields:
+            paragraphs.append(fields)
+    return paragraphs
+
+
+def _deb822_nginx_active(fields: Dict[str, str]) -> bool:
+    return (NGINX_ORG_MARKER in fields.get("uris", "")
+            and "deb" in fields.get("types", "deb").split()
+            and fields.get("enabled", "yes").lower() not in ("no", "false", "0"))
+
+
+def nginx_sources_in_deb822(text: str, path: str = "") -> List[NginxSource]:
+    """Active nginx.org entries of a deb822 .sources file (Enabled: no and
+    deb-src-only stanzas are inactive)."""
+    found = []
+    for fields in _deb822_paragraphs(text):
+        if not _deb822_nginx_active(fields):
+            continue
+        uri = next((u for u in fields["uris"].split() if NGINX_ORG_MARKER in u), "")
+        for suite in fields.get("suites", "").split():
+            found.append(NginxSource(path, "deb822", suite, uri))
+    return found
+
+
+def collect_nginx_sources(apt_dir: str = "/etc/apt") -> List[NginxSource]:
+    """Every active nginx.org source apt would actually read. Only
+    sources.list, *.list and *.sources count: apt ignores .distUpgrade, .save,
+    ~ and every other suffix, so those files are neither read nor touched."""
+    files = [(os.path.join(apt_dir, "sources.list"), "list")]
+    parts = os.path.join(apt_dir, "sources.list.d")
+    try:
+        names = sorted(os.listdir(parts))
+    except OSError:
+        names = []
+    for name in names:
+        if name.endswith(".list"):
+            files.append((os.path.join(parts, name), "list"))
+        elif name.endswith(".sources"):
+            files.append((os.path.join(parts, name), "deb822"))
+    found: List[NginxSource] = []
+    for path, kind in files:
+        try:
+            with open(path, "r", encoding="utf-8", errors="replace") as handle:
+                text = handle.read()
+        except OSError:
+            continue
+        parser = nginx_sources_in_list if kind == "list" else nginx_sources_in_deb822
+        found.extend(parser(text, path))
+    return found
+
+
+def nginx_repo_line(os_id: str, codename: str) -> str:
+    return (f"deb [signed-by={NGINX_KEYRING}] "
+            f"https://nginx.org/packages/{os_id} {codename} nginx\n")
+
+
+def comment_out_nginx_lines(text: str) -> Tuple[str, bool]:
+    """Comment out the active nginx.org `deb` lines of a one-line-style file."""
+    changed = False
+    out = []
+    for line in text.splitlines(keepends=True):
+        if (not line.lstrip().startswith("#")
+                and (m := _APT_DEB_LINE.match(line)) and NGINX_ORG_MARKER in m.group(1)):
+            line = "# disabled by ups (wrong release): " + line
+            changed = True
+        out.append(line)
+    return "".join(out), changed
+
+
+def disable_nginx_deb822(text: str) -> Tuple[str, bool]:
+    """Set `Enabled: no` on the active nginx.org stanzas of a .sources file."""
+    pieces = re.split(r"(\n[ \t]*\n)", text)
+    changed = False
+    for i in range(0, len(pieces), 2):
+        fields = _deb822_paragraphs(pieces[i])
+        if fields and _deb822_nginx_active(fields[0]):
+            body = re.sub(r"(?im)^enabled:.*\n?", "", pieces[i]).rstrip("\n")
+            pieces[i] = body + "\nEnabled: no\n"
+            changed = True
+    return "".join(pieces), changed
+
+
+def decide_nginx_repo_action(installed: str, sources: List[NginxSource],
+                             codename: str) -> str:
+    """'distro' (no '~' in the version: Debian/Ubuntu package, do not switch),
+    'current' (an active nginx.org entry names this release) or 'repair'."""
+    if "~" not in installed:
+        return "distro"
+    if any(s.suite == codename for s in sources):
+        return "current"
+    return "repair"
+
+
+def nginx_installed_version(status_line: str) -> Optional[str]:
+    """Version out of `dpkg-query -f '${db:Status-Abbrev} ${Version}'`, or None
+    unless the package is fully installed ("ii")."""
+    parts = status_line.split()
+    if len(parts) >= 2 and parts[0].startswith("ii"):
+        return parts[1]
+    return None
+
+
+def parse_policy_candidate(output: str) -> Optional[str]:
+    """Candidate version out of `apt-cache policy <pkg>`."""
+    match = re.search(r"^\s*Candidate:\s*(\S+)", output, re.MULTILINE)
+    if not match or match.group(1) == "(none)":
+        return None
+    return match.group(1)
+
+
+def version_is_newer(candidate: str, installed: str) -> bool:
+    """Debian version order, asked of dpkg itself (never hand-rolled)."""
+    return subprocess.run(["dpkg", "--compare-versions", candidate, "gt", installed],
+                          capture_output=True).returncode == 0
+
+
+def nginx_needs_upgrade(installed: str, candidate: Optional[str],
+                        newer=version_is_newer) -> bool:
+    return bool(candidate) and candidate != installed and newer(candidate, installed)
+
+
+def nginx_conf_uses_http2(texts: List[str]) -> bool:
+    """An ACTIVE `http2 on;` or `listen ... http2` in any of the given files."""
+    return any(_HTTP2_ACTIVE.search(t) for t in texts)
+
+
+def distro_nginx_advice(http2_active: bool) -> str:
+    text = ("distro nginx is not patched for the HTTP/2 CVEs "
+            "(CVE-2026-123007, CVE-2026-123633) yet")
+    if http2_active:
+        text += ("; until it is: 'http2 off;' in nginx.conf, then nginx -t and "
+                 "reload (listen ... http2 -> listen ...)")
+    return text
+
+
+def nginx_upgrade_command(packages: List[str], downgrade: bool = False) -> List[str]:
+    """One apt call for nginx and its modules. The deployed nginx.conf is a
+    modified conffile: without the two dpkg options apt would prompt and `ups`
+    would hang. `packages` are plain names (upgrade) or name=version (rollback)."""
+    return (["apt-get", "install", "-y"]
+            + (["--allow-downgrades"] if downgrade else ["--only-upgrade"])
+            + ["-o", "Dpkg::Options::=--force-confdef",
+               "-o", "Dpkg::Options::=--force-confold"] + packages)
+
+
+def _nginx_run(argv: List[str], timeout: float = 120,
+               input_bytes: Optional[bytes] = None) -> Tuple[int, str]:
+    """Run a command, never raise. Non-interactive for apt and dpkg, and in
+    the C locale: their output is parsed here, and on a German server
+    `apt-cache policy` says "Installationskandidat:" instead of "Candidate:"
+    (found on the first live run - every check passed and nothing upgraded)."""
+    env = dict(os.environ, DEBIAN_FRONTEND="noninteractive", LC_ALL="C", LANG="C")
+    try:
+        result = subprocess.run(argv, capture_output=True, timeout=timeout,
+                                env=env, input=input_bytes)
+    except FileNotFoundError:
+        return 127, f"{argv[0]}: command not found"
+    except subprocess.TimeoutExpired:
+        return 124, f"{argv[0]}: timed out after {timeout}s"
+    except OSError as exc:
+        return 1, str(exc)
+    out = (result.stdout or b"") + (result.stderr or b"")
+    return result.returncode, out.decode(errors="replace").strip()
+
+
+def _nginx_installed_modules() -> Dict[str, str]:
+    """Installed nginx-module-* packages and their versions; they depend on the
+    exact nginx version (njs, for one) and must move with it."""
+    code, out = _nginx_run(["dpkg-query", "-W", "-f",
+                            "${Package} ${Version} ${db:Status-Abbrev}\\n",
+                            "nginx-module-*"], timeout=30)
+    modules = {}
+    for line in out.splitlines():
+        parts = line.split()
+        if len(parts) >= 3 and parts[2].startswith("ii"):
+            modules[parts[0]] = parts[1]
+    return modules
+
+
+def _nginx_backup(path: str) -> None:
+    os.makedirs(NGINX_BACKUP_DIR, mode=0o700, exist_ok=True)
+    stamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+    shutil.copy2(path, os.path.join(NGINX_BACKUP_DIR, f"{os.path.basename(path)}.bak_{stamp}"))
+
+
+def _nginx_write_atomic(path: str, content: str) -> None:
+    tmp = f"{path}.tmp"
+    with open(tmp, "w", encoding="utf-8") as handle:
+        handle.write(content)
+    os.chmod(tmp, 0o644)
+    os.replace(tmp, path)
+
+
+def _nginx_ensure_keyring() -> Optional[str]:
+    """Make sure the signing keyring exists; returns an error text or None."""
+    if os.path.isfile(NGINX_KEYRING):
+        return None
+    if requests is None:
+        return "python3-requests missing"
+    try:
+        response = requests.get(NGINX_KEY_URL, timeout=20)
+        response.raise_for_status()
+    except Exception as exc:
+        return f"cannot fetch {NGINX_KEY_URL}: {exc}"
+    code, _ = _nginx_run(["gpg", "--version"], timeout=20)
+    if code != 0:
+        return "gpg missing (apt-get install gnupg)"
+    handle_fd, tmp = tempfile.mkstemp(prefix="nginx-key-")
+    os.close(handle_fd)
+    try:
+        code, out = _nginx_run(["gpg", "--dearmor", "--yes", "-o", tmp], timeout=30,
+                               input_bytes=response.content)
+        if code != 0:
+            return f"gpg --dearmor failed: {out}"
+        os.chmod(tmp, 0o644)
+        shutil.move(tmp, NGINX_KEYRING)
+    except OSError as exc:
+        return f"cannot write {NGINX_KEYRING}: {exc}"
+    finally:
+        if os.path.exists(tmp):
+            os.remove(tmp)
+    return None
+
+
+def _nginx_release_exists(os_id: str, codename: str) -> Optional[bool]:
+    """True/False for the Release file on nginx.org; None when unreachable.
+    requests honours the proxy ensure_proxy_environment() restored."""
+    url = f"https://nginx.org/packages/{os_id}/dists/{codename}/Release"
+    try:
+        response = requests.get(url, timeout=(5, 10))
+    except Exception as exc:
+        logger.debug(f"nginx.org Release check failed: {exc}")
+        return None
+    return response.status_code == 200
+
+
+def _nginx_refresh_command(source: NginxSource) -> Tuple[List[str], Optional[str]]:
+    """apt-get update for the nginx.org source only (nothing else is touched,
+    nothing is cleaned up). A deb822 file is offered through a temporary
+    directory holding a symlink, because sourcelist only reads one-line files."""
+    base = ["apt-get", "update", "-o", "APT::Get::List-Cleanup=0"]
+    if source.kind == "list":
+        return base + ["-o", f"Dir::Etc::sourcelist={source.path}",
+                       "-o", "Dir::Etc::sourceparts=-"], None
+    tmpdir = tempfile.mkdtemp(prefix="nginx-sources-")
+    os.symlink(source.path, os.path.join(tmpdir, os.path.basename(source.path)))
+    return base + ["-o", "Dir::Etc::sourcelist=-",
+                   "-o", f"Dir::Etc::sourceparts={tmpdir}"], tmpdir
+
+
+def _nginx_healthy() -> Optional[str]:
+    """None when nginx -t passes and the service is active, else what failed."""
+    code, out = _nginx_run(["nginx", "-t"], timeout=60)
+    if code != 0:
+        return f"nginx -t failed: {out.splitlines()[-1] if out else code}"
+    if shutil.which("systemctl"):
+        code, out = _nginx_run(["systemctl", "is-active", "nginx"], timeout=30)
+        if code != 0:
+            return f"nginx service is {out or 'not active'}"
+    return None
+
+
+def _nginx_repair_source(os_id: str, codename: str, sources: List[NginxSource]) -> bool:
+    """Point apt at the right nginx.org release. True when an entry exists
+    afterwards; records its own outcome otherwise."""
+    label = "nginx repo"
+    old = ", ".join(sorted({s.suite for s in sources})) or "none active"
+    exists = _nginx_release_exists(os_id, codename)
+    if exists is None:
+        record_install(label, "skipped", "nginx.org not reachable, source not checked")
+        return False
+    if not exists:
+        record_install(label, "skipped",
+                       f"nginx.org has no repository for {os_id}/{codename}; "
+                       "nginx stays on the installed version")
+        return False
+    error = _nginx_ensure_keyring()
+    if error:
+        record_install(label, "failed", error)
+        return False
+    try:
+        for path in sorted({s.path for s in sources if s.path != NGINX_SOURCE_FILE}):
+            with open(path, "r", encoding="utf-8") as handle:
+                text = handle.read()
+            kind = next(s.kind for s in sources if s.path == path)
+            new_text, changed = (comment_out_nginx_lines(text) if kind == "list"
+                                 else disable_nginx_deb822(text))
+            if changed:
+                _nginx_backup(path)
+                _nginx_write_atomic(path, new_text)
+        if os.path.exists(NGINX_SOURCE_FILE):
+            _nginx_backup(NGINX_SOURCE_FILE)
+        os.makedirs(os.path.dirname(NGINX_SOURCE_FILE), exist_ok=True)
+        _nginx_write_atomic(NGINX_SOURCE_FILE, nginx_repo_line(os_id, codename))
+    except OSError as exc:
+        record_install(label, "failed", f"cannot write the source: {exc}")
+        return False
+    record_install(label, "updated", f"{old} -> {codename}")
+    return True
+
+
+def _nginx_upgrade(installed: str, candidate: str) -> None:
+    """Upgrade nginx and its modules in one apt call, check, undo on failure."""
+    modules = _nginx_installed_modules()
+    previous = dict(modules, nginx=installed)
+    code, out = _nginx_run(nginx_upgrade_command(["nginx"] + sorted(modules)),
+                           timeout=NGINX_APT_TIMEOUT)
+    problem = (f"apt-get install failed: {out.splitlines()[-1] if out else code}"
+               if code != 0 else _nginx_healthy())
+    if problem is None:
+        record_install("nginx", "updated", f"{installed} -> {candidate}")
+        return
+    logger.warning(f"nginx upgrade to {candidate} failed ({problem}); rolling back")
+    pinned = [f"{name}={version}" for name, version in sorted(previous.items())]
+    code, out = _nginx_run(nginx_upgrade_command(pinned, downgrade=True),
+                           timeout=NGINX_APT_TIMEOUT)
+    if code != 0:
+        record_install("nginx", "failed",
+                       f"upgrade to {candidate} failed ({problem}) AND the rollback to "
+                       f"{installed} failed: {out.splitlines()[-1] if out else code}")
+        return
+    if shutil.which("systemctl"):
+        _nginx_run(["systemctl", "restart", "nginx"], timeout=60)
+    after = _nginx_healthy()
+    record_install("nginx", "failed",
+                   f"upgrade to {candidate} failed ({problem}); rolled back to {installed}"
+                   + (f", but {after}" if after else ""))
+
+
+def ensure_nginx_current() -> None:
+    """Keep nginx.org-nginx installable and current. Never fatal.
+
+    Silent when there is nothing to do. A distro nginx is never switched to
+    nginx.org automatically - it is only reported. See the block comment above.
+    """
+    try:
+        _ensure_nginx_current()
+    except Exception as exc:
+        logger.debug(f"ensure_nginx_current: {exc}", exc_info=True)
+        record_install("nginx", "failed", f"unexpected error: {exc}")
+
+
+def _ensure_nginx_current() -> None:
+    if not shutil.which("dpkg-query"):
+        return
+    try:
+        with open("/etc/os-release", "r", encoding="utf-8") as handle:
+            release = parse_os_release(handle.read())
+    except OSError:
+        return
+    os_id, codename = release.get("ID", ""), release.get("VERSION_CODENAME", "")
+    if os_id not in ("debian", "ubuntu") or not codename:
+        return
+    # Only a package in state "ii" counts. A removed nginx keeps a version in
+    # dpkg's database ("rc": config files left), and treating that as installed
+    # would let the rollback below install nginx on a host that has none.
+    code, status = _nginx_run(["dpkg-query", "-W", "-f", "${db:Status-Abbrev} ${Version}",
+                               "nginx"], timeout=30)
+    installed = nginx_installed_version(status) if code == 0 else None
+    if not installed:
+        return
+    if os.geteuid() != 0:
+        record_install("nginx", "skipped", "needs root")
+        return
+
+    sources = collect_nginx_sources()
+    action = decide_nginx_repo_action(installed, sources, codename)
+    if action == "distro":
+        texts = []
+        for pattern in ("/etc/nginx/nginx.conf", "/etc/nginx/conf.d/*.conf",
+                        "/etc/nginx/sites-enabled/*"):
+            for path in glob.glob(pattern):
+                try:
+                    with open(path, "r", encoding="utf-8", errors="replace") as handle:
+                        texts.append(handle.read())
+                except OSError:
+                    pass
+        record_install("nginx", "skipped",
+                       f"{installed}: " + distro_nginx_advice(nginx_conf_uses_http2(texts)))
+        return
+    if action == "repair":
+        if not _nginx_repair_source(os_id, codename, sources):
+            return
+        sources = collect_nginx_sources()
+
+    active = next((s for s in sources if s.suite == codename), None)
+    if active is None:   # repair wrote it; read it back
+        active = next((s for s in collect_nginx_sources() if s.suite == codename), None)
+    if active is None:
+        record_install("nginx repo", "failed", f"no active nginx.org entry for {codename}")
+        return
+    command, tmpdir = _nginx_refresh_command(active)
+    try:
+        code, out = _nginx_run(command, timeout=300)
+    finally:
+        if tmpdir:
+            shutil.rmtree(tmpdir, ignore_errors=True)
+    if code != 0:
+        record_install("nginx", "failed",
+                       f"apt-get update for nginx.org failed, version not checked: "
+                       f"{out.splitlines()[-1] if out else code}")
+        return
+    code, policy = _nginx_run(["apt-cache", "policy", "nginx"], timeout=30)
+    candidate = parse_policy_candidate(policy)
+    if candidate is None:
+        record_install("nginx", "failed", "no installable candidate for nginx after the refresh")
+        return
+    if nginx_needs_upgrade(installed, candidate):
+        _nginx_upgrade(installed, candidate)
+    else:
+        logger.info(f"nginx {installed} is current")
+
+
 def remove_retired_scripts(_myhome: str) -> None:
     """Delete the scripts this project has withdrawn. Never fatal."""
     for name, reason in RETIRED_SCRIPTS.items():
@@ -6702,6 +7186,10 @@ def main() -> None:
 
         # Install all packages
         run_install_packages(package_info)
+
+        # nginx from nginx.org: repair a source a release upgrade switched off
+        # and install a newer package (see ensure_nginx_current()).
+        ensure_nginx_current()
 
         # A pending SSH port transition ends here once a login over the new
         # port exists - before the audit below, which then sees the final state.

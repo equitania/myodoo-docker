@@ -4,8 +4,8 @@
 # Title:            server-readiness.py
 # Description:      Report whether this server matches the state myodoo-docker
 #                   expects, and name the exact command that closes each gap.
-# Version:          1.18.1
-# Date:             18.11.2026
+# Version:          1.19.0
+# Date:             19.11.2026
 # Author:           Equitania Software GmbH
 # ==============================================================================
 # Why this exists:
@@ -80,8 +80,8 @@ from dataclasses import dataclass
 from enum import Enum
 from typing import Callable, List, Optional, Tuple
 
-SCRIPT_VERSION = "1.18.1"
-SCRIPT_DATE = "18.11.2026"
+SCRIPT_VERSION = "1.19.0"
+SCRIPT_DATE = "19.11.2026"
 
 # Where nginx keeps its customer vhosts (mirrors nginx-cert-guard.py).
 NGINX_CONF_D = "etc/nginx/conf.d"
@@ -276,15 +276,18 @@ def _read(path: str) -> Optional[str]:
         return None
 
 
-def _run(command: List[str], timeout: int = 15) -> Tuple[int, str]:
+def _run(command: List[str], timeout: int = 15, c_locale: bool = False) -> Tuple[int, str]:
     """Run a command and return (returncode, combined output).
 
     Never raises: a missing binary or a timeout yields a non-zero code so the
-    calling check can decide between SKIP and a real finding.
+    calling check can decide between SKIP and a real finding. `c_locale` for
+    output that is parsed by its words (apt-cache policy is translated on a
+    German server).
     """
+    env = dict(os.environ, LC_ALL="C", LANG="C") if c_locale else None
     try:
         result = subprocess.run(
-            command, capture_output=True, text=True, timeout=timeout
+            command, capture_output=True, text=True, timeout=timeout, env=env
         )
         return result.returncode, f"{result.stdout}{result.stderr}".strip()
     except FileNotFoundError:
@@ -2160,6 +2163,96 @@ def check_odoo_sizing(ctx: HealthContext) -> Finding:
                    "; ".join(deviations) or None)
 
 
+def _nginx_org_suites(apt_dir: str) -> List[str]:
+    """Release names of the ACTIVE nginx.org entries apt would read: non-comment
+    `deb` lines of sources.list and *.list, and deb822 *.sources stanzas that are
+    not `Enabled: no`. Files apt ignores (.distUpgrade, .save, ~) do not count.
+    (getScripts.collect_nginx_sources() is the writer's copy of this reader;
+    the two scripts are delivered separately and cannot import each other.)"""
+    marker = "nginx.org/packages/"
+    paths = [os.path.join(apt_dir, "sources.list")]
+    parts = os.path.join(apt_dir, "sources.list.d")
+    try:
+        paths += [os.path.join(parts, n) for n in sorted(os.listdir(parts))
+                  if n.endswith((".list", ".sources"))]
+    except OSError:
+        pass
+    suites: List[str] = []
+    for path in paths:
+        text = _read(path)
+        if text is None:
+            continue
+        if path.endswith(".sources"):
+            for block in re.split(r"\n[ \t]*\n", text):
+                fields = {}
+                for line in block.splitlines():
+                    if ":" in line and not line.lstrip().startswith("#") and line[0] not in " \t":
+                        key, _, value = line.partition(":")
+                        fields[key.strip().lower()] = value.strip()
+                if (marker in fields.get("uris", "")
+                        and "deb" in fields.get("types", "deb").split()
+                        and fields.get("enabled", "yes").lower() not in ("no", "false", "0")):
+                    suites += fields.get("suites", "").split()
+        else:
+            for line in text.splitlines():
+                match = re.match(r"^\s*deb\s+(?:\[[^\]]*\]\s*)?(\S+)\s+(\S+)", line)
+                if match and not line.lstrip().startswith("#") and marker in match.group(1):
+                    suites.append(match.group(2))
+    return suites
+
+
+def check_nginx_repo(ctx: HealthContext) -> Finding:
+    """nginx from nginx.org is only updated if apt still has the source: a
+    release upgrade switches third-party sources off (nginx.list.distUpgrade is
+    all that is left), and unattended-upgrades allows Debian origins only. Read
+    only - it judges the local apt cache and never runs apt-get update."""
+    title = "nginx repository"
+    if not shutil.which("dpkg-query"):
+        return _skip("nginx_repo", title, "not a dpkg system")
+    # Only state "ii" counts: a removed nginx ("rc") still has a version in dpkg.
+    code, status = _run(["dpkg-query", "-W", "-f", "${db:Status-Abbrev} ${Version}", "nginx"])
+    parts = status.split() if code == 0 else []
+    if len(parts) < 2 or not parts[0].startswith("ii"):
+        return _skip("nginx_repo", title, "nginx not installed")
+    installed = parts[1]
+
+    if "~" not in installed:
+        return Finding(
+            "nginx_repo", Severity.WARN, title,
+            f"nginx {installed} is the distribution package, not from nginx.org - "
+            f"it does not have the fix for the HTTP/2 CVEs (CVE-2026-123007, "
+            f"CVE-2026-123633) yet; with 'http2 on;' active, switch it off until it does",
+            "sed -i 's/^\\(\\s*\\)http2 on;/\\1http2 off;/' /etc/nginx/nginx.conf "
+            "&& nginx -t && systemctl reload nginx"
+            "  # or keep it: ownerp_mute.py nginx_repo --reason \"...\"")
+
+    text = _read(ctx.p("etc/os-release")) or ""
+    match = re.search(r'^VERSION_CODENAME="?([^"\n]+)"?', text, re.MULTILINE)
+    codename = match.group(1).strip() if match else ""
+    if not codename:
+        return _skip("nginx_repo", title, "VERSION_CODENAME unknown")
+
+    suites = _nginx_org_suites(ctx.p("etc/apt"))
+    if codename not in suites:
+        found = ", ".join(sorted(set(suites))) or "no active nginx.org entry"
+        return Finding(
+            "nginx_repo", Severity.FAIL, title,
+            f"nginx {installed} comes from nginx.org, but apt has no source for "
+            f"{codename} ({found}) - it will never be updated",
+            "ups")
+
+    code, policy = _run(["apt-cache", "policy", "nginx"], c_locale=True)
+    cand = re.search(r"^\s*Candidate:\s*(\S+)", policy, re.MULTILINE) if code == 0 else None
+    candidate = cand.group(1) if cand else ""
+    if candidate and candidate != "(none)" and candidate != installed:
+        newer, _ = _run(["dpkg", "--compare-versions", candidate, "gt", installed])
+        if newer == 0:
+            return Finding(
+                "nginx_repo", Severity.WARN, title,
+                f"nginx {installed} installed, {candidate} available", "ups")
+    return _ok("nginx_repo", title, f"nginx {installed}, source for {codename}")
+
+
 CHECKS: Tuple[Callable[[HealthContext], Finding], ...] = (
     check_maintenance_cron_present,
     check_maintenance_cron_current,
@@ -2174,6 +2267,7 @@ CHECKS: Tuple[Callable[[HealthContext], Finding], ...] = (
     check_av_on_access_scanner,
     check_nginx_unit_dropin,
     check_nginx_listen_targets,
+    check_nginx_repo,
     check_certbot_timer_window,
     check_resolved_dnssec,
     check_dns_resolution,

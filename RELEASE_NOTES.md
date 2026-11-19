@@ -1,5 +1,40 @@
 # Release Notes
 
+## New: nginx from nginx.org stays installable and current (19.11.2026)
+
+*getScripts.py 9.40.0 · scripts/server_hardening.py 1.13.0 · scripts/server-readiness.py 1.19.0 · docs/usage/04-updates.md*
+
+Two nginx CVEs (CVE-2026-123007, CVE-2026-123633; HTTP/2, fixed in nginx 1.30.7)
+showed that nothing kept nginx current on our servers: unattended-upgrades only
+allows the distribution's origins, and a release upgrade had switched the
+nginx.org source off (Ubuntu 22.04 to 24.04 left only `nginx.list.distUpgrade`
+and `nginx.list~`, which apt does not read).
+
+- `ups` (getScripts 9.40.0) repairs the nginx.org source when no active entry
+  names the current release, then upgrades nginx and every installed
+  `nginx-module-*` in one apt call, checks `nginx -t` and the service and
+  reinstalls the previous exact versions on failure. A distribution nginx
+  (version without `~`) is never switched; it is reported with the interim
+  mitigation (`http2 off;`). Silent when nothing is to do. Backups of edited
+  apt files go to `/var/backups/myodoo-docker`.
+- `server_hardening.py` 1.13.0: the unattended-upgrades drop-in now allows
+  `origin=nginx,codename=${distro_codename}` and passes
+  `--force-confdef --force-confold` (a modified `nginx.conf` otherwise makes
+  unattended-upgrades skip the package). The audit FAILs when nginx.org nginx
+  is installed and the drop-in lacks the origin; applying rewrites the file, so
+  existing servers get it on the next hardening run.
+- `server-readiness.py` 1.19.0: new check `nginx_repo` (SKIP without nginx, WARN
+  for the distribution package or a pending update, FAIL without an active
+  source for the current release; fix: `ups`).
+- All three count nginx as installed only in dpkg state `ii`. A removed nginx
+  keeps its version in dpkg (`rc`, config files left), and getScripts would
+  otherwise have tried an upgrade, failed `nginx -t` and "rolled back" by
+  installing nginx on a host that had none.
+- apt and dpkg run in the C locale (getScripts) / `apt-cache policy` does
+  (readiness): their output is parsed, and on a German server apt answers
+  "Installationskandidat:" instead of "Candidate:". Found on the first live run,
+  where every unit test had passed and nothing was upgraded.
+
 ## New: `pgup`, the PostgreSQL Patch Update (18.11.2026)
 
 *scripts/ownerp_pg_update.py 1.0.0 · scripts/container2backup.py 4.14.0 · getScripts.py 9.39.0 · scripts/server-readiness.py 1.18.1 · fish/conf.d/33-aliases-backup.fish · usage/AGENT.md · docs*

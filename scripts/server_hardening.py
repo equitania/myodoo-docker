@@ -2,7 +2,7 @@
 """
 Server-Härtungs-Skript
 =======================
-Version: 1.12.0 / Date: 27.10.2026
+Version: 1.13.0 / Date: 19.11.2026
 
 Prüft und härtet: UFW, Fail2Ban, SSH, Kernel, Kernel-Module, Docker,
 Auto-Updates, auditd, AIDE, Nginx
@@ -19,7 +19,7 @@ import subprocess
 import sys
 import os
 
-SCRIPT_VERSION = "1.12.0"
+SCRIPT_VERSION = "1.13.0"
 import glob
 import re
 import time
@@ -1223,6 +1223,52 @@ def audit_kernel_modules(config, apply=False, force=False):
 
 
 # ─── MODUL: Automatische Updates ─────────────────────────────
+UNATTENDED_OVERRIDE = Path("/etc/apt/apt.conf.d/52unattended-upgrades-hardening")
+NGINX_ORIGIN_LINE = '"origin=nginx,codename=${distro_codename}";'
+
+
+def unattended_override_content(auto_reboot, reboot_time):
+    """Content of our own unattended-upgrades drop-in (pure, testable).
+
+    Origins-Pattern: apt list options accumulate across apt.conf.d files, so
+    this EXTENDS Debian's 50unattended-upgrades instead of replacing it. On
+    Ubuntu the default file uses Allowed-Origins; unattended-upgrade reads
+    Allowed-Origins and Origins-Pattern side by side and allows a package that
+    matches either one (from the tool's documented behaviour; not verified on
+    a live Ubuntu host). Without the nginx line nothing updates nginx from
+    nginx.org at night: the stock files allow Debian/Ubuntu origins only.
+
+    Dpkg::Options: unattended-upgrade skips any package whose conffile was
+    modified locally unless dpkg is told what to do. The nginx.conf we deploy
+    IS a modified conffile, so without these two options an nginx security
+    update would be skipped silently, night after night.
+    """
+    reboot_val = "true" if auto_reboot else "false"
+    return (
+        "// Managed by server_hardening.py\n"
+        f'Unattended-Upgrade::Automatic-Reboot "{reboot_val}";\n'
+        f'Unattended-Upgrade::Automatic-Reboot-Time "{reboot_time}";\n'
+        "// nginx.org is a third-party origin the stock configuration ignores.\n"
+        "Unattended-Upgrade::Origins-Pattern {\n"
+        f"    {NGINX_ORIGIN_LINE}\n"
+        "};\n"
+        "// Keep our modified nginx.conf (and answer the conffile prompt) so the\n"
+        "// package is not skipped.\n"
+        "Dpkg::Options {\n"
+        '    "--force-confdef";\n'
+        '    "--force-confold";\n'
+        "};\n"
+    )
+
+
+def nginx_org_installed():
+    """True when the installed nginx is the nginx.org build (version has a '~')."""
+    # Only state "ii" counts: a removed nginx ("rc") still has a version in dpkg.
+    parts = (run("dpkg-query -W -f='${db:Status-Abbrev} ${Version}' nginx 2>/dev/null")
+             or "").split()
+    return len(parts) >= 2 and parts[0].startswith("ii") and "~" in parts[1]
+
+
 def audit_auto_updates(config, apply=False, force=False):
     header("MODUL: Automatische Security-Updates")
     cfg = config.get("auto_updates", {})
@@ -1251,6 +1297,19 @@ def audit_auto_updates(config, apply=False, force=False):
         fail("Periodische Upgrades NICHT aktiviert")
         Stats.fail_count += 1
 
+    if nginx_org_installed():
+        try:
+            current = UNATTENDED_OVERRIDE.read_text()
+        except OSError:
+            current = ""
+        if NGINX_ORIGIN_LINE in current and "--force-confold" in current:
+            ok("nginx.org als Quelle für unattended-upgrades freigegeben")
+            Stats.ok_count += 1
+        else:
+            fail("nginx.org NICHT in unattended-upgrades freigegeben "
+                 "(nginx bekommt keine nächtlichen Sicherheitsupdates)")
+            Stats.fail_count += 1
+
     if apply:
         sub("Konfiguration schreiben")
         if auto_file.exists():
@@ -1271,12 +1330,9 @@ def audit_auto_updates(config, apply=False, force=False):
             warn(f"Ungültige reboot_time {reboot_time!r} — verwende 03:30")
             reboot_time = "03:30"
         reboot_val = "true" if auto_reboot else "false"
-        override = Path("/etc/apt/apt.conf.d/52unattended-upgrades-hardening")
-        override.write_text(
-            "// Managed by server_hardening.py\n"
-            f'Unattended-Upgrade::Automatic-Reboot "{reboot_val}";\n'
-            f'Unattended-Upgrade::Automatic-Reboot-Time "{reboot_time}";\n'
-        )
+        # Full rewrite of our own file on every apply: an existing server gets
+        # the nginx origin and the dpkg options without a separate migration.
+        UNATTENDED_OVERRIDE.write_text(unattended_override_content(auto_reboot, reboot_time))
         ok(f"Auto-Reboot: {reboot_val} (Zeit: {reboot_time})")
         run("systemctl enable --now unattended-upgrades 2>&1")
         Stats.fix_count += 1

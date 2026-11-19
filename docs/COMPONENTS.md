@@ -11,7 +11,7 @@ in this repository, stay in `CLAUDE.md`.
 
 ### Key Components
 
-#### 1. getScripts.py (v9.39.0)
+#### 1. getScripts.py (v9.40.0)
 - **Purpose**: Main installation and update script
 - **Features**:
   - **Delivers `ownerp_pg_update.py`** (v9.39.0, 18.11.2026): in the `copy_scripts()` list and in `RESTRICTED_DOCKER_SCRIPTS`; fish alias `pgup` (`33-aliases-backup.fish`) and a row in the login overview
