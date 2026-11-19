@@ -536,12 +536,12 @@ einschalten mit `docron --enable container2backup`. Details (inkl. der
 gleichen Regelung für `odoo_build_cache.py` auf Servern ohne doup-verwaltete Instanzen):
 [docs/usage/06-maintenance.md](../docs/usage/06-maintenance.md).
 
-Der installierte Job (Version 4.6.x) sieht so aus:
+Der installierte Job (seit 4.15.0: nachts voll, mittags nur die Datenbanken) sieht so aus:
 
 ```cron
 # /etc/cron.d/myodoo-maintenance — von setup-maintenance-cron.sh verwaltet
 0 2  * * * root /root/container2backup.py </dev/null >> /var/log/container2backup.log 2>&1
-0 14 * * * root /root/container2backup.py </dev/null >> /var/log/container2backup.log 2>&1
+0 14 * * * root /root/container2backup.py --sql-only </dev/null >> /var/log/container2backup.log 2>&1
 ```
 
 Wichtig zur Umleitung:
@@ -1061,12 +1061,12 @@ with `docron --enable container2backup`. Details (including the same rule for
 `odoo_build_cache.py` on hosts with no doup-managed instances):
 [docs/usage/06-maintenance.md](../docs/usage/06-maintenance.md).
 
-The installed job (version 4.6.x) looks like this:
+The installed job (since 4.15.0: full at night, databases only at noon) looks like this:
 
 ```cron
 # /etc/cron.d/myodoo-maintenance — managed by setup-maintenance-cron.sh
 0 2  * * * root /root/container2backup.py </dev/null >> /var/log/container2backup.log 2>&1
-0 14 * * * root /root/container2backup.py </dev/null >> /var/log/container2backup.log 2>&1
+0 14 * * * root /root/container2backup.py --sql-only </dev/null >> /var/log/container2backup.log 2>&1
 ```
 
 Notes on redirection:

@@ -252,7 +252,7 @@ Never mark modules `to remove` via SQL and run `-u` — doup's `-u all` resets t
 ```bash
 ~/myodoo-docker/scripts/setup-maintenance-cron.sh
 ```
-Installs: backups 02:00+14:00 · ssl-renew 00:00 · cert-guard 23:50 · weblog purge 03:00 · nightly cleanup 04:30.
+Installs: backups 02:00 full + 14:00 `--sql-only` (ups migrates the old two-full-runs default) · ssl-renew 00:00 · cert-guard 23:50 · weblog purge 03:00 · nightly cleanup 04:30.
 
 ### Switch on the pull update for an instance
 ```fish

@@ -3,8 +3,8 @@
 # ==============================================================================
 # Title:            container2backup.py
 # Description:      Script to backup Odoo database including FileStore under Docker
-# Version:          4.14.0
-# Date:             18.11.2026
+# Version:          4.15.0
+# Date:             19.11.2026
 # Author:           Equitania Software GmbH
 # ==============================================================================
 # Feature Overview:
@@ -32,6 +32,9 @@
 #     write; a refused item counts as failed and keeps its old archives
 #   - Run lock (flock): a second concurrent run stops without touching anything
 #   - Unique temp directory per database run (mkdtemp)
+#   - Staging directories left by killed runs are removed at start, under
+#     the run lock and only when older than 1 h (4.15.0)
+#   - Retention never deletes a database's newest full archive (4.15.0)
 #   - No staging on a RAM disk: without temp_path a tmpfs /tmp (Debian 13)
 #     is replaced by /var/tmp; on a RAM disk only min_free_percent applies
 # ==============================================================================
@@ -75,8 +78,8 @@ import fnmatch
 # Single source of truth for the version banner printed at runtime. Keep these
 # in sync with the header comment above. The __main__ banner is derived from
 # these constants so it cannot silently drift out of date again.
-SCRIPT_VERSION = "4.14.0"
-SCRIPT_DATE = "18.11.2026"
+SCRIPT_VERSION = "4.15.0"
+SCRIPT_DATE = "19.11.2026"
 
 # Every name an archive written here can end in. Retention deletes only files
 # with one of these, and server-readiness.py (BACKUP_ARCHIVE_SUFFIXES) and
@@ -912,6 +915,87 @@ def warn_stale_temp_dirs(temp_base, db_name, current_dir):
     return stale
 
 
+# A staging directory this script created: <name>_<YYYYMMDD>_<HHMMSS>, since
+# 4.12.0 followed by mkdtemp's 8-character suffix. Any database name - a
+# database removed from the YAML or renamed leaves its leftovers too.
+STALE_TEMP_RE = re.compile(r'.+_\d{8}_\d{6}(?:_[A-Za-z0-9_]{8})?')
+# A directory younger than this is never removed, even under the run lock:
+# the timestamp in its name says when a run started, not that it ended.
+STALE_TEMP_MIN_AGE = 3600
+
+
+def remove_stale_temp_dirs(temp_base, lock_held, now=None):
+    """Remove staging directories that earlier runs left under temp_base.
+
+    A run that was killed or crashed mid-backup never reaches its own cleanup,
+    and the dump plus staged filestore it leaves behind takes the space every
+    later run needs: on 19.11.2026 the free-space reserve refused a customer's
+    backup until the operator emptied temp_path by hand (4.15.0).
+
+    Safe because it runs only while this process holds the run lock - no other
+    backup can be using a directory then - and it only touches directories
+    directly under temp_base whose name has the shape this script gives them
+    and that are older than STALE_TEMP_MIN_AGE. Without the lock it only
+    reports. Returns (removed, kept) lists of paths.
+    """
+    removed, kept = [], []
+    if not temp_base or not os.path.isdir(temp_base):
+        return removed, kept
+    now = time.time() if now is None else now
+    try:
+        entries = sorted(os.listdir(temp_base))
+    except OSError:
+        return removed, kept
+    for name in entries:
+        path = os.path.join(temp_base, name)
+        if (not STALE_TEMP_RE.fullmatch(name) or os.path.islink(path)
+                or not os.path.isdir(path) or not _looks_like_staging(path)):
+            continue
+        try:
+            age = now - os.stat(path).st_mtime
+        except OSError:
+            continue
+        if not lock_held or age < STALE_TEMP_MIN_AGE:
+            kept.append(path)
+            print(f"WARNING: leftover temp directory from an earlier run: {path} "
+                  f"- left in place ({'no run lock' if not lock_held else 'younger than 1 h'})")
+            continue
+        try:
+            size = _tree_size(path)
+            shutil.rmtree(path)
+        except OSError as exc:
+            kept.append(path)
+            print(f"WARNING: could not remove leftover temp directory {path}: {exc}")
+            continue
+        removed.append(path)
+        print(f"Removed leftover temp directory from an earlier run: {path} "
+              f"(freed {_human(size)})")
+    return removed, kept
+
+
+def _looks_like_staging(path):
+    """True for what a run leaves behind: empty (killed before the dump), or
+    holding the dump / the filestore it stages. temp_path may be a shared
+    directory such as /tmp, so the name alone is not enough to delete."""
+    try:
+        content = set(os.listdir(path))
+    except OSError:
+        return False
+    return not content or bool(content & {'dump.sql', 'filestore'})
+
+
+def _tree_size(path):
+    """Bytes below path, without following symlinks (best effort)."""
+    total = 0
+    for root, _dirs, files in os.walk(path):
+        for name in files:
+            try:
+                total += os.lstat(os.path.join(root, name)).st_size
+            except OSError:
+                pass
+    return total
+
+
 def _existing_parent(path):
     """Nearest existing ancestor of path (for stat/dev comparisons)."""
     probe = path
@@ -1361,9 +1445,34 @@ def backup_fast_report(db_name, fast_report_config, backup_path, timestamp):
     print(f"FastReport backup for {db_name} completed successfully")
     return True
 
-def cleanup_backups_by_pattern(cleanup_path, cutoff_timestamp, pattern):
+def newest_full_archive(cleanup_path, pattern):
+    """File name of the newest database archive that includes the filestore,
+    or None. SQL-only archives carry '_sql_only' before the suffix."""
+    newest, newest_mtime = None, None
+    try:
+        names = os.listdir(cleanup_path)
+    except OSError:
+        return None
+    for name in names:
+        if not name.startswith(pattern) or '_sql_only.' in name:
+            continue
+        if not any(name.endswith(ext) for ext in BACKUP_SUFFIXES):
+            continue
+        path = os.path.join(cleanup_path, name)
+        if not os.path.isfile(path):
+            continue
+        mtime = os.path.getmtime(path)
+        if newest_mtime is None or mtime > newest_mtime:
+            newest, newest_mtime = name, mtime
+    return newest
+
+
+def cleanup_backups_by_pattern(cleanup_path, cutoff_timestamp, pattern, keep=()):
     """
-    Deletes files matching the pattern and older than cutoff_timestamp
+    Deletes files matching the pattern and older than cutoff_timestamp.
+    Names in ``keep`` are never deleted (4.15.0: the newest full archive, so
+    a 14:00 --sql-only run with a short retention cannot leave a database
+    without any filestore backup).
     """
     if not os.path.exists(cleanup_path):
         print(f"Directory {cleanup_path} does not exist.")
@@ -1402,7 +1511,9 @@ def cleanup_backups_by_pattern(cleanup_path, cutoff_timestamp, pattern):
             file_mtime = os.path.getmtime(file_path)
             file_date = datetime.datetime.fromtimestamp(file_mtime).strftime('%Y-%m-%d %H:%M:%S')
             
-            if file_mtime < cutoff_timestamp:
+            if file in keep:
+                print(f"Keeping:  {file} (date: {file_date}, newest full backup)")
+            elif file_mtime < cutoff_timestamp:
                 print(f"Deleting: {file} (date: {file_date})")
                 try:
                     os.remove(file_path)
@@ -1815,7 +1926,12 @@ if __name__ == "__main__":
             except PermissionError:
                 print(f"Warning: No permission to create temporary directory {temp_path}")
                 print("Will use system default temporary directory instead.")
-        
+
+        # Leftovers of killed runs, before any pre-flight counts free space
+        # (4.15.0). Only under the run lock - see remove_stale_temp_dirs().
+        if temp_path:
+            remove_stale_temp_dirs(temp_path, run_lock is not None)
+
         # Create directories if they don't exist
         if not os.path.exists(backup_path):
             try:
@@ -1975,7 +2091,9 @@ if __name__ == "__main__":
             
             # Clean up database backups (both .zip and .7z)
             db_backup_pattern = f"{db_name}_{data_container}_dockerbackup_"
-            cleanup_backups_by_pattern(docker_backup_path, cutoff_timestamp, db_backup_pattern)
+            newest_full = newest_full_archive(docker_backup_path, db_backup_pattern)
+            cleanup_backups_by_pattern(docker_backup_path, cutoff_timestamp, db_backup_pattern,
+                                       keep={newest_full} if newest_full else ())
             
             # Clean up FastReport backups
             fr_backup_pattern = f"{db_name}_FastReport_"

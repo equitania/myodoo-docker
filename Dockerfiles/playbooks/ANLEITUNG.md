@@ -103,7 +103,9 @@ Live-System, oder setzen Sie danach ein gemeinsames Passwort (siehe unten).
 8. Das Playbook prüft, ob Odoo gesund läuft, kein Modul hängen geblieben ist und die
    Anmeldeseite lädt. Erst danach ist das Testsystem einsatzbereit.
 
-Welches Backup verwendet wird, entscheidet der Zeitstempel im Dateinamen. Ein Lauf
+Welches Backup verwendet wird, entscheidet der Zeitstempel im Dateinamen. Es zählen
+nur vollständige Backups mit Filestore; das mittägliche Backup nur der Datenbank
+(`…_sql_only`) wird übersprungen. Ein Lauf
 dauert bei einer Datenbank mit rund 2 GB Backup etwa 10 Minuten; den größten Teil
 brauchen das Einspielen und das Modul-Update.
 

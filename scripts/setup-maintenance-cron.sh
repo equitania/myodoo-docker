@@ -1,13 +1,13 @@
 #!/bin/bash
 # setup-maintenance-cron.sh — Install the myodoo maintenance cron jobs + logrotate
-# Version 1.4.0 — 09.11.2026
+# Version 1.4.1 — 19.11.2026
 #
 # Installs a declarative /etc/cron.d/ drop-in (versioned in this repo) instead of
 # hand-edited per-user crontabs, plus a matching logrotate config. Idempotent:
 # safe to re-run; re-running just refreshes the installed files.
 #
 # Jobs installed (see myodoo-maintenance.cron for the authoritative schedule):
-#   - container2backup.py   02:00 + 14:00   (DB + filestore backup, RPO ~12h)
+#   - container2backup.py   02:00 full, 14:00 --sql-only (filestore once a day)
 #   - ssl-renew.sh          00:00 daily     (Let's Encrypt renewal, no-op if nothing due)
 #   - cleanup-weblogs.py    03:00 daily     (DSGVO: rotate/purge nginx logs >7 days)
 #   - nightly-cleanup.sh    04:30 daily     (container restart cycle + journald vacuum)
@@ -39,8 +39,8 @@
 
 set -Eeuo pipefail
 
-SCRIPT_VERSION="1.4.0"
-SCRIPT_DATE="09.11.2026"
+SCRIPT_VERSION="1.4.1"
+SCRIPT_DATE="19.11.2026"
 
 # Where the maintenance scripts live (getScripts.py copies them to /root).
 SCRIPT_DIR="${SCRIPT_DIR:-/root}"

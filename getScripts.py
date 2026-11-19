@@ -148,7 +148,7 @@ if os.environ.get('GETSCRIPTS_DEBUG', '').lower() in ('1', 'true', 'yes'):
     logger.debug("Debug logging enabled")
 
 # Script version and date
-SCRIPT_VERSION = "9.41.0"
+SCRIPT_VERSION = "9.42.0"
 SCRIPT_DATE = "19.11.2026"
 
 # Branch of myodoo-docker this server tracks - the single source of truth for
@@ -6604,6 +6604,90 @@ def neutralise_legacy_root_crontab(_myhome: str) -> None:
     _record_legacy_cron_moves(getattr(result, "stdout", None))
 
 
+# The backup lines the cron template shipped until 19.11.2026: a full backup
+# at 02:00 and again at 14:00. The second full run doubled the disk use for
+# the filestore, and on 19.11.2026 five full archives of one customer left the
+# free-space reserve no room. The migration recognises the old template by its
+# comment, so a 14:00 line an operator later set back to a full run is not
+# rewritten again on the next ups.
+OLD_BACKUP_COMMENT = ("# Backup twice daily (02:00 + 14:00) — RPO ~12h. "
+                      "Requires /root/container2backup.yaml.")
+NEW_BACKUP_COMMENT = (
+    "# Backup: full (databases + filestores) at 02:00, databases only at 14:00 —\n"
+    "# RPO ~12h for the data, ~24h for attachments. A second full run a day doubled\n"
+    "# the disk use for the filestore, which changes little between the two runs.\n"
+    "# Requires /root/container2backup.yaml.")
+_NOON_FULL_BACKUP_RE = re.compile(
+    r"^(?P<prefix>(?:#OWNERP-DISABLED# )?0 14 +\* \* \* root )"
+    r"(?P<script>\S*/container2backup\.py)"
+    r"(?P<rest> </dev/null >> /var/log/container2backup\.log 2>&1)$")
+CRON_BACKUP_DIR = "/var/backups/myodoo-docker"
+
+
+def migrate_backup_schedule_text(text: str) -> Optional[str]:
+    """The cron file with the 14:00 backup switched to --sql-only, or None.
+
+    None means: leave the file alone - it does not carry the old template
+    comment, or its 14:00 line is not the untouched old default (a changed
+    schedule, extra options, already --sql-only). A parked line keeps its
+    #OWNERP-DISABLED# marker and stays parked.
+    """
+    lines = text.split("\n")
+    if OLD_BACKUP_COMMENT not in lines:
+        return None
+    hits = [i for i, line in enumerate(lines) if _NOON_FULL_BACKUP_RE.match(line)]
+    if len(hits) != 1:
+        return None
+    match = _NOON_FULL_BACKUP_RE.match(lines[hits[0]])
+    lines[hits[0]] = (f"{match.group('prefix')}{match.group('script')} --sql-only"
+                      f"{match.group('rest')}")
+    index = lines.index(OLD_BACKUP_COMMENT)
+    lines[index:index + 1] = NEW_BACKUP_COMMENT.split("\n")
+    return "\n".join(lines)
+
+
+def migrate_backup_schedule(cron_path: str = MAINTENANCE_CRON_PATH,
+                            backup_dir: str = CRON_BACKUP_DIR) -> None:
+    """Switch the 14:00 backup of an existing server to databases only.
+
+    Runs on EVERY ups: setup-maintenance-cron.sh installs the cron file only
+    once, so a changed template never reaches the servers that already have
+    it. Only the untouched old default is rewritten (see
+    migrate_backup_schedule_text()); anything an operator changed stays.
+    Backup first (outside /etc/cron.d, where a copy would run as a second
+    schedule), then a temp file next to the target, mode 0644 before the
+    rename - cron silently ignores a group-writable file.
+    """
+    try:
+        with open(cron_path, encoding="utf-8") as handle:
+            text = handle.read()
+    except OSError:
+        return
+    new_text = migrate_backup_schedule_text(text)
+    if new_text is None:
+        return
+    temp = ""
+    try:
+        os.makedirs(backup_dir, mode=0o700, exist_ok=True)
+        stamp = datetime.now().strftime("%Y%m%d-%H%M%S")
+        backup = os.path.join(backup_dir, f"{os.path.basename(cron_path)}.{stamp}")
+        shutil.copy2(cron_path, backup)
+        temp = f"{cron_path}.tmp_{os.getpid()}"
+        with open(temp, "w", encoding="utf-8") as handle:
+            handle.write(new_text)
+        os.chmod(temp, 0o644)
+        os.replace(temp, cron_path)
+    except OSError as e:
+        if temp and os.path.exists(temp):
+            os.unlink(temp)
+        record_install("backup schedule", "failed",
+                       f"could not switch the 14:00 backup to --sql-only: {e}")
+        return
+    record_install("backup schedule", "updated",
+                   "14:00 backup now databases only (--sql-only), full backup "
+                   f"stays at 02:00 (backup: {backup})")
+
+
 def run_install_packages(package_info: Dict[str, Any]) -> None:
     """install_packages() as a step that cannot take the rest of the run down.
 
@@ -7267,6 +7351,9 @@ def main() -> None:
 
         # Legacy lines in root's crontab would run every managed job twice.
         neutralise_legacy_root_crontab(_myhome)
+
+        # Old default: two full backups a day. Now 14:00 is databases only.
+        migrate_backup_schedule()
 
         # Everything below needs something install_packages() delivers: PyYAML
         # for the migration and the validators, python3-dotenv for the hardening

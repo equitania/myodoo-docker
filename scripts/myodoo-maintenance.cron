@@ -12,9 +12,12 @@
 MAILTO=root
 PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
 
-# Backup twice daily (02:00 + 14:00) — RPO ~12h. Requires /root/container2backup.yaml.
+# Backup: full (databases + filestores) at 02:00, databases only at 14:00 —
+# RPO ~12h for the data, ~24h for attachments. A second full run a day doubled
+# the disk use for the filestore, which changes little between the two runs.
+# Requires /root/container2backup.yaml.
 0 2  * * * root /root/container2backup.py </dev/null >> /var/log/container2backup.log 2>&1
-0 14 * * * root /root/container2backup.py </dev/null >> /var/log/container2backup.log 2>&1
+0 14 * * * root /root/container2backup.py --sql-only </dev/null >> /var/log/container2backup.log 2>&1
 
 # Proactive DNS early-warning, DAILY at 23:50 — just BEFORE the cert renewal.
 # Detects customer (sub)domains that no longer point at this server and, after

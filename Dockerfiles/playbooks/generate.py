@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
-# Version: 1.0.0
-# Date: 21.10.2026
+# Version: 1.1.0
+# Date: 19.11.2026
 """Generate odoodev server playbooks that rebuild the test instance from the newest live backup.
 
 One playbook per data state (<state>.yaml), plus wiederherstellen.yaml (puts back the
@@ -21,7 +21,7 @@ import os
 import re
 import sys
 
-SCRIPT_VERSION = "1.0.0"
+SCRIPT_VERSION = "1.1.0"
 SCRIPT_DATE = "21.10.2026"
 
 FLAGS = ("deactivate_cron", "neutralize", "anonymize", "wipe", "purge_transactions", "purge_master_data")
@@ -303,7 +303,11 @@ def main():
     if not re.match(r"^[a-z0-9.]+$", args.backup_suffix):
         parser.error(f"invalid backup suffix: {args.backup_suffix!r}")
 
-    live_pattern = f"{args.live_db}_{args.live_container}_dockerbackup_*.{args.backup_suffix}"
+    # The timestamp spelled out, not "*": since 19.11.2026 the 14:00 run is
+    # databases only and its archive ends in "_sql_only" - a "*" would make
+    # that the newest backup and restore a test instance without filestore.
+    live_pattern = (f"{args.live_db}_{args.live_container}_dockerbackup_"
+                    f"????-??-??_??-??-??.{args.backup_suffix}")
     safety_pattern = f"{args.test_db}_{args.test_container}_prerestore_*.tar.zst"
 
     out = os.path.expanduser(args.out)

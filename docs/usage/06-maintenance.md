@@ -21,7 +21,7 @@ Wartungsjobs als `/etc/cron.d/myodoo-maintenance` (inkl. logrotate):
 
 | Zeit | Job |
 |---|---|
-| 02:00 / 14:00 | `container2backup.py` — Backups |
+| 02:00 / 14:00 | `container2backup.py` — Backup: nachts komplett, mittags nur die Datenbanken (`--sql-only`) |
 | 23:50 | `nginx-cert-guard.py --check --apply` — DNS-Drift/Zertifikats-Wache |
 | 00:00 | `ssl-renew.sh` — Let's-Encrypt-Renewal |
 | 03:00 | `cleanup-weblogs.py` — DSGVO-Weblog-Rotation (7 Tage) |
@@ -140,7 +140,7 @@ maintenance jobs as `/etc/cron.d/myodoo-maintenance` (incl. logrotate):
 
 | Time | Job |
 |---|---|
-| 02:00 / 14:00 | `container2backup.py` — backups |
+| 02:00 / 14:00 | `container2backup.py` — backup: full at night, databases only at noon (`--sql-only`) |
 | 23:50 | `nginx-cert-guard.py --check --apply` — DNS drift/certificate guard |
 | 00:00 | `ssl-renew.sh` — Let's Encrypt renewal |
 | 03:00 | `cleanup-weblogs.py` — GDPR weblog rotation (7 days) |

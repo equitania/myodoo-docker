@@ -20,6 +20,7 @@ import io
 import os
 import sys
 import tempfile
+import time
 import types
 import unittest
 from unittest import mock
@@ -344,6 +345,129 @@ class StaleTempDirsTest(unittest.TestCase):
             with mock.patch("sys.stdout", buf):
                 self.assertEqual(c2b.warn_stale_temp_dirs(base, "live_db", None), [])
             self.assertEqual(buf.getvalue(), "")
+
+
+class RemoveStaleTempDirsTest(unittest.TestCase):
+    """4.15.0: leftovers of killed runs are removed at start. On 19.11.2026 a
+    customer's backup was refused by the free-space reserve until the operator
+    emptied temp_path by hand."""
+
+    OLD = 2 * 3600
+
+    def make(self, base, name, age, files=("dump.sql",)):
+        path = os.path.join(base, name)
+        os.makedirs(path)
+        for f in files:
+            with open(os.path.join(path, f), "w") as handle:
+                handle.write("x" * 100)
+        stamp = time.time() - age
+        os.utime(path, (stamp, stamp))
+        return path
+
+    def run_quiet(self, base, lock_held=True):
+        with mock.patch("sys.stdout", io.StringIO()) as buf:
+            removed, kept = c2b.remove_stale_temp_dirs(base, lock_held)
+        return removed, kept, buf.getvalue()
+
+    def test_old_staging_directories_of_any_database_are_removed(self):
+        with tempfile.TemporaryDirectory() as base:
+            a = self.make(base, "live_db_20261119_020001_ab12cd34", self.OLD)
+            b = self.make(base, "gone_db_20250820_180002", self.OLD)
+            empty = self.make(base, "live_db_20261118_140001_zz99yy88", self.OLD, files=())
+            removed, kept, out = self.run_quiet(base)
+            self.assertEqual(sorted(removed), sorted([a, b, empty]))
+            self.assertEqual(kept, [])
+            self.assertEqual(os.listdir(base), [])
+            self.assertIn("freed", out)
+
+    def test_foreign_and_young_directories_stay(self):
+        with tempfile.TemporaryDirectory() as base:
+            young = self.make(base, "live_db_20261119_160001_ab12cd34", 60)
+            foreign = self.make(base, "report_20261119_020001", self.OLD, files=("data.csv",))
+            notes = self.make(base, "notes", self.OLD)
+            loose = os.path.join(base, "dump_20261119_020001_ab12cd34")
+            open(loose, "w").close()
+            removed, kept, _ = self.run_quiet(base)
+            self.assertEqual(removed, [])
+            self.assertEqual(kept, [young])
+            for path in (young, foreign, notes, loose):
+                self.assertTrue(os.path.exists(path), path)
+
+    def test_without_the_run_lock_nothing_is_removed(self):
+        with tempfile.TemporaryDirectory() as base:
+            old = self.make(base, "live_db_20261119_020001_ab12cd34", self.OLD)
+            removed, kept, out = self.run_quiet(base, lock_held=False)
+            self.assertEqual((removed, kept), ([], [old]))
+            self.assertTrue(os.path.isdir(old))
+            self.assertIn("no run lock", out)
+
+    def test_streaming_symlink_to_the_live_filestore_is_never_followed(self):
+        # A streaming run stages <temp>/filestore as a symlink to the real
+        # filestore. Removing the leftover must unlink the link, not the data.
+        with tempfile.TemporaryDirectory() as root:
+            live = os.path.join(root, "live-filestore")
+            os.makedirs(os.path.join(live, "ab"))
+            attachment = os.path.join(live, "ab", "abcdef")
+            with open(attachment, "w") as handle:
+                handle.write("customer data")
+            base = os.path.join(root, "tmp")
+            os.makedirs(base)
+            stage = self.make(base, "live_db_20261119_020001_ab12cd34", 0, files=())
+            os.symlink(live, os.path.join(stage, "filestore"))
+            stamp = time.time() - self.OLD
+            os.utime(stage, (stamp, stamp))
+            removed, _, _ = self.run_quiet(base)
+            self.assertEqual(removed, [stage])
+            self.assertFalse(os.path.exists(stage))
+            with open(attachment) as handle:
+                self.assertEqual(handle.read(), "customer data")
+
+    def test_a_symlinked_staging_name_is_not_followed(self):
+        with tempfile.TemporaryDirectory() as root:
+            target = os.path.join(root, "elsewhere")
+            os.makedirs(target)
+            open(os.path.join(target, "dump.sql"), "w").close()
+            base = os.path.join(root, "tmp")
+            os.makedirs(base)
+            os.symlink(target, os.path.join(base, "live_db_20261119_020001_ab12cd34"))
+            removed, _, _ = self.run_quiet(base)
+            self.assertEqual(removed, [])
+            self.assertTrue(os.path.exists(os.path.join(target, "dump.sql")))
+
+    def test_missing_temp_path_is_a_no_op(self):
+        self.assertEqual(c2b.remove_stale_temp_dirs("/nonexistent/c2b-temp", True), ([], []))
+        self.assertEqual(c2b.remove_stale_temp_dirs("", True), ([], []))
+
+
+class RetentionKeepsNewestFullArchiveTest(unittest.TestCase):
+    """4.15.0: the 14:00 run is databases only. With retention_days 0 or 1 the
+    cleanup after it must not delete the last archive that has a filestore."""
+
+    def make(self, folder, name, age_hours):
+        path = os.path.join(folder, name)
+        open(path, "w").close()
+        stamp = time.time() - age_hours * 3600
+        os.utime(path, (stamp, stamp))
+        return name
+
+    def test_sql_only_run_with_zero_retention_keeps_the_night_backup(self):
+        with tempfile.TemporaryDirectory() as folder:
+            p = "db_c_dockerbackup_"
+            older = self.make(folder, p + "2026-11-18_02-00-01.tar.zst", 36)
+            night = self.make(folder, p + "2026-11-19_02-00-01.tar.zst", 12)
+            noon = self.make(folder, p + "2026-11-19_14-00-01_sql_only.sql.zst", 0)
+            self.assertEqual(c2b.newest_full_archive(folder, p), night)
+            with mock.patch("sys.stdout", io.StringIO()):
+                c2b.cleanup_backups_by_pattern(folder, time.time() + 60, p, keep={night})
+            self.assertEqual(sorted(os.listdir(folder)), [night])
+            self.assertNotIn(older, os.listdir(folder))
+            self.assertNotIn(noon, os.listdir(folder))
+
+    def test_no_full_archive_means_nothing_extra_is_kept(self):
+        with tempfile.TemporaryDirectory() as folder:
+            self.make(folder, "db_c_dockerbackup_2026-11-19_14-00-01_sql_only.sql.zst", 0)
+            self.assertIsNone(c2b.newest_full_archive(folder, "db_c_dockerbackup_"))
+            self.assertIsNone(c2b.newest_full_archive(os.path.join(folder, "missing"), "x"))
 
 
 class RetentionCoversEveryFormatTest(unittest.TestCase):

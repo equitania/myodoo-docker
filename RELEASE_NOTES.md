@@ -1,5 +1,41 @@
 # Release Notes
 
+## Change: one full backup a day, the 14:00 run backs up databases only; leftover temp directories are removed (19.11.2026)
+
+*scripts/container2backup.py 4.15.0 · scripts/myodoo-maintenance.cron · scripts/setup-maintenance-cron.sh 1.4.1 · getScripts.py 9.42.0 · Dockerfiles/playbooks/generate.py 1.1.0 (+ regenerated v16/v18/v19 playbooks) · scripts/README_BackUp.md · docs/usage/06-maintenance.md · usage/AGENT.md · tests/test_container2backup.py · tests/test_getscripts_backup_schedule.py*
+
+On a customer server the free-space reserve refused the database backup: five
+full archives of 8.2 GB each (two full runs a day, two days retention) took a
+third of the disk, and staging directories of killed runs in `temp_path` took
+the rest of the margin until the operator emptied it by hand.
+
+- **Backup schedule:** the cron template runs the full backup (databases and
+  filestores) at 02:00 and `--sql-only` at 14:00. The data keeps a 12-hour
+  recovery point, attachments a 24-hour one; the disk holds roughly half the
+  filestore copies. `ups` carries this to existing servers
+  (`migrate_backup_schedule()`), but only when the installed file still has
+  the old template's comment and an untouched `0 14 … container2backup.py`
+  line: a rescheduled line, extra options, or a 14:00 run an operator set back
+  to full after the migration stay as they are. A parked line stays parked.
+  The old file is saved to `/var/backups/myodoo-docker` first; the result is
+  byte-identical to a fresh install, so the readiness check stays green.
+- **Leftover temp directories:** `container2backup.py` removes staging
+  directories of earlier runs from `temp_path` at start, before any
+  free-space check. Only while it holds the run lock (no other backup can use
+  them), only directories directly under `temp_path` named
+  `<name>_<YYYYMMDD>_<HHMMSS>[_xxxxxxxx]` that are empty or hold `dump.sql` /
+  `filestore`, and only when older than one hour. Symlinks are never
+  followed - a streaming run's `filestore` link to the live filestore is
+  unlinked, not emptied. Without the lock it only warns.
+- **Retention keeps the newest full archive** of every database: with
+  `retention_days` 0 or 1 the cleanup after a 14:00 `--sql-only` run would
+  otherwise have deleted the only archive that still has the filestore.
+- **Test-restore playbooks:** the live-backup pattern spells out the timestamp
+  (`…_dockerbackup_????-??-??_??-??-??.<ext>`), so the 14:00 archive
+  (`…_sql_only`) is never picked as the newest backup - a test instance would
+  have come up without its filestore. Regenerate server playbooks with
+  `generate.py`.
+
 ## Feature: `fr-local-deploy.sh --non-interactive` (19.11.2026)
 
 *scripts/fr-local-deploy.sh · tests/test_deploy_scripts.py · docs/usage/06-maintenance.md · docs/usage/09-reference.md · usage/AGENT.md*
