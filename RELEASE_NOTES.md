@@ -1,5 +1,28 @@
 # Release Notes
 
+## Feature: `fr-local-deploy.sh --non-interactive` (19.11.2026)
+
+*scripts/fr-local-deploy.sh · tests/test_deploy_scripts.py · docs/usage/06-maintenance.md · docs/usage/09-reference.md · usage/AGENT.md*
+
+The FastReport deploy script asked for every value at the terminal, so it
+could not run from cron, Ansible or a remote session. It now takes them as
+options; without options it behaves exactly as before, and options given in
+interactive mode only skip their own question.
+
+- `--non-interactive --name N --port P --token-file F [--basedir D] [--tag T] [--recreate]`
+  never prompts; a missing required value stops the run with exit 1 before
+  anything is created.
+- The registry token comes from a file with mode 600/400 or from
+  `FR_REGISTRY_TOKEN` — never from the command line, where `ps` would show it.
+- Without `--tag` the newest release tag of the registry is used.
+- Admin/superuser passwords and the JWT key are kept from an existing
+  `appsettings.json` or generated. Generated passwords are written to
+  `settings/generated-credentials.txt` (0600) instead of the screen, because
+  the output of an unattended run ends up in logs.
+- An existing container of the same name is left untouched (exit 0) unless
+  `--recreate` is given; a foreign-owned volume is reset without asking (the
+  interactive default).
+
 ## Fix: `ups` no longer overwrites an SCCS-managed shell configuration (19.11.2026)
 
 *getScripts.py 9.41.0 · docs/usage/01-provisioning.md · docs/usage/09-reference.md · docs/COMPONENTS.md · tests/test_getscripts_sccs_guard.py*

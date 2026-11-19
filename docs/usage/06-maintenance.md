@@ -109,6 +109,17 @@ Bericht auch im Terminal.
 Registry-Zugang erforderlich. Die Backup-Einbindung erfolgt über den
 `fast_report:`-Block in `container2backup.yaml` ([Kapitel 11](05-backup-restore.md#de-11-schritt-9-backups-einrichten-edbkdobk)).
 
+Ohne Rückfragen (Cron, Ansible, Fernzugriff) — der Token liegt in einer Datei mit
+Modus 600, ohne `--tag` gilt der neueste Release-Tag, erzeugte Passwörter stehen
+danach in `settings/generated-credentials.txt` statt auf dem Bildschirm:
+
+```fish
+sudo ~/myodoo-docker/scripts/fr-local-deploy.sh --non-interactive \
+    --name fr-live --port 8899 --token-file /root/.config/fr-registry-token
+```
+
+Ein bestehender Container gleichen Namens bleibt stehen, außer mit `--recreate`.
+
 **Debian-Major-Upgrade:** `dist-upgrade-debian.sh` führt geführt durch ein
 In-Place-Upgrade (Quellen umschreiben, phasenweises Upgrade, Reboot-Abfrage).
 
@@ -213,6 +224,17 @@ report even in a terminal.
 `/opt/fast-report`, one container per system (e.g. `fr-live`, `fr-test`),
 registry access required. Backup integration via the `fast_report:` block in
 `container2backup.yaml` ([chapter 11](05-backup-restore.md#en-11-step-9-set-up-backups-edbkdobk)).
+
+Without prompts (cron, Ansible, remote access) — the token sits in a file with
+mode 600, without `--tag` the newest release tag is used, generated passwords
+end up in `settings/generated-credentials.txt` instead of on screen:
+
+```fish
+sudo ~/myodoo-docker/scripts/fr-local-deploy.sh --non-interactive \
+    --name fr-live --port 8899 --token-file /root/.config/fr-registry-token
+```
+
+An existing container of the same name is left alone unless `--recreate` is given.
 
 **Debian major upgrade:** `dist-upgrade-debian.sh` guides through an in-place
 upgrade (rewrite sources, phased upgrade, reboot prompt).

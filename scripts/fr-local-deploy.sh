@@ -29,6 +29,14 @@
 # passenden Host-Benutzer frapi:10000 an (nur anlegen, nie ändern), damit
 # ls -l die Volumes unter einem Namen statt als 10000 zeigt.
 #
+# Nicht-interaktiv (--non-interactive): alle Werte aus Optionen, keine einzige
+# Rückfrage — für Cron, Ansible und Claude (srv exec). Siehe --help.
+#   --name N --port P [--basedir D] [--tag T] --token-file F [--recreate]
+# Der Registry-Token kommt aus einer Datei (Modus 600) oder $FR_REGISTRY_TOKEN,
+# nie von der Kommandozeile. Passwörter werden übernommen oder zufällig erzeugt;
+# erzeugte Zugangsdaten landen in settings/generated-credentials.txt (0600)
+# statt auf dem Bildschirm, damit sie nicht in Logs wandern.
+#
 # Hinweis: erwartet GNU-Tools (md5sum, stat -c). Auf Linux-Deploy-Hosts gegeben;
 # auf macOS sind 'md5sum'/'stat -c' nicht nativ vorhanden.
 
@@ -353,8 +361,92 @@ _ensure_host_user() {  # name uid comment
     fi
 }
 
+_usage() {
+    cat <<'USAGE'
+Aufruf: fr-local-deploy.sh                      interaktiv (fragt alles ab)
+        fr-local-deploy.sh --non-interactive --name N --port P --token-file F
+                           [--basedir D] [--tag T] [--recreate]
+
+  --non-interactive   keine Rückfrage; fehlende Pflichtwerte brechen ab (Exit 1)
+  --name N            Container-Name, zugleich Unterordner unter --basedir
+  --port P            Host-Port (gebunden an 127.0.0.1)
+  --basedir D         Basis der Volumes (Default /opt/fast-report)
+  --tag T             Image-Tag; ohne Angabe der neueste Release-Tag der Registry
+  --token-file F      Datei mit dem Registry-Token (Modus 600); alternativ
+                      Umgebungsvariable FR_REGISTRY_TOKEN
+  --recreate          bestehenden Container gleichen Namens ersetzen
+                      (ohne: Abbruch mit Exit 0, Volumes bleiben)
+  -h, --help          diese Hilfe
+
+Optionen gelten auch interaktiv; dann wird nur nach den fehlenden Werten gefragt.
+USAGE
+}
+
+# Setzt NONINTERACTIVE und OPT_* aus der Kommandozeile. Exit 1 bei Fehlern.
+NONINTERACTIVE=0
+OPT_NAME=""; OPT_BASEDIR=""; OPT_PORT=""; OPT_TAG=""; OPT_TOKEN_FILE=""; OPT_RECREATE=0
+_parse_args() {
+    while [ $# -gt 0 ]; do
+        case "$1" in
+            --non-interactive) NONINTERACTIVE=1 ;;
+            --recreate)        OPT_RECREATE=1 ;;
+            --name|--basedir|--port|--tag|--token-file)
+                if [ $# -lt 2 ] || [ -z "$2" ]; then
+                    _err "$1 braucht einen Wert"; return 1
+                fi
+                case "$1" in
+                    --name)       OPT_NAME="$2" ;;
+                    --basedir)    OPT_BASEDIR="$2" ;;
+                    --port)       OPT_PORT="$2" ;;
+                    --tag)        OPT_TAG="$2" ;;
+                    --token-file) OPT_TOKEN_FILE="$2" ;;
+                esac
+                shift ;;
+            -h|--help) _usage; exit 0 ;;
+            *) _err "Unbekannte Option: $1 (--help)"; return 1 ;;
+        esac
+        shift
+    done
+    if [ "$NONINTERACTIVE" -eq 1 ]; then
+        local missing=""
+        [ -z "$OPT_NAME" ] && missing="$missing --name"
+        [ -z "$OPT_PORT" ] && missing="$missing --port"
+        [ -z "$OPT_TOKEN_FILE" ] && [ -z "${FR_REGISTRY_TOKEN:-}" ] && missing="$missing --token-file"
+        if [ -n "$missing" ]; then
+            _err "--non-interactive braucht:$missing"; return 1
+        fi
+    fi
+    return 0
+}
+
+# Liest den Registry-Token aus der Datei (nur Modus 600/400) — stdout = Token.
+_read_token_file() {  # file
+    local f="$1" mode
+    if [ ! -r "$f" ]; then
+        _err "Token-Datei nicht lesbar: $f"; return 1
+    fi
+    mode="$(stat -c '%a' "$f" 2>/dev/null || stat -f '%Lp' "$f")"
+    case "$mode" in
+        600|400) : ;;
+        *) _err "Token-Datei $f hat Modus $mode — erwartet 600"; return 1 ;;
+    esac
+    tr -d '\r\n' < "$f"
+}
+
+# Wert aus Option, sonst Rückfrage (interaktiv) bzw. Default (nicht-interaktiv).
+_ask() {  # prompt option default -> value on stdout
+    local prompt="$1" opt="$2" def="$3" ans
+    if [ -n "$opt" ]; then printf '%s' "$opt"; return 0; fi
+    if [ "$NONINTERACTIVE" -eq 1 ]; then printf '%s' "$def"; return 0; fi
+    read -rp "$prompt" ans
+    [ -z "$ans" ] && ans="$def"
+    printf '%s' "$ans"
+}
+
 # Tests sourcen das Skript nur für die Hilfsfunktionen.
 [ -n "${FR_DEPLOY_NO_MAIN:-}" ] && return 0
+
+_parse_args "$@" || exit 1
 
 # ── Step 1: Pre-Flight Checks ────────────────────────────────────────────────
 _info "Step 1: Pre-Flight Checks"
@@ -389,8 +481,7 @@ fi
 _hr
 _info "Step 2: Parameter"
 
-read -rp "  Container-Name [fr-local]: " fr_name
-[ -z "$fr_name" ] && fr_name="fr-local"
+fr_name="$(_ask "  Container-Name [fr-local]: " "$OPT_NAME" "fr-local")"
 # Whitelist — fr_name landet in generierter Compose-YAML (container_name);
 # Sonderzeichen (z.B. ") könnten die YAML-Struktur aufbrechen.
 if ! [[ "$fr_name" =~ ^[a-zA-Z0-9][a-zA-Z0-9_.-]*$ ]]; then
@@ -398,8 +489,7 @@ if ! [[ "$fr_name" =~ ^[a-zA-Z0-9][a-zA-Z0-9_.-]*$ ]]; then
     exit 1
 fi
 
-read -rp "  Basis-Verzeichnis für Volumes [/opt/fast-report]: " fr_basedir
-[ -z "$fr_basedir" ] && fr_basedir="/opt/fast-report"
+fr_basedir="$(_ask "  Basis-Verzeichnis für Volumes [/opt/fast-report]: " "$OPT_BASEDIR" "/opt/fast-report")"
 # read expandiert '~' nicht — manuell auflösen.
 case "$fr_basedir" in
     "~")   fr_basedir="$HOME" ;;
@@ -411,14 +501,19 @@ case "$fr_basedir" in
     *)  fr_basedir="$PWD/$fr_basedir" ;;
 esac
 
-read -rp "  Host-Port [8899]: " fr_port
-[ -z "$fr_port" ] && fr_port="8899"
+fr_port="$(_ask "  Host-Port [8899]: " "$OPT_PORT" "8899")"
 if ! [[ "$fr_port" =~ ^[0-9]+$ ]]; then
     _err "Port muss numerisch sein: $fr_port"
     exit 1
 fi
 
-registry_token="$(_read_masked "  GitLab Registry Token (User: $REGISTRY_USER): ")"
+if [ -n "$OPT_TOKEN_FILE" ]; then
+    registry_token="$(_read_token_file "$OPT_TOKEN_FILE")" || exit 1
+elif [ -n "${FR_REGISTRY_TOKEN:-}" ]; then
+    registry_token="$FR_REGISTRY_TOKEN"
+else
+    registry_token="$(_read_masked "  GitLab Registry Token (User: $REGISTRY_USER): ")"
+fi
 if [ -z "$registry_token" ]; then
     _err "Token ist Pflicht"
     exit 1
@@ -438,7 +533,12 @@ if fr_tags="$(_registry_tags "$registry_token")"; then
 else
     _info "Tag-Liste nicht abrufbar — Image-Tag bitte von Hand eingeben."
 fi
-if [ -n "$fr_suggest" ]; then
+if [ -n "$OPT_TAG" ]; then
+    fr_version="$OPT_TAG"
+elif [ "$NONINTERACTIVE" -eq 1 ]; then
+    fr_version="$fr_suggest"
+    [ -n "$fr_version" ] && _ok "Image-Tag: $fr_version (neuester Release-Tag)"
+elif [ -n "$fr_suggest" ]; then
     read -rp "  Image-Tag [$fr_suggest]: " fr_version
     [ -z "$fr_version" ] && fr_version="$fr_suggest"
 else
@@ -455,13 +555,18 @@ if ! [[ "$fr_version" =~ ^[a-zA-Z0-9_][a-zA-Z0-9_.-]*$ ]]; then
     exit 1
 fi
 
-echo
-echo "  Optional — leere Eingabe übernimmt bestehende Werte aus appsettings.json"
-echo "  bzw. fällt auf Baked Defaults zurück."
-echo
-fr_admin_password="$(_read_pwd_twice "Admin-Passwort")"
-fr_superuser_password="$(_read_pwd_twice "Superuser-Passwort")"
-fr_jwt_key="$(_read_pwd_twice "JWT-Key (raw String)")"
+if [ "$NONINTERACTIVE" -eq 1 ]; then
+    # Bestehende Werte übernehmen, sonst zufällig erzeugen (Step 5).
+    fr_admin_password=""; fr_superuser_password=""; fr_jwt_key=""
+else
+    echo
+    echo "  Optional — leere Eingabe übernimmt bestehende Werte aus appsettings.json"
+    echo "  bzw. fällt auf Baked Defaults zurück."
+    echo
+    fr_admin_password="$(_read_pwd_twice "Admin-Passwort")"
+    fr_superuser_password="$(_read_pwd_twice "Superuser-Passwort")"
+    fr_jwt_key="$(_read_pwd_twice "JWT-Key (raw String)")"
+fi
 
 # ── Step 3: Container-Path-Auflösung ─────────────────────────────────────────
 _hr
@@ -515,7 +620,8 @@ if [ -n "$(find "$host_base" ! -uid "$(id -u)" 2>/dev/null | head -n1)" ]; then
         fi
     done
     if [ -n "$reset_image" ]; then
-        read -rp "  Owner aller Volume-Dateien auf dich ($(id -u):$(id -g)) zurücksetzen? (Y/n) " ans
+        ans="y"
+        [ "$NONINTERACTIVE" -eq 1 ] || read -rp "  Owner aller Volume-Dateien auf dich ($(id -u):$(id -g)) zurücksetzen? (Y/n) " ans
         if [ "$ans" != "n" ] && [ "$ans" != "N" ]; then
             if docker run --rm -v "$host_base:/data" --entrypoint chown "$reset_image" \
                 -R "$(id -u):$(id -g)" /data >/dev/null 2>&1; then
@@ -929,7 +1035,14 @@ fi
 
 # Idempotenz — Bestätigungs-Prompt bei existierendem Container
 if docker ps -a --format '{{.Names}}' | grep -qx "$fr_name"; then
-    read -rp "  Container '$fr_name' existiert bereits. Entfernen und neu deployen? (y/N) " confirm
+    if [ "$OPT_RECREATE" -eq 1 ]; then
+        confirm="y"
+    elif [ "$NONINTERACTIVE" -eq 1 ]; then
+        confirm="n"
+        _info "Container '$fr_name' existiert bereits — ohne --recreate bleibt er unverändert."
+    else
+        read -rp "  Container '$fr_name' existiert bereits. Entfernen und neu deployen? (y/N) " confirm
+    fi
     if [ "$confirm" = "y" ] || [ "$confirm" = "Y" ]; then
         [ -n "$DC" ] && $DC -f "$compose_file" down >/dev/null 2>&1
         docker stop "$fr_name" >/dev/null 2>&1
@@ -1020,7 +1133,20 @@ echo
 
 # Generierte Secrets EINMALIG anzeigen (kein Baked Default mehr). Nur hier —
 # danach nur noch als Hash in appsettings.json (0600) vorhanden.
-if [ -n "$GENERATED_ADMIN_PWD" ] || [ -n "$GENERATED_SUPERUSER_PWD" ] || [ "$GENERATED_JWT_KEY" -eq 1 ]; then
+if [ "$NONINTERACTIVE" -eq 1 ] && { [ -n "$GENERATED_ADMIN_PWD" ] || [ -n "$GENERATED_SUPERUSER_PWD" ]; }; then
+    # Nicht auf den Bildschirm: die Ausgabe eines nicht-interaktiven Laufs
+    # landet in Logs (Cron, Ansible, Claude). Nur root/Besitzer liest die Datei.
+    cred_file="$host_base/settings/generated-credentials.txt"
+    ( umask 077
+      {
+          echo "# fr-api $fr_name — erzeugt $(date '+%F %T') von fr-local-deploy.sh"
+          [ -n "$GENERATED_ADMIN_PWD" ]     && echo "admin=$GENERATED_ADMIN_PWD"
+          [ -n "$GENERATED_SUPERUSER_PWD" ] && echo "superuser=$GENERATED_SUPERUSER_PWD"
+      } > "$cred_file" )
+    _info "Automatisch generierte Zugangsdaten stehen in $cred_file (0600) —"
+    echo "  notieren und die Datei danach löschen."
+    echo
+elif [ -n "$GENERATED_ADMIN_PWD" ] || [ -n "$GENERATED_SUPERUSER_PWD" ] || [ "$GENERATED_JWT_KEY" -eq 1 ]; then
     _info "Automatisch generierte Zugangsdaten — JETZT sicher notieren:"
     [ -n "$GENERATED_ADMIN_PWD" ]     && echo "  Admin-Passwort (User 'admin'):          $GENERATED_ADMIN_PWD"
     [ -n "$GENERATED_SUPERUSER_PWD" ] && echo "  Superuser-Passwort (User 'superuser'):  $GENERATED_SUPERUSER_PWD"

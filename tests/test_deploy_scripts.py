@@ -172,5 +172,79 @@ class PostgresSizingTests(unittest.TestCase):
         self.assertIn("over budget", result.stderr)
 
 
+@unittest.skipUnless(shutil.which("bash"), "bash missing")
+class FastReportNonInteractiveTests(unittest.TestCase):
+    """--non-interactive: every value from options, never a prompt."""
+
+    def fr(self, body, stdin=""):
+        return source_and_run(FR, "FR_DEPLOY_NO_MAIN", body, stdin=stdin)
+
+    def test_options_are_parsed(self):
+        r = self.fr('_parse_args --non-interactive --name demo-fr-19 --port 8819 '
+                    '--token-file /x --tag 1.2 --basedir /srv/fr --recreate && '
+                    'echo "$NONINTERACTIVE|$OPT_NAME|$OPT_PORT|$OPT_TOKEN_FILE|$OPT_TAG|'
+                    '$OPT_BASEDIR|$OPT_RECREATE"')
+        self.assertEqual(r.returncode, 0, r.stderr)
+        self.assertEqual(r.stdout.strip(), "1|demo-fr-19|8819|/x|1.2|/srv/fr|1")
+
+    def test_missing_required_values_fail(self):
+        r = self.fr('_parse_args --non-interactive --name a')
+        self.assertEqual(r.returncode, 1)
+        self.assertIn("--port", r.stderr)
+        self.assertIn("--token-file", r.stderr)
+
+    def test_token_from_environment_satisfies_the_requirement(self):
+        r = self.fr('FR_REGISTRY_TOKEN=t _parse_args --non-interactive --name a --port 1')
+        self.assertEqual(r.returncode, 0, r.stderr)
+
+    def test_unknown_option_and_missing_value_fail(self):
+        self.assertEqual(self.fr('_parse_args --bogus').returncode, 1)
+        self.assertEqual(self.fr('_parse_args --name').returncode, 1)
+
+    def test_no_options_stays_interactive(self):
+        r = self.fr('_parse_args && echo "$NONINTERACTIVE"')
+        self.assertEqual(r.stdout.strip(), "0")
+
+    def test_ask_prefers_option_then_default_without_reading(self):
+        # stdin carries an answer that must NOT be read in non-interactive mode
+        r = self.fr('NONINTERACTIVE=1; echo "[$(_ask "p: " "" dflt)][$(_ask "p: " opt dflt)]"',
+                    stdin="typed\n")
+        self.assertEqual(r.stdout.strip(), "[dflt][opt]")
+
+    def test_ask_reads_when_interactive(self):
+        r = self.fr('echo "[$(_ask "p: " "" dflt)]"', stdin="typed\n")
+        self.assertEqual(r.stdout.strip(), "[typed]")
+
+    def test_token_file_must_be_private(self):
+        import tempfile
+        with tempfile.TemporaryDirectory() as d:
+            tok = Path(d) / "token"
+            tok.write_text("glpat-secret\n")
+            os.chmod(tok, 0o644)
+            r = self.fr(f'_read_token_file "{tok}"')
+            self.assertEqual(r.returncode, 1)
+            self.assertNotIn("glpat-secret", r.stdout + r.stderr)
+            os.chmod(tok, 0o600)
+            r = self.fr(f'_read_token_file "{tok}"')
+            self.assertEqual((r.returncode, r.stdout), (0, "glpat-secret"))
+
+    def test_every_prompt_in_the_flow_has_a_non_interactive_branch(self):
+        flow = FR.read_text().split('_parse_args "$@" || exit 1', 1)[1]
+        lines = flow.splitlines()
+        prompts = [i for i, ln in enumerate(lines)
+                   if ("read -rp" in ln or "_read_masked \"" in ln or "_read_pwd_twice \"" in ln)]
+        self.assertTrue(prompts)
+        for i in prompts:
+            context = "\n".join(lines[max(0, i - 12):i + 1])
+            self.assertTrue("NONINTERACTIVE" in context or "OPT_TOKEN_FILE" in context
+                            or "FR_REGISTRY_TOKEN" in context,
+                            f"unguarded prompt: {lines[i].strip()}")
+
+    def test_generated_credentials_go_to_a_private_file(self):
+        text = FR.read_text()
+        self.assertIn("generated-credentials.txt", text)
+        self.assertIn("umask 077", text)
+
+
 if __name__ == "__main__":
     unittest.main()
