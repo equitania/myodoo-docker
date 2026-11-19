@@ -11,9 +11,10 @@ in this repository, stay in `CLAUDE.md`.
 
 ### Key Components
 
-#### 1. getScripts.py (v9.40.0)
+#### 1. getScripts.py (v9.41.0)
 - **Purpose**: Main installation and update script
 - **Features**:
+  - **Leaves an SCCS-managed shell configuration alone** (v9.41.0, 19.11.2026): `sccs_manages()` skips `copy_fish_configuration()` / `copy_starship_configuration()` when the target home is not owned by root and holds `~/.config/sccs/config.yaml` (unless `fish_config` / `starship_config` say `enabled: false`); install summary `fish config: skipped`. Before, `ups` overwrote same-named conf.d files and pruned every other `NN-name.fish` in a developer's account. `/root` always gets the ownERP configuration
   - **Delivers `ownerp_pg_update.py`** (v9.39.0, 18.11.2026): in the `copy_scripts()` list and in `RESTRICTED_DOCKER_SCRIPTS`; fish alias `pgup` (`33-aliases-backup.fish`) and a row in the login overview
   - **Delivers `ownerp_sizing.py`** (v9.38.0, 09.11.2026): in the `copy_scripts()` list and in `RESTRICTED_DOCKER_SCRIPTS` (restricted Docker tier); fish alias `dosize` (`33-aliases-backup.fish` 2.1.0) and a row in the login overview
   - Legacy root-crontab lines neutralised on every run (v9.37.0, 09.11.2026):

@@ -180,6 +180,16 @@ Starship-Prompt, fastfetch-Konfiguration und — mit dem eigenen Passwort — di
 Login-Shell. Server-Werkzeuge, Härtung, Proxy und DNS bleiben root
 vorbehalten.
 
+**Eigene Shell-Konfiguration bleibt unangetastet (ab 9.41.0).** Gehört das
+Home-Verzeichnis nicht root und liegt dort `~/.config/sccs/config.yaml`, wird
+die Shell-Konfiguration dieses Kontos mit SCCS synchronisiert. `ups` kopiert
+dann weder Fish-Konfiguration noch `starship.toml` und meldet
+„von SCCS verwaltet, übersprungen“ — mit sudo ebenso wie ohne. Vorher hat
+`ups` gleichnamige `conf.d`-Dateien überschrieben und jede andere
+`NN-name.fish` gelöscht. Wer in diesem Konto trotzdem die ownERP-Konfiguration
+will, setzt in der SCCS-Config `fish_config` bzw. `starship_config` auf
+`enabled: false`. `/root` bekommt sie immer.
+
 Als normaler Benutzer (funktioniert in bash und fish, braucht nur python3):
 
 ```bash
@@ -523,6 +533,16 @@ For customers who will run getScripts.py neither as root nor through sudo
 the user's own environment: the Fish configuration, the Starship prompt,
 fastfetch's configuration and — with the user's own password — the login
 shell. Server tools, hardening, proxy and DNS stay with root.
+
+**Your own shell configuration is left alone (since 9.41.0).** When the home
+directory is not owned by root and holds `~/.config/sccs/config.yaml`, that
+account's shell configuration is synchronised by SCCS. `ups` then copies
+neither the Fish configuration nor `starship.toml` and reports "managed by
+SCCS, left untouched" — with sudo as well as without. Before, `ups`
+overwrote conf.d files of the same name and deleted every other
+`NN-name.fish`. To get the ownERP configuration in such an account anyway, set
+`fish_config` or `starship_config` to `enabled: false` in the SCCS config.
+`/root` always gets it.
 
 As an ordinary user (works in bash and fish, needs only python3):
 

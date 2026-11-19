@@ -148,7 +148,7 @@ if os.environ.get('GETSCRIPTS_DEBUG', '').lower() in ('1', 'true', 'yes'):
     logger.debug("Debug logging enabled")
 
 # Script version and date
-SCRIPT_VERSION = "9.40.0"
+SCRIPT_VERSION = "9.41.0"
 SCRIPT_DATE = "19.11.2026"
 
 # Branch of myodoo-docker this server tracks - the single source of truth for
@@ -912,6 +912,60 @@ def install_fisher_if_needed() -> bool:
         logger.error(f"Failed to install Fisher: {e}")
 
     return False
+
+
+# A personal account whose shell configuration is synchronised by SCCS
+# (SkillsCommandsConfigsSync) must not get ours: copy_fish_configuration()
+# overwrites every conf.d file of the same name and prunes every other
+# NN-name.fish, which on 19.11.2026 deleted a developer's own hooks and PATH
+# entries. Only homes NOT owned by root are protected - /root on a customer
+# server always gets the ownERP configuration.
+SCCS_CONFIG_RELPATH = os.path.join(".config", "sccs", "config.yaml")
+SCCS_SKIP_DETAIL = "managed by SCCS (~/.config/sccs/config.yaml), left untouched"
+_YAML_FALSE = {"false", "no", "off"}
+
+
+def sccs_manages(home: str, category: str) -> bool:
+    """True when SCCS keeps `category` in sync for this (non-root) home.
+
+    SCCS enables `fish_config` and `starship_config` by default, so a category
+    counts as managed unless its block explicitly says `enabled: false`. An
+    SCCS config that cannot be read counts as managed too: skipping a copy
+    costs an outdated alias, overwriting costs the user's files.
+    Line-based on purpose - getScripts.py does not depend on PyYAML.
+    """
+    try:
+        if os.stat(home).st_uid == 0:
+            return False
+    except OSError:
+        return False
+    config_path = os.path.join(home, SCCS_CONFIG_RELPATH)
+    if not os.path.isfile(config_path):
+        return False
+    try:
+        with open(config_path, encoding="utf-8") as handle:
+            lines = handle.read().splitlines()
+    except (OSError, UnicodeDecodeError) as e:
+        logger.info(f"SCCS config unreadable ({e}), treating {category} as managed")
+        return True
+
+    header = re.compile(rf"^(\s*){re.escape(category)}:\s*(#.*)?$")
+    enabled = re.compile(r"^\s*enabled:\s*([^\s#]+)")
+    for index, line in enumerate(lines):
+        match = header.match(line)
+        if not match:
+            continue
+        indent = len(match.group(1))
+        for inner in lines[index + 1:]:
+            if not inner.strip() or inner.lstrip().startswith("#"):
+                continue
+            if len(inner) - len(inner.lstrip()) <= indent:
+                break
+            flag = enabled.match(inner)
+            if flag:
+                return flag.group(1).strip("'\"").lower() not in _YAML_FALSE
+        break
+    return True
 
 
 def copy_fish_configuration(_myhome: str, myodoo_docker: str) -> bool:
@@ -7036,12 +7090,17 @@ def run_restricted_mode() -> int:
         os.chdir(home)
 
     done = []
-    if copy_fish_configuration(home, myodoo_docker):
+    if sccs_manages(home, "fish_config"):
+        done.append("Fish-Konfiguration: von SCCS verwaltet, übersprungen")
+    elif copy_fish_configuration(home, myodoo_docker):
         done.append(f"Fish-Konfiguration (Fish {fish_version})")
     else:
         print("Fish-Konfiguration konnte nicht kopiert werden - Details in ~/getscripts.log")
-    if is_starship_installed()[0] and copy_starship_configuration(home, myodoo_docker):
-        done.append("Starship-Prompt")
+    if is_starship_installed()[0]:
+        if sccs_manages(home, "starship_config"):
+            done.append("Starship-Prompt: von SCCS verwaltet, übersprungen")
+        elif copy_starship_configuration(home, myodoo_docker):
+            done.append("Starship-Prompt")
     if is_fastfetch_installed()[0]:
         config_directory = os.path.join(home, ".config", "fastfetch")
         ensure_directory_exists(config_directory)
@@ -7135,13 +7194,20 @@ def main() -> None:
         if fish_installed:
             install_fisher_if_needed()
 
-        # Copy Fish configuration (always update to get latest changes)
+        # Copy Fish configuration (always update to get latest changes),
+        # unless SCCS owns it in a personal (non-root) home.
         if fish_installed:
-            copy_fish_configuration(_myhome, myodoo_docker)
+            if sccs_manages(_myhome, "fish_config"):
+                record_install("fish config", "skipped", SCCS_SKIP_DETAIL)
+            else:
+                copy_fish_configuration(_myhome, myodoo_docker)
 
         # Copy Starship configuration (always update to get latest changes)
         if starship_installed:
-            copy_starship_configuration(_myhome, myodoo_docker)
+            if sccs_manages(_myhome, "starship_config"):
+                record_install("starship config", "skipped", SCCS_SKIP_DETAIL)
+            else:
+                copy_starship_configuration(_myhome, myodoo_docker)
 
         # Log ZSH detection (Fish is now the only supported shell)
         zsh_installed, _ = is_zsh_installed()

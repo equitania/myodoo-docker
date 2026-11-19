@@ -1,5 +1,26 @@
 # Release Notes
 
+## Fix: `ups` no longer overwrites an SCCS-managed shell configuration (19.11.2026)
+
+*getScripts.py 9.41.0 · docs/usage/01-provisioning.md · docs/usage/09-reference.md · docs/COMPONENTS.md · tests/test_getscripts_sccs_guard.py*
+
+In a personal account whose Fish configuration is synchronised by SCCS, `ups`
+replaced `config.fish`, overwrote every conf.d file of the same name and pruned
+every other `NN-name.fish` — a developer lost their project hooks
+(`45-project-hooks.fish`) and PATH entries (`10-path.fish`). The
+`config.fish.bak` it wrote is overwritten on every run and kept nothing.
+
+- `sccs_manages()`: a home **not owned by root** with
+  `~/.config/sccs/config.yaml` keeps its Fish configuration and
+  `starship.toml`, unless the SCCS config sets `fish_config` /
+  `starship_config` to `enabled: false`. An unreadable SCCS config counts as
+  managed. Line-based, no PyYAML.
+- Both paths are guarded — the normal run (also under `sudo`, which installs
+  into `SUDO_USER`'s home) and the restricted mode. The install summary shows
+  `fish config: skipped — managed by SCCS`; the restricted overview
+  „Fish-Konfiguration: von SCCS verwaltet, übersprungen“.
+- `/root` and every customer server without SCCS behave as before.
+
 ## Fix: hardening backups no longer act as live configuration (19.11.2026)
 
 *scripts/server_hardening.py 1.13.1*
