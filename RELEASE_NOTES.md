@@ -1,5 +1,23 @@
 # Release Notes
 
+## Fix: hardening backups no longer act as live configuration (19.11.2026)
+
+*scripts/server_hardening.py 1.13.1*
+
+`backup_file()` wrote its copy next to the file (`20auto-upgrades.backup_<ts>`,
+`99-hardening.backup_<ts>.conf`), and five of those directories are read as a
+whole. apt loaded `20auto-upgrades.backup_<ts>` after `20auto-upgrades`, so the
+OLD settings won; systemd (`docker.service.d`), modprobe, augenrules and sysctl
+applied the old copy alongside the new one.
+
+- Backups now go to `/var/backups/myodoo-docker/hardening/<original path>.backup_<ts>`
+  (the same place `ownerp_cron.py` uses since 1.1.1). Rollbacks use the returned
+  path and are unchanged.
+- Every `--apply` first moves backups an older version left in `apt.conf.d`,
+  `sysctl.d`, `modprobe.d`, `audit/rules.d` and `docker.service.d` there. Only
+  names with the exact `.backup_YYYYMMDD_HHMMSS` marker are touched; an audit
+  without `--apply` still writes nothing.
+
 ## New: nginx from nginx.org stays installable and current (19.11.2026)
 
 *getScripts.py 9.40.0 · scripts/server_hardening.py 1.13.0 · scripts/server-readiness.py 1.19.0 · docs/usage/04-updates.md*

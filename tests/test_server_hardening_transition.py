@@ -129,7 +129,8 @@ class AuditSshTransitionTest(_TempCentral):
         super().setUp()
         self.sshd_config = Path(self.tmp.name) / "sshd_config"
         self.dropins = Path(self.tmp.name) / "sshd_config.d"
-        for name, value in (("SSHD_CONFIG", self.sshd_config), ("SSHD_DROPIN_DIR", self.dropins)):
+        for name, value in (("SSHD_CONFIG", self.sshd_config), ("SSHD_DROPIN_DIR", self.dropins),
+                            ("BACKUP_ROOT", Path(self.tmp.name) / "backups")):
             p = mock.patch.object(sh, name, value)
             p.start()
             self.addCleanup(p.stop)
@@ -221,7 +222,8 @@ class _TransitionCli(_TempCentral):
         self.sshd_config.write_text("Include /etc/ssh/sshd_config.d/*.conf\nPort 22\nPermitRootLogin yes\n")
         self.dropins = Path(self.tmp.name) / "sshd_config.d"
         self.dropins.mkdir()
-        for name, value in (("SSHD_CONFIG", self.sshd_config), ("SSHD_DROPIN_DIR", self.dropins)):
+        for name, value in (("SSHD_CONFIG", self.sshd_config), ("SSHD_DROPIN_DIR", self.dropins),
+                            ("BACKUP_ROOT", Path(self.tmp.name) / "backups")):
             p = mock.patch.object(sh, name, value)
             p.start()
             self.addCleanup(p.stop)

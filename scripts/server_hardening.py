@@ -2,7 +2,7 @@
 """
 Server-Härtungs-Skript
 =======================
-Version: 1.13.0 / Date: 19.11.2026
+Version: 1.13.1 / Date: 19.11.2026
 
 Prüft und härtet: UFW, Fail2Ban, SSH, Kernel, Kernel-Module, Docker,
 Auto-Updates, auditd, AIDE, Nginx
@@ -19,7 +19,7 @@ import subprocess
 import sys
 import os
 
-SCRIPT_VERSION = "1.13.0"
+SCRIPT_VERSION = "1.13.1"
 import glob
 import re
 import time
@@ -105,16 +105,63 @@ def _ssh_value_matches(current, expected):
     any run of whitespace equal to one space."""
     return " ".join(str(current).split()).lower() == " ".join(str(expected).split()).lower()
 
+# Backups live outside /etc. Up to 1.13.0 they were written next to the file
+# (foo.backup_<ts>.conf), and five of those directories are read as a whole:
+# apt read 20auto-upgrades.backup_<ts> AFTER 20auto-upgrades, so the OLD
+# settings won; systemd, modprobe, augenrules and sysctl applied the old copy
+# alongside the new one. Same lesson as ownerp_cron.py 1.1.1.
+BACKUP_ROOT = Path("/var/backups/myodoo-docker/hardening")
+STRAY_BACKUP_DIRS = (
+    "/etc/apt/apt.conf.d",
+    "/etc/systemd/system/docker.service.d",
+    "/etc/modprobe.d",
+    "/etc/audit/rules.d",
+    "/etc/sysctl.d",
+)
+_STRAY_BACKUP_RE = re.compile(r"\.backup_\d{8}_\d{6}")
+
+
+def backup_path_for(path, ts, root=None):
+    """Where the backup of `path` goes: the original path below BACKUP_ROOT."""
+    p = Path(path)
+    return (root or BACKUP_ROOT) / p.relative_to(p.anchor).parent / f"{p.name}.backup_{ts}"
+
+
 def backup_file(path):
-    """Erstellt ein Backup mit Zeitstempel."""
+    """Erstellt ein Backup mit Zeitstempel unter BACKUP_ROOT (nie neben der Datei)."""
     p = Path(path)
     if p.exists():
         ts = datetime.now().strftime("%Y%m%d_%H%M%S")
-        backup = p.with_suffix(f".backup_{ts}{p.suffix}")
+        backup = backup_path_for(p, ts)
+        backup.parent.mkdir(mode=0o700, parents=True, exist_ok=True)
         shutil.copy2(p, backup)
         info(f"Backup: {backup}")
         return str(backup)
     return None
+
+
+def relocate_stray_backups(dirs=STRAY_BACKUP_DIRS, root=None):
+    """Move backups an older version left inside directories that are read as
+    a whole. Only names carrying our exact `.backup_YYYYMMDD_HHMMSS` marker are
+    touched. Returns the moved targets; never raises."""
+    moved = []
+    for directory in dirs:
+        d = Path(directory)
+        if not d.is_dir():
+            continue
+        for entry in sorted(d.iterdir()):
+            if not entry.is_file() or not _STRAY_BACKUP_RE.search(entry.name):
+                continue
+            target = (root or BACKUP_ROOT) / entry.relative_to(entry.anchor)
+            try:
+                target.parent.mkdir(mode=0o700, parents=True, exist_ok=True)
+                shutil.move(str(entry), str(target))
+            except OSError as exc:
+                warn(f"Altes Backup nicht verschoben: {entry} ({exc})")
+                continue
+            info(f"Altes Backup aus {d} verschoben: {target}")
+            moved.append(str(target))
+    return moved
 
 def confirm(msg, force=False):
     if force:
@@ -2061,7 +2108,10 @@ def main(argv=None):
 AUDIT vs. APPLY
   Ohne --apply  : reiner Dry-Run, es wird NICHTS verändert (nur geprüft/berichtet).
   Mit  --apply  : Dateien werden geändert. Vor jeder Änderung wird ein Backup
-                  angelegt: <datei>.backup_YYYYMMDD_HHMMSS
+                  angelegt, nie neben der Datei, sondern unter
+                  /var/backups/myodoo-docker/hardening/<pfad>.backup_YYYYMMDD_HHMMSS
+                  (alte Backups in apt.conf.d, sysctl.d, modprobe.d, audit/rules.d
+                  und docker.service.d werden dorthin verschoben)
   --json        : Audit als ein JSON-Dokument (für server-readiness.py und ups);
                   schreibt nichts, Admin-IPs erscheinen nur als Kommentar/Slot.
 
@@ -2264,6 +2314,10 @@ Beispiele:
     if not args.apply:
         info("Dry-Run Modus - keine Änderungen")
         info("Mit --apply ausführen um zu härten\n")
+    else:
+        # Before any module writes: an old backup inside an include directory
+        # is read by apt/systemd/modprobe/augenrules/sysctl as live config.
+        relocate_stray_backups()
 
     modules = module_functions()
     for mod_name in ordered_modules(args.module):
