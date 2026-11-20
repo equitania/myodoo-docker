@@ -356,11 +356,21 @@ in this repository, stay in `CLAUDE.md`.
   - Automated restart management
   - Module updates for Odoo
 
-#### 4. update_docker_odoo.py (v5.26.0)
+#### 4. update_docker_odoo.py (v5.27.0)
 - **Purpose**: Automated Docker container updates for v16+ Odoo instances
   (image rebuild, container re-creation, module update), driven by
   `docker2update.yaml`
 - **Sizing from the hardware** (v5.26.0, 09.11.2026): for an instance whose `docker2update.yaml` entry has a `sizing:` block, `doup` computes workers, memory limits and PostgreSQL memory via `ownerp_sizing.py` (opt-in). A hand edit wins; `-s NAME` recomputes the host and applies one instance; sizing errors are ERROR lines, never an abort, but the run exits 1 ("sizing errors N"); over budget is a WARNING. `odoo.conf` gets a `.bak_<timestamp>` and a regression gate; PostgreSQL is changed in the restart window for local database containers only, verified with `SHOW`, rolled back on failure. See `docs/usage/04-updates.md`
+- **Build first, swap afterwards** (v5.27.0, 20.11.2026): the new image is built
+  under the tag `<image>:doup-candidate` while the old container keeps serving,
+  checked by `verify_built_image()`, and only then tagged as `<image>` (`:latest`).
+  The old container is stopped and removed after that, right before the database
+  update; the old image is no longer removed by name (`docker rmi`) - once its
+  container is gone it is untagged and `clean_docker_system()` prunes it. A failed
+  or hollow build leaves the instance running on its previous image and prints
+  `BUILD_FAILED_KEPT_ADVICE`; before, container and image were removed first and
+  every failed build was an outage (demo server 20.11.2026, a download dropped
+  for seconds). The host needs room for both images during the build
 - **Features**:
   - **`--release-file PATH`** (v5.25.0, 14.10.2026): installs exactly this
     release instead of asking the release manager (skips
@@ -380,7 +390,7 @@ in this repository, stay in `CLAUDE.md`.
     when `/opt/odoo/data` or one of its direct entries belongs to another UID,
     a one-time `chown -R` to the image's odoo user. `bin/boot` cannot do this:
     it changes ownership only on an empty data directory. A failed chown is an
-    error with the manual command, not an abort - the old image is gone by then
+    error with the manual command, not an abort - the old container is gone by then
   - **`odoo_version` is checked against the release** (v5.23.0, 30.09.2026):
     right after the release file is fetched and before anything is stopped or
     removed. The kernel archive in `release.file` names the release's Odoo
@@ -423,11 +433,11 @@ in this repository, stay in `CLAUDE.md`.
   then restart-loops with `exec /app/bin/boot: no such file or directory`,
   which reads like a Dockerfile bug and is not one — seen on one customer
   server on 16.07.2026 and again on 14.08.2026
-- **It cannot roll back, and that is the point of naming it early.** The
-  previous image is deleted *before* the build (`docker rmi {image}:latest`,
-  with the container), so there is nothing left to fall back to. What the check
-  buys is the fault stated where it happens, with the way out in the message,
-  instead of a cryptic runtime error half a minute later
+- **Since v5.27.0 it keeps the instance up.** The image is checked under its
+  candidate tag while the old container still runs, so a hollow image is never
+  promoted and the instance keeps its previous image. Up to v5.26.0 the previous
+  image was deleted *before* the build, and this check could only name the outage
+  where it happened instead of a cryptic runtime error half a minute later
 - **It is SPORADIC, and one automatic retry is the answer** (v5.16.0,
   17.08.2026). This is the single most useful fact about the defect and the
   hardest-won: on one server it appeared in **both** shapes within an hour — the
@@ -436,9 +446,9 @@ in this repository, stay in `CLAUDE.md`.
   **plain rebuild succeeded right after each of them**. The build step therefore
   retries **once**, and only when `build_looks_hollow()` matches the signature: a
   Dockerfile error, a full disk or a timed-out download must not be repeated,
-  that would burn the same minutes twice before the real message. Since the
-  previous image is deleted before the build, giving up on the first attempt is
-  an outage rather than a failed step — that is what this buys
+  that would burn the same minutes twice before the real message. Giving up on
+  the first attempt skips the update (since v5.27.0 the instance keeps its old
+  image; up to v5.26.0 it was an outage) — that is what this buys
 - **Do not build an escalation ladder out of a handful of runs.** During that
   incident three explanations were proposed and all three died: sibling
   containers running during the build, a poisoned build cache, a broken base

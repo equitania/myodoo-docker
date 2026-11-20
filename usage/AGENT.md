@@ -414,6 +414,11 @@ CIDR (wget/apt/urllib do not). Full walkthrough: `docs/usage/07-proxy.md`.
   immediately. Tune via `BUILD_ODOO_RETRIES` / `BUILD_ODOO_RETRY_BACKOFF`. If the build still
   aborts with `Release server '…' could not be reached`, the web service on the release host is
   down — check `systemctl status nginx` there, then rerun.
+- **A failed build keeps the instance up** (update_docker_odoo ≥ 5.27.0): the image is built as
+  `<image>:doup-candidate` and verified while the old container still serves; only then is it tagged
+  `:latest` and the old container stopped. A build failure prints `'<container>' was not touched`
+  and exits 1 — the instance was NOT updated, rerun once the cause is fixed. Older versions
+  removed container and image first, so a failed build meant the instance was down.
 - **Incomplete images:** missing module archives fail the build (build_odoo ≥ 2.6.0). All failed
   archives are listed at the end instead of surfacing one rerun at a time; 3 consecutive failures
   abort the run early (`BUILD_ODOO_FAILURE_LIMIT`) so a dead release server cannot burn the retry

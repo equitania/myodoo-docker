@@ -1,5 +1,37 @@
 # Release Notes
 
+## Change: doup builds the new image first and swaps afterwards, so a failed build no longer takes the instance down (20.11.2026)
+
+*scripts/update_docker_odoo.py 5.27.0 · tests/test_update_docker_odoo.py · docs/COMPONENTS.md · usage/AGENT.md*
+
+On the demo server the nightly update of one instance failed during the image
+build: the release server could not be reached for a few seconds (`wget` exit 4,
+then `build_odoo.py` aborted). The container and its image had already been
+removed before the build, so the instance stayed offline until it was rebuilt by
+hand the next morning. The instances updated a quarter of an hour before and
+after it went through normally.
+
+- **New order:** release manager, cache and sizing as before, then the build
+  under the tag `<image>:doup-candidate` while the old container keeps
+  serving, then `verify_built_image()` on that candidate. Only a candidate that
+  built and passed verification is tagged as `<image>` (`:latest`); after
+  that the old container is stopped and removed, PostgreSQL sizing runs, and
+  the database update and start follow as before.
+- **A failed or hollow build changes nothing on the instance.** The candidate
+  tag is removed, the run prints `'<container>' was not touched: … NOT
+  updated` and exits 1. The automatic retry for hollow layers is unchanged.
+- **Shorter downtime:** Odoo is now down only for the database update, not for
+  build plus update.
+- **`docker rmi <image>:latest` is gone.** The previous image loses its tag
+  when the new one is promoted and is pruned by the existing
+  `docker image prune -f` at the end of a successful run, once its container is
+  removed. After a failed database update it stays on disk as an untagged image
+  until the next successful run.
+- **Disk space:** during the build the old and the new image exist side by
+  side, so the host needs room for one more image than before.
+- **Not changed:** a failed database update still leaves the instance stopped
+  (the old code cannot safely run on a partly updated database).
+
 ## Change: one full backup a day, the 14:00 run backs up databases only; leftover temp directories are removed (19.11.2026)
 
 *scripts/container2backup.py 4.15.0 · scripts/myodoo-maintenance.cron · scripts/setup-maintenance-cron.sh 1.4.1 · getScripts.py 9.42.0 · Dockerfiles/playbooks/generate.py 1.1.0 (+ regenerated v16/v18/v19 playbooks) · scripts/README_BackUp.md · docs/usage/06-maintenance.md · usage/AGENT.md · tests/test_container2backup.py · tests/test_getscripts_backup_schedule.py*

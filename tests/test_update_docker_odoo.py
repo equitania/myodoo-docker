@@ -381,10 +381,9 @@ class VerifyBuiltImageTest(unittest.TestCase):
     A build can export an image whose layers carry nothing (known cause: an
     on-access virus scanner leaking BuildKit mounts under /var/lib/docker):
     the build is a two-second cache hit, the image has a plausible size, and
-    every file is missing at runtime. The old image is already gone by then -
-    update_docker_odoo.py removes it before building - so this cannot roll
-    anything back. What it does is name the fault where it happens instead of
-    letting it surface as a restart loop and an error naming the wrong file.
+    every file is missing at runtime. Since v5.27.0 the image is probed under
+    its candidate tag while the old container still runs, so a hollow build
+    is never promoted and the instance stays up on its previous image.
     """
 
     def setUp(self):
@@ -882,6 +881,78 @@ class BuildRetryCommandTest(unittest.TestCase):
                 command = udo.build_command_for_attempt("odoo/test", attempt)
                 self.assertIn("-t odoo/test", command)
                 self.assertTrue(command.rstrip().endswith(" ."))
+
+
+class BuildBeforeSwapTest(unittest.TestCase):
+    """Build first, swap afterwards (v5.27.0). On the demo server on 20.11.2026
+    a download dropped for seconds during the build of kpi18; the container
+    and its image had already been removed, so the instance stayed down until
+    it was rebuilt by hand. The old container now keeps running until a new
+    image has built and passed verification."""
+
+    def setUp(self):
+        self.commands = []
+        self.original = udo.run_command
+
+    def tearDown(self):
+        udo.run_command = self.original
+
+    def fake_docker(self, ok=True):
+        def run_command(command, *_args, **_kwargs):
+            self.commands.append(command)
+            return (ok, "", 0, 0, 0)
+        udo.run_command = run_command
+
+    def test_the_candidate_tag_replaces_no_tag(self):
+        self.assertEqual(udo.candidate_image("odoo/kpi18"), "odoo/kpi18:doup-candidate")
+
+    def test_the_candidate_tag_replaces_an_existing_tag(self):
+        self.assertEqual(udo.candidate_image("odoo/live:18"), "odoo/live:doup-candidate")
+
+    def test_a_registry_port_is_not_taken_for_a_tag(self):
+        self.assertEqual(udo.candidate_image("registry:5000/odoo/live"),
+                         "registry:5000/odoo/live:doup-candidate")
+
+    def test_promotion_tags_the_image_and_drops_only_the_candidate_name(self):
+        self.fake_docker(ok=True)
+        promoted, problem = udo.promote_candidate_image(
+            "odoo/kpi18:doup-candidate", "odoo/kpi18")
+        self.assertTrue(promoted)
+        self.assertEqual(problem, "")
+        self.assertEqual(self.commands, [
+            "docker tag odoo/kpi18:doup-candidate odoo/kpi18",
+            "docker rmi odoo/kpi18:doup-candidate",
+        ])
+
+    def test_a_failed_tag_keeps_the_candidate_and_says_so(self):
+        self.fake_docker(ok=False)
+        promoted, problem = udo.promote_candidate_image(
+            "odoo/kpi18:doup-candidate", "odoo/kpi18")
+        self.assertFalse(promoted)
+        self.assertIn("odoo/kpi18", problem)
+        self.assertEqual(len(self.commands), 1, "nothing may be removed after a failed tag")
+
+    def source(self):
+        return inspect.getsource(udo._process_container)
+
+    def test_the_old_image_is_never_removed_by_name(self):
+        self.assertNotIn("docker rmi {image}", self.source())
+
+    def test_build_and_verification_come_before_the_old_container_is_stopped(self):
+        source = self.source()
+        stop_at = source.index('f"docker stop {container_name}"')
+        self.assertLess(source.index("build_command_for_attempt(candidate"), stop_at)
+        self.assertLess(source.index("verify_built_image(candidate)"), stop_at)
+        self.assertLess(source.index("promote_candidate_image(candidate, image)"), stop_at)
+
+    def test_the_build_targets_the_candidate_not_the_live_tag(self):
+        self.assertNotIn("build_command_for_attempt(image", self.source())
+
+    def test_a_failed_build_tells_the_operator_the_instance_was_kept(self):
+        self.assertIn("BUILD_FAILED_KEPT_ADVICE", self.source())
+        text = udo.BUILD_FAILED_KEPT_ADVICE.format(container="kpi18-odoo")
+        self.assertIn("kpi18-odoo", text)
+        self.assertIn("NOT updated", text)
 
 
 class ProxyRunArgsTest(unittest.TestCase):
@@ -1435,9 +1506,12 @@ class SizingStepsTest(unittest.TestCase):
         odoo_at = source.index("run_sizing_odoo(")
         self.assertGreater(odoo_at, source.index('"cache release archives"'))
         self.assertLess(odoo_at, source.index('f"stop {container_name}"'))
+        # PostgreSQL restarts only while Odoo is down: after the old container
+        # was removed (which since v5.27.0 follows the build) and before the
+        # new image's first run.
         pg_at = source.index("run_sizing_postgres(")
-        self.assertGreater(pg_at, source.index("remove image"))
-        self.assertLess(pg_at, source.index("Verify Dockerfile exists"))
+        self.assertGreater(pg_at, source.index('f"docker rm {container_name}"'))
+        self.assertLess(pg_at, source.index("align_data_ownership(image, volume)"))
 
     # --- PostgreSQL step ---------------------------------------------------
 

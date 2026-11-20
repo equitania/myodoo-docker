@@ -1,8 +1,8 @@
 #!/usr/bin/python3
 # -*- coding: utf-8 -*-
 # This script performs an update of an Odoo database in a Docker container
-# Version 5.26.0
-# Date 09.11.2026
+# Version 5.27.0
+# Date 20.11.2026
 ##############################################################################
 #
 #    Shell Script for Odoo, Open Source Management Solution
@@ -77,8 +77,8 @@ logger = logging.getLogger(__name__)
 # Kept in sync with the header comment above. Printed at the start of every run
 # so a pasted log says which version produced it — the single most common
 # question when a report comes back from a server.
-SCRIPT_VERSION = "5.26.0"
-SCRIPT_DATE = "09.11.2026"
+SCRIPT_VERSION = "5.27.0"
+SCRIPT_DATE = "20.11.2026"
 
 # Set by --no-cache. A module-level flag rather than another parameter through
 # process_container(): the build is six call levels below the argument parser,
@@ -873,15 +873,29 @@ ODOO_LOAD_FAILURE_MARKERS = (
 )
 
 
-# Printed under a failed update. The old container and image are already gone
-# at that point (they are removed before the build), so nothing serves until
-# the next successful run - which the operator has to know without reading the
-# code.
+# Printed under a failed update. The old container is already gone at that
+# point (it is removed after the new image was built and verified, right before
+# the database update), so nothing serves until the next successful run - which
+# the operator has to know without reading the code.
 UPDATE_FAILED_ADVICE = (
     "    '{container}' is NOT running: the update of its database failed, so the\n"
     "    container was not started. Fix the cause named above (full log below),\n"
     "    then run the update again."
 )
+
+# Printed under a failed build. Since v5.27.0 the build comes first, so the
+# instance was not touched - the operator must not go looking for an outage
+# that did not happen, nor assume the update went through.
+BUILD_FAILED_KEPT_ADVICE = (
+    "    '{container}' was not touched: the new image did not build, so the\n"
+    "    instance keeps running on its previous image and was NOT updated.\n"
+    "    Fix the cause named above, then run the update again."
+)
+
+# Tag the new image is built under until it has passed verify_built_image().
+# Only then does it become :latest, so a failed or hollow build never replaces
+# the image the running container came from.
+BUILD_CANDIDATE_TAG = "doup-candidate"
 
 
 def run_command(command, show_output=True, filter_output=False, show_progress=False,
@@ -1519,10 +1533,10 @@ def verify_built_image(image):
     which reads like a Dockerfile bug and is not one. Seen on one customer
     server on 16.07.2026 and again on 14.08.2026.
 
-    This cannot roll anything back - the previous image is removed before the
-    build, several steps up. What it buys is that the failure is named where it
-    happens, with the command that fixes it, instead of surfacing half a minute
-    later as a restart loop and an error message that points at the wrong file.
+    Since v5.27.0 the image is checked under its candidate tag while the old
+    container is still running, so a hollow image is never promoted to :latest
+    and the instance stays up on its previous image. Before, the previous image
+    was removed ahead of the build and this check could only name the outage.
 
     The probe runs the image's own entrypoint executable through `test -x`, so
     it fails in both shapes the fault takes: a hollow image has no /bin/sh and
@@ -1530,7 +1544,7 @@ def verify_built_image(image):
     still has a shell but fails the test.
 
     Args:
-        image: Image name without a tag (the build tags it as-is)
+        image: Image reference to probe (the candidate tag during an update)
 
     Returns:
         tuple: (usable, message) - message is empty when usable
@@ -1557,6 +1571,51 @@ def verify_built_image(image):
         f"The image {image} was built but does not carry {entrypoint}.\n"
         + HOLLOW_IMAGE_ADVICE.replace(
             "<this script>", os.path.basename(sys.argv[0])))
+
+
+def candidate_image(image):
+    """Return the reference the new image is built and verified under.
+
+    An image name that already carries a tag (odoo/live:18) keeps its
+    repository and gets the candidate tag instead; a registry port
+    (host:5000/odoo/live) is not mistaken for a tag.
+    """
+    repository = image
+    last = image.rsplit("/", 1)[-1]
+    if ":" in last:
+        repository = image[: len(image) - len(last)] + last.split(":", 1)[0]
+    return f"{repository}:{BUILD_CANDIDATE_TAG}"
+
+
+def promote_candidate_image(candidate, image):
+    """Make the verified candidate the image the instance runs from.
+
+    `docker tag` moves `image` (:latest when untagged) onto the candidate. The
+    running container is not affected - it references its image by ID - and
+    the previous image, now untagged, is removed by clean_docker_system() once
+    the old container is gone. The candidate tag is dropped afterwards; that
+    only removes a name, never the image, because `image` still points at it.
+
+    Returns:
+        tuple: (promoted, message) - message is empty when promoted
+    """
+    success, output, *_ = run_command(
+        f"docker tag {candidate} {image}", show_output=False, timeout=60)
+    if not success:
+        return False, (f"Could not tag {candidate} as {image}: "
+                       f"{(output or '').strip() or 'docker tag failed'}")
+    discard_candidate_image(candidate)
+    return True, ""
+
+
+def discard_candidate_image(candidate):
+    """Remove the candidate tag - after a failed build, or once promoted.
+
+    Never fatal and never counted: when no candidate exists (the build failed
+    before tagging anything) `docker rmi` fails, and that is the normal case.
+    """
+    run_command(f"docker rmi {candidate}", show_output=False,
+                filter_output=True, timeout=120)
 
 
 # Run inside the new image as root, with the instance's own volume flags, so it
@@ -1586,7 +1645,7 @@ def align_data_ownership(image, volume):
     'docker run' per update.
 
     A failed chown is reported as an error but does not abort the update: the
-    old image is gone at this point, and a running container with a write
+    old container is gone at this point, and a running container with a write
     problem beats no container at all.
 
     Args:
@@ -2513,22 +2572,12 @@ def _process_container(container, proxy_settings=None, dockerfiles_source=None,
     total_warnings += warn
     total_errors += err
 
-    # Stop and remove the container plus its image
-    for step_label, step_command in (
-            (f"stop {container_name}", f"docker stop {container_name}"),
-            (f"remove {container_name}", f"docker rm {container_name}"),
-            (f"remove image {image}:latest", f"docker rmi {image}:latest")):
-        _, _, info, warn, err = run_step(step_label, step_command)
-        total_info += info
-        total_warnings += warn
-        total_errors += err
-
-    # Sizing: Odoo is down for the whole build, so a PostgreSQL restart costs
-    # no extra downtime. Never fatal.
-    info, warn, err = run_sizing_postgres(container, db_user, all_containers=all_containers)
-    total_info += info
-    total_warnings += warn
-    total_errors += err
+    # Build first, swap afterwards (since v5.27.0). The new image is built under
+    # a candidate tag while the old container keeps serving, and only an image
+    # that built AND passed verify_built_image() replaces it. Before, the
+    # container and its image were removed first, so every failed build - a
+    # download dropped for a few seconds is enough, demo server 20.11.2026 -
+    # left the instance down until the next successful run.
 
     # Verify Dockerfile exists
     if not isfile('Dockerfile'):
@@ -2559,7 +2608,7 @@ def _process_container(container, proxy_settings=None, dockerfiles_source=None,
     build_env = dict(proxy_env or {})
     build_env["DOCKER_BUILDKIT"] = "1"
     cache_arg = "--no-cache " if BUILD_NO_CACHE else ""
-
+    candidate = candidate_image(image)
 
     # An on-access virus scanner (e.g. Sophos's soapd) watching /var/lib/docker
     # can sporadically produce layers that carry nothing, in two shapes: the
@@ -2567,8 +2616,8 @@ def _process_container(container, proxy_settings=None, dockerfiles_source=None,
     # build whose image has no filesystem. Same defect - see HOLLOW_IMAGE_ADVICE
     # for the mechanism and the exclusion that fixes it at the source. On
     # 17.08.2026 a plain rebuild succeeded right after each shape had occurred,
-    # so ONE retry is worth its seconds - the previous image was deleted before
-    # this build, which makes giving up here an outage rather than a failed step.
+    # so ONE retry is worth its seconds: without it the update is skipped and
+    # the instance keeps running on its old image until the next run.
     #
     # The retry hangs off the hollow signature, not off failure in general: a
     # Dockerfile error, a full disk or a timed-out download must not be repeated,
@@ -2576,7 +2625,7 @@ def _process_container(container, proxy_settings=None, dockerfiles_source=None,
     for attempt in (1, 2):
         success, output, info, warn, err = run_stream(
             f"build image {image}" if attempt == 1 else f"rebuild image {image}",
-            build_command_for_attempt(image, attempt, cache_arg, proxy_build_args),
+            build_command_for_attempt(candidate, attempt, cache_arg, proxy_build_args),
             timeout=3600, env=build_env,
             filter_output=should_filter,
             show_progress=should_filter,
@@ -2588,7 +2637,7 @@ def _process_container(container, proxy_settings=None, dockerfiles_source=None,
         if success:
             # A build reporting success is not proof of a usable image
             started = time.time()
-            usable, problem = verify_built_image(image)
+            usable, problem = verify_built_image(candidate)
             print_step(f"verify image {image}", "ok" if usable else "FAILED",
                        time.time() - started)
             if usable:
@@ -2599,12 +2648,13 @@ def _process_container(container, proxy_settings=None, dockerfiles_source=None,
                        + HOLLOW_IMAGE_ADVICE.replace(
                            "<this script>", os.path.basename(sys.argv[0])))
         else:
+            discard_candidate_image(candidate)
             print("ERROR: Failed to build Docker image")
             print("This may be due to:")
             print("- Network timeout while downloading modules")
             print("- Insufficient disk space")
             print("- Build process was interrupted")
-            print("You can retry the build by running the script again")
+            print(BUILD_FAILED_KEPT_ADVICE.format(container=container_name))
             try:
                 os.chdir(original_dir)  # Change back to original directory
             except:
@@ -2627,13 +2677,52 @@ def _process_container(container, proxy_settings=None, dockerfiles_source=None,
             continue
 
         total_errors += 1
+        discard_candidate_image(candidate)
         logger.error(problem)
         print(problem)
+        print(BUILD_FAILED_KEPT_ADVICE.format(container=container_name))
         try:
             os.chdir(original_dir)  # Change back to original directory
         except:
             pass
         return False, total_info, total_warnings, total_errors
+
+    # The candidate is usable: it becomes {image}:latest. The old container
+    # keeps running meanwhile - it references its image by ID, not by tag -
+    # and the old image, untagged now, is removed by clean_docker_system()
+    # once the old container is gone.
+    started = time.time()
+    promoted, problem = promote_candidate_image(candidate, image)
+    print_step(f"tag {image}:latest", "ok" if promoted else "FAILED",
+               time.time() - started)
+    if not promoted:
+        total_errors += 1
+        note_issue("ERROR", problem)
+        logger.error(problem)
+        print(f"{CR}    {problem}")
+        print(BUILD_FAILED_KEPT_ADVICE.format(container=container_name))
+        try:
+            os.chdir(original_dir)
+        except Exception:
+            pass
+        return False, total_info, total_warnings, total_errors
+
+    # Only now is the old container stopped and removed - the outage window
+    # shrinks from build + update to the update alone.
+    for step_label, step_command in (
+            (f"stop {container_name}", f"docker stop {container_name}"),
+            (f"remove {container_name}", f"docker rm {container_name}")):
+        _, _, info, warn, err = run_step(step_label, step_command)
+        total_info += info
+        total_warnings += warn
+        total_errors += err
+
+    # Sizing: Odoo is down from here until the restart, so a PostgreSQL
+    # restart costs no extra downtime. Never fatal.
+    info, warn, err = run_sizing_postgres(container, db_user, all_containers=all_containers)
+    total_info += info
+    total_warnings += warn
+    total_errors += err
 
     # The new image's odoo user may carry another UID than the one the data
     # volume was written with (UID pinned to 8069 on 07.10.2026) - fix that
