@@ -1366,12 +1366,17 @@ in this repository, stay in `CLAUDE.md`.
   `v19/` hold the output for the templates' values as examples
 - **Extra modules** (v1.2.0): `install_modules: [a, b]` on the test container in `docker2update.yaml` (or `--install-modules a,b`, which wins; empty = none) adds a `server.install` step after "Neutralize" and before the final verify to every restore playbook; the header then says `odoodev >= 0.78.0`. Without modules the output is unchanged
 - **States**: `neutral`, `anonym`, `anonym-leer`, `stammdaten`, `vorlage`
-  (odoodev sanitize flags), plus `wiederherstellen.yaml` (newest
-  `/opt/backups/prerestore` file, no safety backup on purpose) and
-  `passwoerter.yaml` (one pbkdf2 hash for every user except the technical
+  (odoodev sanitize flags), plus `passwoerter.yaml` (one pbkdf2 hash for every user except the technical
   accounts, 2FA off; the hash comes from `passwort-setzen.py`, stored in
   `/root/.config/odoodev/test-passwords.env`, 0600)
-- **Flow**: safety backup → stop → restore via staging DB (unpacked in
+- **Test settings file** (v1.4.0, 20.11.2026): `/root/.config/odoodev/test-after-restore.sql` (0600, or `--after-restore-sql PATH`) runs via `sql.execute file:` after neutralize and `server.install`, followed by `container.stop`/`container.start`, before the final verify - for `web.base.url`, the test FastReport URL/token (neutralize empties the token), an admin login. Read at run time; no secret in the playbook
+- **No safety backup by default** (v1.3.0, 20.11.2026): a test instance is overwritten
+  on every run, and the prerestore archive (size of a full backup, never pruned) cost
+  ~8 GB a night. `--safety-backup` restores the old flow: a `server.backup` to
+  `/opt/backups/prerestore` first, plus `wiederherstellen.yaml` (newest prerestore file,
+  itself without a safety backup). Without the flag an older `wiederherstellen.yaml` in
+  the output directory is reported, never deleted
+- **Flow**: (safety backup, only with `--safety-backup`) → stop → restore via staging DB (unpacked in
   `/opt/backups/restore-tmp`, the backup dir may be a read-only share) →
   EBICS off via SQL before start → `doup --type F` → `server.uninstall` of
   `account_ebics*` → `odoo-bin neutralize` → `server.verify`

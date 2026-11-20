@@ -243,9 +243,11 @@ cd ~/myodoo-docker/Dockerfiles/playbooks
 python3 generate.py --version 18 --out ~/playbooks   # values from docker2update/container2backup YAML
 # optional extra modules after every restore: `install_modules: [eq_module_a, eq_module_b]` on the
 # test container in docker2update.yaml (doup ignores it), or: generate.py ... --install-modules a,b
-mkdir -p /opt/backups/prerestore /opt/backups/restore-tmp
+mkdir -p /opt/backups/restore-tmp   # + /opt/backups/prerestore with --safety-backup
 cd ~/playbooks && odoodev run neutral.yaml --dry-run && odoodev run neutral.yaml
-# states: neutral anonym anonym-leer stammdaten vorlage · wiederherstellen · passwoerter
+# states: neutral anonym anonym-leer stammdaten vorlage · passwoerter
+# no safety backup by default (test is overwritten anyway); --safety-backup adds it + wiederherstellen.yaml
+# /root/.config/odoodev/test-after-restore.sql (0600) runs last if present: web.base.url, FR token, admin login
 ```
 Never mark modules `to remove` via SQL and run `-u` — doup's `-u all` resets them and
 `odoo-bin -u` next to the running server deadlocks; use odoodev `server.uninstall`.

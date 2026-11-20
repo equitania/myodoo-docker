@@ -5,8 +5,8 @@
 # Description:      Share one host-side cache of Odoo release archives across
 #                   every instance on the server, so a build downloads only
 #                   what actually changed.
-# Version:          1.7.1
-# Date:             07.10.2026
+# Version:          1.7.2
+# Date:             20.11.2026
 # Author:           Equitania Software GmbH
 # ==============================================================================
 # Why this exists:
@@ -82,8 +82,8 @@ import urllib.request
 import zipfile
 from urllib.parse import urlsplit
 
-SCRIPT_VERSION = "1.7.1"
-SCRIPT_DATE = "07.10.2026"
+SCRIPT_VERSION = "1.7.2"
+SCRIPT_DATE = "20.11.2026"
 
 CACHE_ROOT_DEFAULT = "/opt/odoo-build-cache"
 ZIP_DIR = "zips"
@@ -350,6 +350,12 @@ def populate_build_dir(build_dir, root, base_url, names):
     Emptied first so a leftover from a previous release cannot travel into the
     image. Hardlinks cost no space; a cache on a different filesystem falls back
     to a copy.
+
+    A release.file may list the same archive twice (a module added to the
+    release by hand that another entry already brought). The second entry is
+    skipped: linking it again failed with EEXIST, the copy fallback then with
+    SameFileError, and the uncaught error ended the run with the build folder
+    half populated.
     """
     target_dir = os.path.join(build_dir, ZIP_DIR)
     if os.path.isdir(target_dir):
@@ -357,7 +363,11 @@ def populate_build_dir(build_dir, root, base_url, names):
     os.makedirs(target_dir, exist_ok=True)
 
     linked = missing = 0
+    seen = set()
     for name in names:
+        if os.path.basename(name) in seen:
+            continue
+        seen.add(os.path.basename(name))
         source = cache_path_for(root, base_url, name)
         if not os.path.isfile(source):
             missing += 1

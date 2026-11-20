@@ -220,6 +220,16 @@ class PopulateTest(unittest.TestCase):
         self.assertEqual((linked, missing), (1, 0))
         self.assertTrue(os.path.isfile(os.path.join(self.build, "zips", "mod_b.zip")))
 
+    def test_a_name_listed_twice_is_linked_once(self):
+        """A release.file with the same archive twice made the second link fail
+        with EEXIST and the copy fallback with SameFileError (seen 20.11.2026)."""
+        self._put("mod_b.zip")
+        self._put("mod_c.zip")
+        linked, missing = obc.populate_build_dir(
+            self.build, self.cache, self.base_url, ["mod_b.zip", "mod_c.zip", "mod_b.zip"])
+        self.assertEqual((linked, missing), (2, 0))
+        self.assertEqual(sorted(os.listdir(os.path.join(self.build, "zips"))), ["mod_b.zip", "mod_c.zip"])
+
     def test_counts_missing_without_failing(self):
         linked, missing = obc.populate_build_dir(self.build, self.cache, self.base_url, ["absent.zip"])
         self.assertEqual((linked, missing), (0, 1))

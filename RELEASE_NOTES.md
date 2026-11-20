@@ -1,5 +1,38 @@
 # Release Notes
 
+## Fix: odoo_build_cache no longer crashes on an archive listed twice in release.file (20.11.2026)
+
+*scripts/odoo_build_cache.py 1.7.2 · tests/test_odoo_build_cache.py*
+
+When a release.file listed the same archive twice, linking it into `zips/` a second time
+failed with `FileExistsError`, the copy fallback then with `shutil.SameFileError`, and the
+uncaught error ended the run: doup showed `cache release archives ... FAILED` and the build
+folder was only half populated (the build still fetched the rest itself). A repeated name is
+now linked once.
+
+## Change: test playbooks no longer save the test instance first, and apply its own settings last (20.11.2026)
+
+*Dockerfiles/playbooks/generate.py 1.4.0 · Dockerfiles/playbooks/ANLEITUNG.md · tests/test_playbook_generate.py · Dockerfiles/playbooks/v16, v18, v19 · docs/COMPONENTS.md · docs/usage/09-reference.md · usage/AGENT.md*
+
+A test instance is overwritten on every run, and the safety backup in
+`/opt/backups/prerestore` (the size of a full backup, never pruned) filled the disk by
+about 8 GB per run - fatal for a nightly mirror.
+
+- **Default:** the state playbooks start with "Stop test-odoo"; no `server.backup` step,
+  no `wiederherstellen.yaml`. generate.py says `safety backup: off` and reports an older
+  `wiederherstellen.yaml` in the output directory without deleting it.
+- **`--safety-backup`** brings back the previous behaviour: every state playbook saves the
+  test instance first, and `wiederherstellen.yaml` restores it.
+- The example playbooks under `v16/`, `v18/`, `v19/` are regenerated with the default.
+- **Settings of the test instance:** a restore brings the live values, and neutralizing
+  empties the FastReport token (`eq_fr_core/data/neutralize.sql`). When
+  `/root/.config/odoodev/test-after-restore.sql` exists (or `--after-restore-sql PATH`;
+  empty = none), every restore playbook runs it after neutralizing and installing, then
+  restarts the test container (Odoo caches configuration parameters) before the final
+  verify. Typical content: `web.base.url`, the FastReport URL and token of the test server,
+  an admin login without 2FA. odoodev reads the file at run time, so no secret is written
+  into a playbook. A missing file is refused; a file readable by others is warned about.
+
 ## Change: install_modules - the test playbooks install extra modules after a restore (20.11.2026)
 
 *Dockerfiles/playbooks/generate.py 1.2.0 · scripts/ownerp_validate.py 1.4.0 · scripts/ownerp_wizard.py 1.4.0 · scripts/ownerp_console.py 1.4.0 · scripts/docker2update.yaml · Dockerfiles/playbooks/ANLEITUNG.md · tests · docs/COMPONENTS.md · docs/usage · usage/AGENT.md*

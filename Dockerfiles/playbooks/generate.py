@@ -1,10 +1,13 @@
 #!/usr/bin/env python3
-# Version: 1.2.0
+# Version: 1.4.0
 # Date: 20.11.2026
 """Generate odoodev server playbooks that rebuild the test instance from the newest live backup.
 
-One playbook per data state (<state>.yaml), plus wiederherstellen.yaml (puts back the
-state saved before the last run) and passwoerter.yaml (one common password, 2FA off).
+One playbook per data state (<state>.yaml) and passwoerter.yaml (one common password, 2FA off).
+A test instance is overwritten on every run, so by default nothing is saved beforehand.
+With --safety-backup every state playbook first saves the test instance to
+/opt/backups/prerestore, and wiederherstellen.yaml puts that state back. Those archives
+are never deleted automatically (about the size of a full backup each).
 Target is the test instance (default test-odoo / test-db), source the live instance's
 backups (default live-odoo) as written by container2backup.py.
 
@@ -26,7 +29,7 @@ import os
 import re
 import sys
 
-SCRIPT_VERSION = "1.2.0"
+SCRIPT_VERSION = "1.4.0"
 SCRIPT_DATE = "20.11.2026"
 
 FLAGS = ("deactivate_cron", "neutralize", "anonymize", "wipe", "purge_transactions", "purge_master_data")
@@ -63,6 +66,11 @@ SAFETY_DIR = "/opt/backups/prerestore"
 # directory may be a read-only network share.
 RESTORE_TMP = "/opt/backups/restore-tmp"
 ENV_FILE = "/root/.config/odoodev/test-passwords.env"
+# SQL that only the test instance needs after every restore: its own web.base.url,
+# its own FastReport server and token (eq_fr_core's neutralize empties the token),
+# an admin login without 2FA. Server-only, root-only (0600) - it holds secrets and
+# never goes into a playbook or a repository; odoodev reads it at run time.
+AFTER_RESTORE_SQL = "/root/.config/odoodev/test-after-restore.sql"
 
 # EBICS only works with the bank keys of the live system. Right after the restore,
 # before Odoo starts, the copy is switched off and its stored passphrases are
@@ -269,6 +277,7 @@ def render_restore(args, state, label, active, source_dir, pattern, safety_backu
         "    args: { target: test }",
         "",
     ]
+    after_sql = getattr(args, "after_restore_sql", "") or ""
     if modules:
         lines += [
             '  - name: "Install additional modules"',
@@ -276,6 +285,25 @@ def render_restore(args, state, label, active, source_dir, pattern, safety_backu
             "    args:",
             "      target: test",
             f"      modules: [{', '.join(modules)}]",
+            "",
+        ]
+    if after_sql:
+        lines += [
+            "  # Last, so neutralize cannot undo it. Odoo caches configuration parameters,",
+            "  # so the container restarts afterwards.",
+            '  - name: "Apply the settings of the test instance"',
+            "    command: sql.execute",
+            "    args:",
+            "      target: test",
+            f"      file: {after_sql}",
+            "",
+            f'  - name: "Restart {args.test_container} with these settings"',
+            "    command: container.stop",
+            "    args: { target: test, component: odoo }",
+            "",
+            f'  - name: "Start {args.test_container}"',
+            "    command: container.start",
+            "    args: { target: test, component: odoo }",
             "",
         ]
     lines += [
@@ -330,6 +358,17 @@ def main():
         help="Modules to install after every restore, comma-separated "
         "(default: install_modules of the test container in docker2update.yaml; empty = none)",
     )
+    parser.add_argument(
+        "--safety-backup",
+        action="store_true",
+        help=f"Save the test instance to {SAFETY_DIR} before every restore and write wiederherstellen.yaml "
+        "(default: off - a test instance is overwritten anyway)",
+    )
+    parser.add_argument(
+        "--after-restore-sql",
+        help=f"SQL file run after neutralizing, e.g. web.base.url, FastReport token, admin login "
+        f"(default: {AFTER_RESTORE_SQL} if it exists; empty = none). Keep it mode 0600",
+    )
     parser.add_argument("--update-config", default="~/docker2update.yaml")
     parser.add_argument("--backup-config", default="~/container2backup.yaml")
     parser.add_argument("--no-detect", action="store_true", help="Do not read the server's YAML files")
@@ -338,6 +377,17 @@ def main():
     if args.no_detect:
         args.update_config = args.backup_config = "/nonexistent"
     found = detect(args)
+    if args.after_restore_sql is None:
+        args.after_restore_sql = "" if args.no_detect or not os.path.isfile(AFTER_RESTORE_SQL) else AFTER_RESTORE_SQL
+    if args.after_restore_sql:
+        if not re.match(r"^[A-Za-z0-9_./~-]+$", args.after_restore_sql):
+            parser.error(f"invalid path for --after-restore-sql: {args.after_restore_sql!r}")
+        sql_path = os.path.expanduser(args.after_restore_sql)
+        if not os.path.isfile(sql_path):
+            parser.error(f"--after-restore-sql: {sql_path} does not exist")
+        if os.stat(sql_path).st_mode & 0o077:
+            print(f"Warning: {sql_path} is readable by others - it may hold passwords and tokens: chmod 600",
+                  file=sys.stderr)
 
     for value in (args.test_container, args.test_db_container, args.live_container, args.test_db, args.live_db):
         if not NAME_RE.match(value):
@@ -359,17 +409,20 @@ def main():
     os.makedirs(out, exist_ok=True)
     files = {}
     for state, (label, active) in STATES.items():
-        files[f"{state}.yaml"] = render_restore(args, state, label, active, args.backup_dir, live_pattern, True)
-    # No safety backup here: it would itself become the newest prerestore file.
-    files["wiederherstellen.yaml"] = render_restore(
-        args,
-        "wiederherstellen",
-        "State saved before the last playbook run, neutralized",
-        NEUTRALIZE_ONLY,
-        SAFETY_DIR,
-        safety_pattern,
-        False,
-    )
+        files[f"{state}.yaml"] = render_restore(
+            args, state, label, active, args.backup_dir, live_pattern, args.safety_backup
+        )
+    if args.safety_backup:
+        # No safety backup here: it would itself become the newest prerestore file.
+        files["wiederherstellen.yaml"] = render_restore(
+            args,
+            "wiederherstellen",
+            "State saved before the last playbook run, neutralized",
+            NEUTRALIZE_ONLY,
+            SAFETY_DIR,
+            safety_pattern,
+            False,
+        )
     files["passwoerter.yaml"] = render_passwords(args)
     for name, content in files.items():
         with open(os.path.join(out, name), "w", encoding="utf-8") as handle:
@@ -379,8 +432,17 @@ def main():
         print(f"read: {line}")
     print(f"test instance: {args.test_container} / {args.test_db_container}, database {args.test_db}, data {args.data_dir}")
     print(f"live backups:  {os.path.join(args.backup_dir, live_pattern)}")
+    if args.after_restore_sql:
+        print(f"test settings: {args.after_restore_sql} is applied after every restore, then {args.test_container} restarts")
     if args.install_modules:
         print(f"extra modules: {', '.join(args.install_modules)} (needs odoodev >= {MIN_ODOODEV_INSTALL})")
+    if args.safety_backup:
+        print(f"safety backup: on - every run first saves the test instance to {SAFETY_DIR} (never pruned)")
+    else:
+        print("safety backup: off - the test instance is overwritten without a copy (--safety-backup to keep one)")
+        stale = os.path.join(out, "wiederherstellen.yaml")
+        if os.path.exists(stale):
+            print(f"note: {stale} is from an earlier run with --safety-backup; it is left alone")
     print(f"written: {len(files)} playbooks to {out}")
     return 0
 

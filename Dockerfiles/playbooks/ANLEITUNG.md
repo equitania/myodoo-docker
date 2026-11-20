@@ -26,7 +26,7 @@ werden sie mit dem Generator aus dessen eigener Konfiguration erzeugt:
 ```
 cd ~/myodoo-docker/Dockerfiles/playbooks
 python3 generate.py --version 18 --out ~/playbooks
-mkdir -p /opt/backups/prerestore /opt/backups/restore-tmp
+mkdir -p /opt/backups/restore-tmp
 cp passwort-setzen.py ~/playbooks/
 ```
 
@@ -64,10 +64,11 @@ Im Einzelnen:
 - **`vorlage`** löscht alles, was `stammdaten` löscht, und zusätzlich Kunden, Lieferanten
   und Kontakte, CRM- und Personaldaten samt Anhängen.
 
-Dazu kommen zwei Hilfs-Playbooks:
+Dazu kommt das Hilfs-Playbook **`passwoerter.yaml`**. Es setzt ein gemeinsames Passwort
+für alle Benutzer.
 
-- **`wiederherstellen.yaml`** holt den Stand vor dem letzten Lauf zurück.
-- **`passwoerter.yaml`** setzt ein gemeinsames Passwort für alle Benutzer.
+Nur mit `--safety-backup` (siehe *Den Stand vor dem letzten Lauf zurückholen*) entsteht
+zusätzlich **`wiederherstellen.yaml`**.
 
 ## Was bei jedem Zustand immer passiert
 
@@ -110,19 +111,48 @@ Statt der Datei geht auch eine Angabe auf der Kommandozeile, sie hat Vorrang:
 `python3 generate.py --version 18 --install-modules eq_module_a,eq_module_b --out ~/playbooks`.
 `--install-modules ""` schaltet den Schritt für diesen Aufruf ab.
 
+## Einstellungen, die nur für das Testsystem gelten
+
+Nach dem Einspielen stehen in der Datenbank die Werte von Live. Neutralisieren leert
+außerdem den FastReport-Token. Was das Testsystem anders braucht, steht deshalb in einer
+SQL-Datei auf dem Server, die nur `root` lesen kann:
+
+```
+/root/.config/odoodev/test-after-restore.sql
+```
+
+Gibt es die Datei, wenn `generate.py` läuft, führt jedes Playbook sie nach dem
+Neutralisieren und nach den Zusatzmodulen aus und startet `test-odoo` danach neu. odoodev
+liest die Datei erst beim Lauf. Passwörter und Tokens stehen so nie im Playbook. Ein
+anderer Pfad geht mit `--after-restore-sql PFAD`, `--after-restore-sql ""` schaltet den
+Schritt ab.
+
+Beispiel:
+
+```
+UPDATE ir_config_parameter SET value = 'https://test.example.com' WHERE key = 'web.base.url';
+UPDATE ir_config_parameter SET value = 'https://fr-test.example.com/api/reports' WHERE key = 'eq.fast.reports.server.api.url';
+UPDATE ir_config_parameter SET value = '<Token von fr-test>' WHERE key = 'eq.fast.reports.server.api.token';
+UPDATE res_users SET totp_secret = NULL, login = 'admin@example.com', password = '<Passwort>' WHERE id = 2;
+```
+
+Danach `chmod 600` auf die Datei und `generate.py` neu laufen lassen. Ein Passwort im
+Klartext nimmt Odoo an und speichert es bei der ersten Anmeldung verschlüsselt.
+
 ## Der Ablauf
 
-1. Der aktuelle Stand des Testsystems wird nach `/opt/backups/prerestore` gesichert.
-2. `test-odoo` wird gestoppt. **Ab hier ist das Testsystem nicht erreichbar.**
-3. Das neueste Live-Backup wird eingespielt und je nach Zustand bereinigt. Entpackt wird
+1. `test-odoo` wird gestoppt. **Ab hier ist das Testsystem nicht erreichbar.**
+2. Das neueste Live-Backup wird eingespielt und je nach Zustand bereinigt. Entpackt wird
    es dafür in `/opt/backups/restore-tmp`. Die bisherige Datenbank wird erst ersetzt,
    wenn die neue vollständig eingespielt ist.
-4. EBICS wird abgeschaltet, bevor Odoo startet.
-5. `doup` baut das Image neu, aktualisiert alle Module und startet Odoo.
-6. EBICS wird deinstalliert, danach startet Odoo neu.
-7. Odoo neutralisiert die Datenbank.
+3. EBICS wird abgeschaltet, bevor Odoo startet.
+4. `doup` baut das Image neu, aktualisiert alle Module und startet Odoo.
+5. EBICS wird deinstalliert, danach startet Odoo neu.
+6. Odoo neutralisiert die Datenbank.
    Sind `install_modules` eingetragen, werden danach diese Module installiert.
-8. Das Playbook prüft, ob Odoo gesund läuft, kein Modul hängen geblieben ist und die
+   Gibt es die Datei mit den Test-Einstellungen, wird sie danach ausgeführt und
+   `test-odoo` neu gestartet.
+7. Das Playbook prüft, ob Odoo gesund läuft, kein Modul hängen geblieben ist und die
    Anmeldeseite lädt. Erst danach ist das Testsystem einsatzbereit.
 
 Welches Backup verwendet wird, entscheidet der Zeitstempel im Dateinamen. Es zählen
@@ -167,12 +197,24 @@ Bei einem Fehler hält das Playbook sofort an.
   vollständig vorbereitet. Nutzen Sie das Testsystem so nicht.
 
 Starten Sie das Playbook nicht einfach erneut, sondern sehen Sie sich die erste
-Fehlermeldung an. Muss das Testsystem schnell wieder brauchbar sein, holen Sie den
-vorherigen Stand zurück.
+Fehlermeldung an. Muss das Testsystem schnell wieder brauchbar sein, beheben Sie die
+Ursache und starten Sie das Playbook danach neu. Es spielt das Live-Backup noch einmal
+vollständig ein. Den vorherigen Stand gibt es nur, wenn die Playbooks mit
+`--safety-backup` erzeugt wurden.
 
 ## Den Stand vor dem letzten Lauf zurückholen
 
-`wiederherstellen.yaml` spielt die jüngste Sicherung aus `/opt/backups/prerestore`
+Ein Testsystem wird bei jedem Lauf überschrieben. Deshalb sichern die Playbooks den alten
+Stand standardmäßig **nicht**. Wer ihn behalten will, erzeugt die Playbooks mit
+`--safety-backup`:
+
+```
+python3 generate.py --version 18 --safety-backup --out ~/playbooks
+mkdir -p /opt/backups/prerestore
+```
+
+Dann sichert jedes Zustands-Playbook das Testsystem zuerst nach `/opt/backups/prerestore`,
+und `wiederherstellen.yaml` spielt die jüngste Sicherung aus `/opt/backups/prerestore`
 zurück, also den Stand vor dem letzten Lauf:
 
 ```
@@ -210,9 +252,12 @@ Neuaufsetzen und Wiederherstellen gelten wieder die alten Passwörter**; starten
 
 ## Speicherplatz
 
-Jeder Lauf legt in `/opt/backups/prerestore` eine Sicherung in der Größe des Backups ab.
-Sie wird nicht automatisch gelöscht. Behalten Sie mindestens die jüngste, denn nur sie
-kann `wiederherstellen.yaml` zurückholen.
+Ein Lauf braucht vorübergehend Platz für das entpackte Backup in `/opt/backups/restore-tmp`
+und für den alten Filestore, bis der neue ihn ersetzt.
+
+Mit `--safety-backup` legt zusätzlich jeder Lauf in `/opt/backups/prerestore` eine Sicherung
+in der Größe des Backups ab. Sie wird nicht automatisch gelöscht. Behalten Sie mindestens die
+jüngste, denn nur sie kann `wiederherstellen.yaml` zurückholen.
 
 ## Dateien
 
