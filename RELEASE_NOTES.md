@@ -1,5 +1,28 @@
 # Release Notes
 
+## Change: install_modules - the test playbooks install extra modules after a restore (20.11.2026)
+
+*Dockerfiles/playbooks/generate.py 1.2.0 · scripts/ownerp_validate.py 1.4.0 · scripts/ownerp_wizard.py 1.4.0 · scripts/ownerp_console.py 1.4.0 · scripts/docker2update.yaml · Dockerfiles/playbooks/ANLEITUNG.md · tests · docs/COMPONENTS.md · docs/usage · usage/AGENT.md*
+
+A test instance often needs a few modules on top of the live state. A new optional
+per-container field in `docker2update.yaml` names them, always on one line:
+
+    install_modules: [eq_module_a, eq_module_b]
+
+- **generate.py:** reads the field from the test container's entry (override:
+  `--install-modules a,b`; an empty value means none). With modules every restore
+  playbook gets the step "Install additional modules" (`server.install`) after
+  "Neutralize" and before the final verify, and its header says `odoodev >= 0.78.0`.
+  Without modules the output is unchanged, so the committed example playbooks stay as they are.
+- **doval:** the key must be a list of names matching `[a-z0-9_]+` (the rule of odoodev's `server.install`); wrong type or
+  bad name is an error with the line number, a repeated name a warning, `[]` is fine.
+  A typo such as `instal_modules` is caught by the unknown-key suggestion.
+- **wizup / konsole:** the list is written and replaced as a single flow line, like the
+  sizing block. Input is comma-separated; empty input writes `[]` into an existing field
+  and leaves an absent one alone. A list in block style is refused with a pointer to
+  mcedit. wizup has the new menu entry 4; the konsole form shows the list as `a, b`.
+- **doup** ignores the key (covered by a test).
+
 ## Change: doup builds the new image first and swaps afterwards, so a failed build no longer takes the instance down (20.11.2026)
 
 *scripts/update_docker_odoo.py 5.27.0 · tests/test_update_docker_odoo.py · docs/COMPONENTS.md · usage/AGENT.md*

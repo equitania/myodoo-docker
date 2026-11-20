@@ -45,6 +45,9 @@ containers:
 Nützliche Optionen: `doup --validate` (Config prüfen), `-s CONTAINER`
 (einzelner Container), `-v` (verbose). **Proxy-Kunden:** `defaults.proxy` und
 `pre_build_files` in der YAML, Daemon-Proxy via `getScripts.py --proxy-check`.
+**Test-Instanz:** `install_modules: [eq_module_a, eq_module_b]` am Container (eine Zeile) nennt
+Module, die die Test-Playbooks (`Dockerfiles/playbooks`) nach dem Einspielen eines Live-Backups
+installieren; `doup` ignoriert den Schlüssel. Setzen mit `wizup` (Menü 4), in `konsole` oder per Hand.
 
 ### Server ohne jede Konfiguration
 
@@ -357,6 +360,9 @@ containers:
 Useful options: `doup --validate` (check config), `-s CONTAINER` (single
 container), `-v` (verbose). **Proxy customers:** `defaults.proxy` and
 `pre_build_files` in the YAML, daemon proxy via `getScripts.py --proxy-check`.
+**Test instance:** `install_modules: [eq_module_a, eq_module_b]` on the container (one line) names
+modules the test playbooks (`Dockerfiles/playbooks`) install after restoring a live backup;
+`doup` ignores the key. Set it with `wizup` (menu 4), in `konsole` or by hand.
 
 ### A server with no configuration at all
 

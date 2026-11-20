@@ -35,6 +35,10 @@
 #     concurrent users (optional); optional overrides: workers, max_cron_threads,
 #     limit_memory_soft_mb, limit_memory_hard_mb, db_maxconn,
 #     pg_shared_buffers_mb, pg_max_connections. Without the block nothing changes.
+#   install_modules: (optional, per container) technical names of Odoo modules
+#     that the test-instance playbooks (Dockerfiles/playbooks/generate.py)
+#     install after restoring a live backup. Always one line, a flow list:
+#     install_modules: [eq_module_a, eq_module_b]. doup ignores the key.
 #
 # Notes:
 #   - [M]odule update: Only copies new modules to container without updating all (2-3 minutes)
@@ -123,6 +127,8 @@ containers:
     #  profile: "live"
     #  users: 30
     #  #workers: 6
+    # Optional: modules the test playbooks install after a restore (test container).
+    #install_modules: [eq_module_a, eq_module_b]
 
 
   - active: false

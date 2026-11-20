@@ -4,8 +4,8 @@
 # Title:            ownerp_validate.py
 # Description:      Read-only validation of docker2update.yaml and
 #                   container2backup.yaml against declared schemas
-# Version:          1.3.0
-# Date:             09.11.2026
+# Version:          1.4.0
+# Date:             20.11.2026
 # Author:           Equitania Software GmbH
 # ==============================================================================
 #
@@ -35,8 +35,8 @@ try:
 except ImportError:  # pragma: no cover - depends on the machine
     yaml = None
 
-SCRIPT_VERSION = "1.3.0"
-SCRIPT_DATE = "09.11.2026"
+SCRIPT_VERSION = "1.4.0"
+SCRIPT_DATE = "20.11.2026"
 
 ERROR = "error"
 WARNING = "warning"
@@ -390,6 +390,9 @@ CONTAINER_FIELDS = {
     "log_retention_days":  {"type": int, "min": 0},
     "proxy":               {"type": dict, "fields": PROXY_FIELDS},
     "sizing":              {"type": dict, "fields": SIZING_FIELDS},
+    # Technical names of Odoo modules the test-instance playbooks install after
+    # a restore (Dockerfiles/playbooks/generate.py). doup ignores the key.
+    "install_modules":     {"type": list},
     "pre_build_files":     {"type": list, "item": {"fields": {
         "source": {"type": str, "required": True, "path": "any"},
         "target": {"type": str},
@@ -517,6 +520,28 @@ def _check_port_collisions(findings, active, file_path):
                 seen[number] = (mapping, name, field)
 
 
+MODULE_NAME_RE = re.compile(r"^[a-z0-9_]+$")
+
+
+def _check_install_modules(findings, container, index, file_path, downgrade):
+    """Every install_modules item is a module name; a repeat is a warning."""
+    names = container.get("install_modules") if isinstance(container, dict) else None
+    if not isinstance(names, list):
+        return  # absent, or the type error validate_mapping already reported
+    line = line_of(container, "install_modules")
+    path = f"containers[{index}].install_modules"
+    seen = set()
+    for position, name in enumerate(names):
+        if not isinstance(name, str) or not MODULE_NAME_RE.match(name):
+            _add(findings, ERROR, file_path, line, f"{path}[{position}]",
+                 f'"{_shown("install_modules", name)}" is not a module name - '
+                 "use lowercase letters, digits and underscores only", downgrade)
+        elif name in seen:
+            _add(findings, WARNING, file_path, line, f"{path}[{position}]",
+                 f'"{name}" is listed twice', downgrade)
+        seen.add(name if isinstance(name, str) else repr(name))
+
+
 def validate_update(path):
     """Validate a docker2update.yaml. Returns (findings, fatal)."""
     data, fatal = load_positioned(path)
@@ -534,6 +559,7 @@ def validate_update(path):
             validate_mapping(container, CONTAINER_FIELDS,
                              f"containers[{index}]", path, findings,
                              downgrade=inactive)
+            _check_install_modules(findings, container, index, path, inactive)
 
         # Collisions are only real between entries that can both run.
         active = [(c, c.get("container_name") or f"containers[{i}]")

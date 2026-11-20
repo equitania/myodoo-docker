@@ -779,6 +779,80 @@ class SizingFormTest(ConsoleFixture):
         self.assertEqual(entry["delay_time"], 11)
 
 
+class InstallModulesFormTest(ConsoleFixture):
+    """install_modules is a comma-separated text input on the update form."""
+
+    LISTED = UPDATE_CONFIG.replace(
+        '    translate: Y\n',
+        '    install_modules: [eq_module_a, eq_module_b]\n    translate: Y\n')
+
+    def open_form(self, then=None, kind=None):
+        async def body(app, pilot):
+            app._open_form(kind or self.console.wizard.UPDATE, 0)
+            await pilot.pause()
+            widgets = app.screen.query("#f-install_modules")
+            value = widgets.first().value if widgets else None
+            if then:
+                then(app.screen)
+                app.screen.action_save()
+                await pilot.pause()
+            return value
+        return self.run_app(body)
+
+    def test_the_form_offers_the_field_empty_when_absent(self):
+        self.assertEqual(self.open_form(), "")
+
+    def test_the_form_shows_the_current_list_as_text(self):
+        self.write("docker2update.yaml", self.LISTED)
+        self.assertEqual(self.open_form(), "eq_module_a, eq_module_b")
+
+    def test_the_backup_form_has_no_such_field(self):
+        self.assertIsNone(self.open_form(kind=self.console.wizard.BACKUP))
+
+    def test_saving_writes_a_flow_list(self):
+        def fill(screen):
+            screen.query_one("#f-install_modules").value = "eq_module_a,  eq_module_b"
+        self.open_form(fill)
+        entry = self.parsed("docker2update.yaml")["containers"][0]
+        self.assertEqual(entry["install_modules"], ["eq_module_a", "eq_module_b"])
+        with open(os.path.join(self.home, "docker2update.yaml"),
+                  encoding="utf-8") as handle:
+            self.assertIn("    install_modules: [eq_module_a, eq_module_b]\n",
+                          handle.read())
+
+    def test_an_untouched_field_leaves_the_file_alone(self):
+        self.write("docker2update.yaml", self.LISTED)
+
+        def touch(screen):
+            screen.query_one("#f-delay_time").value = "11"
+        self.open_form(touch)
+        with open(os.path.join(self.home, "docker2update.yaml"),
+                  encoding="utf-8") as handle:
+            self.assertIn("    install_modules: [eq_module_a, eq_module_b]\n",
+                          handle.read())
+
+    def test_clearing_the_field_writes_an_empty_list(self):
+        self.write("docker2update.yaml", self.LISTED)
+
+        def clear(screen):
+            screen.query_one("#f-install_modules").value = ""
+        self.open_form(clear)
+        entry = self.parsed("docker2update.yaml")["containers"][0]
+        self.assertEqual(entry["install_modules"], [])
+
+    def test_an_invalid_name_writes_nothing(self):
+        with open(os.path.join(self.home, "docker2update.yaml"),
+                  encoding="utf-8") as handle:
+            before = handle.read()
+
+        def fill(screen):
+            screen.query_one("#f-install_modules").value = "eq-module.a"
+        self.open_form(fill)
+        with open(os.path.join(self.home, "docker2update.yaml"),
+                  encoding="utf-8") as handle:
+            self.assertEqual(handle.read(), before)
+
+
 class NewEntryTest(ConsoleFixture):
     """Adding an entry, and the suggestions that make it bearable."""
 

@@ -5,8 +5,8 @@
 # Description:      Guided editing of docker2update.yaml and
 #                   container2backup.yaml - add an entry, change a field.
 #                   Validates before it replaces anything.
-# Version:          1.3.0
-# Date:             09.11.2026
+# Version:          1.4.0
+# Date:             20.11.2026
 # Author:           Equitania Software GmbH
 # ==============================================================================
 #
@@ -16,12 +16,16 @@
 # and only then os.replace(). A rejected result leaves the original byte for
 # byte as it was.
 #
-# It edits scalar fields only, plus one exception: the sizing block, a mapping
-# that is written and replaced as a single-line flow mapping. pre_build_files
-# and proxy are a list and a mapping - a value that spans lines has no single
-# line to replace, and guessing at one is how a config file gets quietly
-# corrupted. Those stay with mcedit, and so does removing an entry and a
-# sizing block written over several lines.
+# It edits scalar fields only, plus two exceptions: the sizing block, a mapping
+# that is written and replaced as a single-line flow mapping, and
+# install_modules, a list of module names written and replaced as a single-line
+# flow list ([a, b]). pre_build_files and proxy are a list and a mapping - a
+# value that spans lines has no single line to replace, and guessing at one is
+# how a config file gets quietly corrupted. Those stay with mcedit, and so does
+# removing an entry, a sizing block written over several lines and an
+# install_modules list written in block style. Emptying install_modules writes
+# `[]` into a field that exists and writes nothing for one that does not; the
+# line itself is never deleted.
 #
 ##############################################################################
 import os
@@ -49,8 +53,8 @@ try:
 except ImportError:  # pragma: no cover - depends on the installation
     validator = None
 
-SCRIPT_VERSION = "1.3.0"
-SCRIPT_DATE = "09.11.2026"
+SCRIPT_VERSION = "1.4.0"
+SCRIPT_DATE = "20.11.2026"
 
 DEFAULT_UPDATE_CONFIG = os.path.join(os.path.expanduser("~"), "docker2update.yaml")
 DEFAULT_BACKUP_CONFIG = os.path.join(os.path.expanduser("~"),
@@ -110,7 +114,23 @@ def format_value(value):
         inner = ", ".join(f"{key}: {format_value(item)}"
                           for key, item in value.items())
         return "{" + inner + "}"
+    if isinstance(value, (list, tuple)):
+        # One-line flow list, same reason as the mapping above.
+        return "[" + ", ".join(_list_item(item) for item in value) + "]"
     return json.dumps(str(value))
+
+
+# Words YAML reads as something other than a string when they stand bare.
+_YAML_WORDS = {"true", "false", "yes", "no", "on", "off", "y", "n", "null", "~"}
+
+
+def _list_item(item):
+    """A list element: bare when it is a plain module name, else quoted."""
+    text = str(item)
+    if (isinstance(item, str) and re.fullmatch(r"[A-Za-z0-9_]+", text)
+            and re.search(r"[A-Za-z_]", text) and text.lower() not in _YAML_WORDS):
+        return text
+    return json.dumps(text)
 
 
 KEY_RE = re.compile(r"^(?P<lead>\s*(?:-\s+)?)(?P<key>[A-Za-z0-9_]+)\s*:\s*")
@@ -642,7 +662,8 @@ def duplicate_of(data, entry, kind=UPDATE, skip=None):
 
 
 def is_flow_line(lines, line_number):
-    """Whether the key on this 1-based line holds a complete {...} mapping."""
+    """Whether the key on this 1-based line holds a complete {...} mapping
+    or [...] list."""
     if not line_number or line_number > len(lines):
         return False
     code, _comment = split_comment(lines[line_number - 1])
@@ -650,7 +671,8 @@ def is_flow_line(lines, line_number):
     if not match:
         return False
     rest = code[match.end():].strip()
-    return rest.startswith("{") and rest.endswith("}")
+    return ((rest.startswith("{") and rest.endswith("}"))
+            or (rest.startswith("[") and rest.endswith("]")))
 
 
 def set_fields(path, index, changes, kind=UPDATE, now=None):
@@ -681,9 +703,16 @@ def set_fields(path, index, changes, kind=UPDATE, now=None):
     prepared = []
     for field, value in changes.items():
         existing = current.get(field)
-        if isinstance(existing, dict) and isinstance(value, dict) \
+        if isinstance(value, list) and not value and field not in current:
+            continue  # nothing to empty; an absent list stays absent
+        if isinstance(existing, (dict, list)) \
+                and isinstance(value, dict if isinstance(existing, dict) else list) \
                 and is_flow_line(lines, validator.line_of(current, field)):
-            pass  # a one-line mapping has one line to replace
+            pass  # a one-line mapping or list has one line to replace
+        elif isinstance(existing, list) and field in FLOW_LIST_FIELDS:
+            return WriteResult(
+                error=f"{field} is written over several lines - "
+                      "edit it with mcedit")
         elif isinstance(existing, (list, dict)):
             # A value spanning several lines has no single line to replace,
             # and guessing at one is how a configuration gets quietly
@@ -702,6 +731,9 @@ def set_fields(path, index, changes, kind=UPDATE, now=None):
             value = keep_bind_address(existing, value)
 
         prepared.append((field, value, validator.line_of(current, field)))
+
+    if not prepared:
+        return WriteResult(ok=True)  # nothing to change, nothing to write
 
     new_lines = list(lines)
     for _field, value, line_number in prepared:
@@ -815,6 +847,35 @@ def fold_sizing(entry, changes):
     return folded
 
 
+# Fields that are a list of names, written as one flow line.
+FLOW_LIST_FIELDS = ("install_modules",)
+
+INSTALL_MODULES_FORM = [
+    Field("install_modules", "Modules to install after a test restore",
+          "comma-separated technical names, e.g. eq_module_a, eq_module_b - "
+          "the test playbooks install them after restoring a live backup; "
+          "empty = none", None),
+]
+
+
+def flatten_install_modules(entry):
+    """A copy of `entry` with install_modules as text, "a, b" - for a form."""
+    flat = dict(entry)
+    names = entry.get("install_modules")
+    if isinstance(names, list):
+        flat["install_modules"] = ", ".join(str(name) for name in names)
+    return flat
+
+
+def parse_module_list(text):
+    """"a, b" -> ["a", "b"]. Whitespace is tolerated, empty items are dropped.
+
+    Names are not checked here: the validator is the one judge of what a
+    module name is, and its message names the line.
+    """
+    return [part.strip() for part in text.split(",") if part.strip()]
+
+
 def coerce(field_name, text, kind=UPDATE):
     """Turn prompt text into the type the schema expects for that field.
 
@@ -822,6 +883,8 @@ def coerce(field_name, text, kind=UPDATE):
     through to text on purpose: every shipped template writes it quoted, and
     picking one half of the tuple would silently change the file's style.
     """
+    if field_name == "install_modules":
+        return parse_module_list(text)
     if field_name == "sizing_users":
         return int(text.strip()) if text.strip() else None
     if field_name == "sizing_profile":
@@ -1156,6 +1219,65 @@ def edit_sizing(path, data):
     return ask_sizing(path, int(choice) - 1)
 
 
+def ask_install_modules(path, index, ask=input, out=print):
+    """The wizup flow for install_modules of one entry. Returns an exit code.
+
+    Writes through set_fields like every other change. An empty answer
+    empties the list (`[]`) when the field exists and writes nothing when it
+    does not.
+    """
+    lines, data, error = load_config(path)
+    if error:
+        out(f"  {error}")
+        return 2
+    entries = entries_of(data, UPDATE)
+    if not 0 <= index < len(entries):
+        out(f"  There is no entry {index} in {path}")
+        return 2
+    current = entries[index]
+    name = current.get("container_name", "?")
+    shown = flatten_install_modules(current).get("install_modules")
+
+    field = INSTALL_MODULES_FORM[0]
+    out(f"    {field.help}")
+    if shown:
+        out(f"    Now: {shown}")
+    text = ask(f"  {field.label}: ")
+    result = set_fields(path, index,
+                        {"install_modules": parse_module_list(text)}, UPDATE)
+    if result.error:
+        out(f"\n  Not written: {result.error}")
+        return 1
+    if not result.ok:
+        out("\n  Not written - the result would be invalid:")
+        for finding in result.findings:
+            out(f"  {finding.severity}  {finding.path}: {finding.message}")
+        out(f"  {path} is unchanged.")
+        return 1
+    if result.backup is None:
+        out(f"\n  Nothing to change for {name}.")
+        return 0
+    out(f"\n  Modules for {name} set.")
+    out(f"  Written to {path}\n  Backup:    {result.backup}")
+    out("  The test playbooks pick them up the next time they are generated.")
+    return 0
+
+
+def edit_install_modules(path, data):
+    """Pick an entry, then ask for its install_modules."""
+    entries = entries_of(data, UPDATE)
+    if not entries:
+        print("No entries to edit.")
+        return 0
+    for number, existing in enumerate(entries, 1):
+        print(f"  {number:>2}) {existing.get('container_name', '?')}")
+    choice = input("  Entry number: ").strip()
+    if not choice.isdigit() or not 1 <= int(choice) <= len(entries):
+        print("Cancelled.")
+        return 0
+    return ask_install_modules(path, int(choice) - 1)
+
+
 def parse_arguments(argv):
     parser = argparse.ArgumentParser(
         prog="ownerp_wizard.py",
@@ -1216,7 +1338,9 @@ def main(argv=None):
           "fallback.")
 
     label = KINDS[kind]["label"]
-    sizing_line = "\n  3) Set role/sizing" if kind == UPDATE else ""
+    sizing_line = ("\n  3) Set role/sizing"
+                   "\n  4) Set modules to install after a test restore"
+                   if kind == UPDATE else "")
     print(f"\n  1) Add a{'n' if label[0] in 'aeiou' else ''} {label}"
           f"\n  2) Change a field{sizing_line}\n  q) Quit")
     choice = input("\n  Choice [1]: ").strip() or "1"
@@ -1226,6 +1350,8 @@ def main(argv=None):
         return edit_field(path, lines, data, kind)
     if choice == "3" and kind == UPDATE:
         return edit_sizing(path, data)
+    if choice == "4" and kind == UPDATE:
+        return edit_install_modules(path, data)
     return 0
 
 

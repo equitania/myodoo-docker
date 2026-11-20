@@ -4,8 +4,8 @@
 # Title:            ownerp_console.py
 # Description:      The ownERP console: server state, and the configuration
 #                   editing that used to mean hand-writing YAML.
-# Version:          1.3.0
-# Date:             09.11.2026
+# Version:          1.4.0
+# Date:             20.11.2026
 # Author:           Equitania Software GmbH
 # ==============================================================================
 # Stage 3 of docs/superpowers/specs/2026-08-13-ownerp-console-design.md.
@@ -53,8 +53,8 @@
 import os
 import sys
 
-SCRIPT_VERSION = "1.3.0"
-SCRIPT_DATE = "09.11.2026"
+SCRIPT_VERSION = "1.4.0"
+SCRIPT_DATE = "20.11.2026"
 
 # The dependencies, in one place. Textual is pinned to a major version: it
 # moves fast and a widget API is not a stable interface across majors.
@@ -383,6 +383,12 @@ class EntryForm(ModalScreen):
                     changes[field.name] = text
                 continue
             if not self.creating and text == _as_text(self.current.get(field.name)):
+                continue
+            if (field.name == "install_modules" and not text.strip()
+                    and not self.creating):
+                # Empty means "none": the wizard writes `[]` into a list that
+                # exists and leaves an absent one alone.
+                changes[field.name] = []
                 continue
             if (field.name == "sizing_users" and not text.strip()
                     and not self.creating):
@@ -826,6 +832,9 @@ class Console(App):
             # block when saved (see _save_changes).
             fields += list(wizard.SIZING_FORM)
             current = wizard.flatten_sizing(current)
+            # The module list is shown as "a, b" and parsed back on save.
+            fields += list(wizard.INSTALL_MODULES_FORM)
+            current = wizard.flatten_install_modules(current)
         label = current.get(wizard.KINDS[kind]["unique"][0], "entry")
         self.push_screen(
             EntryForm(f"{wizard.KINDS[kind]['label']} · {label}",

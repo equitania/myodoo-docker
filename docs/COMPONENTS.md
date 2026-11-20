@@ -610,7 +610,8 @@ in this repository, stay in `CLAUDE.md`.
   carry both instructions **and** the `ca-certificates/` directory beside them —
   a `COPY` without its directory would break every fresh build
 
-#### 6. ownerp_validate.py (v1.3.0)
+#### 6. ownerp_validate.py (v1.4.0)
+- **`install_modules` list** (v1.4.0, 20.11.2026): optional per container; a list of strings matching `^[a-z0-9_]+$` (the same rule as odoodev's `server.install`) (wrong type or bad name = error with the line number, a repeated name = warning, an empty list is fine). `doup` ignores the key; the test-instance playbooks read it
 - **`sizing:` block schema** (v1.3.0): `profile` (live | test | demo), `users`, and the seven override keys (`workers`, `max_cron_threads`, `limit_memory_soft_mb`, `limit_memory_hard_mb`, `db_maxconn`, `pg_shared_buffers_mb`, `pg_max_connections`), asserted equal to `OVERRIDE_KEYS` in `ownerp_sizing.py`
 - **v1.2.0 (09.11.2026):** knows the container2backup keys `exclude` (list of
   glob patterns per service, each entry checked) and `defaults.min_free_percent`
@@ -636,11 +637,12 @@ in this repository, stay in `CLAUDE.md`.
 - **`update_docker_odoo.py --validate` and `container2backup.py --validate`**
   both delegate to it
 
-#### 7. ownerp_wizard.py (v1.3.0)
+#### 7. ownerp_wizard.py (v1.4.0)
 - **Purpose**: Guided editing of `docker2update.yaml` **and**
   `container2backup.yaml` — add an entry, or change one field of an existing
   one. `wiz` asks which file, `wizup`/`wizbk` go straight there
 - **Role and sizing** (v1.3.0): `wizup` menu "Set role/sizing" writes the `sizing:` block (one-line mapping); plan warnings are shown before asking
+- **Modules to install** (v1.4.0, 20.11.2026): `wizup` menu 4 and `set_fields(..., {"install_modules": [...]})` write `install_modules` as a one-line flow list `[a, b]`; input is comma-separated, whitespace tolerated. Empty input writes `[]` into an existing field and writes nothing for an absent one (the line is never deleted). A list written in block style or over several lines is refused with a pointer to mcedit; the write path is unchanged
 - **The only tool in this set that writes to a customer's configuration**, so
   the write path is the substance: timestamped backup → build in memory →
   temporary file **in the same directory** → `ownerp_validate.py` runs against
@@ -855,11 +857,12 @@ in this repository, stay in `CLAUDE.md`.
 - **Exit code** `0` clean / `1` needs attention / `2` broken, plus `--json`, so
   cron and monitoring never parse the text
 
-#### 11. ownerp_console.py (v1.3.0)
+#### 11. ownerp_console.py (v1.4.0)
 - **Purpose**: The ownERP console — server state and configuration editing in
   a full-screen interface. Started with `konsole`; stage 3 (last) of
   `docs/superpowers/specs/2026-08-13-ownerp-console-design.md`
 - **Role and users** (v1.3.0): form fields Role / Concurrent users write the `sizing:` block
+- **Modules to install** (v1.4.0): text field on the update-container form, current list shown as `a, b`, saved through `set_fields`
 - **Owns no data and no write path**: facts from `ownerp_state.py`,
   configuration changes through `ownerp_wizard.py`, cron changes through
   `ownerp_cron.py`. The suite fails if a write call appears here — a second
@@ -1351,7 +1354,7 @@ in this repository, stay in `CLAUDE.md`.
   update token", shown once)
 - **Tests**: `tests/test_ownerp_pull_update.py`
 
-#### 19. Dockerfiles/playbooks (generate.py v1.0.0, passwort-setzen.py v1.0.0)
+#### 19. Dockerfiles/playbooks (generate.py v1.2.0, passwort-setzen.py v1.0.0)
 - **Purpose**: Rebuild the test instance (`test-odoo` / `test-db`) from the
   newest `live-odoo` backup with odoodev server playbooks (odoodev ≥ 0.75.7),
   Odoo 16, 18 and 19. Replaces the withdrawn `restore-zip.sh` path
@@ -1361,6 +1364,7 @@ in this repository, stay in `CLAUDE.md`.
   suffix (`stream` → `.tar.zst`, else `compression.format`) from
   `~/container2backup.yaml`; every value has a flag (`--help`). `v16/`, `v18/`,
   `v19/` hold the output for the templates' values as examples
+- **Extra modules** (v1.2.0): `install_modules: [a, b]` on the test container in `docker2update.yaml` (or `--install-modules a,b`, which wins; empty = none) adds a `server.install` step after "Neutralize" and before the final verify to every restore playbook; the header then says `odoodev >= 0.78.0`. Without modules the output is unchanged
 - **States**: `neutral`, `anonym`, `anonym-leer`, `stammdaten`, `vorlage`
   (odoodev sanitize flags), plus `wiederherstellen.yaml` (newest
   `/opt/backups/prerestore` file, no safety backup on purpose) and

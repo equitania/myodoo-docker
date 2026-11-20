@@ -89,6 +89,27 @@ Jedes Playbook neutralisiert die Datenbank, damit das Testsystem nichts nach au�
 Live-Passwörter. Behandeln Sie das Testsystem deshalb so vertraulich wie das
 Live-System, oder setzen Sie danach ein gemeinsames Passwort (siehe unten).
 
+## Zusätzliche Module installieren (optional)
+
+Sollen nach jedem Neuaufsetzen bestimmte Module im Testsystem installiert sein, tragen Sie
+sie beim Container `test-odoo` in `~/docker2update.yaml` ein, immer in einer Zeile:
+
+```yaml
+    install_modules: [eq_module_a, eq_module_b]
+```
+
+Angegeben werden die technischen Namen der Module (Buchstaben, Ziffern, Unterstrich).
+Mit `wizup` (Menü 4) oder in `konsole` lässt sich die Liste ebenfalls setzen. Danach
+`generate.py` neu ausführen: Jedes Playbook, das ein Backup einspielt (alle außer
+`passwoerter.yaml`), enthält dann nach dem Neutralisieren den Schritt „Install additional
+modules“. Dafür braucht es odoodev ab Version 0.78.0; die Kopfzeile des Playbooks nennt
+die nötige Version. Ohne Eintrag ändert sich nichts. `update_docker_odoo.py` (`doup`)
+ignoriert den Schlüssel.
+
+Statt der Datei geht auch eine Angabe auf der Kommandozeile, sie hat Vorrang:
+`python3 generate.py --version 18 --install-modules eq_module_a,eq_module_b --out ~/playbooks`.
+`--install-modules ""` schaltet den Schritt für diesen Aufruf ab.
+
 ## Der Ablauf
 
 1. Der aktuelle Stand des Testsystems wird nach `/opt/backups/prerestore` gesichert.
@@ -100,6 +121,7 @@ Live-System, oder setzen Sie danach ein gemeinsames Passwort (siehe unten).
 5. `doup` baut das Image neu, aktualisiert alle Module und startet Odoo.
 6. EBICS wird deinstalliert, danach startet Odoo neu.
 7. Odoo neutralisiert die Datenbank.
+   Sind `install_modules` eingetragen, werden danach diese Module installiert.
 8. Das Playbook prüft, ob Odoo gesund läuft, kein Modul hängen geblieben ist und die
    Anmeldeseite lädt. Erst danach ist das Testsystem einsatzbereit.
 

@@ -1250,6 +1250,132 @@ class SizingBlockTest(ConfigFixture):
         self.assertEqual(self.read(self.update), text)
 
 
+class InstallModulesTest(ConfigFixture):
+    """install_modules is a list; set_fields writes it as one flow line."""
+
+    def _with_list(self, line):
+        text = UPDATE_CONFIG.replace('    translate: Y\n',
+                                     f'{line}\n    translate: Y\n')
+        self.write("docker2update.yaml", text)
+        return text
+
+    def _backups(self):
+        return [f for f in os.listdir(self.dir) if ".bak-" in f]
+
+    def test_format_value_renders_a_flow_list(self):
+        self.assertEqual(wiz.format_value(["eq_module_a", "eq_module_b"]),
+                         "[eq_module_a, eq_module_b]")
+        self.assertEqual(wiz.format_value([]), "[]")
+
+    def test_format_value_quotes_names_yaml_would_misread(self):
+        rendered = wiz.format_value(["yes", "42", "a b"])
+        self.assertEqual(yaml.safe_load(f"k: {rendered}")["k"],
+                         ["yes", "42", "a b"])
+
+    def test_coerce_splits_on_commas_and_tolerates_whitespace(self):
+        self.assertEqual(wiz.coerce("install_modules", " eq_module_a ,eq_module_b,, "),
+                         ["eq_module_a", "eq_module_b"])
+        self.assertEqual(wiz.coerce("install_modules", "   "), [])
+
+    def test_an_absent_field_is_inserted_as_one_flow_line(self):
+        result = wiz.set_fields(self.update, 0, {
+            "install_modules": ["eq_module_a", "eq_module_b"]})
+        self.assertTrue(result.ok, result.error or result.findings)
+        entry = self.parsed(self.update)["containers"][0]
+        self.assertEqual(entry["install_modules"], ["eq_module_a", "eq_module_b"])
+        added = [l for l in self.read(self.update).split("\n")
+                 if "install_modules" in l]
+        self.assertEqual(added, ["    install_modules: [eq_module_a, eq_module_b]"])
+        self.assertEqual(self.read(self.update).replace(added[0] + "\n", ""),
+                         UPDATE_CONFIG)
+
+    def test_two_absent_fields_land_together_without_a_line_shift(self):
+        result = wiz.set_fields(self.update, 0, {
+            "install_modules": ["eq_module_a"], "delay_time": 99})
+        self.assertTrue(result.ok, result.error or result.findings)
+        containers = self.parsed(self.update)["containers"]
+        self.assertEqual(containers[0]["install_modules"], ["eq_module_a"])
+        self.assertEqual(containers[0]["delay_time"], 99)
+        self.assertEqual(len(containers), 1)
+        added = [l for l in self.read(self.update).split("\n")
+                 if "install_modules" in l or "delay_time" in l]
+        self.assertEqual(sorted(added), ["    delay_time: 99",
+                                         "    install_modules: [eq_module_a]"])
+
+    def test_an_existing_flow_list_is_replaced_and_its_comment_kept(self):
+        self._with_list("    install_modules: [eq_module_a]  # keep")
+        result = wiz.set_fields(self.update, 0, {
+            "install_modules": ["eq_module_b", "eq_module_c"]})
+        self.assertTrue(result.ok, result.error or result.findings)
+        self.assertEqual(self.parsed(self.update)["containers"][0]["install_modules"],
+                         ["eq_module_b", "eq_module_c"])
+        self.assertIn("    install_modules: [eq_module_b, eq_module_c]  # keep",
+                      self.read(self.update))
+
+    def test_emptying_an_existing_list_writes_an_empty_flow_list(self):
+        self._with_list("    install_modules: [eq_module_a]")
+        result = wiz.set_fields(self.update, 0, {"install_modules": []})
+        self.assertTrue(result.ok, result.error or result.findings)
+        self.assertIn("    install_modules: []\n", self.read(self.update))
+
+    def test_emptying_an_absent_list_writes_nothing(self):
+        result = wiz.set_fields(self.update, 0, {"install_modules": []})
+        self.assertTrue(result.ok)
+        self.assertEqual(self.read(self.update), UPDATE_CONFIG)
+        self.assertEqual(self._backups(), [])
+
+    def test_a_block_list_is_refused_and_the_file_is_untouched(self):
+        text = self._with_list("    install_modules:\n      - eq_module_a")
+        result = wiz.set_fields(self.update, 0, {"install_modules": ["eq_module_b"]})
+        self.assertFalse(result.ok)
+        self.assertIn("mcedit", result.error)
+        self.assertIn("install_modules", result.error)
+        self.assertEqual(self.read(self.update), text)
+        self.assertEqual(self._backups(), [])
+
+    def test_a_flow_list_over_several_lines_is_refused(self):
+        text = self._with_list("    install_modules: [eq_module_a,\n      eq_module_b]")
+        result = wiz.set_fields(self.update, 0, {"install_modules": ["eq_module_c"]})
+        self.assertIn("mcedit", result.error)
+        self.assertEqual(self.read(self.update), text)
+
+    def test_an_invalid_name_is_rejected_and_the_file_stays_byte_identical(self):
+        before = self.read(self.update)
+        result = wiz.set_fields(self.update, 0, {
+            "install_modules": ["eq_module_a", "eq-module.b"]})
+        self.assertFalse(result.ok)
+        self.assertIsNone(result.error)
+        self.assertTrue(any("install_modules[1]" in f.path for f in result.findings))
+        self.assertEqual(self.read(self.update), before)
+        self.assertEqual(self._backups(), [])
+
+    def test_ask_install_modules_flow(self):
+        out = []
+        code = wiz.ask_install_modules(
+            self.update, 0, ask=lambda prompt: " eq_module_a , eq_module_b ",
+            out=out.append)
+        self.assertEqual(code, 0, out)
+        self.assertEqual(self.parsed(self.update)["containers"][0]["install_modules"],
+                         ["eq_module_a", "eq_module_b"])
+
+    def test_ask_install_modules_reports_a_refused_write(self):
+        self._with_list("    install_modules:\n      - eq_module_a")
+        out = []
+        code = wiz.ask_install_modules(self.update, 0, ask=lambda p: "eq_module_b",
+                                       out=out.append)
+        self.assertEqual(code, 1)
+        self.assertTrue(any("mcedit" in line for line in out))
+
+    def test_the_entry_picker_hands_the_chosen_index_on(self):
+        _lines, data, _error = wiz.load_config(self.update)
+        with mock.patch("builtins.input", lambda prompt="": "1"), \
+                mock.patch.object(wiz, "ask_install_modules",
+                                  return_value=0) as asked, \
+                contextlib.redirect_stdout(io.StringIO()):
+            wiz.edit_install_modules(self.update, data)
+        asked.assert_called_once_with(self.update, 0)
+
+
 class SizingWarningTest(ConfigFixture):
     def test_ask_sizing_shows_over_budget_before_the_review_question(self):
         class Plan:

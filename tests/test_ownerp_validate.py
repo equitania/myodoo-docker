@@ -486,6 +486,56 @@ class SizingBlockTest(UpdateSchemaTest):
                          set(ownerp_sizing.OVERRIDE_KEYS))
 
 
+class InstallModulesTest(UpdateSchemaTest):
+    """The optional 'install_modules' list of a container."""
+
+    def with_line(self, line):
+        return GOOD_UPDATE + " " * 8 + line + "\n"
+
+    def test_a_flow_list_of_module_names_is_accepted(self):
+        findings = self.check(self.with_line("install_modules: [eq_module_a, eq_module_b]"))
+        self.assertEqual(findings, [])
+
+    def test_an_empty_list_is_accepted(self):
+        self.assertEqual(self.check(self.with_line("install_modules: []")), [])
+
+    def test_a_scalar_is_an_error_with_its_line(self):
+        text = self.with_line("install_modules: eq_module_a")
+        errors = self.errors(text)
+        self.assertEqual(len(errors), 1)
+        self.assertEqual(errors[0].path, "containers[0].install_modules")
+        self.assertIn("a list", errors[0].message)
+        self.assertEqual(errors[0].line,
+                         len(text.format(here=self.here).lstrip("\n").splitlines()))
+
+    def test_a_bad_module_name_is_an_error_with_its_line(self):
+        text = self.with_line("install_modules: [eq_module_a, eq-module.b]")
+        errors = self.errors(text)
+        self.assertEqual(len(errors), 1)
+        self.assertEqual(errors[0].path, "containers[0].install_modules[1]")
+        self.assertIn("eq-module.b", errors[0].message)
+        self.assertEqual(errors[0].line,
+                         len(text.format(here=self.here).lstrip("\n").splitlines()))
+
+    def test_a_non_string_item_is_an_error(self):
+        errors = self.errors(self.with_line("install_modules: [eq_module_a, 42]"))
+        self.assertEqual(len(errors), 1)
+        self.assertEqual(errors[0].path, "containers[0].install_modules[1]")
+
+    def test_a_duplicate_is_a_warning_not_an_error(self):
+        findings = self.check(self.with_line("install_modules: [eq_module_a, eq_module_a]"))
+        self.assertEqual([f for f in findings if f.severity == ov.ERROR], [])
+        warnings = [f for f in findings if f.severity == ov.WARNING]
+        self.assertEqual(len(warnings), 1)
+        self.assertIn("twice", warnings[0].message)
+
+    def test_a_typo_in_the_key_is_caught_by_the_suggestion(self):
+        findings = self.check(self.with_line("instal_modules: [eq_module_a]"))
+        hits = [f for f in findings if "unknown key" in f.message]
+        self.assertEqual(len(hits), 1)
+        self.assertIn("install_modules", hits[0].message)
+
+
 class CollisionTest(UpdateSchemaTest):
     TWO = GOOD_UPDATE + """
       - active: true

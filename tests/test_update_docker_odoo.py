@@ -726,6 +726,21 @@ class MainAgainstARealConfigFileTest(unittest.TestCase):
         self.assertEqual(exit_code, 0)
         self.assertEqual(before, after)
 
+    def test_install_modules_is_ignored_by_doup(self):
+        """install_modules belongs to the playbook generator; doup neither
+        rejects, warns about nor rewrites it."""
+        with open(self.config_path, "w", encoding="utf8") as handle:
+            handle.write(self.config_text
+                         + "    install_modules: [eq_module_a, eq_module_b]\n")
+        with open(self.config_path, "rb") as handle:
+            before = handle.read()
+        self.assertEqual(self.run_main(["--validate"]), 0)
+        config = udo.load_config(self.config_path)
+        self.assertTrue(udo.validate_container_config(config["containers"][0]))
+        with open(self.config_path, "rb") as handle:
+            self.assertEqual(handle.read(), before)
+        self.assertNotIn("install_modules", inspect.getsource(udo))
+
     def test_no_cache_reaches_the_module_flag_the_build_reads(self):
         """The flag travels as a module-level global rather than through six
         call levels, so the wiring from argv to that global is the part that
