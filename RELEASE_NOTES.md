@@ -1,5 +1,40 @@
 # Release Notes
 
+## Fix: test-instance playbooks switch cron jobs off again after the module update (23.11.2026)
+
+*Dockerfiles/playbooks/generate.py 1.6.0 · Dockerfiles/playbooks/ANLEITUNG.md · Dockerfiles/playbooks/v16, v18, v19 · tests/test_playbook_generate.py · docs/COMPONENTS.md · docs/usage/09-reference.md · usage/AGENT.md*
+
+`server.restore` switches the cron jobs off, but the full module update of the following
+`server.rebuild` re-enables the jobs whose cron XML is not noupdate. They were due at once and
+ran in the test container: they blocked the later `server.install` step (Odoo refuses module
+operations while a cron holds `ir_cron`) and ran jobs such as report mails on a copy of live data.
+A test server showed 9 active cron jobs after a run.
+
+- New step "Switch cron jobs off again (the module update re-enabled them)" right after the
+  rebuild in every restore playbook, running `UPDATE ir_cron SET active = false;` - the same
+  statement as odoodev's `deactivate_cron` sanitize.
+- With `install_modules` the step is repeated after the install step, because installing
+  modules can re-enable jobs too. One shared constant in generate.py.
+- The example playbooks in `v16`, `v18`, `v19` are regenerated. Existing playbooks on a server
+  stay as they are until `generate.py` runs again.
+
+## Change: EBICS steps in the test-instance playbooks are opt-in (23.11.2026)
+
+*Dockerfiles/playbooks/generate.py 1.5.0 · scripts/ownerp_validate.py · Dockerfiles/playbooks/ANLEITUNG.md · Dockerfiles/playbooks/v16, v18, v19 · tests/test_playbook_generate.py · tests/test_ownerp_validate.py · docs/COMPONENTS.md · docs/usage/09-reference.md · usage/AGENT.md*
+
+Every restore playbook used to contain "Switch off EBICS" and "Uninstall EBICS", although
+only one server actually uses EBICS; on all others both steps did nothing.
+
+- The steps are now only generated when asked for: `ebics: true` on the test container in
+  `docker2update.yaml`, or `generate.py --ebics`. `--no-ebics` wins over the file. Default is
+  off. A value that is not `true`/`false` is reported as a warning and treated as off.
+- A server that needs the steps sets `ebics: true` on its test container and runs
+  `generate.py` again; the steps then look exactly as before.
+- generate.py prints `EBICS: steps included ...` or `EBICS: no steps ...` at the end.
+- `ownerp_validate.py` knows the `ebics` key (type bool). The example playbooks in
+  `v16`, `v18`, `v19` are regenerated without the EBICS steps.
+- Existing playbooks on a server keep their EBICS steps until `generate.py` runs again.
+
 ## Fix: an unreachable release manager no longer breaks the build or logs the access code (23.11.2026)
 
 *Dockerfiles/v16-odoo, v18-odoo, v19-odoo/check_dockerimage_odoo.py 3.5.0 · scripts/update_docker_odoo.py 5.27.1 · tests/test_check_dockerimage.py · docs/COMPONENTS.md · usage/AGENT.md*

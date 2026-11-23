@@ -237,12 +237,13 @@ ls -lah /opt/backups/docker                      # or: llbk
 ### Restore a live backup as a test database
 Use the odoodev playbooks in `~/myodoo-docker/Dockerfiles/playbooks` (odoodev ≥ 0.75.7, ≥ 0.78.0 with `install_modules`; they
 replace the withdrawn `restore-zip.sh`). Target `test-odoo`/`test-db`, source the newest
-`live-odoo` backup; every state ends neutralized, EBICS uninstalled, verified.
+`live-odoo` backup; every state ends neutralized, cron jobs off (switched off again after the rebuild and after `install_modules`) and verified (EBICS switched off and uninstalled only with `ebics: true` / `--ebics`).
 ```bash
 cd ~/myodoo-docker/Dockerfiles/playbooks
 python3 generate.py --version 18 --out ~/playbooks   # values from docker2update/container2backup YAML
 # optional extra modules after every restore: `install_modules: [eq_module_a, eq_module_b]` on the
 # test container in docker2update.yaml (doup ignores it), or: generate.py ... --install-modules a,b
+# EBICS steps are opt-in: `ebics: true` on the test container, or generate.py ... --ebics (--no-ebics wins)
 mkdir -p /opt/backups/restore-tmp   # + /opt/backups/prerestore with --safety-backup
 cd ~/playbooks && odoodev run neutral.yaml --dry-run && odoodev run neutral.yaml
 # states: neutral anonym anonym-leer stammdaten vorlage · passwoerter

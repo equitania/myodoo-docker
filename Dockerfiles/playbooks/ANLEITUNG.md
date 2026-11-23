@@ -74,15 +74,17 @@ zusätzlich **`wiederherstellen.yaml`**.
 
 Jedes Playbook neutralisiert die Datenbank, damit das Testsystem nichts nach außen sendet:
 
-- Alle geplanten Aktionen sind abgeschaltet.
+- Alle geplanten Aktionen sind abgeschaltet — auch nach dem Modul-Update, das sie wieder
+  einschalten würde: dafür gibt es nach dem Update (und nach dem Installieren zusätzlicher
+  Module) einen eigenen Schritt.
 - Alle Postausgangs- und Posteingangsserver sind abgeschaltet. Aktiv ist danach nur
   Odoos Platzhalter „neutralization - disable emails“, der jeden Versand ins Leere
   laufen lässt.
 - Die Bankanbindung ist entfernt.
-- **EBICS ist deinstalliert**, falls es installiert war. Konfiguration und Benutzer werden
-  vor dem Start von Odoo deaktiviert und die EBICS-Passphrasen gelöscht; danach werden
-  `account_ebics`, `account_ebics_batch` und `account_ebics_oe` so deinstalliert wie
-  über das Apps-Menü.
+- **EBICS ist deinstalliert**, falls es installiert war — aber nur, wenn die EBICS-Schritte
+  eingeschaltet sind (siehe unten). Konfiguration und Benutzer werden vor dem Start von
+  Odoo deaktiviert und die EBICS-Passphrasen gelöscht; danach werden `account_ebics`,
+  `account_ebics_batch` und `account_ebics_oe` so deinstalliert wie über das Apps-Menü.
 - Odoo führt seine eigene Neutralisierung aus und blendet einen Hinweis ein, dass es
   sich um eine Testdatenbank handelt.
 
@@ -110,6 +112,15 @@ ignoriert den Schlüssel.
 Statt der Datei geht auch eine Angabe auf der Kommandozeile, sie hat Vorrang:
 `python3 generate.py --version 18 --install-modules eq_module_a,eq_module_b --out ~/playbooks`.
 `--install-modules ""` schaltet den Schritt für diesen Aufruf ab.
+
+## EBICS-Schritte (nur bei Bedarf)
+
+Die beiden EBICS-Schritte („Switch off EBICS“ und „Uninstall EBICS“) stehen nur in den
+Playbooks, wenn Sie sie verlangen: `ebics: true` beim Test-Container in
+`~/docker2update.yaml`, oder `python3 generate.py --version 18 --ebics --out ~/playbooks`.
+`--no-ebics` hat Vorrang vor der Datei. Ohne Angabe fehlen beide Schritte; ein Wert, der
+weder `true` noch `false` ist, wird mit einer Warnung als `false` gewertet. `generate.py`
+zeigt am Ende, ob die Schritte enthalten sind.
 
 ## Einstellungen, die nur für das Testsystem gelten
 
@@ -145,11 +156,13 @@ Klartext nimmt Odoo an und speichert es bei der ersten Anmeldung verschlüsselt.
 2. Das neueste Live-Backup wird eingespielt und je nach Zustand bereinigt. Entpackt wird
    es dafür in `/opt/backups/restore-tmp`. Die bisherige Datenbank wird erst ersetzt,
    wenn die neue vollständig eingespielt ist.
-3. EBICS wird abgeschaltet, bevor Odoo startet.
-4. `doup` baut das Image neu, aktualisiert alle Module und startet Odoo.
-5. EBICS wird deinstalliert, danach startet Odoo neu.
+3. Nur mit EBICS-Schritten: EBICS wird abgeschaltet, bevor Odoo startet.
+4. `doup` baut das Image neu, aktualisiert alle Module und startet Odoo. Danach werden
+   die geplanten Aktionen wieder abgeschaltet, weil das Update sie einschaltet.
+5. Nur mit EBICS-Schritten: EBICS wird deinstalliert, danach startet Odoo neu.
 6. Odoo neutralisiert die Datenbank.
-   Sind `install_modules` eingetragen, werden danach diese Module installiert.
+   Sind `install_modules` eingetragen, werden danach diese Module installiert und die
+   geplanten Aktionen erneut abgeschaltet.
    Gibt es die Datei mit den Test-Einstellungen, wird sie danach ausgeführt und
    `test-odoo` neu gestartet.
 7. Das Playbook prüft, ob Odoo gesund läuft, kein Modul hängen geblieben ist und die
@@ -226,7 +239,7 @@ odoodev run wiederherstellen.yaml
   selbst die jüngste und würde statt der gewünschten eingespielt.
 - **Es geht immer nur einen Schritt zurück.** Ein zweiter Aufruf spielt dieselbe
   Sicherung noch einmal ein.
-- **Auch der zurückgeholte Stand wird neutralisiert** und EBICS deinstalliert.
+- **Auch der zurückgeholte Stand wird neutralisiert** (und, wenn die EBICS-Schritte eingeschaltet sind, EBICS deinstalliert).
 
 ## Ein gemeinsames Passwort setzen
 

@@ -393,6 +393,8 @@ CONTAINER_FIELDS = {
     # Technical names of Odoo modules the test-instance playbooks install after
     # a restore (Dockerfiles/playbooks/generate.py). doup ignores the key.
     "install_modules":     {"type": list},
+    # true: the playbooks also switch EBICS off and uninstall it (generate.py --ebics).
+    "ebics":               {"type": bool},
     "pre_build_files":     {"type": list, "item": {"fields": {
         "source": {"type": str, "required": True, "path": "any"},
         "target": {"type": str},

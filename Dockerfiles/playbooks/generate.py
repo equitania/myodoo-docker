@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
-# Version: 1.4.0
-# Date: 20.11.2026
+# Version: 1.6.0
+# Date: 23.11.2026
 """Generate odoodev server playbooks that rebuild the test instance from the newest live backup.
 
 One playbook per data state (<state>.yaml) and passwoerter.yaml (one common password, 2FA off).
@@ -16,12 +16,21 @@ test container) and ~/container2backup.yaml (backup directory, live database nam
 archive format). Every value can be overridden on the command line.
 
 Run as root on the server:  python3 generate.py --out ~/playbooks
-Needs odoodev >= 0.75.7 (server.uninstall, temp_dir).
+Needs odoodev >= 0.75.7 (temp_dir; with EBICS also server.uninstall).
 
 Optional: modules the test instance gets on top after every restore. They are listed per
 container in docker2update.yaml (install_modules: [eq_module_a, eq_module_b]) or given with
 --install-modules a,b. With modules every restore playbook installs them (server.install,
 odoodev >= 0.78.0); without, the playbooks are unchanged.
+
+Optional: EBICS handling, only for a server that uses EBICS. With ebics: true on the test
+container in docker2update.yaml, or --ebics, every restore playbook switches EBICS off before
+Odoo starts and uninstalls the EBICS modules afterwards (server.uninstall). --no-ebics overrides
+the YAML. Default: no EBICS steps.
+
+Cron jobs: server.restore switches them off, but the module update of the rebuild (and an
+install step) re-enables those whose cron XML is not noupdate. Every restore playbook therefore
+switches all cron jobs off again after the rebuild, and after the install step if there is one.
 """
 
 import argparse
@@ -29,8 +38,8 @@ import os
 import re
 import sys
 
-SCRIPT_VERSION = "1.4.0"
-SCRIPT_DATE = "20.11.2026"
+SCRIPT_VERSION = "1.6.0"
+SCRIPT_DATE = "23.11.2026"
 
 FLAGS = ("deactivate_cron", "neutralize", "anonymize", "wipe", "purge_transactions", "purge_master_data")
 NEUTRALIZE_ONLY = ("deactivate_cron", "neutralize")
@@ -72,6 +81,7 @@ ENV_FILE = "/root/.config/odoodev/test-passwords.env"
 # never goes into a playbook or a repository; odoodev reads it at run time.
 AFTER_RESTORE_SQL = "/root/.config/odoodev/test-after-restore.sql"
 
+# Only generated with ebics: true / --ebics.
 # EBICS only works with the bank keys of the live system. Right after the restore,
 # before Odoo starts, the copy is switched off and its stored passphrases are
 # cleared (no-op without EBICS). After the rebuild the modules are uninstalled
@@ -86,6 +96,22 @@ EBICS_OFF_SQL = (
     "END $$;"
 )
 EBICS_MODULES = ("account_ebics", "account_ebics_batch", "account_ebics_oe")
+
+# Mirrors odoodev's deactivate_cron sanitize (odoodev/core/database.py, deactivate_cronjobs):
+# the same ir_cron statement, no exclusions. The module update of server.rebuild (-u all) and
+# server.install re-activate cron jobs whose XML is not noupdate; they are due at once, would
+# block the next module operation (Odoo refuses it while a cron holds ir_cron) and would run
+# jobs such as report mails on a copy of live data. So the step is repeated after both.
+CRON_OFF_SQL = "UPDATE ir_cron SET active = false;"
+CRON_OFF_STEP = [
+    '  - name: "Switch cron jobs off again (the module update re-enabled them)"',
+    "    command: sql.execute",
+    "    args:",
+    "      target: test",
+    "      statements:",
+    f'        - "{CRON_OFF_SQL}"',
+    "",
+]
 
 # Same users as `odoodev db reset-auth --passwords`: everyone except the technical
 # accounts. A missing or malformed hash aborts before anything changes.
@@ -111,7 +137,7 @@ TOTP_SQL = (
 NAME_RE = re.compile(r"^[A-Za-z0-9_.-]+$")
 MODULE_RE = re.compile(r"^[a-z0-9_]+$")
 
-# Minimum odoodev: server.uninstall + temp_dir; with install_modules also server.install.
+# Minimum odoodev: temp_dir + server.uninstall (the latter only with EBICS, same version kept); with install_modules also server.install.
 MIN_ODOODEV = "0.75.7"
 MIN_ODOODEV_INSTALL = "0.78.0"
 
@@ -149,6 +175,14 @@ def detect(args):
         if not args.data_dir and match:
             args.data_dir = match.group(1)
             found.append(f"data directory {args.data_dir} ({args.update_config})")
+        ebics = entry.get("ebics")
+        if args.ebics is None and ebics is not None:
+            if isinstance(ebics, bool):
+                args.ebics = ebics
+                if ebics:
+                    found.append(f"EBICS steps enabled ({args.update_config})")
+            else:
+                print("Warning: ebics must be true or false — treated as false", file=sys.stderr)
         configured = entry.get("install_modules")
         if args.install_modules is None and configured:
             if isinstance(configured, list) and all(isinstance(name, str) for name in configured):
@@ -183,6 +217,7 @@ def detect(args):
     args.backup_dir = args.backup_dir or "/opt/backups/docker"
     args.backup_suffix = args.backup_suffix or "7z"
     args.install_modules = args.install_modules or []
+    args.ebics = bool(args.ebics)
     return found
 
 
@@ -217,6 +252,7 @@ def targets(args):
 def render_restore(args, state, label, active, source_dir, pattern, safety_backup):
     filename = f"{state}.yaml"
     modules = getattr(args, "install_modules", None) or []
+    ebics = getattr(args, "ebics", False)
     minimum = MIN_ODOODEV_INSTALL if modules else MIN_ODOODEV
     lines = header(state, label, args.version, filename, minimum) + targets(args)
     if safety_backup:
@@ -250,13 +286,18 @@ def render_restore(args, state, label, active, source_dir, pattern, safety_backu
     lines += [f"      {flag}: {'true' if flag in active else 'false'}" for flag in FLAGS]
     lines += [
         "",
-        '  - name: "Switch off EBICS (before Odoo starts)"',
-        "    command: sql.execute",
-        "    args:",
-        "      target: test",
-        "      statements:",
-        f'        - "{EBICS_OFF_SQL}"',
-        "",
+    ]
+    if ebics:
+        lines += [
+            '  - name: "Switch off EBICS (before Odoo starts)"',
+            "    command: sql.execute",
+            "    args:",
+            "      target: test",
+            "      statements:",
+            f'        - "{EBICS_OFF_SQL}"',
+            "",
+        ]
+    lines += [
         "  # update_docker_odoo.py (doup): builds the image, updates all modules on the",
         "  # restored database and starts the container. --type F forces the full update.",
         f'  - name: "Rebuild image, update all modules, start {args.test_container}"',
@@ -265,13 +306,19 @@ def render_restore(args, state, label, active, source_dir, pattern, safety_backu
         "      target: test",
         '      extra_args: ["--type", "F"]',
         "",
-        "  # A no-op when the database has no EBICS.",
-        '  - name: "Uninstall EBICS"',
-        "    command: server.uninstall",
-        "    args:",
-        "      target: test",
-        f"      modules: [{', '.join(EBICS_MODULES)}]",
-        "",
+    ]
+    lines += CRON_OFF_STEP
+    if ebics:
+        lines += [
+            "  # A no-op when the database has no EBICS.",
+            '  - name: "Uninstall EBICS"',
+            "    command: server.uninstall",
+            "    args:",
+            "      target: test",
+            f"      modules: [{', '.join(EBICS_MODULES)}]",
+            "",
+        ]
+    lines += [
         '  - name: "Neutralize (odoo-bin neutralize in the container)"',
         "    command: server.neutralize",
         "    args: { target: test }",
@@ -287,6 +334,7 @@ def render_restore(args, state, label, active, source_dir, pattern, safety_backu
             f"      modules: [{', '.join(modules)}]",
             "",
         ]
+        lines += CRON_OFF_STEP
     if after_sql:
         lines += [
             "  # Last, so neutralize cannot undo it. Odoo caches configuration parameters,",
@@ -357,6 +405,13 @@ def main():
         type=parse_modules,
         help="Modules to install after every restore, comma-separated "
         "(default: install_modules of the test container in docker2update.yaml; empty = none)",
+    )
+    parser.add_argument(
+        "--ebics",
+        action=argparse.BooleanOptionalAction,
+        default=None,
+        help="Add the EBICS steps (switch off before Odoo starts, uninstall afterwards) to every restore "
+        "playbook (default: ebics of the test container in docker2update.yaml, else off)",
     )
     parser.add_argument(
         "--safety-backup",
@@ -436,6 +491,10 @@ def main():
         print(f"test settings: {args.after_restore_sql} is applied after every restore, then {args.test_container} restarts")
     if args.install_modules:
         print(f"extra modules: {', '.join(args.install_modules)} (needs odoodev >= {MIN_ODOODEV_INSTALL})")
+    if args.ebics:
+        print("EBICS: steps included (switch off + uninstall)")
+    else:
+        print("EBICS: no steps (enable with ebics: true or --ebics)")
     if args.safety_backup:
         print(f"safety backup: on - every run first saves the test instance to {SAFETY_DIR} (never pruned)")
     else:

@@ -1,6 +1,6 @@
 """
-Tests for Dockerfiles/playbooks/generate.py - the install_modules step and the
-optional safety backup.
+Tests for Dockerfiles/playbooks/generate.py - the install_modules step, the opt-in
+EBICS steps and the optional safety backup.
 
 Run from the repository root:
 
@@ -113,6 +113,138 @@ class InstallModulesTest(unittest.TestCase):
         with self.assertRaises(SystemExit):
             self.run_generate("--no-detect", "--install-modules", "eq-module.a")
 
+
+
+class EbicsTest(unittest.TestCase):
+    """The EBICS steps are opt-in: ebics: true on the test container or --ebics."""
+
+    setUp = InstallModulesTest.setUp
+    update_config = InstallModulesTest.update_config
+    read = InstallModulesTest.read
+
+    def generate(self, *argv):
+        args = ["generate.py", "--version", "18", "--out", self.out,
+                "--backup-config", "/nonexistent"] + list(argv)
+        out, err = io.StringIO(), io.StringIO()
+        with mock.patch.object(sys, "argv", args), \
+                contextlib.redirect_stdout(out), contextlib.redirect_stderr(err):
+            gen.main()
+        return out.getvalue(), err.getvalue()
+
+    def assertEbics(self, present):
+        for state in gen.STATES:
+            text = self.read(f"{state}.yaml")
+            commands = [s["command"] for s in yaml.safe_load(text)["steps"]]
+            self.assertEqual("Switch off EBICS" in text, present, state)
+            self.assertEqual("server.uninstall" in text, present, state)
+            self.assertEqual("Uninstall EBICS" in text, present, state)
+            self.assertEqual("server.uninstall" in commands, present, state)
+            self.assertEqual(commands[:2], ["container.stop", "server.restore"], state)
+            self.assertEqual(commands[-2:], ["server.neutralize", "server.verify"], state)
+        self.assertNotIn("EBICS", self.read("passwoerter.yaml"))
+
+    def test_default_has_no_ebics_steps(self):
+        out, _ = self.generate("--no-detect")
+        self.assertEbics(False)
+        self.assertIn("EBICS: no steps (enable with ebics: true or --ebics)", out)
+        commands = [s["command"] for s in yaml.safe_load(self.read("neutral.yaml"))["steps"]]
+        self.assertEqual(commands, ["container.stop", "server.restore", "server.rebuild",
+                                    "sql.execute", "server.neutralize", "server.verify"])
+
+    def test_yaml_true_includes_the_steps_in_order(self):
+        config = self.update_config("    ebics: true\n")
+        out, _ = self.generate("--update-config", config)
+        self.assertEbics(True)
+        self.assertIn("EBICS: steps included (switch off + uninstall)", out)
+        commands = [s["command"] for s in yaml.safe_load(self.read("neutral.yaml"))["steps"]]
+        self.assertEqual(commands, ["container.stop", "server.restore", "sql.execute", "server.rebuild",
+                                    "sql.execute", "server.uninstall", "server.neutralize",
+                                    "server.verify"])
+
+    def test_no_ebics_overrides_yaml_true(self):
+        config = self.update_config("    ebics: true\n")
+        self.generate("--update-config", config, "--no-ebics")
+        self.assertEbics(False)
+
+    def test_ebics_overrides_absent_yaml(self):
+        config = self.update_config()
+        self.generate("--update-config", config, "--ebics")
+        self.assertEbics(True)
+
+    def test_ebics_of_another_container_is_not_taken(self):
+        path = os.path.join(self.tmp.name, "docker2update.yaml")
+        with open(path, "w", encoding="utf-8") as handle:
+            handle.write("containers:\n  - container_name: live-odoo\n    ebics: true\n"
+                         "  - container_name: test-odoo\n    database_name: test_db\n")
+        self.generate("--update-config", path)
+        self.assertEbics(False)
+
+    def test_a_non_bool_yaml_value_warns_and_is_off(self):
+        config = self.update_config('    ebics: "yes"\n')
+        _, err = self.generate("--update-config", config)
+        self.assertIn("ebics must be true or false", err)
+        self.assertEbics(False)
+
+
+class CronOffTest(unittest.TestCase):
+    """The rebuild's module update re-enables cron jobs: switch them off again afterwards."""
+
+    setUp = InstallModulesTest.setUp
+    update_config = InstallModulesTest.update_config
+    read = InstallModulesTest.read
+    generate = EbicsTest.generate
+
+    STEP = "Switch cron jobs off again (the module update re-enabled them)"
+
+    def steps(self, state):
+        return yaml.safe_load(self.read(f"{state}.yaml"))["steps"]
+
+    def cron_positions(self, steps):
+        return [i for i, s in enumerate(steps) if s["name"] == self.STEP]
+
+    def test_cron_off_follows_the_rebuild_in_every_state(self):
+        self.generate("--no-detect", "--safety-backup")
+        for state in list(gen.STATES) + ["wiederherstellen"]:
+            steps = self.steps(state)
+            commands = [s["command"] for s in steps]
+            positions = self.cron_positions(steps)
+            self.assertEqual(positions, [commands.index("server.rebuild") + 1], state)
+            step = steps[positions[0]]
+            self.assertEqual(step["command"], "sql.execute", state)
+            self.assertEqual(step["args"]["statements"], ["UPDATE ir_cron SET active = false;"], state)
+            self.assertLess(positions[0], commands.index("server.neutralize"), state)
+
+    def test_the_sql_mirrors_odoodev(self):
+        self.assertEqual(gen.CRON_OFF_SQL, "UPDATE ir_cron SET active = false;")
+
+    def test_second_step_only_with_install_modules_and_after_them(self):
+        self.generate("--no-detect")
+        for state in gen.STATES:
+            self.assertEqual(len(self.cron_positions(self.steps(state))), 1, state)
+        self.generate("--no-detect", "--install-modules", "eq_module_a")
+        for state in gen.STATES:
+            steps = self.steps(state)
+            commands = [s["command"] for s in steps]
+            positions = self.cron_positions(steps)
+            self.assertEqual(len(positions), 2, state)
+            self.assertEqual(positions[1], commands.index("server.install") + 1, state)
+            self.assertLess(positions[1], commands.index("server.verify"), state)
+
+    def test_full_order_with_everything(self):
+        sql = os.path.join(self.tmp.name, "after.sql")
+        with open(sql, "w", encoding="utf-8") as handle:
+            handle.write("SELECT 1;\n")
+        os.chmod(sql, 0o600)
+        self.generate("--no-detect", "--ebics", "--install-modules", "eq_module_a",
+                      "--after-restore-sql", sql)
+        names = [s["name"] for s in self.steps("neutral")]
+        expected = ["Stop test-odoo", "Restore newest backup (neutral)", "Switch off EBICS",
+                    "Rebuild image", "Switch cron jobs off again", "Uninstall EBICS",
+                    "Neutralize", "Install additional modules", "Switch cron jobs off again",
+                    "Apply the settings", "Restart test-odoo", "Start test-odoo", "Verify that"]
+        self.assertEqual(len(names), len(expected))
+        for name, prefix in zip(names, expected):
+            self.assertTrue(name.startswith(prefix), (name, prefix))
 
 
 class SafetyBackupTest(unittest.TestCase):

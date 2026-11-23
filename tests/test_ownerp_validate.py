@@ -486,6 +486,21 @@ class SizingBlockTest(UpdateSchemaTest):
                          set(ownerp_sizing.OVERRIDE_KEYS))
 
 
+class EbicsKeyTest(UpdateSchemaTest):
+    """The optional 'ebics' flag of a container (generate.py opt-in)."""
+
+    def with_line(self, line):
+        return GOOD_UPDATE + " " * 8 + line + "\n"
+
+    def test_a_bool_is_accepted(self):
+        self.assertEqual(self.check(self.with_line("ebics: true")), [])
+
+    def test_a_string_is_an_error(self):
+        errors = self.errors(self.with_line("ebics: yes_please"))
+        self.assertEqual(len(errors), 1)
+        self.assertEqual(errors[0].path, "containers[0].ebics")
+
+
 class InstallModulesTest(UpdateSchemaTest):
     """The optional 'install_modules' list of a container."""
 

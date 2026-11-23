@@ -1367,7 +1367,7 @@ in this repository, stay in `CLAUDE.md`.
   update token", shown once)
 - **Tests**: `tests/test_ownerp_pull_update.py`
 
-#### 19. Dockerfiles/playbooks (generate.py v1.2.0, passwort-setzen.py v1.0.0)
+#### 19. Dockerfiles/playbooks (generate.py v1.6.0, passwort-setzen.py v1.0.0)
 - **Purpose**: Rebuild the test instance (`test-odoo` / `test-db`) from the
   newest `live-odoo` backup with odoodev server playbooks (odoodev ≥ 0.75.7),
   Odoo 16, 18 and 19. Replaces the withdrawn `restore-zip.sh` path
@@ -1378,6 +1378,8 @@ in this repository, stay in `CLAUDE.md`.
   `~/container2backup.yaml`; every value has a flag (`--help`). `v16/`, `v18/`,
   `v19/` hold the output for the templates' values as examples
 - **Extra modules** (v1.2.0): `install_modules: [a, b]` on the test container in `docker2update.yaml` (or `--install-modules a,b`, which wins; empty = none) adds a `server.install` step after "Neutralize" and before the final verify to every restore playbook; the header then says `odoodev >= 0.78.0`. Without modules the output is unchanged
+- **Cron jobs off again** (v1.6.0, 23.11.2026): `server.rebuild` (`-u all`) and `server.install` re-enable cron jobs whose XML is not noupdate, although `server.restore` had switched them off (`deactivate_cron`). Every restore playbook therefore has a `sql.execute` step `UPDATE ir_cron SET active = false;` (same statement as odoodev's sanitize) after the rebuild, and a second one after the install step when `install_modules` is set
+- **EBICS opt-in** (v1.5.0, 23.11.2026): the two EBICS steps (SQL switch-off before the rebuild, `server.uninstall` of `account_ebics*` after it) are only written with `ebics: true` on the test container in `docker2update.yaml` or `--ebics` (`--no-ebics` wins over the file). Default: no EBICS steps; `ownerp_validate.py` knows the key
 - **States**: `neutral`, `anonym`, `anonym-leer`, `stammdaten`, `vorlage`
   (odoodev sanitize flags), plus `passwoerter.yaml` (one pbkdf2 hash for every user except the technical
   accounts, 2FA off; the hash comes from `passwort-setzen.py`, stored in
@@ -1391,8 +1393,8 @@ in this repository, stay in `CLAUDE.md`.
   the output directory is reported, never deleted
 - **Flow**: (safety backup, only with `--safety-backup`) → stop → restore via staging DB (unpacked in
   `/opt/backups/restore-tmp`, the backup dir may be a read-only share) →
-  EBICS off via SQL before start → `doup --type F` → `server.uninstall` of
-  `account_ebics*` → `odoo-bin neutralize` → `server.verify`
+  (with `ebics: true`: EBICS off via SQL before start →) `doup --type F` →
+  (with `ebics: true`: `server.uninstall` of `account_ebics*` →) `odoo-bin neutralize` → `server.verify`
 - **Pitfalls found on a real server**: modules marked `to remove` via SQL are
   reset by doup's `-u all`; `odoo-bin -u` inside the running container
   deadlocks against the serving process — hence `server.uninstall`. One active
