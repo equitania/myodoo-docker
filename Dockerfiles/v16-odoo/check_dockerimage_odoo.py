@@ -1,8 +1,8 @@
 #!/usr/bin/python3
 # -*- coding: utf-8 -*-
 # Mit diesem Skript überprüft das passende Dockerimage gemäß des Releasefiles
-# Version 3.4.0
-# Date 21.08.2026
+# Version 3.5.0
+# Date 23.11.2026
 ##############################################################################
 #
 #    Shell Script for Odoo, Open Source Management Solution
@@ -30,13 +30,26 @@ import re
 import shlex
 import subprocess
 import sys
-import time
 import datetime
 import platform
 
 _access_file = 'release.txt'
 _release_file = 'release.file'
+_download_file = 'release.file.download'
 _dockerfile = 'Dockerfile'
+
+# wget's documented exit codes - named in the error instead of the URL, which
+# carries the access code.
+_WGET_EXIT = {
+    1: 'generic error',
+    2: 'parse error',
+    3: 'file I/O error',
+    4: 'network failure',
+    5: 'SSL verification failure',
+    6: 'authentication failure',
+    7: 'protocol error',
+    8: 'server error response',
+}
 
 # Validation pattern for Docker image references (e.g. myodoo/prepare-v19:25.12.08-3.12.12)
 _DOCKER_IMAGE_PATTERN = re.compile(r'^[a-zA-Z0-9][a-zA-Z0-9_./-]*:[a-zA-Z0-9_.-]+$')
@@ -229,6 +242,47 @@ def update_dockerfile(image_ref: str) -> None:
     subprocess.run(sed_date_cmd, check=True)
 
 
+def download_release_file(accesscode):
+    """Fetch the release file; replace the current one only on success.
+
+    Returns None on success, otherwise a message that never contains the
+    access code. The download goes to a side file first: wget -O truncates
+    its target even when it fails, and renaming the current release.file away
+    beforehand (as up to 3.4.0) left an empty file behind whenever the release
+    manager was unreachable - the build then failed on a perfectly usable
+    previous release (demo server, 20.11.2026). The unhandled
+    CalledProcessError of that version also printed the URL, access code
+    included, into every run log.
+    """
+    url = f'https://main.myodoo.de/get_csv_file/{accesscode}'
+    try:
+        result = subprocess.run(
+            ['wget', '-q', '--timeout=30', '--tries=3', '-O', _download_file, url],
+            check=False)
+        returncode = result.returncode
+    except OSError as exc:
+        returncode = None
+        reason = f'wget could not be started ({exc.strerror})'
+    else:
+        reason = f'wget exit code {returncode} ({_WGET_EXIT.get(returncode, "unknown")})'
+
+    if returncode == 0 and os.path.isfile(_download_file) \
+            and os.stat(_download_file).st_size != 0:
+        if os.path.isfile(_release_file):
+            stamp = datetime.datetime.now().strftime('%Y-%m-%d_%H-%M-%S')
+            os.rename(_release_file, _release_file + '-' + stamp)
+        os.replace(_download_file, _release_file)
+        return None
+
+    if returncode == 0:
+        reason = 'the release manager answered with an empty file'
+    try:
+        os.remove(_download_file)
+    except OSError:
+        pass
+    return f'release manager download failed: {reason}.'
+
+
 def main():
     """Check the build context, then refresh the base image from the release file.
 
@@ -250,20 +304,15 @@ def main():
         print('Not valid accesscode :(')
         return 0 if context_ok else 1
 
-    ts = time.time()
-    mytime = datetime.datetime.fromtimestamp(ts).strftime('%Y-%m-%d_%H-%M-%S')
-    if os.path.isfile(_release_file):
-        os.rename(_release_file, _release_file + '-' + mytime)
-
-    # Download release file using subprocess instead of os.system
-    subprocess.run(
-        ['wget', '-q', '-O', 'release.file',
-         f'https://main.myodoo.de/get_csv_file/{_accesscode}'],
-        check=True
-    )
-
-    while not os.path.isfile(_release_file):
-        time.sleep(0.1)
+    problem = download_release_file(_accesscode)
+    if problem:
+        print(f'WARNING: {problem}')
+        if os.path.isfile(_release_file):
+            print('The previous release.file is kept unchanged - the build uses it.')
+        else:
+            print('There is no previous release.file - the build cannot run until')
+            print('the release manager is reachable.')
+        return 2
 
     if os.stat(_release_file).st_size != 0:
         with io.open(_release_file, 'r', encoding="utf8") as csvfile:

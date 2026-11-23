@@ -356,11 +356,15 @@ in this repository, stay in `CLAUDE.md`.
   - Automated restart management
   - Module updates for Odoo
 
-#### 4. update_docker_odoo.py (v5.27.0)
+#### 4. update_docker_odoo.py (v5.27.1)
 - **Purpose**: Automated Docker container updates for v16+ Odoo instances
   (image rebuild, container re-creation, module update), driven by
   `docker2update.yaml`
 - **Sizing from the hardware** (v5.26.0, 09.11.2026): for an instance whose `docker2update.yaml` entry has a `sizing:` block, `doup` computes workers, memory limits and PostgreSQL memory via `ownerp_sizing.py` (opt-in). A hand edit wins; `-s NAME` recomputes the host and applies one instance; sizing errors are ERROR lines, never an abort, but the run exits 1 ("sizing errors N"); over budget is a WARNING. `odoo.conf` gets a `.bak_<timestamp>` and a regression gate; PostgreSQL is changed in the restart window for local database containers only, verified with `SHOW`, rolled back on failure. See `docs/usage/04-updates.md`
+- **An unreachable release manager is a WARNING in the closing block** (v5.27.1,
+  23.11.2026): the build runs on the previous `release.file`, which
+  `check_dockerimage_odoo.py` ≥ 3.5.0 keeps in place; before, only a debug-level
+  "continuing anyway" said so
 - **Build first, swap afterwards** (v5.27.0, 20.11.2026): the new image is built
   under the tag `<image>:doup-candidate` while the old container keeps serving,
   checked by `verify_built_image()`, and only then tagged as `<image>` (`:latest`).
@@ -1006,10 +1010,19 @@ in this repository, stay in `CLAUDE.md`.
   `<project>` would print a name `docker network inspect` does not recognise,
   the same failure the port column was built to avoid
 
-#### 14. check_dockerimage_odoo.py (v3.4.0)
+#### 14. check_dockerimage_odoo.py (v3.5.0)
 - **Purpose**: Sets the build folder's `FROM` line from the release file (owns
   that line — `odoo_build_cache.py` never touches it), and since v3.4.0 checks
   the build context before the build gets to fail on it
+- **A failed download keeps the previous release file** (v3.5.0, 23.11.2026):
+  wget (`--timeout=30 --tries=3`) writes to `release.file.download`; only a
+  non-empty result replaces `release.file`, the old one moving to
+  `release.file-<timestamp>`. On failure the script names wget's exit code,
+  never the URL (it carries the access code), leaves `release.file` and the
+  `FROM` line untouched and exits 2. Up to 3.4.0 it renamed `release.file`
+  away first, so an unreachable release manager left an empty file, the build
+  failed on `No valid release file`, and the unhandled `CalledProcessError`
+  printed the access code into the run log
 - **Lives in the build folder**, one byte-identical copy per version under
   `Dockerfiles/v{16,18,19}-odoo/`. `sync_build_scripts()` distributes it by
   comparing the `# Version X.Y.Z` header, so **a fix must land in all three** or

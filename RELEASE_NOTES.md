@@ -1,5 +1,24 @@
 # Release Notes
 
+## Fix: an unreachable release manager no longer breaks the build or logs the access code (23.11.2026)
+
+*Dockerfiles/v16-odoo, v18-odoo, v19-odoo/check_dockerimage_odoo.py 3.5.0 · scripts/update_docker_odoo.py 5.27.1 · tests/test_check_dockerimage.py · docs/COMPONENTS.md · usage/AGENT.md*
+
+When the release manager could not be reached for a moment, the check script had already
+moved `release.file` aside, wget left an empty file in its place, and the build then failed
+on `No valid release file` although the previous release was perfectly usable. The unhandled
+error also printed the download URL - access code included - into the run log.
+
+- The download goes to `release.file.download`, bounded by `--timeout=30 --tries=3`. Only a
+  non-empty result replaces `release.file`; the previous one is kept as
+  `release.file-<timestamp>` as before.
+- On failure `release.file` and the Dockerfile's `FROM` line stay as they are, the message
+  names wget's exit code (e.g. `4 (network failure)`) and never the URL, and the script exits 2.
+- doup then builds with the previous release and reports `release manager not reachable`
+  as a WARNING in its closing block instead of a debug line nobody sees.
+- Run logs written by older versions may still contain the access code in a traceback
+  (`update_*.log` in the build folder, kept 90 days by default).
+
 ## Change: the maintenance cron overview is shown at login (23.11.2026)
 
 *fish/conf.d/50-prompt.fish 1.5.0 · tests/test_fish_help.py*

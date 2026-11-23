@@ -418,6 +418,10 @@ CIDR (wget/apt/urllib do not). Full walkthrough: `docs/usage/07-proxy.md`.
   immediately. Tune via `BUILD_ODOO_RETRIES` / `BUILD_ODOO_RETRY_BACKOFF`. If the build still
   aborts with `Release server '…' could not be reached`, the web service on the release host is
   down — check `systemctl status nginx` there, then rerun.
+- **Release manager unreachable** (check_dockerimage_odoo ≥ 3.5.0, update_docker_odoo ≥ 5.27.1):
+  `release manager ... FAILED` plus a WARNING in the closing block; the build runs on the
+  previous `release.file`, which stays untouched. The error names wget's exit code, never the URL
+  — run logs of older versions carry the access code in a traceback.
 - **A failed build keeps the instance up** (update_docker_odoo ≥ 5.27.0): the image is built as
   `<image>:doup-candidate` and verified while the old container still serves; only then is it tagged
   `:latest` and the old container stopped. A build failure prints `'<container>' was not touched`

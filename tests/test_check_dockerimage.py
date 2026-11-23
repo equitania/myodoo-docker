@@ -174,6 +174,124 @@ class TestCheckBuildContext(unittest.TestCase):
         self.assertFalse(MODULE.check_build_context(self.dir))
 
 
+class TestReleaseDownload(unittest.TestCase):
+    """A failed release-manager download must leave the build folder buildable.
+
+    The bug this pins (demo server, 20.11.2026): the release manager was not
+    reachable for a moment. The script had already renamed release.file away,
+    wget -O left an empty file behind, the unhandled CalledProcessError printed
+    the access code into the run log, and the build then failed on
+    'No valid release file'. The previous release.file was perfectly usable.
+    """
+
+    CODE = "SECRETACCESSCODE42"
+    RELEASE = "https://example.invalid/base/\nmyodoo/prepare-v18:26.10.13-3.13.16\nodoo-kernel-18.0.zip\n"
+    OLD_RELEASE = "https://example.invalid/old/\nmyodoo/prepare-v18:26.09.01-3.13.10\n"
+
+    def setUp(self):
+        self.dir = tempfile.mkdtemp(prefix="release-download-test-")
+        self.addCleanup(shutil.rmtree, self.dir, True)
+        self.cwd = os.getcwd()
+        os.chdir(self.dir)
+        self.addCleanup(os.chdir, self.cwd)
+        self.write("release.txt", self.CODE + "\n")
+        self.write("release.file", self.OLD_RELEASE)
+        self.write("Dockerfile", "FROM myodoo/prepare-v18:26.09.01-3.13.10\n#\n#\n# Date 01.09.2026\n")
+        self.wget_calls = []
+        self.real_run = MODULE.subprocess.run
+        self.addCleanup(setattr, MODULE.subprocess, "run", self.real_run)
+        self.addCleanup(setattr, MODULE, "check_build_context", MODULE.check_build_context)
+        MODULE.check_build_context = lambda *a, **k: True
+
+    def write(self, name, content):
+        with io.open(os.path.join(self.dir, name), "w", encoding="utf8") as handle:
+            handle.write(content)
+
+    def read(self, name):
+        with io.open(os.path.join(self.dir, name), "r", encoding="utf8") as handle:
+            return handle.read()
+
+    def fake_wget(self, returncode=0, content=None):
+        """Replace subprocess.run for wget only; sed still runs for real."""
+        def run(cmd, *args, **kwargs):
+            if cmd and cmd[0] == "wget":
+                self.wget_calls.append(cmd)
+                target = cmd[cmd.index("-O") + 1]
+                # wget -O creates (truncates) the target even when it fails
+                with io.open(target, "w", encoding="utf8") as handle:
+                    handle.write(content or "")
+                if kwargs.get("check") and returncode:
+                    raise MODULE.subprocess.CalledProcessError(returncode, cmd)
+                return MODULE.subprocess.CompletedProcess(cmd, returncode)
+            return self.real_run(cmd, *args, **kwargs)
+        MODULE.subprocess.run = run
+
+    def run_main(self):
+        out = io.StringIO()
+        import contextlib
+        with contextlib.redirect_stdout(out), contextlib.redirect_stderr(out):
+            code = MODULE.main()
+        return code, out.getvalue()
+
+    def backups(self):
+        return [n for n in os.listdir(self.dir) if n.startswith("release.file-")]
+
+    def test_failed_download_keeps_the_previous_release_file(self):
+        self.fake_wget(returncode=4)
+        code, _ = self.run_main()
+        self.assertNotEqual(code, 0)
+        self.assertEqual(self.read("release.file"), self.OLD_RELEASE)
+        self.assertEqual(self.backups(), [])
+        self.assertNotIn("release.file.download", os.listdir(self.dir))
+
+    def test_failed_download_never_prints_the_access_code(self):
+        self.fake_wget(returncode=4)
+        _, output = self.run_main()
+        self.assertNotIn(self.CODE, output)
+        self.assertNotIn("Traceback", output)
+        self.assertIn("previous release.file", output)
+
+    def test_empty_download_keeps_the_previous_release_file(self):
+        self.fake_wget(returncode=0, content="")
+        code, _ = self.run_main()
+        self.assertNotEqual(code, 0)
+        self.assertEqual(self.read("release.file"), self.OLD_RELEASE)
+
+    def test_failed_download_leaves_the_dockerfile_alone(self):
+        before = self.read("Dockerfile")
+        self.fake_wget(returncode=4)
+        self.run_main()
+        self.assertEqual(self.read("Dockerfile"), before)
+
+    def test_successful_download_replaces_and_backs_up(self):
+        self.fake_wget(returncode=0, content=self.RELEASE)
+        code, output = self.run_main()
+        self.assertEqual(code, 0)
+        self.assertEqual(self.read("release.file"), self.RELEASE)
+        backups = self.backups()
+        self.assertEqual(len(backups), 1)
+        self.assertEqual(self.read(backups[0]), self.OLD_RELEASE)
+        self.assertTrue(self.read("Dockerfile").startswith(
+            "FROM myodoo/prepare-v18:26.10.13-3.13.16\n"))
+        self.assertNotIn(self.CODE, output)
+
+    def test_wget_is_bounded(self):
+        """No timeout meant a dropping firewall could hang the nightly run."""
+        self.fake_wget(returncode=0, content=self.RELEASE)
+        self.run_main()
+        cmd = self.wget_calls[0]
+        self.assertTrue(any(part.startswith("--timeout=") for part in cmd), cmd)
+        self.assertTrue(any(part.startswith("--tries=") for part in cmd), cmd)
+
+    def test_first_run_without_previous_release_file(self):
+        os.remove(os.path.join(self.dir, "release.file"))
+        self.fake_wget(returncode=4)
+        code, output = self.run_main()
+        self.assertNotEqual(code, 0)
+        self.assertFalse(os.path.exists(os.path.join(self.dir, "release.file")))
+        self.assertNotIn(self.CODE, output)
+
+
 class TestRepositoryBuildFolders(unittest.TestCase):
     """The shipped build folders must pass their own check, unchanged."""
 

@@ -1,8 +1,8 @@
 #!/usr/bin/python3
 # -*- coding: utf-8 -*-
 # This script performs an update of an Odoo database in a Docker container
-# Version 5.27.0
-# Date 20.11.2026
+# Version 5.27.1
+# Date 23.11.2026
 ##############################################################################
 #
 #    Shell Script for Odoo, Open Source Management Solution
@@ -77,8 +77,8 @@ logger = logging.getLogger(__name__)
 # Kept in sync with the header comment above. Printed at the start of every run
 # so a pasted log says which version produced it — the single most common
 # question when a report comes back from a server.
-SCRIPT_VERSION = "5.27.0"
-SCRIPT_DATE = "20.11.2026"
+SCRIPT_VERSION = "5.27.1"
+SCRIPT_DATE = "23.11.2026"
 
 # Set by --no-cache. A module-level flag rather than another parameter through
 # process_container(): the build is six call levels below the argument parser,
@@ -2509,7 +2509,15 @@ def _process_container(container, proxy_settings=None, dockerfiles_source=None,
         total_warnings += warn
         total_errors += err
         if not success:
-            logger.warning("Failed to run release manager check script - continuing anyway")
+            # Since check_dockerimage_odoo.py 3.5.0 a failed download leaves the
+            # previous release.file in place, so the build below runs on the
+            # release the instance already has. Say so in the closing block -
+            # a logger.warning alone is invisible under the lean output.
+            problem = ("release manager not reachable or check failed - building "
+                       "with the previous release.file (see the step output above)")
+            total_warnings += 1
+            note_issue("WARNING", problem)
+            logger.warning(problem)
     else:
         logger.warning(f"Skipping release manager check - files not found: {check_script_name} or {access_file_name}")
         total_warnings += 1
