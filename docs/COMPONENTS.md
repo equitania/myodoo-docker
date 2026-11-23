@@ -356,11 +356,16 @@ in this repository, stay in `CLAUDE.md`.
   - Automated restart management
   - Module updates for Odoo
 
-#### 4. update_docker_odoo.py (v5.27.1)
+#### 4. update_docker_odoo.py (v5.28.0)
 - **Purpose**: Automated Docker container updates for v16+ Odoo instances
   (image rebuild, container re-creation, module update), driven by
   `docker2update.yaml`
 - **Sizing from the hardware** (v5.26.0, 09.11.2026): for an instance whose `docker2update.yaml` entry has a `sizing:` block, `doup` computes workers, memory limits and PostgreSQL memory via `ownerp_sizing.py` (opt-in). A hand edit wins; `-s NAME` recomputes the host and applies one instance; sizing errors are ERROR lines, never an abort, but the run exits 1 ("sizing errors N"); over budget is a WARNING. `odoo.conf` gets a `.bak_<timestamp>` and a regression gate; PostgreSQL is changed in the restart window for local database containers only, verified with `SHOW`, rolled back on failure. See `docs/usage/04-updates.md`
+- **Progress bar for the module update** (v5.28.0, 23.11.2026): in the quiet
+  display the `update odoo` step shows `[████░░░░] 123/345 | sale_stock` instead
+  of the bare spinner, read from Odoo's own `Loading module <name> (<n>/<total>)`
+  lines (`ModuleProgress`). Terminal only; every other step keeps the spinner,
+  `-v` and cron output are unchanged
 - **An unreachable release manager is a WARNING in the closing block** (v5.27.1,
   23.11.2026): the build runs on the previous `release.file`, which
   `check_dockerimage_odoo.py` ≥ 3.5.0 keeps in place; before, only a debug-level

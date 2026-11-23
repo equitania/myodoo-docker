@@ -1,7 +1,7 @@
 #!/usr/bin/python3
 # -*- coding: utf-8 -*-
 # This script performs an update of an Odoo database in a Docker container
-# Version 5.27.1
+# Version 5.28.0
 # Date 23.11.2026
 ##############################################################################
 #
@@ -77,7 +77,7 @@ logger = logging.getLogger(__name__)
 # Kept in sync with the header comment above. Printed at the start of every run
 # so a pasted log says which version produced it — the single most common
 # question when a report comes back from a server.
-SCRIPT_VERSION = "5.27.1"
+SCRIPT_VERSION = "5.28.0"
 SCRIPT_DATE = "23.11.2026"
 
 # Set by --no-cache. A module-level flag rather than another parameter through
@@ -584,6 +584,88 @@ def classify_line(line):
     return 'INFO', stripped
 
 
+class ModuleProgress:
+    """Progress of an Odoo module update, read from Odoo's own log lines.
+
+    Odoo logs 'Loading module <name> (<index>/<count>)' at INFO for every
+    module it updates. Without -v those lines never reach the screen, but
+    run_command() still reads them - so the quiet display can show how far the
+    update is instead of only that something is alive.
+
+    The count can grow while the update runs (base is loaded alone as '1/1',
+    a module installed along the way extends the graph), so the largest count
+    seen is the total and the lone base pass is not shown as a full bar.
+    """
+
+    LINE_RE = re.compile(r'Loading module (\S+) \((\d+)/(\d+)\)')
+    # Logged once after the last module; registry checks, view validation and
+    # translations still follow and can take minutes
+    LOADED_MARK = 'odoo.modules.loading: Modules loaded.'
+    BAR_WIDTH = 24
+    MIN_BAR_WIDTH = 8
+
+    def __init__(self):
+        self.index = 0
+        self.total = 0
+        self.name = ""
+        self.loaded = False
+
+    def feed(self, line):
+        """Take one child-process line; lines without progress are ignored."""
+        match = self.LINE_RE.search(line)
+        if match:
+            index, total = int(match.group(2)), int(match.group(3))
+            if total <= 1 and self.total <= 1:
+                return
+            self.total = max(self.total, total)
+            self.index = min(index, self.total)
+            self.name = match.group(1)
+            self.loaded = False
+        elif self.total and self.LOADED_MARK in line:
+            self.loaded = True
+
+    def render(self, msg, frame, columns, unicode_ok=True):
+        """Return the progress line, or None while no module has been seen.
+
+        The line never exceeds columns - 1: it is redrawn with a carriage
+        return, and a wrapped line would leave a copy behind on every frame.
+        """
+        if not self.total:
+            return None
+        fill, empty = ("█", "░") if unicode_ok else ("#", "-")
+        if self.loaded:
+            # The module being loaded is not done yet, the bar only fills
+            # completely once Odoo reports the last one loaded
+            done, counter, name = self.total, f"{self.total}/{self.total}", "finishing"
+        else:
+            done, counter, name = self.index - 1, f"{self.index}/{self.total}", self.name
+        limit = max(columns - 1, 1)
+
+        def line(width, with_name):
+            filled = width * done // self.total
+            text = f"{msg} [{fill * filled}{empty * (width - filled)}] {counter} {frame}"
+            return f"{text} {name}" if with_name else text
+
+        for width, with_name in ((self.BAR_WIDTH, True), (self.BAR_WIDTH, False),
+                                 (self.MIN_BAR_WIDTH, False)):
+            text = line(width, with_name)
+            if len(text) <= limit:
+                return text
+        text = line(self.BAR_WIDTH, True)
+        if len(line(self.BAR_WIDTH, False)) <= limit:
+            return text[:limit]  # only the module name is cut
+        return f"{msg} {counter} {frame}"[:limit]
+
+
+def _stdout_takes_unicode():
+    """Whether the terminal encoding can carry the bar's block characters."""
+    try:
+        "█░".encode(sys.stdout.encoding or "ascii")
+        return True
+    except (UnicodeError, LookupError):
+        return False
+
+
 def format_duration(seconds):
     """Format a duration as '42s' or '3m12s'."""
     seconds = int(seconds)
@@ -900,7 +982,7 @@ BUILD_CANDIDATE_TAG = "doup-candidate"
 
 def run_command(command, show_output=True, filter_output=False, show_progress=False,
                 progress_msg=None, timeout=None, env=None, output_indent="    ",
-                fail_markers=None):
+                fail_markers=None, progress_tracker=None):
     """Run a shell command with proper error handling and output filtering.
 
     Child output is passed through verbatim (only reformatted by
@@ -914,6 +996,9 @@ def run_command(command, show_output=True, filter_output=False, show_progress=Fa
              visually underneath the step that produced them.
         fail_markers: Optional texts that fail the command when one appears in
              its output, even if it exits 0 - see ODOO_LOAD_FAILURE_MARKERS.
+        progress_tracker: Optional object with feed(line) and
+             render(msg, frame, columns, unicode_ok) - see ModuleProgress. Once
+             it has something to show, its line replaces the bare spinner.
     """
     try:
         # Debug only - under -v this echoed the command in front of every
@@ -987,9 +1072,20 @@ def run_command(command, show_output=True, filter_output=False, show_progress=Fa
                 spinner = "|/-\\"
                 idx = 0
                 msg = progress_msg or "Processing"
+                unicode_ok = _stdout_takes_unicode()
                 while not stop_progress:
+                    frame = spinner[idx % len(spinner)]
+                    bar = None
+                    if progress_tracker:
+                        bar = progress_tracker.render(
+                            msg, frame, shutil.get_terminal_size((80, 24)).columns,
+                            unicode_ok)
                     with progress_lock:
-                        sys.stdout.write(f"\r{msg} {spinner[idx % len(spinner)]} ")
+                        if bar:
+                            # Its length changes with the module name
+                            sys.stdout.write(f"\r{bar}\033[K")
+                        else:
+                            sys.stdout.write(f"\r{msg} {frame} ")
                         sys.stdout.flush()
                     idx += 1
                     time.sleep(0.1)
@@ -1028,6 +1124,8 @@ def run_command(command, show_output=True, filter_output=False, show_progress=Fa
                 # Level detection and display formatting live in classify_line();
                 # see there for why substring matching on the raw line is wrong.
                 level, display = classify_line(line)
+                if progress_tracker:
+                    progress_tracker.feed(stripped_line)
                 if fail_markers and any(marker in stripped_line for marker in fail_markers):
                     fatal_lines.append(display)
 
@@ -2760,6 +2858,7 @@ def _process_container(container, proxy_settings=None, dockerfiles_source=None,
             filter_output=should_filter,
             show_progress=True,
             progress_msg=f"Updating database {db_name}",
+            progress_tracker=ModuleProgress(),
             timeout=1800,  # 30 minute timeout
             fail_markers=ODOO_LOAD_FAILURE_MARKERS
         )
@@ -2819,6 +2918,7 @@ def _process_container(container, proxy_settings=None, dockerfiles_source=None,
             filter_output=should_filter,
             show_progress=True,
             progress_msg=f"Updating database {db_name}",
+            progress_tracker=ModuleProgress(),
             timeout=1800,  # 30 minute timeout
             fail_markers=ODOO_LOAD_FAILURE_MARKERS
         )

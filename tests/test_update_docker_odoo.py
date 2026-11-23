@@ -1196,6 +1196,82 @@ class OdooLoadFailureTest(unittest.TestCase):
         self.assertEqual(source.count("fail_markers=ODOO_LOAD_FAILURE_MARKERS"), 3)
 
 
+class ModuleProgressTest(unittest.TestCase):
+    """The quiet update display shows how far the module update is."""
+
+    LINE = "13:45:50    15 INFO  prod odoo.modules.loading: Loading module {} ({}/{})"
+
+    def fed(self, *steps):
+        progress = udo.ModuleProgress()
+        for name, index, total in steps:
+            progress.feed(self.LINE.format(name, index, total))
+        return progress
+
+    def test_nothing_is_rendered_before_the_first_module(self):
+        progress = udo.ModuleProgress()
+        progress.feed("13:45:50    15 INFO  prod odoo.modules.loading: loading 345 modules...")
+        self.assertIsNone(progress.render("Updating database prod", "|", 120))
+
+    def test_the_lone_base_pass_is_not_a_full_bar(self):
+        progress = self.fed(("base", 1, 1))
+        self.assertIsNone(progress.render("Updating database prod", "|", 120))
+
+    def test_counter_module_name_and_bar_are_shown(self):
+        progress = self.fed(("base", 1, 1), ("sale", 13, 48))
+        text = progress.render("Updating database prod", "/", 120)
+        self.assertIn("13/48", text)
+        self.assertIn("sale", text)
+        # twelve of 48 modules are finished: a quarter of the bar
+        self.assertEqual(text.count("█"), udo.ModuleProgress.BAR_WIDTH // 4)
+        self.assertEqual(text.count("░"), udo.ModuleProgress.BAR_WIDTH * 3 // 4)
+
+    def test_the_bar_fills_only_when_odoo_reports_the_modules_loaded(self):
+        progress = self.fed(("sale", 48, 48))
+        self.assertIn("░", progress.render("Updating", "|", 120))
+        progress.feed("13:45:50    15 INFO  prod odoo.modules.loading: Modules loaded.")
+        text = progress.render("Updating", "|", 120)
+        self.assertNotIn("░", text)
+        self.assertIn("48/48", text)
+        self.assertIn("finishing", text)
+
+    def test_a_grown_module_graph_raises_the_total(self):
+        progress = self.fed(("sale", 40, 48), ("late_module", 49, 50))
+        self.assertIn("49/50", progress.render("Updating", "|", 120))
+
+    def test_the_line_never_exceeds_the_terminal_width(self):
+        progress = self.fed(("a_module_with_a_remarkably_long_technical_name", 13, 48))
+        for columns in (200, 80, 60, 45, 30, 12, 1):
+            text = progress.render("Updating database production", "|", columns)
+            self.assertLessEqual(len(text), max(columns - 1, 1), columns)
+        self.assertIn("13/48", progress.render("Updating database production", "|", 50))
+
+    def test_ascii_bar_for_a_terminal_without_unicode(self):
+        progress = self.fed(("sale", 13, 48))
+        text = progress.render("Updating", "|", 120, unicode_ok=False)
+        self.assertTrue(text.isascii())
+        self.assertIn("#", text)
+
+    def test_run_command_feeds_the_tracker_from_filtered_info_lines(self):
+        import contextlib
+        import io
+        progress = udo.ModuleProgress()
+        command = ("echo '2026-09-30 13:45:50,149 15 INFO prod odoo.modules.loading: "
+                   "Loading module sale (13/48)' 1>&2")
+        screen = io.StringIO()
+        with contextlib.redirect_stdout(screen):
+            result = udo.run_command(command, show_output=False, filter_output=True,
+                                     progress_tracker=progress)
+        self.assertTrue(result[0])
+        self.assertEqual((progress.index, progress.total, progress.name), (13, 48, "sale"))
+        # the line itself stays off the quiet screen
+        self.assertNotIn("Loading module", screen.getvalue())
+
+    def test_both_update_runs_pass_a_tracker(self):
+        with open(udo.__file__, encoding="utf8") as handle:
+            source = handle.read()
+        self.assertEqual(source.count("progress_tracker=ModuleProgress()"), 2)
+
+
 class ReleaseVersionTest(unittest.TestCase):
     """odoo_version in docker2update.yaml must match the release it builds.
 

@@ -1,5 +1,24 @@
 # Release Notes
 
+## Change: doup shows a progress bar during the module update (23.11.2026)
+
+*scripts/update_docker_odoo.py 5.28.0 · tests/test_update_docker_odoo.py · docs/COMPONENTS.md · docs/usage/09-reference.md*
+
+Without `-v` the `update odoo` step showed only `Updating database <name>` and a spinner for
+the whole module update, which can run for many minutes. Odoo reports every module it updates
+together with its position (`Loading module sale (13/345)`); those lines were read and dropped.
+
+- The step now shows a bar, the counter and the module being loaded:
+  `Updating database prod [████████░░░░░░░░░░░░░░░░] 123/345 | sale_stock`. The spinner
+  character stays in the line as the sign of life for a module that takes long.
+- After the last module the bar is full and reads `finishing` - registry checks and
+  translations still follow.
+- Until Odoo names the first module, and in every other step (build, neutralize), the plain
+  spinner stays. Warnings and errors still appear above the bar as before.
+- The line is shortened to the terminal width (module name first, then the bar) and falls back
+  to `#`/`-` on a terminal without UTF-8. Nothing changes under `-v`, in a pipe or under cron,
+  and the run log is unaffected.
+
 ## Fix: test-instance playbooks switch cron jobs off again after the module update (23.11.2026)
 
 *Dockerfiles/playbooks/generate.py 1.6.0 · Dockerfiles/playbooks/ANLEITUNG.md · Dockerfiles/playbooks/v16, v18, v19 · tests/test_playbook_generate.py · docs/COMPONENTS.md · docs/usage/09-reference.md · usage/AGENT.md*
