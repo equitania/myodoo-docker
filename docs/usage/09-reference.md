@@ -64,7 +64,7 @@ Die wichtigsten Aliase/Funktionen nach Kategorie:
 | `edup` | `mcedit $HOME/docker2update.yaml` — Update-Config |
 | `doval` | `$HOME/ownerp_validate.py` — beide YAMLs rein lesend prüfen |
 | `wiz` / `wizup` / `wizbk` | `$HOME/ownerp_wizard.py` [`--update`\|`--backup`] — geführtes Bearbeiten, fragt ohne Flag nach der Datei |
-| `docron` | `$HOME/ownerp_cron.py` — Wartungs-Cron anzeigen (Bearbeiten via `konsole` oder `--set`/`--enable`/`--disable`) |
+| `docron` | `$HOME/ownerp_cron.py` — Wartungs-Cron anzeigen (Bearbeiten via `konsole` oder `--set`/`--enable`/`--disable`); die Kurzform `--brief` erscheint bei der Anmeldung einmal pro Sitzung |
 | `dostat` | `$HOME/ownerp_state.py` — Serverzustand als Text, rein lesend |
 | `dosize` | `$HOME/ownerp_sizing.py` — Sizing-Bericht, rein lesend; `--review NAME` fragt Wert für Wert |
 | `pgup` | `$HOME/ownerp_pg_update.py` — PostgreSQL-Patch-Update; ohne Argumente Übersicht und Auswahl, `--json` rein lesend, `--rollback NAME` geht zurück |
@@ -177,7 +177,7 @@ The most important aliases/functions by category:
 | `edup` | `mcedit $HOME/docker2update.yaml` — update config |
 | `doval` | `$HOME/ownerp_validate.py` — read-only check of both YAMLs |
 | `wiz` / `wizup` / `wizbk` | `$HOME/ownerp_wizard.py` [`--update`\|`--backup`] — guided editing; with no flag it asks which file |
-| `docron` | `$HOME/ownerp_cron.py` — show the maintenance cron (edit via `konsole` or `--set`/`--enable`/`--disable`) |
+| `docron` | `$HOME/ownerp_cron.py` — show the maintenance cron (edit via `konsole` or `--set`/`--enable`/`--disable`); the short form `--brief` is printed once per session at login |
 | `dostat` | `$HOME/ownerp_state.py` — server state as text, read-only |
 | `dosize` | `$HOME/ownerp_sizing.py` — sizing report, read-only; `--review NAME` asks per value |
 | `pgup` | `$HOME/ownerp_pg_update.py` — PostgreSQL patch update; bare: overview and selection, `--json` read-only, `--rollback NAME` goes back |

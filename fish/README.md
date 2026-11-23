@@ -73,7 +73,7 @@ fish/
 | `wiz` | Guided editing of `docker2update.yaml` — the only tool here that writes to the configuration / geführtes Bearbeiten von `docker2update.yaml` |
 | `wizup` | `wiz` pre-selected for the update configuration / `wiz` mit vorausgewählter Update-Konfiguration |
 | `wizbk` | `wiz` pre-selected for the backup configuration / `wiz` mit vorausgewählter Backup-Konfiguration |
-| `docron` | Maintenance cron overview — when jobs run and when they last ran / Wartungs-Cron-Übersicht, wann Jobs laufen und zuletzt liefen |
+| `docron` | Maintenance cron overview — when jobs run and when they last ran / Wartungs-Cron-Übersicht, wann Jobs laufen und zuletzt liefen. Shown once per session at login (`--brief`) / wird bei der Anmeldung einmal pro Sitzung angezeigt |
 | `dostat` | The whole server on one page: instances, backup ages, maintenance jobs, readiness (read-only) / der ganze Server auf einer Seite (rein lesend) |
 | `dosize` | Sizing report: workers, memory limits and PostgreSQL per instance with reasons (read-only); `--review NAME` asks per value / Sizing-Bericht je Instanz mit Begründung (rein lesend); `--review NAME` fragt Wert für Wert |
 | `pgup` | PostgreSQL patch update: newest patch release of the running major version on the same Debian base, with backup and rollback (`--json` read-only; `--rollback NAME`) / PostgreSQL-Patch-Update auf derselben Debian-Basis, mit Backup und Rollback (`--json` rein lesend; `--rollback NAME`) |
