@@ -129,7 +129,7 @@ in this repository, stay in `CLAUDE.md`.
     python3-requests; the full run stops with the package name instead.
     `ups` (1.4.0) runs `getScripts.py --restricted` without sudo for such a
     user; `ownerp-help.fish` (1.6.0) shows a restricted panel there — only
-    commands that work without root; `50-prompt.fish` (1.4.0) prints it at
+    commands that work without root; `50-prompt.fish` (1.5.0) prints it at
     shell start like the server panel.
     The old "continue without sudo? (y/N)" prompt, which ran the full setup
     half-way, is gone.

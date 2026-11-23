@@ -1,5 +1,5 @@
 # Prompt and Startup
-# Version 1.4.0 | 29.09.2026
+# Version 1.5.0 | 23.11.2026
 
 # Run fastfetch on interactive shell start
 if status is-interactive
@@ -26,10 +26,21 @@ end
 # panel. `help` shows it again on demand. A user in getScripts' restricted
 # mode gets the same panel, cut down to what works without root (ownerp-help
 # chooses the variant).
+#
+# The maintenance cron overview (`docron --brief`) follows the panel under the
+# same gate: which jobs are switched on and when each last ran is what an
+# operator wants to know on arrival, and until now only `ups` showed it. Two
+# guards keep the login quiet where there is nothing to report — the script is
+# not there (older server; getScripts' restricted mode never delivers it), or
+# the cron file is not installed yet (fresh server), where the script would
+# answer with an error line.
 if status is-interactive; and not set -q OWNERP_HELP_SHOWN
     if functions -q ownerp-help
         set -gx OWNERP_HELP_SHOWN 1
         ownerp-help
+        if test -x $HOME/ownerp_cron.py; and test -e /etc/cron.d/myodoo-maintenance
+            $HOME/ownerp_cron.py --brief
+        end
     end
 end
 

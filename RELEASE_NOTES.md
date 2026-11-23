@@ -1,5 +1,15 @@
 # Release Notes
 
+## Change: the maintenance cron overview is shown at login (23.11.2026)
+
+*fish/conf.d/50-prompt.fish 1.5.0 · tests/test_fish_help.py*
+
+Arriving on a server now prints the cron overview (`docron --brief`) below the command
+panel: which maintenance jobs are switched on, their schedule and when each last ran. Until
+now only `ups` showed it. Like the panel it appears once per session, not in every tmux pane
+or subshell. Nothing is printed for a user in restricted mode, on a server that does not have
+`ownerp_cron.py` yet, or before the maintenance cron file is installed.
+
 ## Fix: odoo_build_cache no longer crashes on an archive listed twice in release.file (20.11.2026)
 
 *scripts/odoo_build_cache.py 1.7.2 · tests/test_odoo_build_cache.py*

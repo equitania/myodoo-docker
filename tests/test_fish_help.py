@@ -144,6 +144,24 @@ class LoginBehaviourTest(unittest.TestCase):
         """An older server gets the file after the config; the guard matters."""
         self.assertIn("functions -q ownerp-help", read(PROMPT))
 
+    def test_the_cron_overview_follows_the_panel(self):
+        """`docron --brief` is printed at arrival, inside the once-per-session
+        gate — after the panel, never on every pane."""
+        text = code(PROMPT)
+        gate = text.index("not set -q OWNERP_HELP_SHOWN")
+        panel = text.index("ownerp-help", text.index("set -gx OWNERP_HELP_SHOWN"))
+        cron = text.index("$HOME/ownerp_cron.py --brief")
+        self.assertLess(gate, panel)
+        self.assertLess(panel, cron)
+
+    def test_the_cron_overview_stays_quiet_where_it_has_nothing_to_show(self):
+        """No script (older server, or restricted mode, which never delivers
+        it) or no cron file (fresh server: the script would print an error at
+        every login): no output."""
+        text = code(PROMPT)
+        self.assertIn("test -x $HOME/ownerp_cron.py", text)
+        self.assertIn("test -e /etc/cron.d/myodoo-maintenance", text)
+
     def test_help_is_reachable_by_name(self):
         aliases = read(os.path.join(FISH, "conf.d", "30-aliases-system.fish"))
         self.assertRegex(aliases, r"(?m)^alias help='ownerp-help'")
