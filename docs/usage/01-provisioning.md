@@ -79,6 +79,12 @@ unattended-upgrades, Python-Abhängigkeiten; klont das Repo und ruft am Ende
 `getScripts.py` auf. Einzelne Schritte lassen sich per ENV abschalten
 (`INSTALL_NGINX=0`, `INSTALL_DOCKER=0`, `RUN_GETSCRIPTS=0`, …).
 
+> ℹ️ **fail2ban sperrt dich nicht aus** (seit `bootstrap.sh` 1.16.0): Die
+> vorläufige Sperrliste nimmt die Admin-IPs aus der `.env` und alle gerade
+> angemeldeten SSH-Sitzungen aus. Vorher reichten fünf Tippfehler beim Passwort
+> in den zehn Minuten vor der Anmeldung, und fail2ban sperrte beim ersten Start
+> genau die IP, von der aus installiert wurde.
+
 > ℹ️ **Storage-Treiber: `overlay2`, wegen der Geschwindigkeit** (seit
 > `bootstrap.sh` 1.14.0). Die Versionen 1.7.0 bis 1.12.0 pinnten ihn schon
 > einmal, damals als Notbehelf gegen einen kaputten Image-Export auf dem
@@ -435,6 +441,12 @@ Installs: Docker CE (official repo), nginx (nginx.org), certbot, UFW
 unattended-upgrades, Python dependencies; clones the repo and finally runs
 `getScripts.py`. Individual steps can be disabled via env vars
 (`INSTALL_NGINX=0`, `INSTALL_DOCKER=0`, `RUN_GETSCRIPTS=0`, …).
+
+> ℹ️ **fail2ban does not lock you out** (since `bootstrap.sh` 1.16.0): the
+> baseline jail exempts the admin IPs from the `.env` and every SSH session
+> logged in at that moment. Before, five mistyped passwords in the ten minutes
+> before the login were enough for fail2ban's first start to ban the very IP
+> the installation was running from.
 
 > ℹ️ **Storage driver: `overlay2`, for speed** (since `bootstrap.sh` 1.14.0).
 > Versions 1.7.0 to 1.12.0 already pinned it, back then as a workaround for a

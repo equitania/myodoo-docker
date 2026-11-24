@@ -277,5 +277,128 @@ class ScriptShapeTest(unittest.TestCase):
         self.assertIn(constant.split('"')[1], header)
 
 
+
+
+def call_fail2ban(snippet, tmp, ssh_client="", who_output=""):
+    """Source bootstrap.sh with `who`, apt-get and systemctl replaced by stubs.
+
+    `who` is a script on PATH printing `who_output`; apt-get and systemctl are
+    shell functions recording nothing, so install_fail2ban() runs on any host.
+    """
+    bindir = os.path.join(tmp, "bin")
+    os.makedirs(bindir, exist_ok=True)
+    who = os.path.join(bindir, "who")
+    with open(os.path.join(tmp, "who.out"), "w", encoding="utf-8") as handle:
+        handle.write(who_output)
+    with open(who, "w", encoding="utf-8") as handle:
+        handle.write(f'#!/bin/sh\ncat "{tmp}/who.out"\n')
+    os.chmod(who, 0o755)
+    script = (
+        f'set -euo pipefail\n'
+        f'export BOOTSTRAP_NO_MAIN=1\n'
+        f'export PATH="{bindir}:$PATH"\n'
+        f'export SSH_CLIENT="{ssh_client}"\n'
+        f'export FAIL2BAN_JAIL_LOCAL="{tmp}/jail.local"\n'
+        f'export HARDENING_ENV_FILE="{tmp}/.env"\n'
+        f'source "{BOOTSTRAP}"\n'
+        f'SUDO=""\n'
+        f'apt-get() {{ :; }}\n'
+        f'systemctl() {{ echo "systemctl $*" >> "{tmp}/systemctl.log"; '
+        f'[ "$1" != is-active ]; }}\n'
+        f'{snippet}\n'
+    )
+    return subprocess.run(["bash", "-c", script],
+                          capture_output=True, text=True)
+
+
+@unittest.skipUnless(HAS_BASH, "needs bash to source the script")
+class Fail2banBaselineIgnoreIpTest(unittest.TestCase):
+    """The baseline jail must never ban the operator running the bootstrap.
+
+    On 24.11.2026 fail2ban's first start read the journal back over findtime,
+    found the operator's own mistyped passwords from before the login and
+    banned that IP: the session froze mid-bootstrap and the host was locked.
+    """
+
+    def setUp(self):
+        self.tmp = tempfile.mkdtemp()
+        self.addCleanup(shutil.rmtree, self.tmp)
+        self.env = os.path.join(self.tmp, ".env")
+        self.jail = os.path.join(self.tmp, "jail.local")
+
+    def write_env(self, text):
+        with open(self.env, "w", encoding="utf-8") as handle:
+            handle.write(text)
+
+    def ignore_ips(self, **kwargs):
+        result = call_fail2ban(f'baseline_ignore_ips "{self.env}"', self.tmp, **kwargs)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        return result.stdout.strip()
+
+    def test_without_env_and_session_only_loopback(self):
+        self.assertEqual(self.ignore_ips(), "127.0.0.1/8 ::1")
+
+    def test_admin_ips_from_the_env_are_added_in_slot_order(self):
+        self.write_env("SSH_PORT=16667\n"
+                       "ALLOWED_IP_1=192.0.2.10\n"
+                       "ALLOWED_IP_1_COMMENT=office\n"
+                       "ALLOWED_IP_2=\"198.51.100.0/24\"\n"
+                       "ALLOWED_IP_3=\n"
+                       "ALLOWED_IP_4=2001:db8::1 # vpn\n")
+        self.assertEqual(self.ignore_ips(),
+                         "127.0.0.1/8 ::1 192.0.2.10 198.51.100.0/24 2001:db8::1")
+
+    def test_malformed_values_are_dropped_not_passed_to_fail2ban(self):
+        # A bad ignoreip entry makes fail2ban refuse to start at all.
+        self.write_env("ALLOWED_IP_1=office.example.com\n"
+                       "ALLOWED_IP_2=192.0.2.10; rm -rf /\n"
+                       "ALLOWED_IP_3=192.0.2.11\n")
+        self.assertEqual(self.ignore_ips(), "127.0.0.1/8 ::1 192.0.2.11")
+
+    def test_the_current_ssh_session_is_added(self):
+        self.assertEqual(self.ignore_ips(ssh_client="203.0.113.7 61977 22"),
+                         "127.0.0.1/8 ::1 203.0.113.7")
+
+    def test_logged_in_sessions_from_utmp_are_added_once(self):
+        who = ("root     pts/0        2026-11-24 11:49 (203.0.113.7)\n"
+               "root     pts/1        2026-11-24 11:50 (203.0.113.7)\n"
+               "root     tty1         2026-11-24 11:40\n"
+               "admin    pts/2        2026-11-24 11:51 (2001:db8::5)\n")
+        self.write_env("ALLOWED_IP_1=203.0.113.7\n")
+        self.assertEqual(self.ignore_ips(who_output=who),
+                         "127.0.0.1/8 ::1 203.0.113.7 2001:db8::5")
+
+    def test_install_writes_the_admin_ips_into_the_jail(self):
+        self.write_env("ALLOWED_IP_1=192.0.2.10\n")
+        result = call_fail2ban("install_fail2ban", self.tmp,
+                               ssh_client="203.0.113.7 1 22")
+        self.assertEqual(result.returncode, 0, result.stderr)
+        with open(self.jail, encoding="utf-8") as handle:
+            jail = handle.read()
+        self.assertIn("ignoreip = 127.0.0.1/8 ::1 192.0.2.10 203.0.113.7\n", jail)
+        self.assertIn("[sshd]\nenabled  = true", jail)
+
+    def test_an_own_baseline_is_refreshed_on_a_rerun(self):
+        with open(self.jail, "w", encoding="utf-8") as handle:
+            handle.write("# Managed by bootstrap.sh (baseline) — replaced by "
+                         "server_hardening.py --apply\n[DEFAULT]\n"
+                         "ignoreip = 127.0.0.1/8 ::1\n")
+        self.write_env("ALLOWED_IP_1=192.0.2.10\n")
+        result = call_fail2ban("install_fail2ban", self.tmp)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        with open(self.jail, encoding="utf-8") as handle:
+            self.assertIn("ignoreip = 127.0.0.1/8 ::1 192.0.2.10\n", handle.read())
+
+    def test_a_foreign_jail_local_is_left_untouched(self):
+        foreign = "# Managed by server_hardening.py\n[DEFAULT]\nignoreip = 127.0.0.1/8\n"
+        with open(self.jail, "w", encoding="utf-8") as handle:
+            handle.write(foreign)
+        self.write_env("ALLOWED_IP_1=192.0.2.10\n")
+        result = call_fail2ban("install_fail2ban", self.tmp)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        with open(self.jail, encoding="utf-8") as handle:
+            self.assertEqual(handle.read(), foreign)
+
+
 if __name__ == "__main__":
     unittest.main()

@@ -1,6 +1,6 @@
 #!/bin/bash
 # bootstrap.sh — Out-of-the-box initializer for fresh Debian/Ubuntu servers
-# Version 1.15.3 — 28.09.2026
+# Version 1.16.0 — 24.11.2026
 #
 # Supported: Debian 12 (bookworm) / 13 (trixie); Ubuntu 20.04/22.04/24.04/26.04
 # (focal/jammy/noble/resolute). OS + codename are auto-detected from os-release;
@@ -46,7 +46,8 @@
 #      06:00-07:00 apt-daily-upgrade window (its stock randomized delay of up to
 #      12h regularly drifts into it, and standalone renewals stop nginx)
 #   6. Installs UFW (firewall — installed but NOT enabled, see below)
-#   7. Installs fail2ban (baseline SSH brute-force protection)
+#   7. Installs fail2ban (baseline SSH brute-force protection; the admin IPs
+#      from the .env and the open SSH sessions are never banned)
 #   8. Installs unattended-upgrades (automatic security updates)
 #   9. Installs Python module deps the project's root-run scripts import
 #      (python3-yaml, python3-dotenv) — via apt, NOT pip (PEP 668 compliant)
@@ -90,8 +91,8 @@ set -Eeuo pipefail
 # Configuration
 # ──────────────────────────────────────────
 
-SCRIPT_VERSION="1.15.3"
-SCRIPT_DATE="28.09.2026"
+SCRIPT_VERSION="1.16.0"
+SCRIPT_DATE="24.11.2026"
 
 REPO_URL="${REPO_URL:-https://github.com/equitania/myodoo-docker.git}"
 REPO_BRANCH="${REPO_BRANCH:-2026}"
@@ -757,6 +758,67 @@ install_ufw() {
     fi
 }
 
+BASELINE_JAIL_MARKER="# Managed by bootstrap.sh (baseline)"
+
+# Print the address part of a value when it is a plain IPv4/IPv6 address or
+# network, nothing otherwise. Surrounding quotes and whitespace are dropped.
+# Deliberately strict: a malformed ignoreip entry makes fail2ban refuse to start.
+normalize_ignore_ip() {
+    local value="$1"
+    value="${value#"${value%%[![:space:]]*}"}"
+    value="${value%"${value##*[![:space:]]}"}"
+    value="${value#[\"\']}"
+    value="${value%[\"\']}"
+    if [[ "${value}" =~ ^[0-9]{1,3}(\.[0-9]{1,3}){3}(/[0-9]{1,2})?$ ]] \
+            || [[ "${value}" == *:* && "${value}" =~ ^[0-9A-Fa-f:.]+(/[0-9]{1,3})?$ ]]; then
+        printf '%s\n' "${value}"
+    fi
+}
+
+# ALLOWED_IP_<n> values from the hardening .env, which the first-run dialogue
+# of getScripts.py writes BEFORE it offers this script. Missing file: nothing.
+env_admin_ips() {
+    local env_file="$1" line
+    [ -r "${env_file}" ] || return 0
+    while IFS= read -r line || [ -n "${line}" ]; do
+        if [[ "${line}" =~ ^[[:space:]]*ALLOWED_IP_[0-9]+=(.*)$ ]]; then
+            normalize_ignore_ip "${BASH_REMATCH[1]%%#*}"
+        fi
+    done < "${env_file}"
+}
+
+# Addresses of the SSH sessions open right now: they have just authenticated,
+# so they are the operator. utmp carries the address (sshd's UseDNS defaults
+# to no); SSH_CLIENT covers a shell that is not in utmp.
+current_session_ips() {
+    if [ -n "${SSH_CLIENT:-}" ]; then
+        normalize_ignore_ip "${SSH_CLIENT%% *}"
+    fi
+    if command -v who >/dev/null 2>&1; then
+        who 2>/dev/null | sed -n 's/.*(\([^)]*\))[[:space:]]*$/\1/p' \
+            | while IFS= read -r host; do normalize_ignore_ip "${host%%:S.*}"; done
+    fi
+    return 0
+}
+
+# The ignoreip line of the baseline jail: loopback, the admin IPs, the open
+# sessions — de-duplicated, order kept. Without the last two, fail2ban's first
+# start banned the operator running this script: the systemd backend reads the
+# journal back over `findtime`, and a few mistyped passwords before the login
+# that started the installation were enough (a fresh Hetzner host, 24.11.2026 —
+# the session froze in the middle of the bootstrap and the IP stayed banned).
+baseline_ignore_ips() {
+    local env_file="$1" ip seen=" "
+    local -a result=()
+    while IFS= read -r ip; do
+        [ -n "${ip}" ] || continue
+        case "${seen}" in *" ${ip} "*) continue ;; esac
+        seen="${seen}${ip} "
+        result+=("${ip}")
+    done < <(printf '%s\n' "127.0.0.1/8" "::1"; env_admin_ips "${env_file}"; current_session_ips)
+    printf '%s\n' "${result[*]}"
+}
+
 install_fail2ban() {
     [ "${INSTALL_FAIL2BAN}" = "1" ] || { log "fail2ban install disabled — skipping."; return 0; }
 
@@ -765,19 +827,25 @@ install_fail2ban() {
     # python3-systemd is required for the systemd journal backend used below.
     $SUDO apt-get install -y fail2ban python3-systemd
 
-    # Write a SAFE baseline jail.local ONLY when none exists yet, so we never
-    # clobber the authoritative config that server_hardening.py writes later.
+    # Write a SAFE baseline jail.local when none exists yet, or refresh our own
+    # baseline on a re-run (a newer .env, a different session). Anything else
+    # is the authoritative config server_hardening.py writes and stays as it is.
     # Baseline uses port 'ssh' (fresh server still on 22) and the Debian default
     # banaction (nftables) so it works before UFW is configured.
-    local jail_local="/etc/fail2ban/jail.local"
-    if [ -e "${jail_local}" ]; then
+    local jail_local="${FAIL2BAN_JAIL_LOCAL:-/etc/fail2ban/jail.local}"
+    local env_file="${HARDENING_ENV_FILE:-${TARGET_HOME:-/root}/.config/myodoo-docker/.env}"
+    local rewrote=0 first_line=""
+    [ -r "${jail_local}" ] && IFS= read -r first_line < "${jail_local}" || true
+    if [ -e "${jail_local}" ] && [[ "${first_line}" != "${BASELINE_JAIL_MARKER}"* ]]; then
         log "${jail_local} already exists — leaving it untouched (managed elsewhere)."
     else
-        log "Writing baseline ${jail_local}..."
-        write_file "${jail_local}" <<'EOF'
-# Managed by bootstrap.sh (baseline) — replaced by server_hardening.py --apply
+        local ignore_ips
+        ignore_ips="$(baseline_ignore_ips "${env_file}")"
+        log "Writing baseline ${jail_local} (never banned: ${ignore_ips})..."
+        write_file "${jail_local}" <<EOF
+${BASELINE_JAIL_MARKER} — replaced by server_hardening.py --apply
 [DEFAULT]
-ignoreip = 127.0.0.1/8 ::1
+ignoreip = ${ignore_ips}
 bantime  = 3600
 findtime = 600
 maxretry = 5
@@ -789,9 +857,15 @@ backend  = systemd
 maxretry = 5
 bantime  = 86400
 EOF
+        rewrote=1
     fi
 
     if command -v systemctl >/dev/null 2>&1; then
+        if [ "${rewrote}" = "1" ] && $SUDO systemctl is-active --quiet fail2ban; then
+            # Already running from an earlier pass: the new ignoreip only counts
+            # after a restart (an existing ban of an admin IP is lifted by it).
+            $SUDO systemctl restart fail2ban
+        fi
         $SUDO systemctl enable --now fail2ban
         log "fail2ban service enabled and started."
     fi

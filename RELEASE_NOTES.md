@@ -1,5 +1,33 @@
 # Release Notes
 
+## Fix: fail2ban no longer bans the operator during the first installation (24.11.2026)
+
+*scripts/bootstrap.sh 1.16.0 · tests/test_bootstrap.py · docs/usage/01-provisioning.md ·
+docs/usage/09-reference.md*
+
+On a fresh server the SSH session froze in the middle of the bootstrap, right
+at `systemctl enable --now fail2ban`, and every new login from the same address
+timed out. fail2ban's systemd backend reads the journal back over `findtime`
+(10 minutes) on its first start; the operator's own mistyped passwords before
+the login that started the installation counted, and the baseline jail exempted
+only loopback. The address was banned for 24 hours, the session died, and with
+it the rest of the bootstrap and of `getScripts.py` (unattended upgrades,
+Python dependencies, scripts, cron, hardening).
+
+### Fixed
+
+- **The baseline `jail.local` exempts the operator.** `ignoreip` now carries,
+  besides loopback, the `ALLOWED_IP_<n>` values of
+  `~/.config/myodoo-docker/.env` (written by the first-run dialogue before the
+  bootstrap is offered) and the addresses of every SSH session logged in at that
+  moment (`who`, plus `SSH_CLIENT`). Values that are not a plain IPv4/IPv6
+  address or network are dropped, because one malformed entry stops fail2ban
+  from starting.
+- **A re-run refreshes our own baseline.** A `jail.local` that starts with the
+  bootstrap's marker line is rewritten and a running fail2ban restarted, which
+  also lifts an existing ban of an admin address. A `jail.local` written by
+  `server_hardening.py` (or by hand) is still left untouched.
+
 ## Change: reference Dockerfiles start from the base images of 24.11.2026 (24.11.2026)
 
 *Dockerfiles/v16-odoo/Dockerfile · Dockerfiles/v18-odoo/Dockerfile ·
