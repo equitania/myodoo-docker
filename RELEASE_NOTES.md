@@ -1,5 +1,38 @@
 # Release Notes
 
+## Change: reference Dockerfiles start from the base images of 24.11.2026 (24.11.2026)
+
+*Dockerfiles/v16-odoo/Dockerfile · Dockerfiles/v18-odoo/Dockerfile ·
+Dockerfiles/v19-odoo/Dockerfile*
+
+The three base images were rebuilt today for two reasons: the Python security
+releases of October 2026 and `eq-chatbot-core` 4.3.2 (the previous images carry
+4.3.0).
+
+### Changed
+
+- **v19:** `myodoo/prepare-v19:26.11.24-3.13.18` (was `26.10.13-3.13.16`).
+- **v18:** `myodoo/prepare-v18:26.11.24-3.13.18` (was `26.10.13-3.13.16`).
+- **v16:** `myodoo/prepare-v16:26.11.24-3.12.16` (was `26.10.13-3.12.15`).
+
+Python 3.12.16 and 3.13.18 fix CVE-2026-114583 (`tarfile.tar_filter()` accepted
+link members resolving to the destination directory) and CVE-2026-115557 (`ssl`
+now rejects certificate chains with the compromised eMudhra intermediate CA
+keys), plus a cookie-domain check in `http.cookiejar`, a cleanup race in
+`tempfile.TemporaryDirectory` and the bundled libexpat 2.9.0. The exact pins
+of the images (Werkzeug, cryptography, lxml, Pillow, `setuptools<82` on v16) are
+unchanged; about 40 unpinned packages moved to their current release.
+
+Checked in each new image: Python version, `eq-chatbot-core` 4.3.2, imports of
+the chatbot, document, PDF, LDAP and PostgreSQL libraries, `pip check` and
+`wkhtmltopdf`.
+
+### Note
+
+On a running server `check_dockerimage_odoo.py` sets the `FROM` line from the
+release file at every `doup`, so these lines only serve new installations.
+Existing servers receive the new base image once the release names it.
+
 ## Change: doup shows a progress bar during the module update (23.11.2026)
 
 *scripts/update_docker_odoo.py 5.28.0 · tests/test_update_docker_odoo.py · docs/COMPONENTS.md · docs/usage/09-reference.md*
