@@ -1780,3 +1780,38 @@ class SizingStepsTest(unittest.TestCase):
         self.assertEqual(udo.exit_code_for(1, 0), 1)
         self.assertEqual(udo.exit_code_for(0, 0), 0)
 
+
+
+class FirstRunStopRemoveTest(unittest.TestCase):
+    """5.29.0: a first run has no container to stop or remove - no errors for that."""
+
+    def runner(self, code, out):
+        calls = []
+
+        def run(argv):
+            calls.append(argv)
+            return code, out
+        return run, calls
+
+    def test_a_missing_container_is_recognised(self):
+        run, calls = self.runner(1, "Error response from daemon: No such container: test-odoo\n")
+        self.assertTrue(udo.container_missing("test-odoo", run))
+        self.assertEqual(calls[0][:3], ["docker", "container", "inspect"])
+        self.assertEqual(calls[0][-1], "test-odoo")
+
+    def test_an_existing_container_is_not_missing(self):
+        run, _ = self.runner(0, "3f2a\n")
+        self.assertFalse(udo.container_missing("live-odoo", run))
+
+    def test_docker_not_answering_is_not_a_first_run(self):
+        # Unknown must keep the stop/remove steps, which then report the fault.
+        run, _ = self.runner(1, "Cannot connect to the Docker daemon\n")
+        self.assertFalse(udo.container_missing("live-odoo", run))
+        run, _ = self.runner(127, "cannot run docker: not found")
+        self.assertFalse(udo.container_missing("live-odoo", run))
+
+    def test_the_skip_sits_in_the_stop_remove_loop(self):
+        source = inspect.getsource(udo._process_container)
+        check = source.index("first_run = container_missing(container_name)")
+        self.assertLess(check, source.index('(f"stop {container_name}", f"docker stop {container_name}")'))
+        self.assertIn("print_step(step_label, FIRST_RUN_STEP_STATUS)", source)

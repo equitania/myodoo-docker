@@ -1,8 +1,8 @@
 #!/usr/bin/python3
 # -*- coding: utf-8 -*-
 # This script performs an update of an Odoo database in a Docker container
-# Version 5.28.0
-# Date 23.11.2026
+# Version 5.29.0
+# Date 27.11.2026
 ##############################################################################
 #
 #    Shell Script for Odoo, Open Source Management Solution
@@ -77,8 +77,8 @@ logger = logging.getLogger(__name__)
 # Kept in sync with the header comment above. Printed at the start of every run
 # so a pasted log says which version produced it — the single most common
 # question when a report comes back from a server.
-SCRIPT_VERSION = "5.28.0"
-SCRIPT_DATE = "23.11.2026"
+SCRIPT_VERSION = "5.29.0"
+SCRIPT_DATE = "27.11.2026"
 
 # Set by --no-cache. A module-level flag rather than another parameter through
 # process_container(): the build is six call levels below the argument parser,
@@ -2283,6 +2283,22 @@ def run_sizing_odoo(container, all_containers, path, dockerfiles_source, hardwar
     return info, warnings, errors
 
 
+FIRST_RUN_STEP_STATUS = "skipped (no container yet - first run)"
+
+
+def container_missing(name, runner=None):
+    """True only when Docker says the container does not exist.
+
+    A first `doup` of a new instance has no container to stop or remove;
+    reporting that as two errors made a clean first run look broken. Any
+    other answer - running, stopped, or Docker not answering - returns False,
+    so the stop/remove steps run as before and report what they find.
+    """
+    runner = runner or default_runner
+    code, out = runner(["docker", "container", "inspect", "-f", "{{.Id}}", name])
+    return code != 0 and "no such" in out.lower()
+
+
 def _odoo_container_down(name, runner):
     """True when the Odoo container is stopped or already removed."""
     sizing = sizing_module()
@@ -2814,10 +2830,15 @@ def _process_container(container, proxy_settings=None, dockerfiles_source=None,
         return False, total_info, total_warnings, total_errors
 
     # Only now is the old container stopped and removed - the outage window
-    # shrinks from build + update to the update alone.
+    # shrinks from build + update to the update alone. On a first run there is
+    # no old container: both steps are skipped instead of counted as errors.
+    first_run = container_missing(container_name)
     for step_label, step_command in (
             (f"stop {container_name}", f"docker stop {container_name}"),
             (f"remove {container_name}", f"docker rm {container_name}")):
+        if first_run:
+            print_step(step_label, FIRST_RUN_STEP_STATUS)
+            continue
         _, _, info, warn, err = run_step(step_label, step_command)
         total_info += info
         total_warnings += warn

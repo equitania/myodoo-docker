@@ -356,11 +356,16 @@ in this repository, stay in `CLAUDE.md`.
   - Automated restart management
   - Module updates for Odoo
 
-#### 4. update_docker_odoo.py (v5.28.0)
+#### 4. update_docker_odoo.py (v5.29.0)
 - **Purpose**: Automated Docker container updates for v16+ Odoo instances
   (image rebuild, container re-creation, module update), driven by
   `docker2update.yaml`
 - **Sizing from the hardware** (v5.26.0, 09.11.2026): for an instance whose `docker2update.yaml` entry has a `sizing:` block, `doup` computes workers, memory limits and PostgreSQL memory via `ownerp_sizing.py` (opt-in). A hand edit wins; `-s NAME` recomputes the host and applies one instance; sizing errors are ERROR lines, never an abort, but the run exits 1 ("sizing errors N"); over budget is a WARNING. `odoo.conf` gets a `.bak_<timestamp>` and a regression gate; PostgreSQL is changed in the restart window for local database containers only, verified with `SHOW`, rolled back on failure. See `docs/usage/04-updates.md`
+- **First run without errors** (v5.29.0, 27.11.2026): when Docker says the
+  container does not exist (`docker container inspect` → "No such container"),
+  the `stop`/`remove` steps print `skipped (no container yet - first run)`
+  instead of counting two errors. Any other answer, including Docker not
+  responding, runs both steps as before (`container_missing()`)
 - **Progress bar for the module update** (v5.28.0, 23.11.2026): in the quiet
   display the `update odoo` step shows `[████░░░░] 123/345 | sale_stock` instead
   of the bare spinner, read from Odoo's own `Loading module <name> (<n>/<total>)`
@@ -1372,7 +1377,7 @@ in this repository, stay in `CLAUDE.md`.
   update token", shown once)
 - **Tests**: `tests/test_ownerp_pull_update.py`
 
-#### 19. Dockerfiles/playbooks (generate.py v1.6.0, passwort-setzen.py v1.0.0)
+#### 19. Dockerfiles/playbooks (generate.py v1.7.0, passwort-setzen.py v1.0.0)
 - **Purpose**: Rebuild the test instance (`test-odoo` / `test-db`) from the
   newest `live-odoo` backup with odoodev server playbooks (odoodev ≥ 0.75.7),
   Odoo 16, 18 and 19. Replaces the withdrawn `restore-zip.sh` path
@@ -1383,6 +1388,7 @@ in this repository, stay in `CLAUDE.md`.
   `~/container2backup.yaml`; every value has a flag (`--help`). `v16/`, `v18/`,
   `v19/` hold the output for the templates' values as examples
 - **Extra modules** (v1.2.0): `install_modules: [a, b]` on the test container in `docker2update.yaml` (or `--install-modules a,b`, which wins; empty = none) adds a `server.install` step after "Neutralize" and before the final verify to every restore playbook; the header then says `odoodev >= 0.78.0`. Without modules the output is unchanged
+- **Test settings before Odoo first starts; new servers** (v1.7.0, 27.11.2026): the test settings file now also runs right after `server.restore`, before `server.rebuild` starts Odoo on the copy - before, the copy ran the whole module update with live's `web.base.url` and live's FastReport URL and token, and with an empty token Odoo still POSTs report data to that URL. It still runs at the end as well (neutralize empties the token), so the file must be safe to run twice. The first step (`container.stop` of the test container) has `on_error: continue`: on a new server the container does not exist yet and the rebuild creates it; a container still running is refused by `server.restore`
 - **Cron jobs off again** (v1.6.0, 23.11.2026): `server.rebuild` (`-u all`) and `server.install` re-enable cron jobs whose XML is not noupdate, although `server.restore` had switched them off (`deactivate_cron`). Every restore playbook therefore has a `sql.execute` step `UPDATE ir_cron SET active = false;` (same statement as odoodev's sanitize) after the rebuild, and a second one after the install step when `install_modules` is set
 - **EBICS opt-in** (v1.5.0, 23.11.2026): the two EBICS steps (SQL switch-off before the rebuild, `server.uninstall` of `account_ebics*` after it) are only written with `ebics: true` on the test container in `docker2update.yaml` or `--ebics` (`--no-ebics` wins over the file). Default: no EBICS steps; `ownerp_validate.py` knows the key
 - **States**: `neutral`, `anonym`, `anonym-leer`, `stammdaten`, `vorlage`
@@ -1443,7 +1449,12 @@ in this repository, stay in `CLAUDE.md`.
   deviations); `--json`; `--review NAME` asks per value (y / N / q) and needs a
   terminal; `--cpus N --ram-mib M` what-if. Exit 0 fits, 1 over budget or
   warnings, 2 config unreadable
-- **`pg-local-deploy.sh` (v1.5.0)**: asks the role (German dialog) and takes the
+- **`pg-local-deploy.sh` (v1.6.0)**: `--non-interactive` with options for every
+  prompt (`--name`, `--version`, `--password-file` 0600, `--role`, `--profile`,
+  `--port`, `--ssl`, `--pgvector`, `--recreate`; `--help`); `--version` and
+  `--password-file` are required without a terminal. The password prompt stops
+  at EOF instead of looping (an answer file on stdin one line short hung forever).
+  Since v1.5.0 it asks the role (German dialog) and takes the
   memory settings from `ownerp_sizing.py pg --json` as an override block after
   the base profile; any failure falls back to the four fixed profiles
 

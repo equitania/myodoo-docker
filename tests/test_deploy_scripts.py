@@ -246,5 +246,89 @@ class FastReportNonInteractiveTests(unittest.TestCase):
         self.assertIn("umask 077", text)
 
 
+@unittest.skipUnless(shutil.which("bash"), "bash missing")
+class PostgresNonInteractiveTests(unittest.TestCase):
+    """1.6.0: --non-interactive for calls without a terminal; EOF no longer loops."""
+
+    def pg(self, body, stdin=""):
+        return source_and_run(PG, "PG_DEPLOY_NO_MAIN", body, stdin=stdin)
+
+    def test_options_are_parsed(self):
+        r = self.pg('_parse_args --non-interactive --name test-db --version 17.12 '
+                    '--password-file /p --basedir /srv/pg --user u --db d --role test '
+                    '--profile 2cpu4gb --port 15432 --ssl --pgvector --recreate && '
+                    'echo "$NONINTERACTIVE|$OPT_NAME|$OPT_VERSION|$OPT_PASSWORD_FILE|$OPT_BASEDIR|'
+                    '$OPT_USER|$OPT_DB|$OPT_ROLE|$OPT_PROFILE|$OPT_PORT|$OPT_SSL|$OPT_PGVECTOR|'
+                    '$OPT_RECREATE"')
+        self.assertEqual(r.returncode, 0, r.stderr)
+        # role/profile become the menu answers the flow already validates
+        self.assertEqual(r.stdout.strip(), "1|test-db|17.12|/p|/srv/pg|u|d|2|1|15432|y|y|1")
+
+    def test_live_role_and_users(self):
+        r = self.pg('_parse_args --role live --users 40 && echo "$OPT_ROLE|$OPT_USERS"')
+        self.assertEqual(r.stdout.strip(), "1|40")
+
+    def test_password_file_and_version_are_required(self):
+        r = self.pg('_parse_args --non-interactive --name a')
+        self.assertEqual(r.returncode, 1)
+        self.assertIn("--password-file", r.stderr)
+        self.assertIn("--version", r.stderr)
+
+    def test_bad_values_fail(self):
+        self.assertEqual(self.pg('_parse_args --role prod').returncode, 1)
+        self.assertEqual(self.pg('_parse_args --profile 16cpu').returncode, 1)
+        self.assertEqual(self.pg('_parse_args --bogus').returncode, 1)
+        self.assertEqual(self.pg('_parse_args --name').returncode, 1)
+
+    def test_ask_never_reads_in_non_interactive_mode(self):
+        r = self.pg('NONINTERACTIVE=1; echo "[$(_ask "p: " "")][$(_ask "p: " opt)]"',
+                    stdin="typed\n")
+        self.assertEqual(r.stdout.strip(), "[][opt]")
+
+    def test_ask_reads_when_interactive(self):
+        r = self.pg('echo "[$(_ask "p: " "")]"', stdin="typed\n")
+        self.assertEqual(r.stdout.strip(), "[typed]")
+
+    def test_password_file_must_be_private_and_not_empty(self):
+        import tempfile
+        with tempfile.TemporaryDirectory() as d:
+            pw = Path(d) / "pw"
+            pw.write_text("Xq7-secret\nsecond line\n")
+            os.chmod(pw, 0o644)
+            r = self.pg(f'_read_password_file "{pw}"')
+            self.assertEqual(r.returncode, 1)
+            self.assertNotIn("Xq7-secret", r.stdout + r.stderr)
+            os.chmod(pw, 0o600)
+            r = self.pg(f'_read_password_file "{pw}"')
+            self.assertEqual((r.returncode, r.stdout), (0, "Xq7-secret"))
+            pw.write_text("no-newline")
+            r = self.pg(f'_read_password_file "{pw}"')
+            self.assertEqual((r.returncode, r.stdout), (0, "no-newline"))
+            pw.write_text("\n")
+            self.assertEqual(self.pg(f'_read_password_file "{pw}"').returncode, 1)
+
+    def test_password_prompt_stops_at_end_of_input(self):
+        # Before 1.6.0 an exhausted answer file asked for the password forever.
+        r = subprocess.run(
+            ["bash", "-c", f'export PG_DEPLOY_NO_MAIN=1; source "{PG}"; '
+                           '_read_pwd_twice "DB-Passwort"; echo "rc=$?"'],
+            input="", capture_output=True, text=True, timeout=10)
+        self.assertIn("rc=1", r.stdout)
+        self.assertIn("EOF", r.stderr)
+
+    def test_password_prompt_still_reads_a_typed_password(self):
+        r = self.pg('_read_pwd_twice "DB-Passwort"', stdin="abc\nabc\n")
+        self.assertEqual((r.returncode, r.stdout.strip()), (0, "abc"))
+
+    def test_every_prompt_in_the_flow_has_a_non_interactive_branch(self):
+        flow = PG.read_text().split('_parse_args "$@" || exit 1', 1)[1]
+        lines = flow.splitlines()
+        prompts = [i for i, ln in enumerate(lines) if "read -rp" in ln or "_read_pwd_twice \"" in ln]
+        self.assertTrue(prompts)
+        for i in prompts:
+            context = "\n".join(lines[max(0, i - 12):i + 1])
+            self.assertIn("NONINTERACTIVE", context, f"unguarded prompt: {lines[i].strip()}")
+
+
 if __name__ == "__main__":
     unittest.main()

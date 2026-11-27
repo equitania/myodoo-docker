@@ -9,7 +9,7 @@
 
 ## Übersicht
 
-`pg-local-deploy.sh` (v1.2.2) ist ein interaktives On-Premise-Deploy-Skript für PostgreSQL-Docker-Container. Es spiegelt das Ansible-Playbook `semaphore/playbooks/odoo/pg/pb_pg_docker_start.yaml` auf der lokalen Maschine, damit PostgreSQL-Instanzen auch ohne Semaphore/Ansible-Setup (z.B. Kunden-On-Premise) ausgerollt werden können.
+`pg-local-deploy.sh` (v1.6.0) ist ein interaktives (auf Wunsch rückfragefreies) On-Premise-Deploy-Skript für PostgreSQL-Docker-Container. Es spiegelt das Ansible-Playbook `semaphore/playbooks/odoo/pg/pb_pg_docker_start.yaml` auf der lokalen Maschine, damit PostgreSQL-Instanzen auch ohne Semaphore/Ansible-Setup (z.B. Kunden-On-Premise) ausgerollt werden können.
 
 ### Hauptfunktionen
 
@@ -47,6 +47,24 @@ Das Skript fragt interaktiv ab:
 | Host-Port | keiner | Optionales Publish auf `127.0.0.1` |
 | SSL | `nein` | Self-Signed-SSL aktivieren (y/N) |
 | pgvector | `nein` | pgvector installieren (y/N) → Image `postgres-pgvector:<Version>`, siehe unten |
+
+### Ohne Rückfrage (ab 1.6.0)
+
+Für Aufrufe ohne Terminal (Fernwartung, Skripte) übernimmt `--non-interactive` jeden Wert aus
+einer Option; was fehlt, bekommt den Default der Rückfrage. Pflicht sind `--version` (die
+Hauptversion soll zum einzuspielenden Dump passen, deshalb kein stiller „neuester“ Stand) und
+`--password-file` (erste Zeile, Modus 600 oder 400 — nie als Argument, das stünde in der
+Prozessliste). Ein bestehender Container wird nur mit `--recreate` ersetzt, sonst Abbruch mit
+Exit 1. `--help` listet alle Optionen.
+
+```bash
+./pg-local-deploy.sh --non-interactive --name test-db --version 17.12 \
+    --password-file /root/.config/pg-test-db.pw --role test --pgvector
+```
+
+Die Optionen gelten auch interaktiv; dann fragt das Skript nur noch die übrigen Werte ab.
+Endet die Eingabe (EOF), bevor ein Passwort kam, bricht das Skript ab, statt endlos neu zu
+fragen — bis 1.5.0 blieb eine Antwortdatei auf stdin, der eine Zeile fehlte, dort hängen.
 
 ### Volume-Layout
 
@@ -145,7 +163,7 @@ Eine bestehende Instanz auf das neueste Patch-Release ihrer PostgreSQL-Hauptvers
 
 ## Overview
 
-`pg-local-deploy.sh` (v1.2.2) is an interactive on-premise deploy script for PostgreSQL Docker containers. It mirrors the Ansible playbook `semaphore/playbooks/odoo/pg/pb_pg_docker_start.yaml` on the local machine so PostgreSQL instances can be rolled out without a Semaphore/Ansible setup (e.g. customer on-premise).
+`pg-local-deploy.sh` (v1.6.0) is an interactive (optionally non-interactive) on-premise deploy script for PostgreSQL Docker containers. It mirrors the Ansible playbook `semaphore/playbooks/odoo/pg/pb_pg_docker_start.yaml` on the local machine so PostgreSQL instances can be rolled out without a Semaphore/Ansible setup (e.g. customer on-premise).
 
 ### Key Features
 
@@ -183,6 +201,24 @@ The script prompts interactively:
 | Host port | none | Optional publish on `127.0.0.1` |
 | SSL | `no` | Enable self-signed SSL (y/N) |
 | pgvector | `no` | Install pgvector (y/N) → image `postgres-pgvector:<version>`, see below |
+
+### Non-interactive (since 1.6.0)
+
+For calls without a terminal (remote maintenance, scripts) `--non-interactive` takes every
+value from an option; anything not given gets the prompt's default. Required are `--version`
+(the major version should match the dump to be restored, so there is no silent "newest") and
+`--password-file` (first line, mode 600 or 400 — never as an argument, which would show in the
+process list). An existing container is replaced only with `--recreate`; otherwise exit 1.
+`--help` lists every option.
+
+```bash
+./pg-local-deploy.sh --non-interactive --name test-db --version 17.12 \
+    --password-file /root/.config/pg-test-db.pw --role test --pgvector
+```
+
+The options also work interactively; the script then asks only for the remaining values.
+When the input ends (EOF) before a password arrived, the script stops instead of asking
+forever — up to 1.5.0 an answer file on stdin that was one line short hung there.
 
 ### Volume Layout
 

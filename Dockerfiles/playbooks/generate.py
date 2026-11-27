@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
-# Version: 1.6.0
-# Date: 23.11.2026
+# Version: 1.7.0
+# Date: 27.11.2026
 """Generate odoodev server playbooks that rebuild the test instance from the newest live backup.
 
 One playbook per data state (<state>.yaml) and passwoerter.yaml (one common password, 2FA off).
@@ -31,6 +31,14 @@ the YAML. Default: no EBICS steps.
 Cron jobs: server.restore switches them off, but the module update of the rebuild (and an
 install step) re-enables those whose cron XML is not noupdate. Every restore playbook therefore
 switches all cron jobs off again after the rebuild, and after the install step if there is one.
+
+Test settings (test-after-restore.sql): applied right after the restore, before the rebuild
+starts Odoo on the copy - otherwise the copy would run with live's web.base.url and FastReport
+server until the end of the playbook - and again at the end, because neutralize empties the
+FastReport token. The file must therefore be safe to run twice.
+
+New server: the first step (stop the test container) may fail because the container does not
+exist yet; the playbook carries on and the rebuild creates it.
 """
 
 import argparse
@@ -38,8 +46,8 @@ import os
 import re
 import sys
 
-SCRIPT_VERSION = "1.6.0"
-SCRIPT_DATE = "23.11.2026"
+SCRIPT_VERSION = "1.7.0"
+SCRIPT_DATE = "27.11.2026"
 
 FLAGS = ("deactivate_cron", "neutralize", "anonymize", "wipe", "purge_transactions", "purge_master_data")
 NEUTRALIZE_ONLY = ("deactivate_cron", "neutralize")
@@ -266,9 +274,13 @@ def render_restore(args, state, label, active, source_dir, pattern, safety_backu
             "",
         ]
     lines += [
+        "  # on_error: continue - on a new server the test container does not exist yet;",
+        "  # the rebuild creates it. A container that is still running is caught by",
+        "  # server.restore, which refuses to drop a database under a running Odoo.",
         f'  - name: "Stop {args.test_container}"',
         "    command: container.stop",
         "    args: { target: test, component: odoo }",
+        "    on_error: continue",
         "",
         f'  - name: "Restore newest backup ({state})"',
         "    command: server.restore",
@@ -287,6 +299,20 @@ def render_restore(args, state, label, active, source_dir, pattern, safety_backu
     lines += [
         "",
     ]
+    after_sql = getattr(args, "after_restore_sql", "") or ""
+    if after_sql:
+        lines += [
+            "  # Before Odoo first starts on the copy: until here the database still holds",
+            "  # live's settings, and the rebuild starts the container - with live's",
+            "  # FastReport URL and token it would send reports to the live server. Applied",
+            "  # again at the end, because neutralize empties the FastReport token.",
+            '  - name: "Apply the settings of the test instance (before Odoo starts)"',
+            "    command: sql.execute",
+            "    args:",
+            "      target: test",
+            f"      file: {after_sql}",
+            "",
+        ]
     if ebics:
         lines += [
             '  - name: "Switch off EBICS (before Odoo starts)"',
@@ -324,7 +350,6 @@ def render_restore(args, state, label, active, source_dir, pattern, safety_backu
         "    args: { target: test }",
         "",
     ]
-    after_sql = getattr(args, "after_restore_sql", "") or ""
     if modules:
         lines += [
             '  - name: "Install additional modules"',
@@ -421,7 +446,7 @@ def main():
     )
     parser.add_argument(
         "--after-restore-sql",
-        help=f"SQL file run after neutralizing, e.g. web.base.url, FastReport token, admin login "
+        help=f"SQL file run before Odoo first starts on the copy and again after neutralizing, e.g. web.base.url, FastReport token, admin login "
         f"(default: {AFTER_RESTORE_SQL} if it exists; empty = none). Keep it mode 0600",
     )
     parser.add_argument("--update-config", default="~/docker2update.yaml")
@@ -488,7 +513,7 @@ def main():
     print(f"test instance: {args.test_container} / {args.test_db_container}, database {args.test_db}, data {args.data_dir}")
     print(f"live backups:  {os.path.join(args.backup_dir, live_pattern)}")
     if args.after_restore_sql:
-        print(f"test settings: {args.after_restore_sql} is applied after every restore, then {args.test_container} restarts")
+        print(f"test settings: {args.after_restore_sql} is applied before {args.test_container} starts and again at the end, then it restarts")
     if args.install_modules:
         print(f"extra modules: {', '.join(args.install_modules)} (needs odoodev >= {MIN_ODOODEV_INSTALL})")
     if args.ebics:

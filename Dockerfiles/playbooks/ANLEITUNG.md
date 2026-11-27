@@ -132,9 +132,15 @@ SQL-Datei auf dem Server, die nur `root` lesen kann:
 /root/.config/odoodev/test-after-restore.sql
 ```
 
-Gibt es die Datei, wenn `generate.py` läuft, führt jedes Playbook sie nach dem
-Neutralisieren und nach den Zusatzmodulen aus und startet `test-odoo` danach neu. odoodev
-liest die Datei erst beim Lauf. Passwörter und Tokens stehen so nie im Playbook. Ein
+Gibt es die Datei, wenn `generate.py` läuft, führt jedes Playbook sie **zweimal** aus:
+direkt nach dem Einspielen, bevor Odoo zum ersten Mal auf der Kopie startet, und noch
+einmal ganz am Ende, nach dem Neutralisieren und den Zusatzmodulen; danach startet
+`test-odoo` neu. Der frühe Lauf verhindert, dass das Testsystem während des Modul-Updates
+mit der Adresse und dem Token des Live-FastReport-Servers arbeitet und Berichtsdaten
+dorthin schickt. Der späte Lauf ist nötig, weil das Neutralisieren den Token wieder leert.
+Die Datei muss deshalb zweimal hintereinander laufen können (`UPDATE …` oder
+`INSERT … ON CONFLICT … DO UPDATE`, kein reines `INSERT`). odoodev liest die Datei erst
+beim Lauf. Passwörter und Tokens stehen so nie im Playbook. Ein
 anderer Pfad geht mit `--after-restore-sql PFAD`, `--after-restore-sql ""` schaltet den
 Schritt ab.
 
@@ -142,7 +148,7 @@ Beispiel:
 
 ```
 UPDATE ir_config_parameter SET value = 'https://test.example.com' WHERE key = 'web.base.url';
-UPDATE ir_config_parameter SET value = 'https://fr-test.example.com/api/reports' WHERE key = 'eq.fast.reports.server.api.url';
+UPDATE ir_config_parameter SET value = 'https://fr-test.example.com/api/Reports' WHERE key = 'eq.fast.reports.server.api.url';  -- mit /api/Reports
 UPDATE ir_config_parameter SET value = '<Token von fr-test>' WHERE key = 'eq.fast.reports.server.api.token';
 UPDATE res_users SET totp_secret = NULL, login = 'admin@example.com', password = '<Passwort>' WHERE id = 2;
 ```
@@ -152,10 +158,13 @@ Klartext nimmt Odoo an und speichert es bei der ersten Anmeldung verschlüsselt.
 
 ## Der Ablauf
 
-1. `test-odoo` wird gestoppt. **Ab hier ist das Testsystem nicht erreichbar.**
+1. `test-odoo` wird gestoppt. **Ab hier ist das Testsystem nicht erreichbar.** Auf einem
+   neuen Server gibt es `test-odoo` noch nicht; der Schritt meldet das, und das Playbook
+   läuft weiter — `doup` legt den Container in Schritt 4 an.
 2. Das neueste Live-Backup wird eingespielt und je nach Zustand bereinigt. Entpackt wird
    es dafür in `/opt/backups/restore-tmp`. Die bisherige Datenbank wird erst ersetzt,
-   wenn die neue vollständig eingespielt ist.
+   wenn die neue vollständig eingespielt ist. Gibt es die Datei mit den
+   Test-Einstellungen, wird sie jetzt zum ersten Mal ausgeführt.
 3. Nur mit EBICS-Schritten: EBICS wird abgeschaltet, bevor Odoo startet.
 4. `doup` baut das Image neu, aktualisiert alle Module und startet Odoo. Danach werden
    die geplanten Aktionen wieder abgeschaltet, weil das Update sie einschaltet.
@@ -163,8 +172,8 @@ Klartext nimmt Odoo an und speichert es bei der ersten Anmeldung verschlüsselt.
 6. Odoo neutralisiert die Datenbank.
    Sind `install_modules` eingetragen, werden danach diese Module installiert und die
    geplanten Aktionen erneut abgeschaltet.
-   Gibt es die Datei mit den Test-Einstellungen, wird sie danach ausgeführt und
-   `test-odoo` neu gestartet.
+   Gibt es die Datei mit den Test-Einstellungen, wird sie danach ein zweites Mal
+   ausgeführt und `test-odoo` neu gestartet.
 7. Das Playbook prüft, ob Odoo gesund läuft, kein Modul hängen geblieben ist und die
    Anmeldeseite lädt. Erst danach ist das Testsystem einsatzbereit.
 

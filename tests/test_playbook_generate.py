@@ -238,7 +238,8 @@ class CronOffTest(unittest.TestCase):
         self.generate("--no-detect", "--ebics", "--install-modules", "eq_module_a",
                       "--after-restore-sql", sql)
         names = [s["name"] for s in self.steps("neutral")]
-        expected = ["Stop test-odoo", "Restore newest backup (neutral)", "Switch off EBICS",
+        expected = ["Stop test-odoo", "Restore newest backup (neutral)",
+                    "Apply the settings of the test instance (before Odoo starts)", "Switch off EBICS",
                     "Rebuild image", "Switch cron jobs off again", "Uninstall EBICS",
                     "Neutralize", "Install additional modules", "Switch cron jobs off again",
                     "Apply the settings", "Restart test-odoo", "Start test-odoo", "Verify that"]
@@ -268,6 +269,8 @@ class SafetyBackupTest(unittest.TestCase):
             self.assertIsInstance(yaml.safe_load(text), dict, name)
         steps = yaml.safe_load(self.read("neutral.yaml"))["steps"]
         self.assertEqual(steps[0]["command"], "container.stop")
+        # A new server has no test container yet; the rebuild creates it.
+        self.assertEqual(steps[0]["on_error"], "continue")
 
     def test_safety_backup_saves_first_and_writes_the_restore_playbook(self):
         self.run_generate("--no-detect", "--safety-backup")
@@ -319,12 +322,25 @@ class AfterRestoreSqlTest(unittest.TestCase):
         for state in gen.STATES:
             steps = yaml.safe_load(self.read(f"{state}.yaml"))["steps"]
             commands = [step["command"] for step in steps]
-            at = next(i for i, step in enumerate(steps) if step.get("args", {}).get("file") == path)
+            at = max(i for i, step in enumerate(steps) if step.get("args", {}).get("file") == path)
             self.assertGreater(at, commands.index("server.neutralize"), state)
             self.assertGreater(at, commands.index("server.install"), state)
             self.assertEqual(commands[at + 1:], ["container.stop", "container.start", "server.verify"], state)
         self.assertNotIn("Xq7-marker-pw", "".join(self.read(n) for n in os.listdir(self.out)))
         self.assertNotIn(path, self.read("passwoerter.yaml"))
+
+    def test_the_file_also_runs_before_odoo_first_starts_on_the_copy(self):
+        # Without it the rebuild starts the copy with live's FastReport URL and token.
+        path = self.sql_file()
+        self.run_generate("--no-detect", "--ebics", "--after-restore-sql", path)
+        for state in gen.STATES:
+            steps = yaml.safe_load(self.read(f"{state}.yaml"))["steps"]
+            commands = [step["command"] for step in steps]
+            runs = [i for i, step in enumerate(steps) if step.get("args", {}).get("file") == path]
+            self.assertEqual(len(runs), 2, state)
+            self.assertEqual(runs[0], commands.index("server.restore") + 1, state)
+            self.assertLess(runs[0], commands.index("server.rebuild"), state)
+            self.assertGreater(runs[1], commands.index("server.neutralize"), state)
 
     def test_a_missing_file_is_refused(self):
         with self.assertRaises(SystemExit):

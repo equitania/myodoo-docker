@@ -1,5 +1,52 @@
 # Release Notes
 
+## Fix: a new server's first test playbook, first doup and PostgreSQL deploy without a terminal (27.11.2026)
+
+*Dockerfiles/playbooks/generate.py 1.7.0 · scripts/update_docker_odoo.py 5.29.0 ·
+scripts/pg-local-deploy.sh 1.6.0 · Dockerfiles/playbooks/ANLEITUNG.md ·
+scripts/README_pg-local-deploy.md · tests/test_playbook_generate.py ·
+tests/test_update_docker_odoo.py · tests/test_deploy_scripts.py · docs/COMPONENTS.md ·
+docs/usage/09-reference.md · usage/AGENT.md*
+
+Setting up a new customer server from scratch, through a remote-maintenance
+wrapper without a terminal, ran into three gaps on 27.11.2026.
+
+### Fixed
+
+- **The test copy no longer talks to the live FastReport server while it is
+  rebuilt.** The test settings file (`test-after-restore.sql`) ran only at the
+  end of a restore playbook. Until then the copy held live's values, and the
+  rebuild step starts Odoo on it: for the whole module update the test instance
+  had live's `web.base.url` and live's FastReport URL and token. Neutralize
+  empties only the token, and with an empty token Odoo still POSTs the report
+  data to the URL. The file now also runs right after the restore, before Odoo
+  first starts, and again at the end as before. It must therefore be safe to
+  run twice (`UPDATE …` or `INSERT … ON CONFLICT … DO UPDATE`).
+- **The first test playbook on a new server no longer stops at step 1.** It
+  began with "Stop test-odoo", which fails when the container does not exist
+  yet; the workaround was a placeholder container. The step now carries
+  `on_error: continue`; the rebuild creates the container. A test container that
+  is still running is still caught, because `server.restore` refuses to drop a
+  database under a running Odoo.
+- **The first `doup` of a new instance no longer reports two errors.** With no
+  old container, `docker stop` and `docker rm` failed and were counted. When
+  Docker says the container does not exist, both steps now print
+  `skipped (no container yet - first run)`. Any other answer, Docker not
+  responding included, runs them as before.
+
+### Added
+
+- **`pg-local-deploy.sh --non-interactive`.** Every prompt has an option
+  (`--name`, `--basedir`, `--user`, `--db`, `--version`, `--role`, `--users`,
+  `--profile`, `--port`, `--ssl`, `--pgvector`, `--recreate`; `--help`).
+  Without a terminal `--version` and `--password-file` are required: the
+  PostgreSQL major should match the dump to be restored, so there is no silent
+  "newest", and the password comes from the first line of a 0600 file, never
+  from an argument. An existing container is replaced only with `--recreate`,
+  otherwise exit 1. Until now the only way was an answer file on stdin, where one
+  missing line shifted every later answer, and a password prompt that hit the
+  end of the file asked again forever; it now stops at EOF.
+
 ## Fix: fail2ban no longer bans the operator during the first installation (24.11.2026)
 
 *scripts/bootstrap.sh 1.16.0 · tests/test_bootstrap.py · docs/usage/01-provisioning.md ·

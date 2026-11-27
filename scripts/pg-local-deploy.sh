@@ -2,7 +2,7 @@
 #
 # pg-local-deploy.sh — interaktives On-Premise-Deploy für PostgreSQL-Docker.
 #
-# Version: 1.5.0 — 09.11.2026
+# Version: 1.6.0 — 27.11.2026
 #
 # Spiegelt das Ansible-Playbook
 #   semaphore/playbooks/odoo/pg/pb_pg_docker_start.yaml
@@ -46,8 +46,15 @@
 # Modul, schlägt der Aufruf fehl (z.B. Exit 2 bei unlesbarer Konfiguration) oder
 # ist die Ausgabe unbrauchbar, bleiben die vier festen Profile wie bisher.
 #
+# Ohne Rückfrage (1.6.0): --non-interactive mit --name, --version,
+# --password-file und den übrigen Optionen (--help) — für Aufrufe ohne Terminal,
+# z.B. über einen Fernwartungs-Wrapper. Bis 1.5.0 ging das nur mit einer
+# Antwortdatei auf stdin: eine fehlende Zeile verschob jede folgende Antwort,
+# und ein leeres Passwort am Dateiende fragte endlos neu. Das EOF bricht jetzt ab.
+#
 # Sicherheits-Hygiene: KEINE Secrets im Skript hinterlegt — das DB-Passwort
-# wird zwingend interaktiv (silent, mit Wiederholung) abgefragt.
+# wird interaktiv (silent, mit Wiederholung) abgefragt oder aus einer Datei mit
+# Modus 600 gelesen, nie als Argument (Prozessliste).
 #
 # Volume-Layout identisch zur Ansible-Produktion:
 #   {base}/{name}          → PGDATA (5432:5432, 0700; Altinstanzen 999:999)
@@ -92,10 +99,18 @@ _hr()   { printf '%s────────────────────
 
 # Silent single-char read loop with '*' feedback per typed character.
 # Echoes '*' to stderr (keeps command substitution clean), supports backspace.
+# Return 1 when the input ended (EOF) before anything was typed - otherwise a
+# caller that insists on a value would ask again forever (an answer file on
+# stdin that is one line short did exactly that).
 _read_masked() {  # prompt -> value on stdout
-    local prompt="$1" value="" ch
+    local prompt="$1" value="" ch eof=0
     printf '%s' "$prompt" >&2
-    while IFS= read -rs -n1 ch; do
+    while true; do
+        if ! IFS= read -rs -n1 ch; then
+            value+="$ch"                           # last char of a file without final newline
+            eof=1
+            break
+        fi
         [ -z "$ch" ] && break                      # Enter
         if [ "$ch" = $'\x7f' ] || [ "$ch" = $'\b' ]; then
             if [ -n "$value" ]; then
@@ -109,6 +124,8 @@ _read_masked() {  # prompt -> value on stdout
     done
     echo >&2
     printf '%s' "$value"
+    [ "$eof" -eq 1 ] && [ -z "$value" ] && return 1
+    return 0
 }
 
 # Doppelte Passwort-Eingabe mit Verifikation — Pflichtfeld, KEIN Default
@@ -119,12 +136,18 @@ _read_pwd_twice() {
     local label="$1"
     local pwd1 pwd2
     while true; do
-        pwd1="$(_read_masked "  $label: ")"
+        if ! pwd1="$(_read_masked "  $label: ")"; then
+            _err "$label: Eingabe zu Ende (EOF) — Abbruch. Ohne Terminal: --non-interactive --password-file DATEI"
+            return 1
+        fi
         if [ -z "$pwd1" ]; then
             _err "$label ist Pflicht — bitte eingeben."
             continue
         fi
-        pwd2="$(_read_masked "  $label (Wiederholung): ")"
+        if ! pwd2="$(_read_masked "  $label (Wiederholung): ")"; then
+            _err "$label: Eingabe zu Ende (EOF) — Abbruch."
+            return 1
+        fi
         if [ "$pwd1" = "$pwd2" ]; then
             echo "$pwd1"
             return 0
@@ -245,10 +268,132 @@ print("\n".join(lines))
 '
 }
 
+_usage() {
+    cat <<'USAGE'
+Aufruf: pg-local-deploy.sh                      interaktiv (fragt alles ab)
+        pg-local-deploy.sh --non-interactive --name N --version V --password-file F
+                           [--basedir D] [--user U] [--db DB] [--role R [--users N]]
+                           [--profile P] [--port P] [--ssl] [--pgvector] [--recreate]
+
+  --non-interactive   keine Rückfrage; fehlende Pflichtwerte brechen ab (Exit 1),
+                      sonst gilt der Default der Rückfrage
+  --name N            Container-Name (Default live-db)
+  --basedir D         Basis-Verzeichnis (Default /opt/postgresql)
+  --user U            DB-User (Default ownerp)
+  --db DB             DB-Name (Default postgres)
+  --password-file F   Datei mit dem DB-Passwort in der ersten Zeile (Modus 600/400);
+                      nie als Argument, das stünde in der Prozessliste
+  --version V         PostgreSQL-Version, z.B. 17.12 — ohne Terminal Pflicht: die
+                      Hauptversion soll zum einzuspielenden Dump passen
+  --role R            live | test | demo | none (Default none = feste Profile)
+  --users N           gleichzeitige Benutzer (nur --role live; Default aus Hardware)
+  --profile P         2cpu4gb | 2cpu8gb | 4cpu16gb | 8cpu32gb (Default 2cpu8gb;
+                      gilt nur, wenn keine Berechnung aus --role vorliegt)
+  --port P            Host-Port auf 127.0.0.1 (Default keiner)
+  --ssl               Self-Signed-SSL aktivieren (Default aus)
+  --pgvector          pgvector installieren (Default aus)
+  --recreate          bestehenden Container gleichen Namens ersetzen (PGDATA bleibt);
+                      ohne: Abbruch, nicht-interaktiv mit Exit 1
+  -h, --help          diese Hilfe
+
+Optionen gelten auch interaktiv; dann wird nur nach den fehlenden Werten gefragt.
+USAGE
+}
+
+# Setzt NONINTERACTIVE und OPT_* aus der Kommandozeile. Exit 1 bei Fehlern.
+NONINTERACTIVE=0
+OPT_NAME=""; OPT_BASEDIR=""; OPT_USER=""; OPT_DB=""; OPT_PASSWORD_FILE=""; OPT_VERSION=""
+OPT_ROLE=""; OPT_USERS=""; OPT_PROFILE=""; OPT_PORT=""; OPT_SSL=""; OPT_PGVECTOR=""; OPT_RECREATE=0
+_parse_args() {
+    while [ $# -gt 0 ]; do
+        case "$1" in
+            --non-interactive) NONINTERACTIVE=1 ;;
+            --recreate)        OPT_RECREATE=1 ;;
+            --ssl)             OPT_SSL="y" ;;
+            --pgvector)        OPT_PGVECTOR="y" ;;
+            --name|--basedir|--user|--db|--password-file|--version|--role|--users|--profile|--port)
+                if [ $# -lt 2 ] || [ -z "$2" ]; then
+                    _err "$1 braucht einen Wert"; return 1
+                fi
+                case "$1" in
+                    --name)          OPT_NAME="$2" ;;
+                    --basedir)       OPT_BASEDIR="$2" ;;
+                    --user)          OPT_USER="$2" ;;
+                    --db)            OPT_DB="$2" ;;
+                    --password-file) OPT_PASSWORD_FILE="$2" ;;
+                    --version)       OPT_VERSION="$2" ;;
+                    --users)         OPT_USERS="$2" ;;
+                    --port)          OPT_PORT="$2" ;;
+                    --role)
+                        case "$2" in
+                            live) OPT_ROLE=1 ;; test) OPT_ROLE=2 ;; demo) OPT_ROLE=3 ;; none) OPT_ROLE=4 ;;
+                            *) _err "--role: live, test, demo oder none — nicht '$2'"; return 1 ;;
+                        esac ;;
+                    --profile)
+                        case "$2" in
+                            2cpu4gb) OPT_PROFILE=1 ;; 2cpu8gb) OPT_PROFILE=2 ;;
+                            4cpu16gb) OPT_PROFILE=3 ;; 8cpu32gb) OPT_PROFILE=4 ;;
+                            *) _err "--profile: 2cpu4gb, 2cpu8gb, 4cpu16gb oder 8cpu32gb — nicht '$2'"; return 1 ;;
+                        esac ;;
+                esac
+                shift ;;
+            -h|--help) _usage; exit 0 ;;
+            *) _err "Unbekannte Option: $1 (--help)"; return 1 ;;
+        esac
+        shift
+    done
+    if [ "$NONINTERACTIVE" -eq 1 ]; then
+        local missing=""
+        [ -z "$OPT_PASSWORD_FILE" ] && missing="$missing --password-file"
+        [ -z "$OPT_VERSION" ] && missing="$missing --version"
+        if [ -n "$missing" ]; then
+            _err "--non-interactive braucht:$missing"; return 1
+        fi
+    fi
+    return 0
+}
+
+# Erste Zeile der Passwortdatei (nur Modus 600/400) — stdout = Passwort.
+_read_password_file() {  # file
+    local f="$1" mode value
+    if [ ! -r "$f" ]; then
+        _err "Passwortdatei nicht lesbar: $f"; return 1
+    fi
+    mode="$(stat -c '%a' "$f" 2>/dev/null || stat -f '%Lp' "$f")"
+    case "$mode" in
+        600|400) : ;;
+        *) _err "Passwortdatei $f hat Modus $mode — erwartet 600"; return 1 ;;
+    esac
+    IFS= read -r value < "$f" || [ -n "$value" ]
+    value="${value%$'\r'}"
+    if [ -z "$value" ]; then
+        _err "Passwortdatei $f: erste Zeile ist leer"; return 1
+    fi
+    printf '%s' "$value"
+}
+
+# Wert aus Option, sonst Rückfrage (interaktiv) bzw. leer (nicht-interaktiv) —
+# leer heißt wie Enter: der Aufrufer setzt seinen Default.
+_ask() {  # prompt option -> value on stdout
+    local prompt="$1" opt="$2" ans=""
+    # Without a terminal the log should still say what was chosen (stderr,
+    # like the prompt itself).
+    if [ "$NONINTERACTIVE" -eq 1 ]; then
+        printf '%s%s\n' "$prompt" "${opt:-(Default)}" >&2
+        printf '%s' "$opt"
+        return 0
+    fi
+    if [ -n "$opt" ]; then printf '%s' "$opt"; return 0; fi
+    read -rp "$prompt" ans
+    printf '%s' "$ans"
+}
+
 # Tests sourcen das Skript nur für die Hilfsfunktionen.
 [ -n "${PG_DEPLOY_NO_MAIN:-}" ] && return 0
 
 main() {
+
+_parse_args "$@" || exit 1
 
 # ── Step 1: Pre-Flight Checks ────────────────────────────────────────────────
 _info "Step 1: Pre-Flight Checks"
@@ -279,14 +424,14 @@ fi
 _hr
 _info "Step 2: Parameter"
 
-read -rp "  Container-Name [live-db]: " pg_name
+pg_name="$(_ask "  Container-Name [live-db]: " "$OPT_NAME")"
 [ -z "$pg_name" ] && pg_name="live-db"
 if ! [[ "$pg_name" =~ ^[a-zA-Z0-9][a-zA-Z0-9_.-]*$ ]]; then
     _err "Ungültiger Container-Name: $pg_name"
     exit 1
 fi
 
-read -rp "  Basis-Verzeichnis [/opt/postgresql]: " pg_basedir
+pg_basedir="$(_ask "  Basis-Verzeichnis [/opt/postgresql]: " "$OPT_BASEDIR")"
 [ -z "$pg_basedir" ] && pg_basedir="/opt/postgresql"
 # read expandiert '~' nicht — manuell auflösen.
 case "$pg_basedir" in
@@ -300,7 +445,7 @@ case "$pg_basedir" in
 esac
 
 echo
-read -rp "  DB-User [$DEFAULT_PG_USER]: " pg_user
+pg_user="$(_ask "  DB-User [$DEFAULT_PG_USER]: " "$OPT_USER")"
 [ -z "$pg_user" ] && pg_user="$DEFAULT_PG_USER"
 # Whitelist — pg_user landet in generierter Compose-YAML (u.a. im CMD-SHELL-
 # Healthcheck); Sonderzeichen könnten die YAML-/Shell-Struktur aufbrechen.
@@ -309,7 +454,7 @@ if ! [[ "$pg_user" =~ ^[a-zA-Z0-9][a-zA-Z0-9_.-]*$ ]]; then
     exit 1
 fi
 
-read -rp "  DB-Name [$DEFAULT_PG_DB]: " pg_db
+pg_db="$(_ask "  DB-Name [$DEFAULT_PG_DB]: " "$OPT_DB")"
 [ -z "$pg_db" ] && pg_db="$DEFAULT_PG_DB"
 if ! [[ "$pg_db" =~ ^[a-zA-Z0-9][a-zA-Z0-9_.-]*$ ]]; then
     _err "Ungültiger DB-Name: $pg_db"
@@ -319,12 +464,30 @@ fi
 echo
 echo "  Hinweis: POSTGRES_PASSWORD greift nur beim ERSTEN Start (initdb)."
 echo "  Bei bestehendem Datenverzeichnis wird die Eingabe von PostgreSQL ignoriert."
-pg_pass="$(_read_pwd_twice "DB-Passwort")"
+if [ -n "$OPT_PASSWORD_FILE" ]; then
+    pg_pass="$(_read_password_file "$OPT_PASSWORD_FILE")" || exit 1
+    _ok "DB-Passwort aus $OPT_PASSWORD_FILE"
+elif [ "$NONINTERACTIVE" -eq 1 ]; then
+    _err "--non-interactive braucht --password-file"; exit 1
+else
+    pg_pass="$(_read_pwd_twice "DB-Passwort")" || exit 1
+fi
 
 echo
 pg_suggest=""
-pg_latest="$(_http_get "$DOCKER_HUB_TAGS" | _pg_latest_per_major)"
-if [ -n "$pg_latest" ]; then
+pg_latest=""
+# Version given (or no terminal): no Docker Hub lookup, no suggestion.
+if [ -n "$OPT_VERSION" ] || [ "$NONINTERACTIVE" -eq 1 ]; then
+    pg_version="$OPT_VERSION"
+    _ok "PostgreSQL-Version: $pg_version"
+else
+    pg_latest="$(_http_get "$DOCKER_HUB_TAGS" | _pg_latest_per_major)"
+fi
+# The two prompts below are interactive only: with NONINTERACTIVE or --version
+# pg_version is already set (or empty and refused right after).
+if [ -n "$pg_version" ] || [ "$NONINTERACTIVE" -eq 1 ]; then
+    :
+elif [ -n "$pg_latest" ]; then
     echo "  Neueste Versionen auf Docker Hub:"
     while read -r major newest; do
         echo "    PostgreSQL $major: $newest"
@@ -334,6 +497,7 @@ if [ -n "$pg_latest" ]; then
     read -rp "  PostgreSQL-Version [$pg_suggest]: " pg_version
     [ -z "$pg_version" ] && pg_version="$pg_suggest"
 else
+    # Interactive only, like the branch above (NONINTERACTIVE was handled first).
     _info "Docker Hub nicht erreichbar — Version bitte von Hand eingeben."
     echo "  Verfügbare Tags: https://hub.docker.com/_/postgres/tags"
     read -rp "  PostgreSQL-Version (z.B. 16.14): " pg_version
@@ -350,7 +514,7 @@ fi
 echo
 echo "  Rolle dieser Instanz?"
 echo "    1) live   2) test   3) demo   4) keine Angabe (feste Profile)"
-read -rp "  Auswahl [4]: " role_choice
+role_choice="$(_ask "  Auswahl [4]: " "$OPT_ROLE")"
 case "${role_choice:-4}" in
     1) pg_role="live" ;;
     2) pg_role="test" ;;
@@ -362,7 +526,7 @@ sizing_block=""
 if [ -n "$pg_role" ]; then
     pg_users=""
     if [ "$pg_role" = "live" ]; then
-        read -rp "  Gleichzeitige Benutzer [aus Hardware]: " pg_users
+        pg_users="$(_ask "  Gleichzeitige Benutzer [aus Hardware]: " "$OPT_USERS")"
         if [ -n "$pg_users" ] && ! [[ "$pg_users" =~ ^[0-9]+$ ]]; then
             _err "Benutzerzahl muss numerisch sein: $pg_users"
             exit 1
@@ -393,7 +557,7 @@ echo "    1) 2cpu4gb   — 2 CPU,  4 GB RAM (kleine Systeme)"
 echo "    2) 2cpu8gb   — 2 CPU,  8 GB RAM (Standard)"
 echo "    3) 4cpu16gb  — 4 CPU, 16 GB RAM (Produktiv)"
 echo "    4) 8cpu32gb  — 8 CPU, 32 GB RAM (High-Performance)"
-read -rp "  Auswahl [2]: " conf_choice
+conf_choice="$(_ask "  Auswahl [2]: " "$OPT_PROFILE")"
 [ -z "$conf_choice" ] && conf_choice="2"
 case "$conf_choice" in
     1) pg_conf_version="2cpu4gb"  ; conf_func="_conf_2cpu4gb"  ;;
@@ -408,7 +572,7 @@ _ok "Conf-Profil: $pg_conf_version"
 echo
 echo "  Optional — Host-Port für externen Zugriff (Publish auf 127.0.0.1)."
 echo "  Enter = kein Port-Publishing (wie Ansible; Odoo-Container nutzt das Docker-Netz)."
-read -rp "  Host-Port [keiner]: " pg_port
+pg_port="$(_ask "  Host-Port [keiner]: " "$OPT_PORT")"
 if [ -n "$pg_port" ]; then
     if ! [[ "$pg_port" =~ ^[0-9]+$ ]] || [ "$pg_port" -lt 1 ] || [ "$pg_port" -gt 65535 ]; then
         _err "Port muss numerisch (1-65535) sein: $pg_port"
@@ -420,7 +584,7 @@ echo
 echo "  Optional — Self-Signed-SSL für verschlüsselte Client-Verbindungen."
 echo "  Odoo (db_sslmode=prefer) nutzt TLS dann automatisch. Zertifikat ist"
 echo "  self-signed (keine Client-Verifikation via verify-ca/verify-full)."
-read -rp "  SSL mit Self-Signed-Zertifikat aktivieren? (y/N) " ssl_choice
+ssl_choice="$(_ask "  SSL mit Self-Signed-Zertifikat aktivieren? (y/N) " "$OPT_SSL")"
 case "$ssl_choice" in
     [yYjJ]) pg_ssl="yes" ;;
     *)      pg_ssl="no"  ;;
@@ -433,7 +597,7 @@ echo "  Achtung: Mit pgvector installiert Odoo 19 Enterprise das KI-Modul 'ai' i
 echo "  jeder neuen Datenbank automatisch. Das Modul kann Texte an einen externen"
 echo "  KI-Anbieter senden. Nur wählen, wenn der Kunde die KI-Funktionen nutzen will"
 echo "  oder eine Datenbank einspielt, die pgvector bereits verwendet."
-read -rp "  pgvector installieren? (y/N) " vector_choice
+vector_choice="$(_ask "  pgvector installieren? (y/N) " "$OPT_PGVECTOR")"
 case "$vector_choice" in
     [yYjJ]) pg_vector="yes" ;;
     *)      pg_vector="no"  ;;
@@ -668,7 +832,15 @@ _info "Step 7: Container starten (initdb-Phase)"
 
 # Idempotenz — Bestätigungs-Prompt bei existierendem Container
 if docker ps -a --format '{{.Names}}' | grep -qx "$pg_name"; then
-    read -rp "  Container '$pg_name' existiert bereits. Entfernen und neu deployen? (y/N) " confirm
+    confirm=""
+    if [ "$OPT_RECREATE" -eq 1 ]; then
+        confirm="y"
+    elif [ "$NONINTERACTIVE" -eq 1 ]; then
+        _err "Container '$pg_name' existiert bereits — ersetzen nur mit --recreate. PGDATA + Compose-File bleiben erhalten."
+        exit 1
+    else
+        read -rp "  Container '$pg_name' existiert bereits. Entfernen und neu deployen? (y/N) " confirm
+    fi
     if [ "$confirm" = "y" ] || [ "$confirm" = "Y" ]; then
         [ -n "$DC" ] && $DC -f "$compose_file" down >/dev/null 2>&1
         docker stop "$pg_name" >/dev/null 2>&1
